@@ -29,6 +29,15 @@ SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
 # ADMIN_SECRET    — protects POST /admin/bootstrap
 # MCP_AUTH_SECRET — protects POST /mcp (optional; endpoint is open if unset)
 
+# ── Workers AI (embeddings for Vectorize) ────────────────────────────────────
+[ai]
+binding = "AI"
+
+# ── Vectorize (semantic memory search) ───────────────────────────────────────
+[[vectorize]]
+binding    = "VECTORIZE"
+index_name = "halseth-memories"
+
 # ── Local dev overrides ───────────────────────────────────────────────────────
 [env.local]
 # Secrets live in .dev.vars (gitignored). See config/.dev.vars.example.

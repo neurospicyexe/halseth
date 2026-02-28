@@ -8,6 +8,7 @@ import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset } from "./handlers/assets";
+import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
 import { handleMcp } from "./mcp/server";
 
 const router = new Router()
@@ -28,6 +29,10 @@ const router = new Router()
   // Async notes between companion and human
   .on("GET",  "/notes", (request, env) => getNotes(request, env))
   .on("POST", "/notes", (request, env) => createNote(request, env))
+
+  // Biometric snapshots
+  .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
+  .on("GET", "/biometrics",        (request, env) => handleBiometricsList(request, env))
 
   // R2 asset storage
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))

@@ -1,36 +1,62 @@
 import { Env } from "../types";
 import { getOpenSession } from "../db/queries";
-import type { HouseState, CompanionNote, Task, HandoverPacket } from "../types";
+import type { HouseState, CompanionNote, Task, HandoverPacket, BiometricSnapshot } from "../types";
 
 // GET /presence — full system state for the Hearth dashboard.
 // No auth: returns summary data safe for a personal dashboard.
 export async function getPresence(_request: Request, env: Env): Promise<Response> {
-  const [session, houseRow, companionsResult, tasksResult, woundsRow, notesResult] =
-    await Promise.all([
-      getOpenSession(env),
-      env.DB.prepare("SELECT * FROM house_state WHERE id = 'main'").first<HouseState>(),
-      env.DB.prepare(
-        "SELECT id, display_name, role FROM companion_config WHERE active = 1"
-      ).all(),
-      env.DB.prepare(`
-        SELECT id, title, priority, status, due_at, assigned_to
-        FROM tasks
-        WHERE status != 'done'
-        ORDER BY
-          CASE priority
-            WHEN 'urgent' THEN 0
-            WHEN 'high'   THEN 1
-            WHEN 'normal' THEN 2
-            ELSE 3
-          END,
-          due_at ASC NULLS LAST
-        LIMIT 5
-      `).all<Task>(),
-      env.DB.prepare("SELECT COUNT(*) as n FROM living_wounds").first<{ n: number }>(),
-      env.DB.prepare(
-        "SELECT id, author, content, note_type, created_at FROM companion_notes ORDER BY created_at DESC LIMIT 3"
-      ).all<CompanionNote>(),
-    ]);
+  const [
+    session,
+    houseRow,
+    companionsResult,
+    tasksResult,
+    woundsRow,
+    notesResult,
+    dreamsResult,
+    biometricRow,
+    valenceResult,
+    initiatedByResult,
+    totalRow,
+  ] = await Promise.all([
+    getOpenSession(env),
+    env.DB.prepare("SELECT * FROM house_state WHERE id = 'main'").first<HouseState>(),
+    env.DB.prepare(
+      "SELECT id, display_name, role FROM companion_config WHERE active = 1"
+    ).all(),
+    env.DB.prepare(`
+      SELECT id, title, priority, status, due_at, assigned_to
+      FROM tasks
+      WHERE status != 'done'
+      ORDER BY
+        CASE priority
+          WHEN 'urgent' THEN 0
+          WHEN 'high'   THEN 1
+          WHEN 'normal' THEN 2
+          ELSE 3
+        END,
+        due_at ASC NULLS LAST
+      LIMIT 5
+    `).all<Task>(),
+    env.DB.prepare("SELECT COUNT(*) as n FROM living_wounds").first<{ n: number }>(),
+    env.DB.prepare(
+      "SELECT id, author, content, note_type, created_at FROM companion_notes WHERE note_type != 'dream' ORDER BY created_at DESC LIMIT 3"
+    ).all<CompanionNote>(),
+    env.DB.prepare(
+      "SELECT id, content, created_at FROM companion_notes WHERE note_type = 'dream' ORDER BY created_at DESC LIMIT 3"
+    ).all<Pick<CompanionNote, "id" | "content" | "created_at">>(),
+    env.DB.prepare(
+      "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
+    ).first<BiometricSnapshot>(),
+    env.DB.prepare(
+      "SELECT valence, COUNT(*) as n FROM relational_deltas WHERE delta_text IS NOT NULL GROUP BY valence"
+    ).all<{ valence: string | null; n: number }>(),
+    env.DB.prepare(
+      "SELECT initiated_by, COUNT(*) as n FROM relational_deltas WHERE delta_text IS NOT NULL GROUP BY initiated_by"
+    ).all<{ initiated_by: string | null; n: number }>(),
+    env.DB.prepare(
+      "SELECT COUNT(*) as total FROM relational_deltas WHERE delta_text IS NOT NULL"
+    ).first<{ total: number }>(),
+  ]);
 
   // If no open session, fetch full handover for the dashboard spine display.
   let handover: HandoverPacket | null = null;
@@ -48,6 +74,20 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
     love_meter: 50,
     updated_at: new Date().toISOString(),
   };
+
+  // Build personality summary from aggregate rows.
+  const valenceMap: Record<string, number> = {};
+  for (const row of valenceResult.results ?? []) {
+    if (row.valence) valenceMap[row.valence] = row.n;
+  }
+  const initiatedByMap: Record<string, number> = {};
+  for (const row of initiatedByResult.results ?? []) {
+    if (row.initiated_by) initiatedByMap[row.initiated_by] = row.n;
+  }
+  const totalDeltas = totalRow?.total ?? 0;
+  const personality = totalDeltas > 0
+    ? { valence: valenceMap, initiated_by: initiatedByMap, total_deltas: totalDeltas }
+    : null;
 
   const body = {
     system: {
@@ -104,6 +144,24 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
       note_type: n.note_type,
       created_at: n.created_at,
     })),
+    recent_dreams: (dreamsResult.results ?? []).map((d) => ({
+      id:         d.id,
+      content:    d.content,
+      created_at: d.created_at,
+    })),
+    latest_biometrics: biometricRow
+      ? {
+          hrv_resting:   biometricRow.hrv_resting,
+          resting_hr:    biometricRow.resting_hr,
+          sleep_hours:   biometricRow.sleep_hours,
+          sleep_quality: biometricRow.sleep_quality,
+          steps:         biometricRow.steps,
+          active_energy: biometricRow.active_energy,
+          stress_score:  biometricRow.stress_score,
+          recorded_at:   biometricRow.recorded_at,
+        }
+      : null,
+    personality,
     companions: (companionsResult.results ?? []).map((c: any) => ({
       id:           c.id,
       display_name: c.display_name,
