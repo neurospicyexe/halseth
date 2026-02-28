@@ -70,13 +70,16 @@ function Register-AutonomousTask {
         -RunLevel Highest `
         -Description "Halseth autonomous companion time — fires $Time on weekdays." | Out-Null
 
-    Write-Host "Created: $Name ($Time on $($Days -join ', '))"
+    $DayList = $Days -join ', '
+    Write-Host "Created: $Name at $Time on $DayList"
 }
 
 Register-AutonomousTask "Halseth Autonomous Time - Morning"   $MorningTime
 Register-AutonomousTask "Halseth Autonomous Time - Afternoon" $AfternoonTime
 
+$TestCmd = "Start-ScheduledTask -TaskName 'Halseth Autonomous Time - Morning'"
+$ListCmd = "Get-ScheduledTask | Where-Object TaskName -like 'Halseth*'"
 Write-Host ""
 Write-Host "Done. Tasks will fire at $MorningTime and $AfternoonTime on weekdays."
-Write-Host "To test immediately: Start-ScheduledTask -TaskName 'Halseth Autonomous Time - Morning'"
-Write-Host "To view tasks: Get-ScheduledTask | Where-Object TaskName -like 'Halseth*'"
+Write-Host "To test immediately: $TestCmd"
+Write-Host "To view tasks:       $ListCmd"
