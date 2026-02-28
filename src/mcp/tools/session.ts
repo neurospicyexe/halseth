@@ -17,27 +17,42 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       facet:               z.string().optional().describe("Active companion facet e.g. moss / rogue / brat_prince / spiralroot."),
       depth:               z.number().int().min(0).max(3).optional().describe("Immersion depth 0-3."),
       notes:               z.string().optional(),
+      prior_handover_id:   z.string().optional().describe("If returning from a prior session, provide its handover packet ID. Marks that packet as returned per spec semantics."),
     },
     async (input) => {
       const id = generateId();
       const now = new Date().toISOString();
 
-      await env.DB.prepare(`
-        INSERT INTO sessions (
-          id, created_at, updated_at, front_state, hrv_range,
-          emotional_frequency, key_signature, active_anchor, facet, depth, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        id, now, now,
-        input.front_state,
-        input.hrv_range ?? null,
-        input.emotional_frequency ?? null,
-        input.key_signature ?? null,
-        input.active_anchor ?? null,
-        input.facet ?? null,
-        input.depth ?? null,
-        input.notes ?? null,
-      ).run();
+      const statements = [
+        env.DB.prepare(`
+          INSERT INTO sessions (
+            id, created_at, updated_at, front_state, hrv_range,
+            emotional_frequency, key_signature, active_anchor, facet, depth, notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          id, now, now,
+          input.front_state,
+          input.hrv_range ?? null,
+          input.emotional_frequency ?? null,
+          input.key_signature ?? null,
+          input.active_anchor ?? null,
+          input.facet ?? null,
+          input.depth ?? null,
+          input.notes ?? null,
+        ),
+      ];
+
+      // Mark prior handover as returned only when Architect explicitly opens a new session
+      // referencing it. This is the spec-correct place for this mutation — not on read.
+      if (input.prior_handover_id) {
+        statements.push(
+          env.DB.prepare(
+            "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
+          ).bind(input.prior_handover_id)
+        );
+      }
+
+      await env.DB.batch(statements);
 
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
@@ -145,13 +160,8 @@ export function registerSessionTools(server: McpServer, env: Env): void {
         return { content: [{ type: "text", text: "No handover packet found." }] };
       }
 
-      // Mark as returned if not already.
-      if (!("returned" in packet) || packet.returned === null) {
-        await env.DB.prepare(
-          "UPDATE handover_packets SET returned = 1 WHERE id = ?"
-        ).bind((packet as { id: string }).id).run();
-      }
-
+      // Pure read — no mutation. returned is set by halseth_session_open when
+      // Architect explicitly opens a new session with prior_handover_id. See spec §5.5.
       return { content: [{ type: "text", text: JSON.stringify(packet) }] };
     },
   );

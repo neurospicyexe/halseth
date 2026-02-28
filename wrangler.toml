@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding  = "DB"
 database_name = "halseth"
-database_id   = "4b5ed7ce-8222-47ae-bca9-56eca4a46157"
+database_id   = "REPLACE_WITH_D1_DATABASE_ID"
 migrations_dir = "migrations"
 
 # ── R2 (artifact / blob store) ───────────────────────────────────────────────
@@ -22,7 +22,7 @@ PLURALITY_ENABLED    = "false"   # "true" enables front_state validation against
 COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
 COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
 SYSTEM_NAME          = "Halseth"
-SYSTEM_OWNER         = "raziel"
+SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
 
 # Secrets — set via `wrangler secret put <KEY>` for production.
 # For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.

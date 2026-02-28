@@ -23,12 +23,17 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
     },
     async (input) => {
       // INSERT only. This is the only write operation permitted on relational_deltas.
+      // Legacy NOT NULL columns (companion_id, subject_id, delta_type, payload_json) receive
+      // placeholder values for MCP-originated rows. MCP rows are distinguished from legacy
+      // HTTP rows by delta_text IS NOT NULL — see halseth_delta_read filter.
       const id = generateId();
       const now = new Date().toISOString();
 
       await env.DB.prepare(`
-        INSERT INTO relational_deltas (id, session_id, created_at, agent, delta_text, valence, initiated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO relational_deltas
+          (id, companion_id, subject_id, delta_type, payload_json,
+           session_id, created_at, agent, delta_text, valence, initiated_by)
+        VALUES (?, '', 'mcp', 'mcp_delta', '{}', ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         input.session_id,
