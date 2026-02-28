@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "migrate:local": "wrangler d1 migrations apply halseth --local",
-    "migrate:remote": "wrangler d1 migrations apply halseth --remote",
+    "dev": "wrangler dev --config wrangler.prod.toml",
+    "deploy": "wrangler deploy --config wrangler.prod.toml",
+    "migrate:local": "wrangler d1 migrations apply halseth --local --config wrangler.prod.toml",
+    "migrate:remote": "wrangler d1 migrations apply halseth --remote --config wrangler.prod.toml",
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {

@@ -24,7 +24,9 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
 
   registerSessionTools(server, env);
   registerMemoryTools(server, env);
-  registerCoordinationTools(server, env);
+  if (env.COORDINATION_ENABLED === "true") {
+    registerCoordinationTools(server, env);
+  }
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,  // stateless: no Mcp-Session-Id header protocol
