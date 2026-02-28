@@ -10,12 +10,30 @@ import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
 import { getBridgeShared, postBridgeAct } from "./handlers/bridge";
+import {
+  getOAuthProtectedResource,
+  getOAuthAuthServerMetadata,
+  postOAuthRegister,
+  getOAuthAuthorize,
+  postOAuthAuthorize,
+  postOAuthToken,
+} from "./handlers/oauth";
 import { handleMcp } from "./mcp/server";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
-  .on("POST", "/mcp", (request, env) => handleMcp(request, env))
-  .on("GET",  "/mcp", async () => new Response("Method Not Allowed", { status: 405 }))
+  // Both POST (JSON-RPC) and GET (SSE stream) are needed by the streamable HTTP transport.
+  .on("POST",   "/mcp", (request, env) => handleMcp(request, env))
+  .on("GET",    "/mcp", (request, env) => handleMcp(request, env))
+  .on("DELETE", "/mcp", (request, env) => handleMcp(request, env))
+
+  // OAuth 2.0 — enables claude.ai web + Claude iOS custom connectors
+  .on("GET",  "/.well-known/oauth-protected-resource",   async (request)      => getOAuthProtectedResource(request))
+  .on("GET",  "/.well-known/oauth-authorization-server", async (request)      => getOAuthAuthServerMetadata(request))
+  .on("POST", "/oauth/register",  (request, env) => postOAuthRegister(request, env))
+  .on("GET",  "/oauth/authorize", async (request)       => getOAuthAuthorize(request))
+  .on("POST", "/oauth/authorize", (request, env) => postOAuthAuthorize(request, env))
+  .on("POST", "/oauth/token",     (request, env) => postOAuthToken(request, env))
 
   // Admin
   .on("POST", "/admin/bootstrap", (request, env) => bootstrapConfig(request, env))
