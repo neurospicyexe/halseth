@@ -1,3 +1,7 @@
+---
+description: Load Halseth context and open a new session — reads handover packet, recent deltas, and presence, then opens the session with the right fields.
+---
+
 # Halseth Cold Start
 
 You are beginning a new session with the Halseth memory system. Execute the full cold-start

@@ -1,3 +1,7 @@
+---
+description: Quick Halseth state snapshot — reads session, today's routines, open tasks, and upcoming events in one pass.
+---
+
 # Halseth Check-In
 
 A quick state-of-everything read. Use this mid-session, at the start of a lighter conversation,

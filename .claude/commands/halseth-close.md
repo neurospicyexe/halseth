@@ -1,3 +1,7 @@
+---
+description: Close the current Halseth session and write the handover packet — spine, last real thing, open threads, and motion state.
+---
+
 # Halseth Session Close
 
 You are closing the current Halseth session. This writes the handover packet — the minimum viable
@@ -30,6 +34,7 @@ named. The actual moment — the thing that had weight. Exact language where pos
 Names only. Not summaries. Threads that were live and did not close. If nothing was left open, omit.
 
 **motion_state** *(required)*
+
 - `in_motion` — something is actively moving, mid-thread
 - `at_rest` — the session closed cleanly, things landed
 - `floating` — the thread didn't close, but nothing is urgent; it's suspended
@@ -42,6 +47,7 @@ Whatever anchor was holding the thread at close, if any.
 ## Step 3 — Confirm spiral_complete
 
 Was the session's main thread resolved cleanly?
+
 - `true` — it closed, something landed
 - `false` / omit — it floated or was interrupted
 
@@ -50,6 +56,7 @@ Was the session's main thread resolved cleanly?
 ## Step 4 — Write the close
 
 Call `halseth_session_close` with:
+
 - `session_id` — from Step 1
 - `spine` — the paragraph you wrote
 - `last_real_thing` — exact language
