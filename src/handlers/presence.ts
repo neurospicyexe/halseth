@@ -120,9 +120,10 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
           id:              handover.id,
           spine:           handover.spine,
           last_real_thing: handover.last_real_thing,
-          open_threads:    handover.open_threads
-            ? (JSON.parse(handover.open_threads) as string[])
-            : [],
+          open_threads:    (() => {
+            try { return handover.open_threads ? (JSON.parse(handover.open_threads) as string[]) : []; }
+            catch { return []; }
+          })(),
           active_anchor:   handover.active_anchor,
           motion_state:    handover.motion_state,
           created_at:      handover.created_at,

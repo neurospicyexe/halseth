@@ -7,6 +7,7 @@ import { registerMemoryTools } from "./tools/memory.js";
 import { registerCoordinationTools } from "./tools/coordination.js";
 import { registerBiometricTools } from "./tools/biometrics.js";
 import { registerPersonalityTools } from "./tools/personality.js";
+import { registerBridgeTools } from "./tools/bridge.js";
 
 export async function handleMcp(request: Request, env: Env): Promise<Response> {
   // Light auth guard. Skip check if MCP_AUTH_SECRET is not set (local dev).
@@ -28,6 +29,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   registerMemoryTools(server, env);
   registerBiometricTools(server, env);
   registerPersonalityTools(server, env);
+  registerBridgeTools(server, env);
   if (env.COORDINATION_ENABLED === "true") {
     registerCoordinationTools(server, env);
   }

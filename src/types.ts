@@ -12,6 +12,10 @@ export interface Env {
   SYSTEM_NAME:         string;
   SYSTEM_OWNER:        string;
 
+  // Bridge — cross-instance data sharing with partner's Halseth deployment.
+  BRIDGE_URL?:    string;  // partner's base URL; bridge disabled if unset or empty
+  BRIDGE_SECRET?: string;  // shared symmetric secret for /bridge/* endpoints
+
   // Secrets — set via `wrangler secret put`, stored in .dev.vars for local dev.
   ADMIN_SECRET?:    string;  // protects POST /admin/bootstrap
   MCP_AUTH_SECRET?: string;  // protects POST /mcp (optional; skip check if unset)

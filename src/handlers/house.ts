@@ -67,6 +67,11 @@ export async function updateHouseState(request: Request, env: Env): Promise<Resp
   values.push(now);
   values.push("main"); // WHERE id = ?
 
+  // Ensure the row exists before updating (handles cold-start before bootstrap).
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO house_state (id, spoon_count, love_meter, updated_at) VALUES ('main', 10, 50, ?)"
+  ).bind(now).run();
+
   await env.DB.prepare(
     `UPDATE house_state SET ${sets.join(", ")} WHERE id = ?`
   ).bind(...values).run();

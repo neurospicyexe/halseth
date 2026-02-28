@@ -23,6 +23,8 @@ COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
 COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
 SYSTEM_NAME          = "Halseth"
 SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
+BRIDGE_URL           = ""   # partner's Halseth base URL; leave empty to disable bridge
+BRIDGE_SECRET        = ""   # shared symmetric secret; same value in both deployments
 
 # Secrets — set via `wrangler secret put <KEY>` for production.
 # For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.
