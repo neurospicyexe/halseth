@@ -1,5 +1,11 @@
 # Copy to .dev.vars at the repo root (gitignored) for local wrangler dev.
 # Production secrets go in: wrangler secret put <KEY>
 
-# Example — add real secrets below as the system grows:
-# SIGNING_SECRET=your-secret-here
+# Protects POST /admin/bootstrap — seed system config, companions, wounds, fossils.
+# Leave unset in local dev to skip the auth check.
+ADMIN_SECRET=your-admin-secret-here
+
+# Protects POST /mcp — the AI companion entry point.
+# Leave unset in local dev to skip the auth check.
+# In production, set this and use it as the Bearer token in your MCP client config.
+MCP_AUTH_SECRET=your-mcp-secret-here
