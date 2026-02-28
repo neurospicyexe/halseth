@@ -2,6 +2,8 @@
 export interface Env {
   DB: D1Database;
   BUCKET: R2Bucket;
+  AI: Ai;
+  VECTORIZE: VectorizeIndex;
 
   // Config flags — set in wrangler.toml [vars], not in code.
   PLURALITY_ENABLED:   string;  // "true" | "false"
@@ -197,6 +199,21 @@ export interface CompanionNote {
   author: string;    // 'companion' | 'human'
   content: string;
   note_type: string; // 'message' | 'thought' | 'dream'
+}
+
+export interface BiometricSnapshot {
+  id: string;
+  recorded_at: string;
+  logged_at: string;
+  source: string;
+  hrv_resting: number | null;   // ms
+  resting_hr: number | null;    // bpm
+  sleep_hours: number | null;
+  sleep_quality: string | null; // poor / fair / good / excellent
+  stress_score: number | null;  // 0-100
+  steps: number | null;
+  active_energy: number | null; // kcal
+  notes: string | null;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────

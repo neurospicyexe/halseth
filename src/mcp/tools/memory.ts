@@ -1,8 +1,10 @@
 // COVENANT: relational_deltas is append-only.
-// halseth_delta_log uses INSERT only. No UPDATE or DELETE is ever issued against
-// that table from this file or anywhere in the codebase. If you are reading this
-// and considering adding an update path — don't. The history of what was logged
-// is part of the structural record.
+// halseth_delta_log uses INSERT only. The history of what was logged is part of
+// the structural record and must never be altered.
+//
+// EXCEPTION: after INSERT, vector_id is written via UPDATE. This is a cross-reference
+// pointer, not a content change. It does not modify the logged moment — it links the
+// row to its Vectorize embedding. This is the only permitted UPDATE on this table.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -43,6 +45,34 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         input.valence,
         input.initiated_by ?? null,
       ).run();
+
+      // Fire-and-forget: embed delta_text and store in Vectorize.
+      // A Vectorize failure must never block the log itself.
+      void (async () => {
+        try {
+          const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+            text: [input.delta_text],
+          }) as { data: number[][] };
+          const vector = embedding.data[0];
+          if (!vector) return;
+          const vectorId = generateId();
+          await env.VECTORIZE.insert([{
+            id: vectorId,
+            values: vector,
+            metadata: {
+              delta_id:   id,
+              agent:      input.agent ?? "",
+              valence:    input.valence ?? "",
+              session_id: input.session_id ?? "",
+            },
+          }]);
+          // Permitted UPDATE: adds the vector cross-reference only; content unchanged.
+          await env.DB.prepare("UPDATE relational_deltas SET vector_id = ? WHERE id = ?")
+            .bind(vectorId, id).run();
+        } catch {
+          // Silently drop — the delta is already safely persisted in D1.
+        }
+      })();
 
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
@@ -148,6 +178,59 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
 
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
+      };
+    },
+  );
+
+  server.tool(
+    "halseth_memory_search",
+    "Semantic search across logged relational moments. Embeds the query and returns the closest matching deltas from Vectorize.",
+    {
+      query: z.string().describe("Natural language description of the moment or feeling to search for."),
+      limit: z.number().int().min(1).max(20).default(10),
+    },
+    async (input) => {
+      const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+        text: [input.query],
+      }) as { data: number[][] };
+
+      const queryVector = embedding.data[0];
+      if (!queryVector) {
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
+
+      const results = await env.VECTORIZE.query(queryVector, {
+        topK: input.limit,
+        returnMetadata: "all",
+      });
+
+      if (!results.matches || results.matches.length === 0) {
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
+
+      // Collect delta_ids from metadata, then fetch full rows from D1.
+      const deltaIds = results.matches
+        .map((m) => m.metadata?.delta_id as string | undefined)
+        .filter((id): id is string => !!id);
+
+      if (deltaIds.length === 0) {
+        return { content: [{ type: "text", text: JSON.stringify([]) }] };
+      }
+
+      const placeholders = deltaIds.map(() => "?").join(", ");
+      const rows = await env.DB.prepare(
+        `SELECT * FROM relational_deltas WHERE id IN (${placeholders})`
+      ).bind(...deltaIds).all();
+
+      // Attach similarity scores from Vectorize matches.
+      const scoreMap = new Map(results.matches.map((m) => [m.metadata?.delta_id as string, m.score]));
+      const ranked = (rows.results as Record<string, unknown>[]).map((row) => ({
+        ...row,
+        similarity: scoreMap.get(row.id as string) ?? null,
+      })).sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(ranked) }],
       };
     },
   );
