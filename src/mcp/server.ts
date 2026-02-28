@@ -9,13 +9,33 @@ import { registerBiometricTools } from "./tools/biometrics.js";
 import { registerPersonalityTools } from "./tools/personality.js";
 import { registerBridgeTools } from "./tools/bridge.js";
 
+async function isAuthorized(request: Request, env: Env): Promise<boolean> {
+  // No secret set = local dev, allow all.
+  if (!env.MCP_AUTH_SECRET) return true;
+
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!auth.startsWith("Bearer ")) return false;
+  const token = auth.slice(7);
+
+  // Static secret — Claude Desktop / direct use.
+  if (token === env.MCP_AUTH_SECRET) return true;
+
+  // OAuth-issued token — claude.ai web / Claude iOS.
+  const row = await env.DB.prepare(
+    "SELECT token FROM oauth_tokens WHERE token = ?"
+  ).bind(token).first();
+  return row !== null;
+}
+
 export async function handleMcp(request: Request, env: Env): Promise<Response> {
-  // Light auth guard. Skip check if MCP_AUTH_SECRET is not set (local dev).
-  if (env.MCP_AUTH_SECRET) {
-    const auth = request.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${env.MCP_AUTH_SECRET}`) {
-      return new Response("Unauthorized", { status: 401 });
-    }
+  if (!(await isAuthorized(request, env))) {
+    const base = new URL(request.url).origin;
+    return new Response("Unauthorized", {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": `Bearer realm="Halseth", resource_metadata_url="${base}/.well-known/oauth-protected-resource"`,
+      },
+    });
   }
 
   // Each request gets a fresh McpServer + transport — stateless by design.
