@@ -4,6 +4,10 @@ import { listCompanions, createCompanion, getCompanion } from "./handlers/compan
 import { listMemories, createMemory, getMemory } from "./handlers/memory";
 import { listDeltas, appendDelta } from "./handlers/relational";
 import { bootstrapConfig } from "./handlers/admin";
+import { getPresence } from "./handlers/presence";
+import { getHouseState, updateHouseState } from "./handlers/house";
+import { getNotes, createNote } from "./handlers/notes";
+import { uploadAsset, serveAsset } from "./handlers/assets";
 import { handleMcp } from "./mcp/server";
 
 const router = new Router()
@@ -13,6 +17,21 @@ const router = new Router()
 
   // Admin
   .on("POST", "/admin/bootstrap", (request, env) => bootstrapConfig(request, env))
+
+  // Presence (dashboard feed)
+  .on("GET", "/presence", (request, env) => getPresence(request, env))
+
+  // House state (room, spoons, love-o-meter)
+  .on("GET",  "/house", (request, env) => getHouseState(request, env))
+  .on("POST", "/house", (request, env) => updateHouseState(request, env))
+
+  // Async notes between companion and human
+  .on("GET",  "/notes", (request, env) => getNotes(request, env))
+  .on("POST", "/notes", (request, env) => createNote(request, env))
+
+  // R2 asset storage
+  .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))
+  .on("GET",  "/assets/*",      (request, env) => serveAsset(request, env))
 
   // Legacy HTTP API (companion-scoped routes)
   .on("GET",  "/companions",                               listCompanions)
