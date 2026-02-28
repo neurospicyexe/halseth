@@ -1,0 +1,28 @@
+name = "halseth"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── D1 (relational store) ────────────────────────────────────────────────────
+[[d1_databases]]
+binding  = "DB"
+database_name = "halseth"
+database_id   = "4b5ed7ce-8222-47ae-bca9-56eca4a46157"
+migrations_dir = "migrations"
+
+# ── R2 (artifact / blob store) ───────────────────────────────────────────────
+[[r2_buckets]]
+binding     = "BUCKET"
+bucket_name = "halseth-artifacts"
+
+# ── Config flags ─────────────────────────────────────────────────────────────
+# These are the modularity knobs — change here, not in code.
+[vars]
+# Allow more than one companion in a single deployment.
+PLURALITY_ENABLED  = "false"
+# Enable companion-mode. Set false for a pure memory-store deployment.
+COMPANIONS_ENABLED = "true"
+
+# ── Local dev overrides ───────────────────────────────────────────────────────
+[env.local]
+# Secrets live in .dev.vars (gitignored). See .dev.vars.example in config/.

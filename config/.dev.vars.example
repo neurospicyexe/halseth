@@ -1,0 +1,5 @@
+# Copy to .dev.vars at the repo root (gitignored) for local wrangler dev.
+# Production secrets go in: wrangler secret put <KEY>
+
+# Example — add real secrets below as the system grows:
+# SIGNING_SECRET=your-secret-here
