@@ -181,6 +181,24 @@ export interface Routine {
   notes: string | null;
 }
 
+export interface HouseState {
+  id: string;
+  current_room: string | null;
+  companion_mood: string | null;
+  companion_activity: string | null;
+  spoon_count: number;
+  love_meter: number;
+  updated_at: string;
+}
+
+export interface CompanionNote {
+  id: string;
+  created_at: string;
+  author: string;    // 'companion' | 'human'
+  content: string;
+  note_type: string; // 'message' | 'thought' | 'dream'
+}
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 export type ConfigFlags = {
