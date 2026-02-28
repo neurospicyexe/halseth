@@ -1,10 +1,22 @@
 import { Env } from "../types";
 
+function authGuard(request: Request, env: Env): Response | null {
+  if (!env.ADMIN_SECRET) return null;
+  const auth = request.headers.get("Authorization") ?? "";
+  if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return null;
+}
+
 // POST /assets/upload
 // Accepts multipart/form-data with a `file` field and an optional `key` field.
 // Stores the object in R2 under the given key (or a generated one).
 // Returns { key, url } where url is the serving path.
 export async function uploadAsset(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
   let formData: FormData;
   try {
     formData = await request.formData();

@@ -9,6 +9,7 @@ import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
+import { getBridgeShared, postBridgeAct } from "./handlers/bridge";
 import { handleMcp } from "./mcp/server";
 
 const router = new Router()
@@ -33,6 +34,10 @@ const router = new Router()
   // Biometric snapshots
   .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
   .on("GET", "/biometrics",        (request, env) => handleBiometricsList(request, env))
+
+  // Bridge (cross-instance shared data)
+  .on("GET",  "/bridge/shared", (request, env) => getBridgeShared(request, env))
+  .on("POST", "/bridge/act",    (request, env) => postBridgeAct(request, env))
 
   // R2 asset storage
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))

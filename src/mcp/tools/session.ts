@@ -125,7 +125,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_session_read",
-    "Read the current open session or the most recent session.",
+    "Read a session by ID, or the most recent session if no ID is provided.",
     {
       session_id: z.string().optional().describe("Specific session ID. If omitted, returns the most recent session."),
     },
