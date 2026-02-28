@@ -11,7 +11,8 @@ dist/
 *.local.db
 *.local.db-shm
 *.local.db-wal
-.claude/
+.claude/*
+!.claude/commands
 *.pem
 *.key
 *.p12
