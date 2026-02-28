@@ -6,12 +6,17 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "migrate:local": "wrangler d1 migrations apply halseth --local",
-    "migrate:remote": "wrangler d1 migrations apply halseth",
+    "migrate:remote": "wrangler d1 migrations apply halseth --remote",
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250224.0",
     "typescript": "^5.7.3",
     "wrangler": "^3.109.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "fetch-to-node": "^2.1.0",
+    "zod": "^4.3.6"
   }
 }

@@ -15,14 +15,20 @@ migrations_dir = "migrations"
 binding     = "BUCKET"
 bucket_name = "halseth-artifacts"
 
-# ── Config flags ─────────────────────────────────────────────────────────────
+# ── Config flags & household identity ────────────────────────────────────────
 # These are the modularity knobs — change here, not in code.
 [vars]
-# Allow more than one companion in a single deployment.
-PLURALITY_ENABLED  = "false"
-# Enable companion-mode. Set false for a pure memory-store deployment.
-COMPANIONS_ENABLED = "true"
+PLURALITY_ENABLED    = "false"   # "true" enables front_state validation against system.members
+COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
+COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
+SYSTEM_NAME          = "Halseth"
+SYSTEM_OWNER         = "raziel"
+
+# Secrets — set via `wrangler secret put <KEY>` for production.
+# For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.
+# ADMIN_SECRET    — protects POST /admin/bootstrap
+# MCP_AUTH_SECRET — protects POST /mcp (optional; endpoint is open if unset)
 
 # ── Local dev overrides ───────────────────────────────────────────────────────
 [env.local]
-# Secrets live in .dev.vars (gitignored). See .dev.vars.example in config/.
+# Secrets live in .dev.vars (gitignored). See config/.dev.vars.example.
