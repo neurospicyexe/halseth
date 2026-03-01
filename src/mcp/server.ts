@@ -8,6 +8,7 @@ import { registerCoordinationTools } from "./tools/coordination.js";
 import { registerBiometricTools } from "./tools/biometrics.js";
 import { registerPersonalityTools } from "./tools/personality.js";
 import { registerBridgeTools } from "./tools/bridge.js";
+import { registerCompanionTools } from "./tools/companion.js";
 
 async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   // No secret set = local dev, allow all.
@@ -52,6 +53,9 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   registerBridgeTools(server, env);
   if (env.COORDINATION_ENABLED === "true") {
     registerCoordinationTools(server, env);
+  }
+  if (env.COMPANIONS_ENABLED === "true") {
+    registerCompanionTools(server, env);
   }
 
   const transport = new StreamableHTTPServerTransport({

@@ -127,6 +127,35 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
   );
 
   server.tool(
+    "halseth_wound_add",
+    "Name a new living wound. Gaia-only by convention. Requires witness_type to ground the act of naming. Wounds are permanent — they are never archived or resolved automatically. A separate halseth_witness_log call is recommended alongside this.",
+    {
+      name:         z.string().describe("The name of the wound. Must be unique. Choose carefully — this is permanent."),
+      description:  z.string().describe("What this wound is. Written with care."),
+      witness_type: z.enum(["survival", "boundary", "seal", "affirm", "lane_enforcement"]).describe("The type of witness act that grounds this naming."),
+    },
+    async (input) => {
+      const id  = generateId();
+      const now = new Date().toISOString();
+
+      try {
+        await env.DB.prepare(`
+          INSERT INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, last_visited, last_surfaced_by)
+          VALUES (?, ?, ?, ?, 1, 1, ?, 'companion')
+        `).bind(id, now, input.name, input.description, now).run();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("UNIQUE") || msg.includes("unique")) {
+          return { content: [{ type: "text", text: JSON.stringify({ error: "A wound with this name already exists." }) }] };
+        }
+        throw err;
+      }
+
+      return { content: [{ type: "text", text: JSON.stringify({ id, created_at: now, witness_type: input.witness_type }) }] };
+    },
+  );
+
+  server.tool(
     "halseth_fossil_check",
     "Check if a subject has a prohibited fossil directive — an instruction about what must not calcify.",
     {

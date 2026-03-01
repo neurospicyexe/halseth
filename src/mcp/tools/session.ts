@@ -7,8 +7,9 @@ export function registerSessionTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_session_open",
-    "Start a new session. Records front state, HRV range, emotional frequency, key signature, anchor, facet, and depth.",
+    "Start a new session. Records session type, front state, HRV range, emotional frequency, key signature, anchor, facet, and depth.",
     {
+      session_type:        z.enum(["checkin", "hangout", "work", "ritual"]).default("work").describe("Type of session: checkin (quick state read), hangout (casual time), work (task/project focus), ritual (depth/ceremony)."),
       front_state:         z.string().describe("Who is fronting. Must match system_config members if plurality is enabled."),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),
       emotional_frequency: z.string().optional().describe("Freeform internal state texture. E.g. 'tired but warm' or 'pulled inward but present'."),
@@ -26,11 +27,12 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       const statements = [
         env.DB.prepare(`
           INSERT INTO sessions (
-            id, created_at, updated_at, front_state, hrv_range,
+            id, created_at, updated_at, session_type, front_state, hrv_range,
             emotional_frequency, key_signature, active_anchor, facet, depth, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           id, now, now,
+          input.session_type,
           input.front_state,
           input.hrv_range ?? null,
           input.emotional_frequency ?? null,
