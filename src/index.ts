@@ -7,8 +7,11 @@ import { bootstrapConfig } from "./handlers/admin";
 import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
-import { uploadAsset, serveAsset } from "./handlers/assets";
+import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
+import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas } from "./handlers/history";
+import { getFeelings, getDreams } from "./handlers/feelings-dreams";
+import { getJournal } from "./handlers/human-journal";
 import { getBridgeShared, postBridgeAct } from "./handlers/bridge";
 import {
   getOAuthProtectedResource,
@@ -57,8 +60,25 @@ const router = new Router()
   .on("GET",  "/bridge/shared", (request, env) => getBridgeShared(request, env))
   .on("POST", "/bridge/act",    (request, env) => postBridgeAct(request, env))
 
+  // History feeds (read-only, unauthenticated)
+  .on("GET", "/handovers",         (request, env) => getHandovers(request, env))
+  .on("GET", "/companion-journal", (request, env) => getCompanionJournal(request, env))
+  .on("GET", "/cypher-audit",      (request, env) => getCypherAudit(request, env))
+  .on("GET", "/gaia-witness",      (request, env) => getGaiaWitness(request, env))
+  .on("GET", "/wounds",            (request, env) => getWounds(request, env))
+  .on("GET", "/routines",          (request, env) => getRoutines(request, env))
+  .on("GET", "/deltas",            (request, env) => getDeltas(request, env))
+
+  // Emotion and dream feeds
+  .on("GET", "/feelings",          (request, env) => getFeelings(request, env))
+  .on("GET", "/dreams",            (request, env) => getDreams(request, env))
+
+  // Human journal
+  .on("GET", "/journal",           (request, env) => getJournal(request, env))
+
   // R2 asset storage
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))
+  .on("GET",  "/assets",        (request, env) => listAssets(request, env))
   .on("GET",  "/assets/*",      (request, env) => serveAsset(request, env))
 
   // Legacy HTTP API (companion-scoped routes)

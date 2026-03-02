@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { getOpenSession } from "../db/queries";
-import type { HouseState, CompanionNote, Task, HandoverPacket, BiometricSnapshot } from "../types";
+import type { HouseState, CompanionNote, Task, HandoverPacket, BiometricSnapshot, LivingWound, RelationalDeltaV4 } from "../types";
 
 // GET /presence — full system state for the Hearth dashboard.
 // No auth: returns summary data safe for a personal dashboard.
@@ -10,13 +10,15 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
     houseRow,
     companionsResult,
     tasksResult,
-    woundsRow,
+    woundsResult,
     notesResult,
     dreamsResult,
     biometricRow,
     valenceResult,
     initiatedByResult,
     totalRow,
+    recentDeltasResult,
+    routinesTodayResult,
   ] = await Promise.all([
     getOpenSession(env),
     env.DB.prepare("SELECT * FROM house_state WHERE id = 'main'").first<HouseState>(),
@@ -37,7 +39,7 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
         due_at ASC NULLS LAST
       LIMIT 5
     `).all<Task>(),
-    env.DB.prepare("SELECT COUNT(*) as n FROM living_wounds").first<{ n: number }>(),
+    env.DB.prepare("SELECT id, name, description FROM living_wounds").all<Pick<LivingWound, "id" | "name" | "description">>(),
     env.DB.prepare(
       "SELECT id, author, content, note_type, created_at FROM companion_notes WHERE note_type != 'dream' ORDER BY created_at DESC LIMIT 3"
     ).all<CompanionNote>(),
@@ -56,6 +58,12 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
     env.DB.prepare(
       "SELECT COUNT(*) as total FROM relational_deltas WHERE delta_text IS NOT NULL"
     ).first<{ total: number }>(),
+    env.DB.prepare(
+      "SELECT id, agent, delta_text, valence, created_at FROM relational_deltas WHERE delta_text IS NOT NULL ORDER BY created_at DESC LIMIT 5"
+    ).all<Pick<RelationalDeltaV4, "id" | "agent" | "delta_text" | "valence" | "created_at">>(),
+    env.DB.prepare(
+      "SELECT DISTINCT routine_name FROM routines WHERE DATE(logged_at) = DATE('now')"
+    ).all<{ routine_name: string }>(),
   ]);
 
   // If no open session, fetch full handover for the dashboard spine display.
@@ -111,6 +119,7 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
           depth:               session.depth,
           hrv_range:           session.hrv_range,
           emotional_frequency: session.emotional_frequency,
+          session_type:        session.session_type,
           created_at:          session.created_at,
           open: true as const,
         }
@@ -137,7 +146,19 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
       due_at:      t.due_at,
       assigned_to: t.assigned_to,
     })),
-    wounds_count: woundsRow?.n ?? 0,
+    wounds_count: (woundsResult.results ?? []).length,
+    wounds_list:  (woundsResult.results ?? []).map((w) => ({
+      name:        w.name,
+      description: w.description,
+    })),
+    recent_deltas: (recentDeltasResult.results ?? []).map((d) => ({
+      id:         d.id,
+      agent:      d.agent,
+      delta_text: d.delta_text,
+      valence:    d.valence,
+      created_at: d.created_at,
+    })),
+    routines_today: (routinesTodayResult.results ?? []).map((r) => r.routine_name),
     recent_notes: (notesResult.results ?? []).map((n) => ({
       id:        n.id,
       author:    n.author,
