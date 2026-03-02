@@ -29,6 +29,17 @@ async function isAuthorized(request: Request, env: Env): Promise<boolean> {
 }
 
 export async function handleMcp(request: Request, env: Env): Promise<Response> {
+  // mcp-remote probes SSE transport first (GET + Accept: text/event-stream).
+  // This server uses Streamable HTTP only (stateless — no session IDs), so GET
+  // requests will always fail inside the transport.  Return 405 immediately so
+  // mcp-remote falls back to StreamableHTTP without logging a noisy 500.
+  if (request.method === "GET") {
+    return new Response("SSE transport not supported; use Streamable HTTP (POST)", {
+      status: 405,
+      headers: { Allow: "POST, DELETE" },
+    });
+  }
+
   if (!(await isAuthorized(request, env))) {
     const base = new URL(request.url).origin;
     return new Response("Unauthorized", {
