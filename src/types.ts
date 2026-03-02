@@ -70,6 +70,7 @@ export interface Session {
   spiral_complete: number | null;   // 0 / 1 / null
   handover_id: string | null;
   notes: string | null;
+  session_type: "checkin" | "hangout" | "work" | "ritual" | null;
 }
 
 export interface RelationalDeltaV4 {
@@ -218,6 +219,52 @@ export interface BiometricSnapshot {
   steps: number | null;
   active_energy: number | null; // kcal
   notes: string | null;
+}
+
+// ── Schema v2 additions ───────────────────────────────────────────────────────
+
+export interface Feeling {
+  id: string;
+  companion_id: string;
+  session_id: string | null;
+  emotion: string;
+  sub_emotion: string | null;
+  intensity: number;           // 0-100
+  source: string | null;       // 'session' | 'dream' | 'autonomous'
+  created_at: string;
+}
+
+export interface Dream {
+  id: string;
+  companion_id: string;
+  dream_type: string;          // processing / questioning / memory / play / integrating
+  content: string;
+  source_ids: string | null;   // JSON array of feeling/delta IDs
+  generated_at: string;
+  session_id: string | null;
+}
+
+export interface HumanJournalEntry {
+  id: string;
+  created_at: string;
+  entry_text: string;
+  emotion_tag: string | null;
+  sub_emotion: string | null;
+  mood_score: number | null;   // 0-100
+  tags: string | null;         // JSON array
+}
+
+export interface EqSnapshot {
+  id: string;
+  companion_id: string;
+  calculated_at: string;
+  self_awareness_score: number | null;
+  self_management_score: number | null;
+  social_awareness_score: number | null;
+  relationship_mgmt_score: number | null;
+  dominant_mbti: string | null;   // e.g. "INFP"
+  total_signals: number | null;
+  snapshot_json: string | null;   // full breakdown
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
