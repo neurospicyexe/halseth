@@ -53,6 +53,31 @@ export async function uploadAsset(request: Request, env: Env): Promise<Response>
   );
 }
 
+// GET /assets?prefix=rooms/
+// Lists R2 objects under an optional prefix. Returns key, size, uploaded timestamp.
+export async function listAssets(request: Request, env: Env): Promise<Response> {
+  const url    = new URL(request.url);
+  const prefix = url.searchParams.get("prefix") ?? undefined;
+  const cursor = url.searchParams.get("cursor") ?? undefined;
+
+  const listed = await env.BUCKET.list({ prefix, cursor, limit: 100 });
+
+  const objects = listed.objects.map((obj) => ({
+    key:      obj.key,
+    size:     obj.size,
+    uploaded: obj.uploaded.toISOString(),
+  }));
+
+  return new Response(
+    JSON.stringify({
+      objects,
+      truncated: listed.truncated,
+      cursor:    listed.truncated ? listed.cursor : undefined,
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
+
 // GET /assets/:key
 // Streams the object from R2. The key is everything after /assets/ (URL-decoded).
 export async function serveAsset(request: Request, env: Env): Promise<Response> {
