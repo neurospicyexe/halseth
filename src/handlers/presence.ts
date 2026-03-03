@@ -1,12 +1,12 @@
 import { Env } from "../types";
-import { getOpenSession } from "../db/queries";
+import { getAllOpenSessions } from "../db/queries";
 import type { HouseState, CompanionNote, Task, HandoverPacket, BiometricSnapshot, LivingWound, RelationalDeltaV4 } from "../types";
 
 // GET /presence — full system state for the Hearth dashboard.
 // No auth: returns summary data safe for a personal dashboard.
 export async function getPresence(_request: Request, env: Env): Promise<Response> {
   const [
-    session,
+    allSessions,
     houseRow,
     companionsResult,
     tasksResult,
@@ -20,7 +20,7 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
     recentDeltasResult,
     routinesTodayResult,
   ] = await Promise.all([
-    getOpenSession(env),
+    getAllOpenSessions(env),
     env.DB.prepare("SELECT * FROM house_state WHERE id = 'main'").first<HouseState>(),
     env.DB.prepare(
       "SELECT id, display_name, role FROM companion_config WHERE active = 1"
@@ -66,6 +66,9 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
     ).all<{ routine_name: string }>(),
   ]);
 
+  // Latest open session — kept for backwards compat as single `session` field.
+  const session = allSessions[0] ?? null;
+
   // If no open session, fetch full handover for the dashboard spine display.
   let handover: HandoverPacket | null = null;
   if (!session) {
@@ -110,6 +113,7 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
       love_meter:         house.love_meter,
       updated_at:         house.updated_at,
     },
+    // Single latest session — backwards compat for existing consumers.
     session: session
       ? {
           id:                  session.id,
@@ -124,6 +128,19 @@ export async function getPresence(_request: Request, env: Env): Promise<Response
           open: true as const,
         }
       : null,
+    // All currently open sessions — use this when multiple threads may be active.
+    sessions: allSessions.map((s) => ({
+      id:                  s.id,
+      front_state:         s.front_state,
+      active_anchor:       s.active_anchor,
+      facet:               s.facet,
+      depth:               s.depth,
+      hrv_range:           s.hrv_range,
+      emotional_frequency: s.emotional_frequency,
+      session_type:        s.session_type,
+      created_at:          s.created_at,
+      open: true as const,
+    })),
     last_handover: handover
       ? {
           id:              handover.id,
