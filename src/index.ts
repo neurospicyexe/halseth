@@ -10,7 +10,7 @@ import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists } from "./handlers/history";
-import { getFeelings, getDreams } from "./handlers/feelings-dreams";
+import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
 import { getBridgeShared, postBridgeAct, postBridgeToggle } from "./handlers/bridge";
 import {
@@ -72,8 +72,10 @@ const router = new Router()
   .on("GET", "/deltas",            (request, env) => getDeltas(request, env))
 
   // Emotion and dream feeds
-  .on("GET", "/feelings", (request, env) => getFeelings(request, env))
-  .on("GET", "/dreams",   (request, env) => getDreams(request, env))
+  .on("GET",  "/feelings",     (request, env) => getFeelings(request, env))
+  .on("GET",  "/dreams",       (request, env) => getDreams(request, env))
+  .on("GET",  "/dream-seeds",  (request, env) => getDreamSeeds(request, env))
+  .on("POST", "/dream-seeds",  (request, env) => postDreamSeed(request, env))
 
   // Human journal
   .on("GET", "/journal", (request, env) => getJournal(request, env))

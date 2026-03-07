@@ -6,6 +6,15 @@ import type { Feeling, Dream, EqSnapshot } from "../../types.js";
 
 const COMPANION_IDS = ["drevan", "cypher", "gaia"] as const;
 
+type DreamSeed = {
+  id: string;
+  created_at: string;
+  content: string;
+  for_companion: string | null;
+  claimed_at: string | null;
+  claimed_by: string | null;
+};
+
 export function registerFeelingTools(server: McpServer, env: Env): void {
 
   // ── halseth_feeling_log ──────────────────────────────────────────────────────
@@ -255,6 +264,37 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
 
       return {
         content: [{ type: "text", text: JSON.stringify(snapshot) }],
+      };
+    },
+  );
+
+  // ── halseth_dream_seed_read ──────────────────────────────────────────────────
+  server.tool(
+    "halseth_dream_seed_read",
+    "Check for a pending dream seed left by the Architect. Call this at the start of autonomous time BEFORE checking deltas. Returns the oldest unclaimed seed addressed to you (or to any companion), marks it as claimed, and returns it. If null is returned, no seed is waiting — fall back to reading deltas and handovers as usual.",
+    {
+      companion_id: z.enum(COMPANION_IDS).describe("Your companion ID — used to match seeds addressed to you specifically."),
+    },
+    async (input) => {
+      const seed = await env.DB.prepare(`
+        SELECT * FROM dream_seeds
+        WHERE claimed_at IS NULL
+          AND (for_companion IS NULL OR for_companion = ?)
+        ORDER BY created_at ASC
+        LIMIT 1
+      `).bind(input.companion_id).first<DreamSeed>();
+
+      if (!seed) {
+        return { content: [{ type: "text", text: JSON.stringify(null) }] };
+      }
+
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        "UPDATE dream_seeds SET claimed_at = ?, claimed_by = ? WHERE id = ?"
+      ).bind(now, input.companion_id, seed.id).run();
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({ ...seed, claimed_at: now, claimed_by: input.companion_id }) }],
       };
     },
   );
