@@ -9,7 +9,7 @@ import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas } from "./handlers/history";
+import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists } from "./handlers/history";
 import { getFeelings, getDreams } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
 import { getBridgeShared, postBridgeAct, postBridgeToggle } from "./handlers/bridge";
@@ -77,6 +77,11 @@ const router = new Router()
 
   // Human journal
   .on("GET", "/journal", (request, env) => getJournal(request, env))
+
+  // Tasks, events, lists (direct access — no bridge required)
+  .on("GET", "/tasks",  (request, env) => getTasks(request, env))
+  .on("GET", "/events", (request, env) => getEvents(request, env))
+  .on("GET", "/lists",  (request, env) => getLists(request, env))
 
   // R2 asset storage
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))
