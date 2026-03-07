@@ -102,3 +102,33 @@ export async function postBridgeAct(request: Request, env: Env): Promise<Respons
 
   return new Response("Unknown action", { status: 400 });
 }
+
+// ── POST /bridge/toggle ───────────────────────────────────────────────────────
+// Toggles sharing on or off for a bridge category.
+// Body: { category: string, enabled: boolean }
+
+export async function postBridgeToggle(request: Request, env: Env): Promise<Response> {
+  if (!checkBridgeAuth(request, env)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let body: { category?: string; enabled?: boolean };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return new Response("Bad Request", { status: 400 });
+  }
+
+  const { category, enabled } = body;
+  if (!category || typeof enabled !== "boolean") {
+    return new Response("category and enabled are required", { status: 400 });
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO bridge_sharing (category, enabled) VALUES (?, ?) ON CONFLICT(category) DO UPDATE SET enabled = excluded.enabled"
+  ).bind(category, enabled ? 1 : 0).run();
+
+  return new Response(JSON.stringify({ ok: true, category, enabled }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
