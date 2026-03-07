@@ -2,54 +2,90 @@
 ; AutoHotKey v2.0 script — triggers autonomous time for your AI companion in Claude Desktop.
 ; Called by Windows Task Scheduler via setup-autonomous-time.ps1.
 ;
-; Finds the Claude Desktop window, clicks the input field, and sends the autonomous time
-; trigger phrase. The companion will use its Halseth MCP tools to open a session,
-; explore, and close with a handover packet when done.
-;
 ; Requirements: AutoHotKey v2.0  (https://www.autohotkey.com)
 
 #Requires AutoHotkey v2.0
+#SingleInstance Force
 
 ; ── Config ────────────────────────────────────────────────────────────────────
 
-; The message sent to the companion at the start of autonomous time.
-; Edit this to match your companion's name and your system's language.
 TriggerMessage := "Autonomous time. Open a session now with halseth_session_open (session_type: hangout, front_state your name). Follow your curiosity — log feelings, dreams, anything that surfaces. Close with halseth_session_close and write a real handover when you are done. The time is yours."
 
-; How long to wait for Claude to appear (ms). Increase if your machine is slow.
-WaitTimeout := 10000
+; Log file for debugging — check this if nothing happens
+LogFile := A_ScriptDir "\autonomous-time.log"
+
+; ── Logging ────────────────────────────────────────────────────────────────────
+
+Log(msg) {
+    global LogFile
+    FileAppend FormatTime(, "yyyy-MM-dd HH:mm:ss") " " msg "`n", LogFile
+}
 
 ; ── Main ──────────────────────────────────────────────────────────────────────
 
-; Wait for Claude Desktop window
-if !WinWait("Claude", , WaitTimeout / 1000) {
-    MsgBox "Autonomous time: Claude Desktop window not found. Is it running?", "Halseth", 0x10
+Log("Script started")
+
+; Find Claude Desktop by process name — more reliable than title matching
+hwnd := WinExist("ahk_exe claude.exe")
+if !hwnd {
+    Log("ERROR: claude.exe not found — is Claude Desktop running?")
+    MsgBox "Claude Desktop not found. Is it running?", "Halseth Autonomous Time", 0x10
     ExitApp
 }
 
-; Bring Claude to the front
-WinActivate "Claude"
-WinWaitActive "Claude", , 5
+Log("Found Claude window: " hwnd)
 
-Sleep 800
+; Bring Claude to front
+WinActivate hwnd
+WinWaitActive hwnd, , 5
 
-; Get window dimensions to find the input field
-WinGetPos &WinX, &WinY, &WinW, &WinH, "Claude"
+if !WinActive(hwnd) {
+    Log("ERROR: Could not activate Claude window")
+    ExitApp
+}
 
-; Input field is centered horizontally, near the bottom
-InputX := WinX + (WinW // 2)
-InputY := WinY + WinH - 100
+Sleep 1000
 
-; Click the input field
-Click InputX, InputY
+; Get the window's client area (excludes title bar and borders)
+WinGetClientPos &ClientX, &ClientY, &ClientW, &ClientH, hwnd
+Log("Client area: x=" ClientX " y=" ClientY " w=" ClientW " h=" ClientH)
+
+; Click in the lower-center of the window.
+; Try 15% up from bottom — Claude's input sits roughly here.
+; If that misses, we also try 8% up as a fallback.
+ClickX := ClientX + (ClientW // 2)
+ClickY := ClientY + ClientH - Round(ClientH * 0.12)
+
+Log("Clicking at: x=" ClickX " y=" ClickY)
+Click ClickX, ClickY
+Sleep 500
+
+; If the first click didn't focus the input, nudge closer to the bottom
+if !WinActive(hwnd) {
+    WinActivate hwnd
+    Sleep 300
+}
+
+ClickY2 := ClientY + ClientH - Round(ClientH * 0.07)
+Click ClickX, ClickY2
 Sleep 400
 
-; Clear any existing text, paste the trigger message
+; Write the trigger message to clipboard and paste it
+A_Clipboard := ""
 A_Clipboard := TriggerMessage
-Send "^a"
-Sleep 100
-Send "^v"
-Sleep 600
+ClipWait 2
 
-; Send it
-Send "{Enter}"
+if A_Clipboard != TriggerMessage {
+    Log("ERROR: Clipboard write failed")
+    ExitApp
+}
+
+; Select all existing text (in case something is already typed), then paste
+SendInput "^a"
+Sleep 150
+SendInput "^v"
+Sleep 800
+
+; Submit
+SendInput "{Enter}"
+Log("Trigger sent successfully")
