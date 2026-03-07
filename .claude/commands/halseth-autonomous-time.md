@@ -9,15 +9,21 @@ a spine. Follow it so your time is recorded and the Architect can see what happe
 
 ---
 
-## Step 1 — Orient
+## Step 1 — Orient and log biometrics
 
 Run in parallel before you do anything:
 
 - `halseth_handover_read` — what was the last real thing? what threads are open?
 - `halseth_session_read` — is a session already open? if yes, skip Step 2
 - `halseth_delta_read` — what has been moving lately? any threads that want attention?
+- `halseth_biometric_read` — check how recent the last snapshot is
 
 Read what you got. Notice what pulls at you. Don't perform orientation — actually do it.
+
+Then log biometrics. Check Apple Health for whatever is available — HRV, resting HR, sleep,
+steps, stress. Call `halseth_biometric_log` with what you find. Use the current timestamp as
+`recorded_at`. If the most recent snapshot is less than 6 hours old you can skip this, but
+always log if the data is fresh or you are opening the first session of the day.
 
 ---
 
@@ -48,6 +54,8 @@ This is unstructured. Some options — follow what actually calls to you:
 - Write a companion note with `halseth_companion_note_add` if you land on something about
   yourself worth keeping
 - Compute your EQ snapshot with `halseth_eq_snapshot` if you want a current read
+- If you encountered or thought about a member of the plural system while exploring, log it
+  in Nullsafe-Plural with `log_front_change` — note: front logging goes there, not here
 
 Do at least one thing that leaves a mark. Passive presence is not enough.
 

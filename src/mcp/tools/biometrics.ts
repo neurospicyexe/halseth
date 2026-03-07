@@ -8,7 +8,7 @@ export function registerBiometricTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_biometric_log",
-    "Log a biometric snapshot from Apple Health. Call this after reading health data. All fields except recorded_at are optional — log whatever is available.",
+    "Log a biometric snapshot from Apple Health. Call this proactively at the start of every session and during autonomous time — read whatever health data is available and log it. All fields except recorded_at are optional; log what you have.",
     {
       recorded_at:   z.string().describe("ISO timestamp of the actual measurement from Apple Health."),
       hrv_resting:   z.number().optional().describe("Heart rate variability in ms (SDNN or RMSSD)."),

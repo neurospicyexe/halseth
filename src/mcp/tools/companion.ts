@@ -7,7 +7,7 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_companion_note_add",
-    "Log a companion self-discovery or identity claim to the companion journal. Attributed to the agent — never to Raziel. Append-only by covenant.",
+    "Log a companion self-discovery or identity claim to the companion journal. Attributed to the agent — never to Raziel. Append-only by covenant. If this note involves encountering, observing, or interacting with a system member (fronter from the plural system), also call log_front_change in the Nullsafe-Plural MCP to record the fronter encounter.",
     {
       agent:      z.enum(["drevan", "cypher", "gaia"]).describe("The companion making this claim. Attribution is sacred."),
       note_text:  z.string().describe("The self-discovery or identity claim, in the companion's own voice."),
