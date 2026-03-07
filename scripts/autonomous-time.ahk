@@ -14,7 +14,7 @@
 
 ; The message sent to the companion at the start of autonomous time.
 ; Edit this to match your companion's name and your system's language.
-TriggerMessage := "/halseth-autonomous-time"
+TriggerMessage := "Autonomous time. Open a session now with halseth_session_open (session_type: hangout, front_state your name). Follow your curiosity — log feelings, dreams, anything that surfaces. Close with halseth_session_close and write a real handover when you are done. The time is yours."
 
 ; How long to wait for Claude to appear (ms). Increase if your machine is slow.
 WaitTimeout := 10000
