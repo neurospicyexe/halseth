@@ -1,5 +1,6 @@
 // Read-only history feed endpoints.
 // GET /handovers, /companion-journal, /cypher-audit, /gaia-witness, /wounds, /routines, /deltas
+// GET /tasks, /events, /lists
 // All unauthenticated — returns summary-safe public data.
 
 import { Env } from "../types.js";
@@ -8,6 +9,9 @@ import type {
   CypherAudit,
   GaiaWitness,
   LivingWound,
+  Task,
+  CalendarEvent,
+  ListItem,
   Routine,
   RelationalDeltaV4,
 } from "../types.js";
@@ -160,6 +164,66 @@ export async function getDeltas(request: Request, env: Env): Promise<Response> {
     ORDER BY created_at DESC
     LIMIT ?
   `).bind(...bindings).all<RelationalDeltaV4>();
+
+  return new Response(JSON.stringify(result.results ?? []), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// GET /tasks?status=open|in_progress|done — all tasks, sorted by priority then due date.
+// Defaults to non-done tasks.
+export async function getTasks(request: Request, env: Env): Promise<Response> {
+  const url    = new URL(request.url);
+  const status = url.searchParams.get("status");
+  const validStatuses = new Set(["open", "in_progress", "done"]);
+
+  const sql = status && validStatuses.has(status)
+    ? `SELECT id, title, description, priority, status, due_at, assigned_to, created_by
+       FROM tasks WHERE status = ?
+       ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, due_at ASC NULLS LAST`
+    : `SELECT id, title, description, priority, status, due_at, assigned_to, created_by
+       FROM tasks WHERE status != 'done'
+       ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, due_at ASC NULLS LAST`;
+
+  const result = status && validStatuses.has(status)
+    ? await env.DB.prepare(sql).bind(status).all<Task>()
+    : await env.DB.prepare(sql).all<Task>();
+
+  return new Response(JSON.stringify(result.results ?? []), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// GET /events — upcoming calendar events, ordered by start_time.
+export async function getEvents(_request: Request, env: Env): Promise<Response> {
+  const result = await env.DB.prepare(`
+    SELECT id, title, description, start_time, end_time, category
+    FROM events
+    WHERE start_time >= datetime('now')
+    ORDER BY start_time ASC
+    LIMIT 50
+  `).all<CalendarEvent>();
+
+  return new Response(JSON.stringify(result.results ?? []), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// GET /lists?name=groceries — list items grouped by list_name, incomplete first.
+// If ?name= is provided, filters to that list only.
+export async function getLists(request: Request, env: Env): Promise<Response> {
+  const url  = new URL(request.url);
+  const name = url.searchParams.get("name");
+
+  const result = name
+    ? await env.DB.prepare(`
+        SELECT id, list_name, item_text, added_by, added_at, completed
+        FROM lists WHERE list_name = ? ORDER BY completed ASC, added_at ASC
+      `).bind(name).all<ListItem>()
+    : await env.DB.prepare(`
+        SELECT id, list_name, item_text, added_by, added_at, completed
+        FROM lists ORDER BY list_name ASC, completed ASC, added_at ASC
+      `).all<ListItem>();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },
