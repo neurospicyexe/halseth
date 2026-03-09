@@ -4,6 +4,15 @@ import { Env } from "../types.js";
 import type { Feeling, Dream } from "../types.js";
 import { generateId } from "../db/queries.js";
 
+function authGuard(request: Request, env: Env): Response | null {
+  if (!env.ADMIN_SECRET) return null;
+  const auth = request.headers.get("Authorization") ?? "";
+  if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return null;
+}
+
 function clampLimit(raw: string | null, def: number, max: number): number {
   const n = parseInt(raw ?? String(def), 10);
   return Math.min(Math.max(1, isNaN(n) ? def : n), max);
@@ -84,6 +93,9 @@ export async function getDreamSeeds(_request: Request, env: Env): Promise<Respon
 // POST /dream-seeds — inject a dream seed from the Architect.
 // Body: { content: string, for_companion?: "drevan"|"cypher"|"gaia" }
 export async function postDreamSeed(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
   let body: { content?: string; for_companion?: string };
   try {
     body = await request.json() as typeof body;

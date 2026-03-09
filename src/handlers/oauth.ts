@@ -23,15 +23,12 @@ function escapeHtml(str: string): string {
 }
 
 async function verifyPkce(verifier: string, challenge: string, method: string): Promise<boolean> {
-  if (method === "S256") {
-    const data = new TextEncoder().encode(verifier);
-    const hash = await crypto.subtle.digest("SHA-256", data);
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(hash)))
-      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-    return b64 === challenge;
-  }
-  if (method === "plain") return verifier === challenge;
-  return false;
+  if (method !== "S256") return false;  // only S256 accepted; plain is rejected
+  const data = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(hash)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  return b64 === challenge;
 }
 
 function renderAuthorizeForm(
@@ -151,7 +148,7 @@ export async function postOAuthRegister(request: Request, env: Env): Promise<Res
 }
 
 // GET /oauth/authorize — show the passphrase form.
-export function getOAuthAuthorize(request: Request): Response {
+export async function getOAuthAuthorize(request: Request, env: Env): Promise<Response> {
   const p = new URL(request.url).searchParams;
   const clientId            = p.get("client_id")             ?? "";
   const redirectUri         = p.get("redirect_uri")          ?? "";
@@ -161,6 +158,18 @@ export function getOAuthAuthorize(request: Request): Response {
 
   if (!clientId || !redirectUri) {
     return oauthError("invalid_request", "Missing client_id or redirect_uri");
+  }
+
+  // Validate redirect_uri against the client's registered URIs (RFC 6749 §10.6).
+  const client = await env.DB.prepare(
+    "SELECT redirect_uris FROM oauth_clients WHERE client_id = ?"
+  ).bind(clientId).first<{ redirect_uris: string }>();
+
+  if (!client) return oauthError("invalid_client", "Unknown client_id");
+
+  const registered: string[] = JSON.parse(client.redirect_uris ?? "[]");
+  if (!registered.includes(redirectUri)) {
+    return oauthError("invalid_request", "redirect_uri not registered for this client");
   }
 
   return renderAuthorizeForm(clientId, redirectUri, state, codeChallenge, codeChallengeMethod);
@@ -184,6 +193,18 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
 
   if (!clientId || !redirectUri) {
     return oauthError("invalid_request", "Missing client_id or redirect_uri");
+  }
+
+  // Validate redirect_uri against the client's registered URIs before doing anything with it.
+  const client = await env.DB.prepare(
+    "SELECT redirect_uris FROM oauth_clients WHERE client_id = ?"
+  ).bind(clientId).first<{ redirect_uris: string }>();
+
+  if (!client) return oauthError("invalid_client", "Unknown client_id");
+
+  const registered: string[] = JSON.parse(client.redirect_uris ?? "[]");
+  if (!registered.includes(redirectUri)) {
+    return oauthError("invalid_request", "redirect_uri not registered for this client");
   }
 
   // Verify admin passphrase.
@@ -273,17 +294,20 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
   // Mark code as used (one-time use).
   await env.DB.prepare("UPDATE oauth_codes SET used = 1 WHERE code = ?").bind(code).run();
 
-  // Issue access token and persist it.
-  const token = generateId() + generateId().replace(/-/g, ""); // ~50-char token
-  const now   = new Date().toISOString();
+  // Issue access token and persist it with a 90-day expiry.
+  const token     = generateId() + generateId().replace(/-/g, ""); // ~50-char token
+  const now       = new Date().toISOString();
+  const expiresIn = 90 * 24 * 60 * 60; // seconds
+  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
   await env.DB.prepare(
-    "INSERT INTO oauth_tokens (token, client_id, created_at) VALUES (?, ?, ?)"
-  ).bind(token, client_id, now).run();
+    "INSERT INTO oauth_tokens (token, client_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
+  ).bind(token, client_id, now, expiresAt).run();
 
   return jsonResponse({
     access_token: token,
     token_type:   "Bearer",
+    expires_in:   expiresIn,
     scope:        "",
   });
 }
