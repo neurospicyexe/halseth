@@ -1,6 +1,7 @@
 // GET /journal — Human journal REST endpoint.
 
 import { Env } from "../types.js";
+import { authGuard } from "../lib/auth.js";
 import type { HumanJournalEntry } from "../types.js";
 
 function clampLimit(raw: string | null, def: number, max: number): number {
@@ -10,6 +11,7 @@ function clampLimit(raw: string | null, def: number, max: number): number {
 
 // GET /journal?limit=20&from=ISO&to=ISO
 export async function getJournal(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url   = new URL(request.url);
   const limit = clampLimit(url.searchParams.get("limit"), 20, 100);
   const from  = url.searchParams.get("from");
