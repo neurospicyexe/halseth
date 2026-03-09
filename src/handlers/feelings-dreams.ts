@@ -20,6 +20,7 @@ function clampLimit(raw: string | null, def: number, max: number): number {
 
 // GET /feelings?companion_id=drevan&limit=20
 export async function getFeelings(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url          = new URL(request.url);
   const limit        = clampLimit(url.searchParams.get("limit"), 20, 100);
   const companionId  = url.searchParams.get("companion_id");
@@ -47,6 +48,7 @@ export async function getFeelings(request: Request, env: Env): Promise<Response>
 
 // GET /dreams?companion_id=drevan&type=processing&limit=10
 export async function getDreams(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url         = new URL(request.url);
   const limit       = clampLimit(url.searchParams.get("limit"), 10, 100);
   const companionId = url.searchParams.get("companion_id");
@@ -80,7 +82,8 @@ export async function getDreams(request: Request, env: Env): Promise<Response> {
 }
 
 // GET /dream-seeds — list all seeds, newest first. Includes claimed ones.
-export async function getDreamSeeds(_request: Request, env: Env): Promise<Response> {
+export async function getDreamSeeds(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const result = await env.DB.prepare(`
     SELECT * FROM dream_seeds ORDER BY created_at DESC LIMIT 50
   `).all();

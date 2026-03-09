@@ -1,9 +1,9 @@
 // Read-only history feed endpoints.
 // GET /handovers, /companion-journal, /cypher-audit, /gaia-witness, /wounds, /routines, /deltas
 // GET /tasks, /events, /lists
-// All unauthenticated — returns summary-safe public data.
 
 import { Env } from "../types.js";
+import { authGuard } from "../lib/auth.js";
 import type {
   HandoverPacket,
   CypherAudit,
@@ -23,6 +23,7 @@ function clampLimit(raw: string | null, def: number, max: number): number {
 
 // GET /handovers?limit=20&offset=0
 export async function getHandovers(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url    = new URL(request.url);
   const limit  = clampLimit(url.searchParams.get("limit"), 20, 100);
   const rawOff = parseInt(url.searchParams.get("offset") ?? "0", 10);
@@ -43,6 +44,7 @@ export async function getHandovers(request: Request, env: Env): Promise<Response
 
 // GET /companion-journal?agent=drevan&limit=20
 export async function getCompanionJournal(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url   = new URL(request.url);
   const agent = url.searchParams.get("agent");
   const limit = clampLimit(url.searchParams.get("limit"), 20, 100);
@@ -74,6 +76,7 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
 
 // GET /cypher-audit?limit=50
 export async function getCypherAudit(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url   = new URL(request.url);
   const limit = clampLimit(url.searchParams.get("limit"), 50, 200);
 
@@ -88,6 +91,7 @@ export async function getCypherAudit(request: Request, env: Env): Promise<Respon
 
 // GET /gaia-witness?limit=50
 export async function getGaiaWitness(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url   = new URL(request.url);
   const limit = clampLimit(url.searchParams.get("limit"), 50, 200);
 
@@ -101,7 +105,8 @@ export async function getGaiaWitness(request: Request, env: Env): Promise<Respon
 }
 
 // GET /wounds
-export async function getWounds(_request: Request, env: Env): Promise<Response> {
+export async function getWounds(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const result = await env.DB.prepare(`
     SELECT id, created_at, name, description FROM living_wounds
   `).all<Pick<LivingWound, "id" | "created_at" | "name" | "description">>();
@@ -114,6 +119,7 @@ export async function getWounds(_request: Request, env: Env): Promise<Response> 
 // GET /routines?date=YYYY-MM-DD
 // Returns routine completions for the given date (defaults to today UTC).
 export async function getRoutines(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url      = new URL(request.url);
   const rawDate  = url.searchParams.get("date");
   // Validate date format: YYYY-MM-DD
@@ -136,6 +142,7 @@ export async function getRoutines(request: Request, env: Env): Promise<Response>
 // GET /deltas?valence=tender&agent=drevan&limit=20
 // Cross-companion delta feed — only returns rows with delta_text (spec v0.4 rows).
 export async function getDeltas(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url    = new URL(request.url);
   const limit  = clampLimit(url.searchParams.get("limit"), 20, 100);
 
@@ -175,6 +182,7 @@ export async function getDeltas(request: Request, env: Env): Promise<Response> {
 // GET /tasks?status=open|in_progress|done — all tasks, sorted by priority then due date.
 // Defaults to non-done tasks.
 export async function getTasks(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url    = new URL(request.url);
   const status = url.searchParams.get("status");
   const validStatuses = new Set(["open", "in_progress", "done"]);
@@ -197,7 +205,8 @@ export async function getTasks(request: Request, env: Env): Promise<Response> {
 }
 
 // GET /events — upcoming calendar events, ordered by start_time.
-export async function getEvents(_request: Request, env: Env): Promise<Response> {
+export async function getEvents(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const result = await env.DB.prepare(`
     SELECT id, title, description, start_time, end_time, category
     FROM events
@@ -214,6 +223,7 @@ export async function getEvents(_request: Request, env: Env): Promise<Response> 
 // GET /lists?name=groceries — list items grouped by list_name, incomplete first.
 // If ?name= is provided, filters to that list only.
 export async function getLists(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url  = new URL(request.url);
   const name = url.searchParams.get("name");
 

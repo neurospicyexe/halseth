@@ -1,10 +1,11 @@
 import { Env } from "../types";
 import { getAllOpenSessions } from "../db/queries";
+import { authGuard } from "../lib/auth.js";
 import type { HouseState, CompanionNote, Task, HandoverPacket, BiometricSnapshot, LivingWound, RelationalDeltaV4 } from "../types";
 
 // GET /presence — full system state for the Hearth dashboard.
-// No auth: returns summary data safe for a personal dashboard.
-export async function getPresence(_request: Request, env: Env): Promise<Response> {
+export async function getPresence(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const [
     allSessions,
     houseRow,

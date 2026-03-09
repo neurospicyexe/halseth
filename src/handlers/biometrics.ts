@@ -1,6 +1,8 @@
 import { Env } from "../types.js";
+import { authGuard } from "../lib/auth.js";
 
-export async function handleBiometricsLatest(_request: Request, env: Env): Promise<Response> {
+export async function handleBiometricsLatest(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const row = await env.DB.prepare(
     "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
   ).first();
@@ -11,6 +13,7 @@ export async function handleBiometricsLatest(_request: Request, env: Env): Promi
 }
 
 export async function handleBiometricsList(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url = new URL(request.url);
   const rawLimit = parseInt(url.searchParams.get("limit") ?? "7", 10);
   const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 7 : rawLimit), 30);
