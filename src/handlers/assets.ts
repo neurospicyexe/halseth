@@ -1,5 +1,18 @@
 import { Env } from "../types";
 
+// Allowed upload MIME types. Anything else is stored as application/octet-stream.
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+  "image/svg+xml",     // stored but served as attachment (SVG can embed script)
+  "application/pdf",
+  "text/plain",
+]);
+
+// Types that are safe to render inline in a browser.
+const INLINE_IMAGE_TYPES = new Set([
+  "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+]);
+
 function authGuard(request: Request, env: Env): Response | null {
   if (!env.ADMIN_SECRET) return null;
   const auth = request.headers.get("Authorization") ?? "";
@@ -39,9 +52,13 @@ export async function uploadAsset(request: Request, env: Env): Promise<Response>
       ? rawKey.trim()
       : `${crypto.randomUUID()}/${filename}`;
 
+  const mimeType = blob.type && ALLOWED_MIME_TYPES.has(blob.type)
+    ? blob.type
+    : "application/octet-stream";
+
   const buffer = await blob.arrayBuffer();
   await env.BUCKET.put(key, buffer, {
-    httpMetadata: { contentType: blob.type || "application/octet-stream" },
+    httpMetadata: { contentType: mimeType },
   });
 
   return new Response(
@@ -56,6 +73,9 @@ export async function uploadAsset(request: Request, env: Env): Promise<Response>
 // GET /assets?prefix=rooms/
 // Lists R2 objects under an optional prefix. Returns key, size, uploaded timestamp.
 export async function listAssets(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
   const url    = new URL(request.url);
   const prefix = url.searchParams.get("prefix") ?? undefined;
   const cursor = url.searchParams.get("cursor") ?? undefined;
@@ -97,8 +117,15 @@ export async function serveAsset(request: Request, env: Env): Promise<Response> 
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
+  headers.set("X-Content-Type-Options", "nosniff");
   // Allow browsers and the dashboard to cache static assets for 1 hour.
   headers.set("cache-control", "public, max-age=3600");
+
+  // Only render images inline; force download for everything else (including SVG).
+  const ct = ((headers.get("Content-Type") ?? "").split(";")[0] ?? "").trim();
+  if (!INLINE_IMAGE_TYPES.has(ct)) {
+    headers.set("Content-Disposition", "attachment");
+  }
 
   return new Response(object.body, { headers });
 }

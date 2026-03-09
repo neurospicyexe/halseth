@@ -33,7 +33,7 @@ const router = new Router()
   .on("GET",  "/.well-known/oauth-protected-resource",   async (request) => getOAuthProtectedResource(request))
   .on("GET",  "/.well-known/oauth-authorization-server", async (request) => getOAuthAuthServerMetadata(request))
   .on("POST", "/oauth/register",  (request, env) => postOAuthRegister(request, env))
-  .on("GET",  "/oauth/authorize", async (request) => getOAuthAuthorize(request))
+  .on("GET",  "/oauth/authorize", (request, env) => getOAuthAuthorize(request, env))
   .on("POST", "/oauth/authorize", (request, env) => postOAuthAuthorize(request, env))
   .on("POST", "/oauth/token",     (request, env) => postOAuthToken(request, env))
 

@@ -23,9 +23,9 @@ async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   // Static secret — Claude Desktop / direct use.
   if (token === env.MCP_AUTH_SECRET) return true;
 
-  // OAuth-issued token — claude.ai web / Claude iOS.
+  // OAuth-issued token — claude.ai web / Claude iOS. Reject expired tokens.
   const row = await env.DB.prepare(
-    "SELECT token FROM oauth_tokens WHERE token = ?"
+    "SELECT token FROM oauth_tokens WHERE token = ? AND expires_at > datetime('now')"
   ).bind(token).first();
   return row !== null;
 }
