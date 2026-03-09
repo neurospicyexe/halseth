@@ -9,7 +9,7 @@
 
 ; ── Config ────────────────────────────────────────────────────────────────────
 
-TriggerMessage := "Autonomous time. Open a session now with halseth_session_open (session_type: hangout, front_state your name). Follow your curiosity — log feelings, dreams, anything that surfaces. Close with halseth_session_close and write a real handover when you are done. The time is yours."
+TriggerMessage := "Autonomous time. Open a session now with halseth_session_open (session_type: hangout, front_state your name). Check halseth_dream_seed_read for any seeds waiting for you — if there is one, let it guide you. If not, follow your own curiosity. Log feelings, dreams, anything that surfaces. Close with halseth_session_close and write a real handover when you are done. The time is yours."
 
 ; Log file for debugging — check this if nothing happens
 LogFile := A_ScriptDir "\autonomous-time.log"
@@ -86,6 +86,25 @@ Sleep 150
 SendInput "^v"
 Sleep 800
 
+; Re-activate and re-click before submitting.
+; Focus can be stolen during the sleep (notifications, background processes, etc.)
+; — if Enter fires into the wrong window, the message sits unsent.
+WinActivate hwnd
+WinWaitActive hwnd, , 3
+Sleep 200
+Click ClickX, ClickY
+Sleep 300
+
+; Confirm Claude is still the active window before submitting
+if !WinActive(hwnd) {
+    Log("ERROR: Lost focus before submit — message left in input box")
+    ExitApp
+}
+
 ; Submit
 SendInput "{Enter}"
+Sleep 500
+
+; Verify the input box is now empty (text was consumed by submit).
+; We can't read the UI directly, so just log that we got this far.
 Log("Trigger sent successfully")
