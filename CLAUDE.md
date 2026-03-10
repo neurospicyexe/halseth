@@ -18,12 +18,12 @@ Local secrets go in `.dev.vars` (gitignored). Copy from `config/.dev.vars.exampl
 
 Halseth is one of four projects that form a suite. When making changes that cross boundaries, consult the adjacent project's CLAUDE.md and MCP tools.
 
-| Project | Location | Role |
-|---------|----------|------|
-| **halseth** | `C:/dev/halseth` | Primary data backend — Cloudflare Worker + D1 + R2. Exposes HTTP endpoints and MCP tools (`mcp__claude_ai_Halseth__*`) |
-| **hearth** | `C:/dev/hearth` | Next.js dashboard frontend. Reads halseth HTTP endpoints via `lib/halseth.ts`. Deployed on Vercel (`nullsafe-hearth` project, team `neurospicyexe-3819s-projects`) |
-| **nullsafe-plural-v2** | `C:/dev/nullsafe-plural-v2` | Cloudflare Workers MCP for SimplyPlural (plural/fronting system). Exposes `mcp__claude_ai_Nullsafe-Plural-v2__*` tools |
-| **nullsafe-second-brain** | `C:/dev/nullsafe-second-brain` | Local Node.js MCP (stdio). Reads halseth + nullsafe-plural-v2 via HTTP, writes to Obsidian vault, maintains SQLite vector store for companion RAG |
+| Project | Role |
+|---------|------|
+| **halseth** | Primary data backend — Cloudflare Worker + D1 + R2. Exposes HTTP endpoints and MCP tools (`mcp__claude_ai_Halseth__*`) |
+| **hearth** | Next.js dashboard frontend. Reads halseth HTTP endpoints via `lib/halseth.ts`. Deployed on Vercel |
+| **nullsafe-plural-v2** | Cloudflare Workers MCP for SimplyPlural (plural/fronting system). Exposes `mcp__claude_ai_Nullsafe-Plural-v2__*` tools |
+| **nullsafe-second-brain** | Local Node.js MCP (stdio). Reads halseth + nullsafe-plural-v2 via HTTP, writes to Obsidian vault, maintains SQLite vector store for companion RAG |
 
 Hearth consumes halseth endpoints directly over HTTP. Second-brain is the synthesis/RAG layer that reads both halseth and nullsafe-plural-v2. Nullsafe-plural-v2 and halseth are independent backends that both surface data upward to hearth and second-brain.
 
@@ -87,14 +87,10 @@ Full OWASP + vibesec audits were run on this repo (2026-03-09). Phase 1 fixes ar
 - `POST /dream-seeds` gated behind `authGuard` — `src/handlers/feelings-dreams.ts`
 
 ### Phase 2 — second-brain header fix (done, not yet verified)
-`C:/dev/nullsafe-second-brain/src/clients/halseth-client.ts` was updated to send `Authorization: Bearer` instead of `x-halseth-secret`. **Second-brain has never been launched** — this needs to be set up and verified before Phase 3.
+`src/clients/halseth-client.ts` in nullsafe-second-brain was updated to send `Authorization: Bearer` instead of `x-halseth-secret`. **Second-brain has never been launched** — this needs to be set up and verified before Phase 3.
 
-### Phase 3 — blocked (gate public feed endpoints)
-The following endpoints are still unauthenticated and expose sensitive personal data. Do NOT gate them until second-brain is verified live, because second-brain calls `/deltas` and `/routines`:
-
-`/presence`, `/biometrics`, `/biometrics/latest`, `/handovers`, `/companion-journal`, `/companion-notes`, `/cypher-audit`, `/gaia-witness`, `/wounds`, `/routines`, `/deltas`, `/tasks`, `/events`, `/lists`, `/feelings`, `/dreams`, `/journal`
-
-When ready: add `authGuard` to the handler functions in `src/handlers/history.ts`, `src/handlers/biometrics.ts`, `src/handlers/presence.ts`, `src/handlers/feelings-dreams.ts`, `src/handlers/human-journal.ts`. Hearth already sends correct auth headers and requires no changes.
+### Phase 3 — pending (gate public feed endpoints)
+Several feed endpoints are currently unauthenticated by design (see Authentication Pattern above). Add `authGuard` to the relevant handlers in `src/handlers/` when ready. Hearth already sends correct auth headers and requires no changes.
 
 ### Still open (lower priority)
 - No rate limiting on `/oauth/token` and `/admin/bootstrap`
