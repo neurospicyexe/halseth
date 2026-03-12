@@ -48,7 +48,7 @@ export async function updateHouseState(request: Request, env: Env): Promise<Resp
   const now = new Date().toISOString();
 
   // Build SET clause dynamically from provided fields only.
-  const allowed = ["current_room", "companion_mood", "companion_activity", "spoon_count", "love_meter"] as const;
+  const allowed = ["current_room", "companion_mood", "companion_activity", "spoon_count", "love_meter", "autonomous_turn"] as const;
   const sets: string[] = [];
   const values: unknown[] = [];
 
