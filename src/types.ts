@@ -195,6 +195,7 @@ export interface HouseState {
   companion_activity: string | null;
   spoon_count: number;
   love_meter: number;
+  autonomous_turn: "drevan" | "cypher" | "gaia" | null;
   updated_at: string;
 }
 
