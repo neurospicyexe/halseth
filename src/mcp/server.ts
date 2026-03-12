@@ -11,6 +11,7 @@ import { registerBridgeTools } from "./tools/bridge.js";
 import { registerCompanionTools } from "./tools/companion.js";
 import { registerFeelingTools } from "./tools/feelings.js";
 import { registerJournalTools } from "./tools/journal.js";
+import { registerHouseTools } from "./tools/house.js";
 
 async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   // No secret set = local dev, allow all.
@@ -72,6 +73,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   }
   registerFeelingTools(server, env);
   registerJournalTools(server, env);
+  registerHouseTools(server, env);
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,  // stateless: no Mcp-Session-Id header protocol
