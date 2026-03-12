@@ -8,7 +8,7 @@ import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
-import { handleBiometricsLatest, handleBiometricsList } from "./handlers/biometrics";
+import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists } from "./handlers/history";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
@@ -54,6 +54,7 @@ const router = new Router()
   // Biometric snapshots
   .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
   .on("GET", "/biometrics",        (request, env) => handleBiometricsList(request, env))
+  .on("POST", "/biometrics",       (request, env) => handleBiometricsPost(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))
