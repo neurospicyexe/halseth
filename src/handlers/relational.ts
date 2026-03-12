@@ -17,8 +17,8 @@ export async function listDeltas(
   const deltaType = url.searchParams.get("delta_type");
 
   // Build filter dynamically — still SELECT only, never mutates.
-  const conditions: string[] = ["companion_id = ?"];
-  const bindings: unknown[] = [params["companionId"]];
+  const conditions: string[] = ["(companion_id = ? OR (agent = ? AND delta_text IS NOT NULL))"];
+  const bindings: unknown[] = [params["companionId"], params["companionId"]];
 
   if (subjectId) {
     conditions.push("subject_id = ?");
