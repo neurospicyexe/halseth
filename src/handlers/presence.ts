@@ -20,11 +20,12 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
     totalRow,
     recentDeltasResult,
     routinesTodayResult,
+    companionFeelingsResult,
   ] = await Promise.all([
     getAllOpenSessions(env),
     env.DB.prepare("SELECT * FROM house_state WHERE id = 'main'").first<HouseState>(),
     env.DB.prepare(
-      "SELECT id, display_name, role FROM companion_config WHERE active = 1"
+      "SELECT id, display_name, role, avatar_asset_id FROM companion_config WHERE active = 1"
     ).all(),
     env.DB.prepare(`
       SELECT id, title, priority, status, due_at, assigned_to
@@ -65,6 +66,16 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
     env.DB.prepare(
       "SELECT DISTINCT routine_name FROM routines WHERE DATE(logged_at) = DATE('now')"
     ).all<{ routine_name: string }>(),
+    env.DB.prepare(`
+      SELECT f.companion_id, f.emotion, f.intensity, f.created_at
+      FROM feelings f
+      INNER JOIN (
+        SELECT companion_id, MAX(created_at) AS max_at
+        FROM feelings
+        WHERE companion_id IN ('drevan', 'cypher', 'gaia')
+        GROUP BY companion_id
+      ) latest ON f.companion_id = latest.companion_id AND f.created_at = latest.max_at
+    `).all<{ companion_id: string; emotion: string; intensity: number; created_at: string }>(),
   ]);
 
   // Latest open session — kept for backwards compat as single `session` field.
@@ -206,7 +217,17 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
       id:           c.id,
       display_name: c.display_name,
       role:         c.role,
+      avatar_url:   c.avatar_asset_id
+        ? `${new URL(request.url).origin}/assets/${c.avatar_asset_id}`
+        : null,
     })),
+    companion_moods: (companionFeelingsResult.results ?? []).reduce(
+      (acc, f) => {
+        acc[f.companion_id] = { emotion: f.emotion, intensity: f.intensity, at: f.created_at };
+        return acc;
+      },
+      {} as Record<string, { emotion: string; intensity: number; at: string }>,
+    ),
   };
 
   return new Response(JSON.stringify(body), {
