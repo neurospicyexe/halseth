@@ -24,11 +24,11 @@ $AhkScript = "$PSScriptRoot\autonomous-time.ahk"
 # Days of the week to run
 $Days = @("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
 
-# Morning session time (24h format)
-$MorningTime = "10:00"
+# Night session time (24h format)
+$MorningTime = "01:30"
 
-# Afternoon session time (24h format)
-$AfternoonTime = "14:00"
+# Midday session time (24h format)
+$AfternoonTime = "12:30"
 
 # --- Validation -------------------------------------------------------------
 
