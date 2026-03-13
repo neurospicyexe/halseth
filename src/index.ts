@@ -10,6 +10,7 @@ import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists } from "./handlers/history";
+import { getSessions, getSessionById } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
 import { getBridgeShared, postBridgeAct, postBridgeToggle } from "./handlers/bridge";
@@ -61,7 +62,11 @@ const router = new Router()
   .on("POST", "/bridge/act",     (request, env) => postBridgeAct(request, env))
   .on("POST", "/bridge/toggle",  (request, env) => postBridgeToggle(request, env))
 
-  // History feeds (read-only, unauthenticated)
+  // Sessions (read-only — used by nullsafe-second-brain synthesis tools)
+  .on("GET", "/sessions",    (request, env) => getSessions(request, env))
+  .on("GET", "/sessions/:id", (request, env, params) => getSessionById(request, env, params))
+
+  // History feeds (read-only, authenticated)
   .on("GET", "/handovers",         (request, env) => getHandovers(request, env))
   .on("GET", "/companion-journal", (request, env) => getCompanionJournal(request, env))
   // Alias: Hearth API proxy calls /companion-notes
