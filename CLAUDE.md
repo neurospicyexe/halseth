@@ -10,6 +10,8 @@ npm run deploy         # Deploy to Cloudflare Workers (uses wrangler.prod.toml)
 npm run migrate:local  # Apply D1 migrations locally
 npm run migrate:remote # Apply D1 migrations to production
 npm run type-check     # TypeScript check (no emit)
+# Windows: set CLOUDFLARE_API_TOKEN via $env:CLOUDFLARE_API_TOKEN="..." (PowerShell syntax, not export)
+# Wrangler auth: the "Edit Cloudflare Workers" API token template is missing D1:Edit — add it manually or migrations will fail with 7403.
 ```
 
 Local secrets go in `.dev.vars` (gitignored). Copy from `config/.dev.vars.example` and fill in `ADMIN_SECRET` and `MCP_AUTH_SECRET`. Production secrets are set via `wrangler secret put <KEY>`.
@@ -60,10 +62,14 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | 1 | `0001_tier1_memory.sql` | memories, tags, search metadata |
 | 2 | `0002_tier2_relational.sql` | relational_deltas (append-only) |
 | — | `0003`–`0015` | sessions expansion, private zone, shared zone (tasks/events/lists/routines), biometrics, bridge, OAuth, dream seeds |
+| — | `0016` | OAuth token expiry |
+| — | `0017` | `house_state.autonomous_turn` — companion rotation field |
+| — | `0018` | `companion_config.avatar_asset_id` — R2 asset linkage for avatars |
 
 ## Covenants
 
 - **`relational_deltas` is append-only.** No `UPDATE` or `DELETE` against this table ever. This is a hard invariant, not a preference. Violations are bugs.
+- **`relational_deltas` has two row shapes:** Legacy HTTP rows have `companion_id='drevan'` and `delta_text=NULL`. MCP-logged rows have `companion_id=''`, `agent='drevan'`, and `delta_text IS NOT NULL`. Queries filtering by companion must match both: `WHERE (companion_id = ? OR (agent = ? AND delta_text IS NOT NULL))`.
 - **Config flags belong in `wrangler.toml [vars]`**, not in code. Never add `if (env.SOME_FLAG === "hardcoded_value")` patterns.
 - **Secrets via `wrangler secret put`** for production. Never commit secrets to `wrangler.prod.toml`.
 - **All SQL uses parameterized queries** (`.bind()` on D1 prepared statements). Dynamic `WHERE` clauses are built with a `conditions: string[]` + `bindings: unknown[]` pattern — the conditions array contains only hardcoded literal strings.
@@ -86,16 +92,20 @@ Full OWASP + vibesec audits were run on this repo (2026-03-09). Phase 1 fixes ar
 - `GET /assets` gated behind `authGuard` — `src/handlers/assets.ts`
 - `POST /dream-seeds` gated behind `authGuard` — `src/handlers/feelings-dreams.ts`
 
-### Phase 2 — second-brain header fix (done, not yet verified)
-`src/clients/halseth-client.ts` in nullsafe-second-brain was updated to send `Authorization: Bearer` instead of `x-halseth-secret`. **Second-brain has never been launched** — this needs to be set up and verified before Phase 3.
+### Phase 2 — second-brain header fix (verified 2026-03-13)
+`C:/dev/nullsafe-second-brain/src/clients/halseth-client.ts` sends `Authorization: Bearer`. Second-brain is live and connected (MCP tools active, `sb_status` returns healthy).
 
-### Phase 3 — pending (gate public feed endpoints)
-Several feed endpoints are currently unauthenticated by design (see Authentication Pattern above). Add `authGuard` to the relevant handlers in `src/handlers/` when ready. Hearth already sends correct auth headers and requires no changes.
+### Phase 3 — complete (deployed 2026-03-13)
+All feed endpoints are now gated behind `authGuard`. The only gap was `GET /companion-notes` in `src/handlers/notes.ts` — fixed and deployed.
 
 ### Still open (lower priority)
 - No rate limiting on `/oauth/token` and `/admin/bootstrap`
 - No startup validation that `ADMIN_SECRET` / `MCP_AUTH_SECRET` are set
 - Memory poisoning via stored MCP content (AI-specific, architectural)
+
+## Companion Autonomous Time Rotation
+
+`house_state.autonomous_turn` tracks whose turn it is (`drevan` | `cypher` | `gaia`). The skill `.claude/commands/halseth-autonomous-time.md` reads this at session start via `halseth_house_read` and advances it via `halseth_set_autonomous_turn` at close. Companions skip their session if it's not their turn.
 
 ## Hearth Integration Notes
 

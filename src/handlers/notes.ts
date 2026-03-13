@@ -13,6 +13,7 @@ function authGuard(request: Request, env: Env): Response | null {
 
 // GET /notes?limit=N — returns notes newest-first.
 export async function getNotes(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
   const url = new URL(request.url);
   const rawLimit = parseInt(url.searchParams.get("limit") ?? "20", 10);
   const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
