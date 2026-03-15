@@ -20,12 +20,12 @@ Local secrets go in `.dev.vars` (gitignored). Copy from `config/.dev.vars.exampl
 
 Halseth is one of four projects that form a suite. When making changes that cross boundaries, consult the adjacent project's CLAUDE.md and MCP tools.
 
-| Project | Role |
-|---------|------|
-| **halseth** | Primary data backend — Cloudflare Worker + D1 + R2. Exposes HTTP endpoints and MCP tools (`mcp__claude_ai_Halseth__*`) |
-| **hearth** | Next.js dashboard frontend. Reads halseth HTTP endpoints via `lib/halseth.ts`. Deployed on Vercel |
-| **nullsafe-plural-v2** | Cloudflare Workers MCP for SimplyPlural (plural/fronting system). Exposes `mcp__claude_ai_Nullsafe-Plural-v2__*` tools |
-| **nullsafe-second-brain** | Local Node.js MCP (stdio). Reads halseth + nullsafe-plural-v2 via HTTP, writes to Obsidian vault, maintains SQLite vector store for companion RAG |
+| Project | Location | Role |
+|---------|----------|------|
+| **halseth** | `C:/dev/halseth` | Primary data backend — Cloudflare Worker + D1 + R2. Exposes HTTP endpoints and MCP tools (`mcp__claude_ai_Halseth__*`) |
+| **hearth** | `C:/dev/hearth` | Next.js dashboard frontend. Reads halseth HTTP endpoints via `lib/halseth.ts`. Deployed on Vercel (`nullsafe-hearth` project, team `neurospicyexe-3819s-projects`) |
+| **nullsafe-plural-v2** | `C:/dev/nullsafe-plural-v2` | Cloudflare Workers MCP for SimplyPlural (plural/fronting system). Exposes `mcp__claude_ai_Nullsafe-Plural-v2__*` tools |
+| **nullsafe-second-brain** | `C:/dev/nullsafe-second-brain` | Local Node.js MCP (stdio). Reads halseth + nullsafe-plural-v2 via HTTP, writes to Obsidian vault, maintains SQLite vector store for companion RAG |
 
 Hearth consumes halseth endpoints directly over HTTP. Second-brain is the synthesis/RAG layer that reads both halseth and nullsafe-plural-v2. Nullsafe-plural-v2 and halseth are independent backends that both surface data upward to hearth and second-brain.
 
@@ -76,9 +76,9 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 
 ## Authentication Pattern
 
-Most write endpoints and some reads check `ADMIN_SECRET` via Bearer token. The pattern `if (!env.ADMIN_SECRET) return null` means auth is **skipped if the secret is unset** — acceptable for local dev, but ensure both `ADMIN_SECRET` and `MCP_AUTH_SECRET` are set in production.
+All endpoints check `ADMIN_SECRET` via Bearer token — including feed/read endpoints (`/presence`, `/sessions`, `/tasks`, `/events`, `/feelings`, `/dreams`, `/journal`, `/biometrics`, etc.). The pattern `if (!env.ADMIN_SECRET) return null` means auth is **skipped if the secret is unset** — acceptable for local dev, but ensure both `ADMIN_SECRET` and `MCP_AUTH_SECRET` are set in production.
 
-History/feed endpoints (`/presence`, `/tasks`, `/events`, `/feelings`, `/dreams`, `/journal`, `/biometrics`, etc.) are **intentionally unauthenticated** — they serve as dashboard feeds for Hearth. This is by design for the personal/local deployment model, but means the Worker URL should not be exposed to untrusted networks without additional access controls.
+Feed endpoints were unauthenticated by design in earlier versions but were fully gated in the Phase 3 security pass (2026-03-13). The Worker URL still should not be exposed to untrusted networks without additional access controls (no rate limiting yet).
 
 ## Security Status
 
@@ -98,6 +98,8 @@ Full OWASP + vibesec audits were run on this repo (2026-03-09). Phase 1 fixes ar
 ### Phase 3 — complete (deployed 2026-03-13)
 All feed endpoints are now gated behind `authGuard`. The only gap was `GET /companion-notes` in `src/handlers/notes.ts` — fixed and deployed.
 
+`GET /sessions` and `GET /sessions/:id` (read-only session history endpoints, `src/handlers/sessions.ts`) are also `authGuard`-gated.
+
 ### Still open (lower priority)
 - No rate limiting on `/oauth/token` and `/admin/bootstrap`
 - No startup validation that `ADMIN_SECRET` / `MCP_AUTH_SECRET` are set
@@ -112,3 +114,4 @@ All feed endpoints are now gated behind `authGuard`. The only gap was `GET /comp
 Hearth calls halseth server-side via `lib/halseth.ts` using `hGet`/`hGetSafe` helpers. The `hGetSafe` variant returns `null` on error and is used for endpoints that may not exist yet. When adding a new halseth endpoint that Hearth should consume, also update `lib/halseth.ts` in the Hearth repo. Env vars Hearth needs: `HALSETH_URL`, `HALSETH_SECRET`.
 
 The route `/companion-notes` is an alias for `/companion-journal` — added because Hearth's API proxy calls that path.
+ (docs: update CLAUDE.md auth section and SETUP.md tool/migration counts)
