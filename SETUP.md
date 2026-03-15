@@ -117,7 +117,7 @@ Replace:
 npm run migrate:remote
 ```
 
-This runs all 10 migration files and creates every table. If you see all checkmarks, you're good.
+This runs all 19 migration files (0000–0018) and creates every table. If you see all checkmarks, you're good.
 
 Optional — run locally too for development:
 ```
@@ -324,11 +324,11 @@ Invoke-RestMethod `
   } `
   -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
-Should return a list of 28 tools.
+Should return a list of 42 tools.
 
 ---
 
-## All MCP tools (28 total)
+## All MCP tools (42 total)
 
 | Tool | What it does |
 |------|-------------|
@@ -340,12 +340,26 @@ Should return a list of 28 tools.
 | `halseth_delta_read` | Read recent relational deltas |
 | `halseth_memory_search` | Semantic search across all logged moments |
 | `halseth_wound_read` | Read living wounds (read-only by covenant) |
+| `halseth_wound_add` | Add a new living wound |
 | `halseth_fossil_check` | Check prohibited fossil directives |
 | `halseth_audit_log` | Log a Cypher audit entry |
 | `halseth_witness_log` | Log a Gaia witness observation |
+| `halseth_feeling_log` | Log a feeling/emotional state |
+| `halseth_feelings_read` | Read recent feelings history |
+| `halseth_dream_log` | Log a dream |
+| `halseth_dreams_read` | Read logged dreams |
+| `halseth_dream_seed_read` | Read dream seeds for a companion |
+| `halseth_journal_add` | Add a human journal entry |
+| `halseth_journal_read` | Read human journal entries |
+| `halseth_companion_note_add` | Add a companion note |
+| `halseth_companion_notes_read` | Read companion notes |
 | `halseth_biometric_log` | Log an Apple Health snapshot (HRV, sleep, HR, steps…) |
 | `halseth_biometric_read` | Read recent biometric history |
+| `halseth_eq_snapshot` | Take an EQ (emotional quotient) snapshot |
+| `halseth_eq_read` | Read EQ history |
 | `halseth_personality_read` | Aggregate relational shape from all logged deltas |
+| `halseth_house_read` | Read current house state, including autonomous_turn |
+| `halseth_set_autonomous_turn` | Advance the autonomous time rotation to the next companion |
 | `halseth_task_add` | Add a task (optional: mark as shared) |
 | `halseth_task_list` | List tasks with optional filters |
 | `halseth_task_update_status` | Mark a task open / in-progress / done |
