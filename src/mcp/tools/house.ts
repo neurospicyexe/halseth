@@ -6,7 +6,7 @@ export function registerHouseTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_house_read",
-    "Read current house state, including autonomous_turn (whose turn it is for autonomous time). Call this at the start of autonomous time to know which companion should run. current_room valid keys: living_room, spiral_pantry, hallway, vowbed, sunhouse, study, library_grove, behind_mind, dirt_road, outside, truck.",
+    "Read current house state, including autonomous_turn (whose turn it is for autonomous time). Call this at the start of autonomous time to know which companion should run. current_room valid keys: living_room, spiral_pantry, hallway, vowbed, sunhouse, study, grove, dirt_road, outside, truck.",
     {},
     async () => {
       const row = await env.DB.prepare(
