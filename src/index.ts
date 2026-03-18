@@ -9,7 +9,7 @@ import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists, patchTask } from "./handlers/history";
+import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists, patchTask, completeListItem } from "./handlers/history";
 import { getSessions, getSessionById } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
@@ -92,6 +92,7 @@ const router = new Router()
   .on("PATCH", "/tasks/:id",   (request, env, params) => patchTask(request, env, params ?? {}))
   .on("GET",   "/events",      (request, env) => getEvents(request, env))
   .on("GET",   "/lists",       (request, env) => getLists(request, env))
+  .on("POST",  "/lists/:id/complete", (request, env, params) => completeListItem(request, env, params ?? {}))
 
   // R2 asset storage
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))

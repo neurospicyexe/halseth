@@ -244,6 +244,19 @@ export async function getLists(request: Request, env: Env): Promise<Response> {
   });
 }
 
+// POST /lists/:id/complete — mark a list item as completed.
+export async function completeListItem(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const { id } = params;
+  if (!id) return new Response(JSON.stringify({ error: "missing id" }), { status: 400, headers: { "Content-Type": "application/json" } });
+
+  await env.DB.prepare(
+    "UPDATE lists SET completed = 1, completed_at = ? WHERE id = ?"
+  ).bind(new Date().toISOString(), id).run();
+
+  return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+}
+
 // PATCH /tasks/:id — update task status. When → "done", logs a companion_journal entry
 // so companions see the completion and don't re-surface the task.
 export async function patchTask(
