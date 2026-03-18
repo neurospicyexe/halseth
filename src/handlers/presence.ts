@@ -46,8 +46,8 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
       "SELECT id, author, content, note_type, created_at FROM companion_notes WHERE note_type != 'dream' ORDER BY created_at DESC LIMIT 3"
     ).all<CompanionNote>(),
     env.DB.prepare(
-      "SELECT id, content, created_at FROM companion_notes WHERE note_type = 'dream' ORDER BY created_at DESC LIMIT 3"
-    ).all<Pick<CompanionNote, "id" | "content" | "created_at">>(),
+      "SELECT id, companion_id, content, generated_at AS created_at FROM dreams ORDER BY generated_at DESC LIMIT 5"
+    ).all<{ id: string; companion_id: string; content: string; created_at: string }>(),
     env.DB.prepare(
       "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
     ).first<BiometricSnapshot>(),
@@ -196,9 +196,10 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
       created_at: n.created_at,
     })),
     recent_dreams: (dreamsResult.results ?? []).map((d) => ({
-      id:         d.id,
-      content:    d.content,
-      created_at: d.created_at,
+      id:           d.id,
+      companion_id: d.companion_id,
+      content:      d.content,
+      created_at:   d.created_at,
     })),
     latest_biometrics: biometricRow
       ? {

@@ -1,9 +1,11 @@
 // Read-only history feed endpoints.
 // GET /handovers, /companion-journal, /cypher-audit, /gaia-witness, /wounds, /routines, /deltas
 // GET /tasks, /events, /lists
+// PATCH /tasks/:id
 
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { generateId } from "../db/queries.js";
 import type {
   HandoverPacket,
   CypherAudit,
@@ -240,4 +242,57 @@ export async function getLists(request: Request, env: Env): Promise<Response> {
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// PATCH /tasks/:id — update task status. When → "done", logs a companion_journal entry
+// so companions see the completion and don't re-surface the task.
+export async function patchTask(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+
+  const id = params.id;
+  if (!id) return new Response("Missing task id", { status: 400 });
+
+  let body: { status?: string };
+  try { body = await request.json() as { status?: string }; }
+  catch { return new Response("Invalid JSON", { status: 400 }); }
+
+  const VALID = ["open", "in_progress", "done"] as const;
+  if (!body.status || !VALID.includes(body.status as typeof VALID[number])) {
+    return new Response("status must be open, in_progress, or done", { status: 400 });
+  }
+  const status = body.status as typeof VALID[number];
+  const now = new Date().toISOString();
+
+  const existing = await env.DB.prepare(
+    "SELECT id, title, assigned_to FROM tasks WHERE id = ?"
+  ).bind(id).first<{ id: string; title: string; assigned_to: string | null }>();
+  if (!existing) return new Response("Task not found", { status: 404 });
+
+  const result = await env.DB.prepare(
+    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?"
+  ).bind(status, now, id).run();
+  if (result.meta.changes === 0) return new Response("Task not found", { status: 404 });
+
+  if (status === "done") {
+    const noteId = generateId();
+    const assignee = existing.assigned_to ? ` (${existing.assigned_to})` : "";
+    await env.DB.prepare(
+      `INSERT INTO companion_journal (id, created_at, agent, note_text, tags)
+       VALUES (?, ?, 'system', ?, ?)`
+    ).bind(
+      noteId,
+      now,
+      `✓ Task completed${assignee}: ${existing.title}`,
+      JSON.stringify(["task-done"]),
+    ).run();
+  }
+
+  return new Response(
+    JSON.stringify({ ok: true, id, status }),
+    { headers: { "Content-Type": "application/json" } },
+  );
 }
