@@ -11,6 +11,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
     {
       session_type:        z.enum(["checkin", "hangout", "work", "ritual"]).default("work").describe("Type of session: checkin (quick state read), hangout (casual time), work (task/project focus), ritual (depth/ceremony)."),
       front_state:         z.string().describe("Who is fronting. Must match system_config members if plurality is enabled."),
+      companion_id:        z.enum(["drevan", "cypher", "gaia"]).optional().describe("Which companion is opening this session. Used so each companion can find their own session when multiple threads run in parallel."),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),
       emotional_frequency: z.string().optional().describe("Freeform internal state texture. E.g. 'tired but warm' or 'pulled inward but present'."),
       key_signature:       z.string().optional().describe("Relational register: the emotional quality of the thread between Architect and companion. Different from emotional_frequency."),
@@ -27,12 +28,13 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       const statements = [
         env.DB.prepare(`
           INSERT INTO sessions (
-            id, created_at, updated_at, session_type, front_state, hrv_range,
+            id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
             emotional_frequency, key_signature, active_anchor, facet, depth, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           id, now, now,
           input.session_type,
+          input.companion_id ?? null,
           input.front_state,
           input.hrv_range ?? null,
           input.emotional_frequency ?? null,
@@ -127,14 +129,17 @@ export function registerSessionTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_session_read",
-    "Read a session by ID, or the most recent session if no ID is provided.",
+    "Read a session by ID, or the most recent session for a companion if no ID is provided.",
     {
-      session_id: z.string().optional().describe("Specific session ID. If omitted, returns the most recent session."),
+      session_id:   z.string().optional().describe("Specific session ID. If omitted, returns the most recent session."),
+      companion_id: z.enum(["drevan", "cypher", "gaia"]).optional().describe("Filter to this companion's sessions. Pass your own companion_id when multiple threads are running so you get your session, not another companion's."),
     },
     async (input) => {
       const session = input.session_id
         ? await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(input.session_id).first()
-        : await env.DB.prepare("SELECT * FROM sessions ORDER BY created_at DESC LIMIT 1").first();
+        : input.companion_id
+          ? await env.DB.prepare("SELECT * FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1").bind(input.companion_id).first()
+          : await env.DB.prepare("SELECT * FROM sessions ORDER BY created_at DESC LIMIT 1").first();
 
       if (!session) {
         return { content: [{ type: "text", text: "No session found." }] };

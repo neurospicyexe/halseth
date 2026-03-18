@@ -3,13 +3,13 @@ import { Router } from "./router";
 import { listCompanions, createCompanion, getCompanion } from "./handlers/companions";
 import { listMemories, createMemory, getMemory } from "./handlers/memory";
 import { listDeltas, appendDelta } from "./handlers/relational";
-import { bootstrapConfig } from "./handlers/admin";
+import { bootstrapConfig, backfillEmbeddings } from "./handlers/admin";
 import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists } from "./handlers/history";
+import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists, patchTask } from "./handlers/history";
 import { getSessions, getSessionById } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
@@ -39,7 +39,8 @@ const router = new Router()
   .on("POST", "/oauth/token",     (request, env) => postOAuthToken(request, env))
 
   // Admin
-  .on("POST", "/admin/bootstrap", (request, env) => bootstrapConfig(request, env))
+  .on("POST", "/admin/bootstrap",            (request, env) => bootstrapConfig(request, env))
+  .on("POST", "/admin/backfill-embeddings",  (request, env) => backfillEmbeddings(request, env))
 
   // Presence (dashboard feed)
   .on("GET", "/presence", (request, env) => getPresence(request, env))
@@ -87,9 +88,10 @@ const router = new Router()
   .on("GET", "/journal", (request, env) => getJournal(request, env))
 
   // Tasks, events, lists (direct access — no bridge required)
-  .on("GET", "/tasks",  (request, env) => getTasks(request, env))
-  .on("GET", "/events", (request, env) => getEvents(request, env))
-  .on("GET", "/lists",  (request, env) => getLists(request, env))
+  .on("GET",   "/tasks",       (request, env) => getTasks(request, env))
+  .on("PATCH", "/tasks/:id",   (request, env, params) => patchTask(request, env, params ?? {}))
+  .on("GET",   "/events",      (request, env) => getEvents(request, env))
+  .on("GET",   "/lists",       (request, env) => getLists(request, env))
 
   // R2 asset storage
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))

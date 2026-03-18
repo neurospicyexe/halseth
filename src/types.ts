@@ -59,6 +59,7 @@ export interface Session {
   id: string;
   created_at: string;
   updated_at: string;
+  companion_id: string | null;
   front_state: string | null;
   co_con: string | null;            // JSON array of co-conscious members
   hrv_range: "low" | "mid" | "high" | null;
