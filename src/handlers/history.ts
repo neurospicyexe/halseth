@@ -229,15 +229,20 @@ export async function getLists(request: Request, env: Env): Promise<Response> {
   const url  = new URL(request.url);
   const name = url.searchParams.get("name");
 
+  // Exclude items completed more than 7 days ago — they fall away naturally.
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const result = name
     ? await env.DB.prepare(`
         SELECT id, list_name, item_text, added_by, added_at, completed
-        FROM lists WHERE list_name = ? ORDER BY completed ASC, added_at ASC
-      `).bind(name).all<ListItem>()
+        FROM lists WHERE list_name = ?
+          AND (completed = 0 OR completed_at > ?)
+        ORDER BY completed ASC, added_at ASC
+      `).bind(name, cutoff).all<ListItem>()
     : await env.DB.prepare(`
         SELECT id, list_name, item_text, added_by, added_at, completed
-        FROM lists ORDER BY list_name ASC, completed ASC, added_at ASC
-      `).all<ListItem>();
+        FROM lists WHERE completed = 0 OR completed_at > ?
+        ORDER BY list_name ASC, completed ASC, added_at ASC
+      `).bind(cutoff).all<ListItem>();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },
