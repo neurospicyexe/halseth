@@ -1,5 +1,6 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
+import { embedAndStore } from "../mcp/embed.js";
 
 interface CompanionSeed {
   id: string;
@@ -129,4 +130,79 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
     JSON.stringify({ seeded: statements.length, at: now }),
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
+}
+
+/**
+ * POST /admin/backfill-embeddings
+ * One-time endpoint to embed all existing rows into Vectorize.
+ * Process one table at a time via the ?table= param to avoid timeouts.
+ * Remove this endpoint once backfill is complete.
+ */
+export async function backfillEmbeddings(request: Request, env: Env): Promise<Response> {
+  if (env.ADMIN_SECRET) {
+    const auth = request.headers.get("Authorization") ?? "";
+    if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
+  const url = new URL(request.url);
+  const table = url.searchParams.get("table");
+
+  const TABLES: Record<string, { sql: string; getText: (r: Record<string, unknown>) => string; getCompanion: (r: Record<string, unknown>) => string }> = {
+    relational_deltas: {
+      sql:          "SELECT id, delta_text, agent FROM relational_deltas WHERE delta_text IS NOT NULL",
+      getText:      (r) => r.delta_text as string,
+      getCompanion: (r) => (r.agent as string) ?? "",
+    },
+    feelings: {
+      sql:          "SELECT id, emotion, sub_emotion, companion_id FROM feelings",
+      getText:      (r) => r.sub_emotion ? `${r.emotion} — ${r.sub_emotion}` : r.emotion as string,
+      getCompanion: (r) => r.companion_id as string,
+    },
+    dreams: {
+      sql:          "SELECT id, content, companion_id FROM dreams",
+      getText:      (r) => r.content as string,
+      getCompanion: (r) => r.companion_id as string,
+    },
+    companion_journal: {
+      sql:          "SELECT id, note_text, agent FROM companion_journal",
+      getText:      (r) => r.note_text as string,
+      getCompanion: (r) => r.agent as string,
+    },
+    living_wounds: {
+      sql:          "SELECT id, name, description FROM living_wounds",
+      getText:      (r) => `${r.name}: ${r.description}`,
+      getCompanion: () => "gaia",
+    },
+    cypher_audit: {
+      sql:          "SELECT id, content FROM cypher_audit",
+      getText:      (r) => r.content as string,
+      getCompanion: () => "cypher",
+    },
+  };
+
+  const targets = table ? [table] : Object.keys(TABLES);
+  const results: Record<string, number> = {};
+
+  for (const t of targets) {
+    const def = TABLES[t];
+    if (!def) {
+      return new Response(JSON.stringify({ error: `Unknown table: ${t}` }), { status: 400 });
+    }
+    const rows = await env.DB.prepare(def.sql).all();
+    let count = 0;
+    for (const row of (rows.results as Record<string, unknown>[])) {
+      const text = def.getText(row);
+      if (!text) continue;
+      embedAndStore(env, text, t, row.id as string, def.getCompanion(row));
+      count++;
+    }
+    results[t] = count;
+  }
+
+  return new Response(JSON.stringify({ backfilled: results }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }

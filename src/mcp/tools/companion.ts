@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
+import { embedAndStore } from "../embed.js";
 
 export function registerCompanionTools(server: McpServer, env: Env): void {
 
@@ -30,6 +31,7 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
         input.session_id ?? null,
       ).run();
 
+      embedAndStore(env, input.note_text, "companion_journal", id, input.agent);
       return { content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }] };
     },
   );
