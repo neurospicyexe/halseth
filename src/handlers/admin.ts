@@ -1,6 +1,6 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
-import { embedAndStore } from "../mcp/embed.js";
+import { embedAndStoreAsync } from "../mcp/embed.js";
 
 interface CompanionSeed {
   id: string;
@@ -195,7 +195,11 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
     for (const row of (rows.results as Record<string, unknown>[])) {
       const text = def.getText(row);
       if (!text) continue;
-      embedAndStore(env, text, t, row.id as string, def.getCompanion(row));
+      try {
+        await embedAndStoreAsync(env, text, t, row.id as string, def.getCompanion(row));
+      } catch (err) {
+        console.error("[backfill] embed failed", { table: t, rowId: row.id, err: String(err) });
+      }
       count++;
     }
     results[t] = count;
