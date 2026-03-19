@@ -1,15 +1,12 @@
 // COVENANT: relational_deltas is append-only.
 // halseth_delta_log uses INSERT only. The history of what was logged is part of
 // the structural record and must never be altered.
-//
-// EXCEPTION: after INSERT, vector_id is written via UPDATE. This is a cross-reference
-// pointer, not a content change. It does not modify the logged moment — it links the
-// row to its Vectorize embedding. This is the only permitted UPDATE on this table.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
+import { embedAndStore } from "../embed.js";
 
 export function registerMemoryTools(server: McpServer, env: Env): void {
 
@@ -47,33 +44,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       ).run();
 
       // Fire-and-forget: embed delta_text and store in Vectorize.
-      // A Vectorize failure must never block the log itself.
-      void (async () => {
-        try {
-          const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
-            text: [input.delta_text],
-          }) as { data: number[][] };
-          const vector = embedding.data[0];
-          if (!vector) return;
-          const vectorId = generateId();
-          await env.VECTORIZE.insert([{
-            id: vectorId,
-            values: vector,
-            metadata: {
-              delta_id:   id,
-              agent:      input.agent ?? "",
-              valence:    input.valence ?? "",
-              session_id: input.session_id ?? "",
-            },
-          }]);
-          // Permitted UPDATE: adds the vector cross-reference only; content unchanged.
-          await env.DB.prepare("UPDATE relational_deltas SET vector_id = ? WHERE id = ?")
-            .bind(vectorId, id).run();
-        } catch {
-          // Silently drop — the delta is already safely persisted in D1.
-        }
-      })();
-
+      embedAndStore(env, input.delta_text, "relational_deltas", id, input.agent ?? "");
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
       };
@@ -86,6 +57,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
     {
       session_id: z.string().optional(),
       agent:      z.enum(["drevan", "cypher", "gaia"]).optional(),
+      query:      z.string().optional().describe("Substring search across delta_text content."),
       limit:      z.number().int().min(1).max(100).default(20),
     },
     async (input) => {
@@ -99,6 +71,10 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       if (input.agent) {
         conditions.push("agent = ?");
         bindings.push(input.agent);
+      }
+      if (input.query) {
+        conditions.push("delta_text LIKE ?");
+        bindings.push(`%${input.query}%`);
       }
       bindings.push(input.limit);
 
@@ -151,6 +127,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         throw err;
       }
 
+      embedAndStore(env, `${input.name}: ${input.description}`, "living_wounds", id, "gaia");
       return { content: [{ type: "text", text: JSON.stringify({ id, created_at: now, witness_type: input.witness_type }) }] };
     },
   );
@@ -205,6 +182,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         input.supersedes_id ?? null,
       ).run();
 
+      embedAndStore(env, input.content, "cypher_audit", id, "cypher");
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
       };
@@ -212,11 +190,53 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
   );
 
   server.tool(
-    "halseth_memory_search",
-    "Semantic search across logged relational moments. Embeds the query and returns the closest matching deltas from Vectorize.",
+    "halseth_audit_read",
+    "Read Cypher audit entries. Supports filtering by session, entry type, and supersedes chain. Returns newest first.",
     {
-      query: z.string().describe("Natural language description of the moment or feeling to search for."),
-      limit: z.number().int().min(1).max(20).default(10),
+      session_id:    z.string().optional().describe("Filter to entries from a specific session."),
+      entry_type:    z.enum(["decision", "contradiction", "clause_update", "falsification", "scope_correction"]).optional(),
+      supersedes_id: z.string().optional().describe("Return entries that supersede this ID — traces the correction chain forward."),
+      limit:         z.number().int().min(1).max(100).default(20),
+    },
+    async (input) => {
+      const conditions: string[] = [];
+      const bindings: unknown[] = [];
+
+      if (input.session_id) {
+        conditions.push("session_id = ?");
+        bindings.push(input.session_id);
+      }
+      if (input.entry_type) {
+        conditions.push("entry_type = ?");
+        bindings.push(input.entry_type);
+      }
+      if (input.supersedes_id) {
+        conditions.push("supersedes_id = ?");
+        bindings.push(input.supersedes_id);
+      }
+      bindings.push(input.limit);
+
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const sql = `SELECT * FROM cypher_audit ${where} ORDER BY created_at DESC LIMIT ?`;
+      const result = await env.DB.prepare(sql).bind(...bindings).all();
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result.results) }],
+      };
+    },
+  );
+
+  server.tool(
+    "halseth_semantic_query",
+    "Semantic search across Halseth memory tables by meaning. Covers feelings, relational deltas, companion notes, audit entries, dreams, and wounds. Use before writing to find related prior entries.",
+    {
+      query:        z.string().describe("Natural language search query."),
+      tables:       z.array(z.enum(["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams"])).optional()
+                     .describe("Filter to specific tables. Defaults to all six."),
+      companion_id: z.enum(["drevan", "cypher", "gaia"]).optional().describe("Filter by companion."),
+      limit:        z.number().int().min(1).max(20).default(5),
+      after:        z.string().optional().describe("ISO datetime — only entries after this date."),
+      before:       z.string().optional().describe("ISO datetime — only entries before this date."),
     },
     async (input) => {
       const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
@@ -228,8 +248,10 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         return { content: [{ type: "text", text: JSON.stringify([]) }] };
       }
 
+      // Fetch extra to allow for post-fetch filtering
+      const fetchK = Math.min(input.limit * 6, 100);
       const results = await env.VECTORIZE.query(queryVector, {
-        topK: input.limit,
+        topK: fetchK,
         returnMetadata: "all",
       });
 
@@ -237,29 +259,82 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         return { content: [{ type: "text", text: JSON.stringify([]) }] };
       }
 
-      // Collect delta_ids from metadata, then fetch full rows from D1.
-      const deltaIds = results.matches
-        .map((m) => m.metadata?.delta_id as string | undefined)
-        .filter((id): id is string => !!id);
+      const allowedTables = input.tables ?? ["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams"];
 
-      if (deltaIds.length === 0) {
+      // Filter by table and companion_id from Vectorize metadata
+      const filtered = results.matches
+        .filter((m) => {
+          const meta = m.metadata as Record<string, string | undefined> | undefined;
+          if (!meta?.["table"] || !meta?.["row_id"]) return false;
+          if (!(allowedTables as string[]).includes(meta["table"]!)) return false;
+          if (input.companion_id && meta["companion_id"] && meta["companion_id"] !== input.companion_id) return false;
+          return true;
+        })
+        .slice(0, input.limit);
+
+      if (filtered.length === 0) {
         return { content: [{ type: "text", text: JSON.stringify([]) }] };
       }
 
-      const placeholders = deltaIds.map(() => "?").join(", ");
-      const rows = await env.DB.prepare(
-        `SELECT * FROM relational_deltas WHERE id IN (${placeholders})`
-      ).bind(...deltaIds).all();
+      // Build score map keyed by row_id
+      const scoreMap = new Map(
+        filtered.map((m) => {
+          const meta = m.metadata as Record<string, string | undefined>;
+          return [meta["row_id"] ?? "", m.score] as const;
+        })
+      );
 
-      // Attach similarity scores from Vectorize matches.
-      const scoreMap = new Map(results.matches.map((m) => [m.metadata?.delta_id as string, m.score]));
-      const ranked = (rows.results as Record<string, unknown>[]).map((row) => ({
-        ...row,
-        similarity: scoreMap.get(row.id as string) ?? null,
-      })).sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+      // Group row_ids by table
+      const byTable = new Map<string, string[]>();
+      for (const m of filtered) {
+        const meta = m.metadata as Record<string, string | undefined>;
+        const table = meta["table"];
+        const rowId = meta["row_id"];
+        if (!table || !rowId) continue;
+        if (!byTable.has(table)) byTable.set(table, []);
+        byTable.get(table)!.push(rowId);
+      }
+
+      // Table name mapping (hardcoded — inputs come from enum, not user strings)
+      const TABLE_NAMES: Record<string, string> = {
+        feelings:          "feelings",
+        relational_deltas: "relational_deltas",
+        companion_journal: "companion_journal",
+        living_wounds:     "living_wounds",
+        cypher_audit:      "cypher_audit",
+        dreams:            "dreams",
+      };
+
+      // Fetch full rows from D1, one query per table
+      const allRows: Record<string, unknown>[] = [];
+      for (const [table, ids] of byTable.entries()) {
+        const tableName = TABLE_NAMES[table];
+        if (!tableName) continue;
+        const placeholders = ids.map(() => "?").join(", ");
+        const rows = await env.DB.prepare(
+          `SELECT * FROM ${tableName} WHERE id IN (${placeholders})`
+        ).bind(...ids).all();
+        for (const row of (rows.results as Record<string, unknown>[])) {
+          allRows.push({ table, ...row, score: scoreMap.get(row.id as string) ?? null });
+        }
+      }
+
+      // Apply date filters (dreams use generated_at; others use created_at)
+      const after  = input.after;
+      const before = input.before;
+      let final = allRows.filter((r) => {
+        const ts = (r.created_at ?? r.generated_at) as string | undefined;
+        if (!ts) return true;
+        if (after  && ts < after)  return false;
+        if (before && ts > before) return false;
+        return true;
+      });
+
+      // Sort by score descending
+      final.sort((a, b) => ((b.score as number) ?? 0) - ((a.score as number) ?? 0));
 
       return {
-        content: [{ type: "text", text: JSON.stringify(ranked) }],
+        content: [{ type: "text", text: JSON.stringify(final) }],
       };
     },
   );

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
+import { embedAndStore } from "../embed.js";
 import type { Feeling, Dream, EqSnapshot } from "../../types.js";
 
 const COMPANION_IDS = ["drevan", "cypher", "gaia"] as const;
@@ -47,6 +48,8 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
         now,
       ).run();
 
+      const embedText = input.sub_emotion ? `${input.emotion} — ${input.sub_emotion}` : input.emotion;
+      embedAndStore(env, embedText, "feelings", id, input.companion_id);
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
       };
@@ -104,6 +107,7 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
         input.session_id ?? null,
       ).run();
 
+      embedAndStore(env, input.content, "dreams", id, input.companion_id);
       return {
         content: [{ type: "text", text: JSON.stringify({ id, generated_at: now }) }],
       };

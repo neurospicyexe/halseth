@@ -309,7 +309,7 @@ To turn off sharing for a category: `halseth_bridge_toggle lists false`
 
 **Check the server is up:**
 ```
-curl https://halseth.YOUR-ACCOUNT.workers.dev/presence
+curl -H "Authorization: Bearer YOUR_ADMIN_SECRET" https://halseth.YOUR-ACCOUNT.workers.dev/presence
 ```
 Should return JSON with system name, house state, session, etc.
 
