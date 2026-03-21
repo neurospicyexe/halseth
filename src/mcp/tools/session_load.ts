@@ -215,7 +215,7 @@ export function registerSessionLoadTools(server: McpServer, env: Env): void {
       };
 
       return {
-        content: [{ type: "text", text: JSON.stringify(payload) }],
+        content: [{ type: "text", text: JSON.stringify({ ...payload, front: null /* Phase 2: plural front state via Service Binding */ }) }],
       };
     },
   );

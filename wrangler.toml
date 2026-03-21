@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding  = "DB"
 database_name = "halseth"
-database_id   = "REPLACE_WITH_D1_DATABASE_ID"
+database_id   = "4b5ed7ce-8222-47ae-bca9-56eca4a46157"
 migrations_dir = "migrations"
 
 # ── R2 (artifact / blob store) ───────────────────────────────────────────────
