@@ -48,6 +48,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["plural_get_current_front"],
     response_key: "summary",
   },
+  get_member: {
+    triggers: ["tell me about", "get member", "member info", "describe member", "who is "],
+    tools: ["plural_get_member"],
+    response_key: "summary",
+  },
+  update_member_description: {
+    triggers: ["update description", "change description", "set description", "edit description"],
+    tools: ["plural_update_member_description"],
+    response_key: "witness",
+  },
 };
 
 // Companion IDs -- used for routing and ready_prompt shaping
