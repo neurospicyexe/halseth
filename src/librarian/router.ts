@@ -10,8 +10,9 @@
 
 import { Env } from "../types.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
-import { sessionLoad, taskList, handoverRead } from "./backends/halseth.js";
-import { getCurrentFront } from "./backends/plural.js";
+import { sessionLoad, taskList, handoverRead, addCompanionNote } from "./backends/halseth.js";
+import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory } from "./backends/plural.js";
+import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
 import { semanticSearch, filteredRecall } from "./backends/second-brain.js";
 import { buildResponse } from "./response/builder.js";
 import { ResponseKey } from "./response/budget.js";
@@ -171,6 +172,46 @@ Return only the pattern key name or "unknown". No explanation.`;
         case "sb_recall": {
           const result = await filteredRecall(this.env, { companion: req.companion_id });
           return buildResponse(req.companion_id, entry.response_key as ResponseKey, { session_id: "" }, result ?? "No results.");
+        }
+
+        case "plural_get_member": {
+          const trigger = entry.triggers.find(t => req.request.toLowerCase().includes(t));
+          const name = trigger ? extractMemberName(req.request, trigger) : null;
+          if (!name) {
+            return buildResponse(req.companion_id, "witness", {} as never, "couldn't identify a member name -- try 'tell me about Ash'");
+          }
+          const member = await getMember(this.env, name);
+          if (!member) {
+            return buildResponse(req.companion_id, "witness", {} as never, `couldn't find member '${name}'`);
+          }
+          return buildResponse(req.companion_id, "summary", member as never, JSON.stringify(member));
+        }
+
+        case "plural_update_member_description": {
+          const parsed = extractDescriptionUpdate(req.request);
+          if (!parsed) {
+            return buildResponse(req.companion_id, "witness", {} as never, "couldn't parse that -- try 'update Ash\\'s description to [text]'");
+          }
+          const updateResult = await updateMemberDescription(this.env, parsed.member, parsed.description);
+          return buildResponse(req.companion_id, "witness", {} as never, updateResult.success ? `updated ${updateResult.name}` : (updateResult.error ?? "update failed"));
+        }
+
+        case "plural_search_members": {
+          const members = await searchMembers(this.env, req.request);
+          return buildResponse(req.companion_id, "summary", {} as never, JSON.stringify(members));
+        }
+
+        case "plural_get_front_history": {
+          const history = await getFrontHistory(this.env);
+          return buildResponse(req.companion_id, "summary", {} as never, JSON.stringify(history));
+        }
+
+        case "halseth_companion_note_add": {
+          const toMatch = req.request.match(/(to|for)\s+(drevan|cypher|gaia)/i);
+          const to_id = toMatch?.[2]?.toLowerCase() ?? null;
+          const content = req.context ?? req.request;
+          const note = await addCompanionNote(this.env, req.companion_id, to_id, content);
+          return buildResponse(req.companion_id, "witness", {} as never, `note recorded: ${note.id}`);
         }
       }
     }
