@@ -175,14 +175,20 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     };
   }
 
-  // 6. Read unread inter_companion_notes addressed to this companion or broadcast (to_id IS NULL)
+  // 6. Count open tasks
+  const openTasksResult = await env.DB.prepare(
+    `SELECT COUNT(*) as count FROM tasks WHERE status = 'open'`,
+  ).first<{ count: number }>();
+  const openTasks = openTasksResult?.count ?? 0;
+
+  // 7. Read unread inter_companion_notes addressed to this companion or broadcast (to_id IS NULL)
   const unreadNotes = await env.DB.prepare(
     "SELECT * FROM inter_companion_notes WHERE read_at IS NULL AND (to_id = ? OR to_id IS NULL) ORDER BY created_at ASC"
   ).bind(input.companion_id).all<InterCompanionNote>();
 
   const pendingNotes = unreadNotes.results ?? [];
 
-  // 7. Mark those notes as read
+  // 8. Mark those notes as read
   if (pendingNotes.length > 0) {
     // Phase 2: fire-and-forget Service Binding call to State Synthesis Worker if snapshot is null or stale
 
@@ -204,6 +210,7 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     somatic,
     last_session_summary: lastSessionSummary,
     pending_notes: pendingNotes,
+    open_tasks: openTasks,
   };
 }
 

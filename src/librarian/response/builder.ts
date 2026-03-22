@@ -28,6 +28,7 @@ interface SessionPayload {
   handover?: { active_anchor?: string | null; open_threads?: string | null } | null;
   pending_notes?: unknown[];
   last_session_summary?: { open_threads?: string[] | null } | null;
+  open_tasks?: number;
 }
 
 export function buildReadyPrompt(companionId: CompanionId, payload: SessionPayload): string {
@@ -75,8 +76,7 @@ export function buildResponse(
       meta: {
         front_state: frontState,
         pending_notes: payload.pending_notes?.length ?? 0,
-        open_tasks: 0, // Lean phase: hardcoded. session_open does not fetch task list.
-                       // Phase 2: call taskList() and pass count through here.
+        open_tasks: payload.open_tasks ?? 0,
       },
     };
   }
