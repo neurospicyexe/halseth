@@ -9,7 +9,9 @@
 // The KV registry holds patterns that don't need zero-latency treatment.
 // Adding a pattern here = also document it in KV so Phoenix can port it.
 
-export type ResponseKey = "ready_prompt" | "summary" | "witness";
+// ResponseKey is the canonical type from budget.ts -- re-exported here for convenience
+import type { ResponseKey } from "./response/budget.js";
+export type { ResponseKey } from "./response/budget.js";
 
 export interface PatternEntry {
   triggers: string[];
