@@ -69,6 +69,11 @@ export class LibrarianRouter {
       // are already handled by matchFastPath() before classify() is called.
       // If the classifier returned a fast-path key, KV.get() would return null
       // and the request would silently fail. Keep these lists separate.
+      // TODO: KV.list() is paginated -- kvList.keys is capped at 1000 entries and
+      // does not follow the cursor. Before adding more than ~50 KV patterns, replace
+      // this with a cached "_index" KV entry that lists all known pattern keys,
+      // updated whenever a pattern is added. Safe for now: classify() short-circuits
+      // at line below when KV is empty.
       const kvList = await this.env.LIBRARIAN_KV.list();
       const kvKeys = kvList.keys.map(k => k.name).join(", ");
 
@@ -83,6 +88,8 @@ Request: "${request}"
 
 Return only the pattern key name or "unknown". No explanation.`;
 
+      // Cast required: Workers AI types don't accept string literals directly.
+      // If model name changes, update here -- no compile-time typo detection.
       const result = await this.env.AI.run(
         "@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof this.env.AI.run>[0],
         {
