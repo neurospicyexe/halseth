@@ -34,7 +34,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "ready_prompt",
   },
   get_tasks: {
-    triggers: ["my tasks", "what's open", "what do i have", "todo", "open tasks"],
+    triggers: ["my tasks", "what's open", "what do i have", "what tasks", "todo", "open tasks"],
     tools: ["halseth_task_list"],
     response_key: "summary",
   },
