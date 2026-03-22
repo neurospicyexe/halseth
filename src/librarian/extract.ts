@@ -15,6 +15,10 @@
  * @returns The extracted name, or null if empty
  */
 export function extractMemberName(request: string, trigger: string): string | null {
+  if (!request.toLowerCase().startsWith(trigger.toLowerCase())) {
+    return null;
+  }
+
   // Strip the trigger from the start of the original request (preserves casing)
   const remainder = request.slice(trigger.length).trim();
 
