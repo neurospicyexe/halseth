@@ -109,7 +109,7 @@ Return only the pattern key name or "unknown". No explanation.`;
     let frontState: string | null = null;
     if (entry.pre_fetch?.includes("plural_get_current_front")) {
       const front = await getCurrentFront(this.env);
-      frontState = front?.member_name ?? null;
+      frontState = front?.name ?? null;
     }
 
     // Execute tools
@@ -158,7 +158,7 @@ Return only the pattern key name or "unknown". No explanation.`;
         case "plural_get_current_front": {
           const front = await getCurrentFront(this.env);
           const text = front
-            ? `${front.display_name ?? front.member_name} is fronting.`
+            ? `${front.name} is fronting.`
             : "Front state unavailable.";
           return buildResponse(req.companion_id, entry.response_key as ResponseKey, { session_id: "" }, text);
         }
