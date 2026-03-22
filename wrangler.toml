@@ -40,6 +40,20 @@ binding = "AI"
 binding    = "VECTORIZE"
 index_name = "halseth-memories"
 
+# ── Librarian KV (tool registry + pattern matching) ──────────────────────────
+[[kv_namespaces]]
+binding    = "LIBRARIAN_KV"
+id         = "a9a3b20ea0224c3997bfb4d32bbbc276"
+preview_id = "e3f0d2a9e27b415781d0384d59885546"
+
+# ── Service Binding: nullsafe-plural-v2 ────────────────────────────────────────
+[[services]]
+binding = "PLURAL"
+service = "nullsafe-plural-v2"
+
+# Secrets (set via `wrangler secret put SECOND_BRAIN_TOKEN`):
+# SECOND_BRAIN_TOKEN — OAuth token for mcp.softcrashentity.com
+
 # ── Local dev overrides ───────────────────────────────────────────────────────
 [env.local]
 # Secrets live in .dev.vars (gitignored). See config/.dev.vars.example.

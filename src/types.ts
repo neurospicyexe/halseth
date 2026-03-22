@@ -5,6 +5,11 @@ export interface Env {
   AI: Ai;
   VECTORIZE: VectorizeIndex;
 
+  // Librarian bindings
+  PLURAL: Fetcher;              // Service Binding to nullsafe-plural-v2 Worker
+  LIBRARIAN_KV: KVNamespace;    // KV namespace for tool registry + pattern matching
+  SECOND_BRAIN_TOKEN?: string;  // OAuth token for mcp.softcrashentity.com (set via wrangler secret)
+
   // Config flags — set in wrangler.toml [vars], not in code.
   PLURALITY_ENABLED:   string;  // "true" | "false"
   COMPANIONS_ENABLED:  string;  // "true" | "false"
