@@ -23,12 +23,16 @@ import {
   postOAuthToken,
 } from "./handlers/oauth";
 import { handleMcp } from "./mcp/server";
+import { handleLibrarian } from "./librarian/index.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
   .on("POST",   "/mcp", (request, env) => handleMcp(request, env))
   .on("GET",    "/mcp", (request, env) => handleMcp(request, env))
   .on("DELETE", "/mcp", (request, env) => handleMcp(request, env))
+
+  // Librarian — natural language companion entry point
+  .on("POST", "/librarian", (request, env) => handleLibrarian(request, env))
 
   // OAuth 2.0
   .on("GET",  "/.well-known/oauth-protected-resource",   async (request) => getOAuthProtectedResource(request))
