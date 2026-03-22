@@ -8,23 +8,20 @@
 import { Env } from "../../types.js";
 
 export interface FrontState {
-  member_name: string;
-  display_name: string | null;
-  started_at: string | null;
+  name: string;
+  member_id: string;
 }
 
 export async function getCurrentFront(env: Env): Promise<FrontState | null> {
   try {
-    const response = await env.PLURAL.fetch("https://plural-internal/get_current_front", {
+    const response = await env.PLURAL.fetch("https://plural-internal/internal/front", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: "{}",
     });
     if (!response.ok) return null;
-    const data = await response.json() as { result?: { content?: Array<{ text: string }> } };
-    const text = data?.result?.content?.[0]?.text;
-    if (!text) return null;
-    return JSON.parse(text) as FrontState;
+    const data = await response.json() as FrontState | null;
+    return data ?? null;
   } catch {
     // Plural unavailable is non-fatal -- session opens with front_state: null
     return null;
