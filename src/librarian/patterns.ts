@@ -18,6 +18,7 @@ export interface PatternEntry {
   tools: string[];
   pre_fetch?: string[];  // fires BEFORE tools, parallel if possible; result feeds into tool call
   response_key: ResponseKey;
+  raw?: boolean;         // if true: skip buildResponse(), return backend payload as { data: ... }
 }
 
 export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
@@ -42,6 +43,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     triggers: ["catch me up", "handover", "last session", "what happened", "what did i miss"],
     tools: ["halseth_handover_read"],
     response_key: "ready_prompt",
+    raw: true,
   },
   get_front: {
     triggers: ["who's fronting", "front state", "who's here", "current front"],
@@ -51,12 +53,208 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   get_member: {
     triggers: ["tell me about", "get member", "member info", "describe member", "who is "],
     tools: ["plural_get_member"],
+    response_key: "summary",  // ignored -- raw: true
+    raw: true,
+  },
+  sb_search: {
+    triggers: ["search vault", "search second brain", "search my notes", "find in vault", "what do we know about", "anything about"],
+    tools: ["sb_search"],
     response_key: "summary",
+    raw: true,
+  },
+  sb_recall: {
+    triggers: ["recall", "my recent notes", "recent vault entries", "what i've written", "vault recall"],
+    tools: ["sb_recall"],
+    response_key: "summary",
+    raw: true,
+  },
+  sb_list: {
+    triggers: ["list vault", "list notes", "vault contents", "what's in vault", "show vault"],
+    tools: ["sb_list"],
+    response_key: "summary",
+    raw: true,
+  },
+  sb_read: {
+    triggers: ["read vault file", "open note", "read note", "vault file", "open vault"],
+    tools: ["sb_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  sb_recent_patterns: {
+    triggers: ["recent patterns", "hearth summary", "pattern summary", "what patterns", "vault patterns"],
+    tools: ["sb_recent_patterns"],
+    response_key: "summary",
+    raw: true,
+  },
+  sb_save_document: {
+    triggers: ["save to vault", "write to vault", "save document", "vault document"],
+    tools: ["sb_save_document"],
+    response_key: "witness",
+  },
+  sb_save_note: {
+    triggers: ["save note", "save a note", "quick note", "vault note", "log note"],
+    tools: ["sb_save_note"],
+    response_key: "witness",
+  },
+  sb_log_observation: {
+    triggers: ["log observation", "note observation", "observe", "inbox observation"],
+    tools: ["sb_log_observation"],
+    response_key: "witness",
+  },
+  sb_synthesize_session: {
+    triggers: ["synthesize session", "session synthesis", "summarize session", "vault synthesis"],
+    tools: ["sb_synthesize_session"],
+    response_key: "witness",
+  },
+  sb_save_study: {
+    triggers: ["save study", "study note", "learning note", "research note"],
+    tools: ["sb_save_study"],
+    response_key: "witness",
+  },
+  feelings_read: {
+    triggers: ["my feelings", "feeling log", "emotional log", "how have i been feeling", "recent feelings"],
+    tools: ["halseth_feelings_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  journal_read: {
+    triggers: ["my journal", "journal entries", "read journal", "recent entries", "what did i write"],
+    tools: ["halseth_journal_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  wound_read: {
+    triggers: ["my wounds", "wound list", "living wounds", "active wounds", "what wounds"],
+    tools: ["halseth_wound_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  delta_read: {
+    triggers: ["deltas", "delta log", "relational deltas", "what changed", "recent deltas"],
+    tools: ["halseth_delta_read"],
+    response_key: "summary",
+    raw: true,
   },
   update_member_description: {
     triggers: ["update description", "change description", "set description", "edit description"],
     tools: ["plural_update_member_description"],
+    response_key: "witness",  // ignored -- mutation returns ack directly
+  },
+  log_front_change: {
+    triggers: ["log front change", "fronting now", "switched to", "came forward", "front switch", "log switch"],
+    tools: ["plural_log_front_change"],
+    response_key: "witness",  // ignored -- mutation returns ack directly
+  },
+  add_member_note: {
+    triggers: ["add note to", "note for member", "add member note", "note on "],
+    tools: ["plural_add_member_note"],
+    response_key: "witness",  // ignored -- mutation returns ack directly
+  },
+
+  // ── Halseth mutations (all return ack directly, response_key ignored) ──
+  feeling_log: {
+    triggers: ["log feeling", "log a feeling", "i'm feeling", "feeling right now", "mood log", "log mood", "how i'm feeling"],
+    tools: ["halseth_feeling_log"],
     response_key: "witness",
+  },
+  journal_add: {
+    triggers: ["add journal entry", "journal entry", "write journal", "log to journal", "journal tonight", "journal note"],
+    tools: ["halseth_journal_add"],
+    response_key: "witness",
+  },
+  dream_log: {
+    triggers: ["log dream", "record dream", "had a dream", "dream last night", "dreamed about", "log my dream"],
+    tools: ["halseth_dream_log"],
+    response_key: "witness",
+  },
+  wound_add: {
+    triggers: ["add wound", "log wound", "new wound", "wound entry", "living wound add"],
+    tools: ["halseth_wound_add"],
+    response_key: "witness",
+  },
+  delta_log: {
+    triggers: ["log delta", "relationship delta", "note delta", "log relational change", "delta entry"],
+    tools: ["halseth_delta_log"],
+    response_key: "witness",
+  },
+  eq_snapshot: {
+    triggers: ["take eq snapshot", "eq snapshot", "eq check", "log eq state", "emotional quotient snapshot"],
+    tools: ["halseth_eq_snapshot"],
+    response_key: "witness",
+  },
+  task_add: {
+    triggers: ["add task", "new task", "create task", "task for", "add to tasks", "put in tasks"],
+    tools: ["halseth_task_add"],
+    response_key: "witness",
+  },
+  task_update_status: {
+    triggers: ["update task", "mark task done", "task done", "complete task", "task status", "close task", "finish task"],
+    tools: ["halseth_task_update_status"],
+    response_key: "witness",
+  },
+  session_close: {
+    triggers: ["close session", "end session", "wrap up session", "session wrap", "closing session", "log session close"],
+    tools: ["halseth_session_close"],
+    response_key: "witness",
+  },
+  routine_log: {
+    triggers: ["log routine", "routine done", "completed routine", "mark routine", "routine complete"],
+    tools: ["halseth_routine_log"],
+    response_key: "witness",
+  },
+  list_add: {
+    triggers: ["add to list", "list item add", "add item to list", "put on list", "add to my list"],
+    tools: ["halseth_list_add"],
+    response_key: "witness",
+  },
+  list_item_complete: {
+    triggers: ["complete list item", "done with list item", "check off list", "mark list item done", "list item complete"],
+    tools: ["halseth_list_item_complete"],
+    response_key: "witness",
+  },
+  event_add: {
+    triggers: ["add event", "new event", "schedule event", "create event", "log event"],
+    tools: ["halseth_event_add"],
+    response_key: "witness",
+  },
+  biometric_log: {
+    triggers: ["log biometric", "log hrv", "log sleep", "biometric entry", "log health data"],
+    tools: ["halseth_biometric_log"],
+    response_key: "witness",
+  },
+  audit_log: {
+    triggers: ["log decision", "add audit entry", "log to audit", "decision log entry", "audit this decision"],
+    tools: ["halseth_audit_log"],
+    response_key: "witness",
+  },
+  witness_log: {
+    triggers: ["witness log", "log witness", "witness entry", "add witness", "witness this"],
+    tools: ["halseth_witness_log"],
+    response_key: "witness",
+  },
+  set_autonomous_turn: {
+    triggers: ["set autonomous turn", "autonomous mode", "enable autonomy", "autonomy on", "autonomy off"],
+    tools: ["halseth_set_autonomous_turn"],
+    response_key: "witness",
+  },
+
+  // ── Companion notes ──
+  companion_notes_read: {
+    triggers: ["companion notes", "my notes to you", "notes from session", "notes about me", "companion note read"],
+    tools: ["halseth_companion_notes_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  companion_note_add: {
+    triggers: ["add companion note", "companion note", "note to companion", "log companion note"],
+    tools: ["halseth_companion_note_add"],
+    response_key: "witness",
+  },
+  bridge_pull: {
+    triggers: ["check bridge events", "bridge pull", "new events", "any events", "bridge events"],
+    tools: ["halseth_bridge_pull"],
+    response_key: "summary",
+    raw: true,
   },
 };
 
