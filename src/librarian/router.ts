@@ -10,10 +10,21 @@
 
 import { Env } from "../types.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
-import { sessionLoad, taskList, handoverRead, addCompanionNote } from "./backends/halseth.js";
-import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory } from "./backends/plural.js";
+import {
+  sessionLoad, taskList, handoverRead, addCompanionNote,
+  feelingsRead, journalRead, woundRead, deltaRead,
+  dreamsRead, dreamSeedRead, eqRead, routineRead, listRead, eventList,
+  houseRead, personalityRead, biometricRead, auditRead, sessionRead, fossilCheck,
+  feelingLog, journalAdd, dreamLog, woundAdd, deltaLog, eqSnapshot,
+  taskAdd, taskUpdateStatus, sessionClose, routineLog, listAdd, listItemComplete,
+  eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, bridgePull,
+} from "./backends/halseth.js";
+import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
 import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
-import { semanticSearch, filteredRecall } from "./backends/second-brain.js";
+import {
+  semanticSearch, filteredRecall, recentPatterns,
+  sbRead, sbList, sbSaveDocument, sbLogObservation, sbSynthesizeSession, sbSaveStudy,
+} from "./backends/second-brain.js";
 import { buildResponse } from "./response/builder.js";
 import { ResponseKey } from "./response/budget.js";
 
@@ -53,6 +64,12 @@ export class LibrarianRouter {
     };
   }
 
+  // Safely parse req.context as JSON. Returns null if missing or invalid.
+  private parseContext<T>(context: string | undefined): T | null {
+    if (!context) return null;
+    try { return JSON.parse(context) as T; } catch { return null; }
+  }
+
   private matchFastPath(request: string): PatternEntry | null {
     const lower = request.toLowerCase().trim();
     for (const entry of Object.values(FAST_PATH_PATTERNS)) {
@@ -64,42 +81,58 @@ export class LibrarianRouter {
   }
 
   private async classify(request: string): Promise<string | null> {
+    if (!this.env.DEEPSEEK_API_KEY) return null;
+
     try {
-      // Workers AI text generation -- classification only, not generation.
-      // IMPORTANT: Only KV keys are listed here. Fast-path keys (session_open, etc.)
-      // are already handled by matchFastPath() before classify() is called.
-      // If the classifier returned a fast-path key, KV.get() would return null
-      // and the request would silently fail. Keep these lists separate.
-      // TODO: KV.list() is paginated -- kvList.keys is capped at 1000 entries and
-      // does not follow the cursor. Before adding more than ~50 KV patterns, replace
-      // this with a cached "_index" KV entry that lists all known pattern keys,
-      // updated whenever a pattern is added. Safe for now: classify() short-circuits
-      // at line below when KV is empty.
-      const kvList = await this.env.LIBRARIAN_KV.list();
-      const kvKeys = kvList.keys.map(k => k.name).join(", ");
+      // Pattern index is stored in a single KV entry ("_index") as a comma-separated
+      // list of all known KV pattern keys. Update "_index" whenever a new KV pattern
+      // is added -- never call KV.list() here (it paginates and caps at 1000).
+      // Fast-path keys (session_open, feelings_read, etc.) are deliberately excluded
+      // from "_index" -- they are handled by matchFastPath() before classify() runs.
+      // If the classifier returned a fast-path key, KV.get() would return null and
+      // the request would silently fail. Keep these two registries separate.
+      const index = await this.env.LIBRARIAN_KV.get("_index") ?? "";
+      const kvKeys = index.split(",").map(k => k.trim()).filter(Boolean);
 
-      // Nothing in KV yet -- return unknown rather than prompting with empty list
-      if (!kvKeys) return "unknown";
+      // Nothing in KV yet -- return unknown without burning API tokens
+      if (!kvKeys.length) return "unknown";
 
-      const prompt = `You are a request classifier. Given a companion's request, return ONLY the matching pattern key from this list, or "unknown" if none match.
+      // Fetch trigger hints for each key to help the classifier distinguish ambiguous patterns.
+      // "_hints" is a KV entry mapping key -> first trigger phrase (comma-separated pairs).
+      // Format: "key1:trigger1,key2:trigger2,..."
+      const hintsRaw = await this.env.LIBRARIAN_KV.get("_hints") ?? "";
+      const hints: Record<string, string> = {};
+      for (const pair of hintsRaw.split(",")) {
+        const idx = pair.indexOf(":");
+        if (idx > 0) hints[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+      }
 
-Pattern keys: ${kvKeys}
+      const keyList = kvKeys.map(k => hints[k] ? `${k} (e.g. "${hints[k]}")` : k).join(", ");
 
-Request: "${request}"
-
-Return only the pattern key name or "unknown". No explanation.`;
-
-      // Cast required: Workers AI types don't accept string literals directly.
-      // If model name changes, update here -- no compile-time typo detection.
-      const result = await this.env.AI.run(
-        "@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof this.env.AI.run>[0],
-        {
-          messages: [{ role: "user", content: prompt }],
+      const res = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.env.DEEPSEEK_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          messages: [
+            {
+              role: "system",
+              content: `You classify companion requests into one of these pattern keys: ${keyList}. Return ONLY the matching pattern key exactly as written, or "unknown". No explanation.`,
+            },
+            { role: "user", content: request },
+          ],
           max_tokens: 20,
-        }
-      ) as { response?: string };
+          temperature: 0,
+        }),
+      });
 
-      return result?.response?.trim().toLowerCase() ?? null;
+      if (!res.ok) return null;
+
+      const json = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+      return json.choices?.[0]?.message?.content?.trim().toLowerCase() ?? null;
     } catch {
       return null;
     }
@@ -114,6 +147,9 @@ Return only the pattern key name or "unknown". No explanation.`;
     }
 
     // Execute tools
+    // raw: true entries skip buildResponse() and return backend payload directly as { data: ... }.
+    // Mutation entries return { ack: true, id, ...fields } directly from their switch case.
+    // Only boot/shaped entries flow through buildResponse().
     for (const tool of entry.tools) {
       switch (tool) {
         case "halseth_session_load": {
@@ -139,21 +175,7 @@ Return only the pattern key name or "unknown". No explanation.`;
 
         case "halseth_handover_read": {
           const handover = await handoverRead(this.env);
-          const text = handover
-            ? JSON.stringify(handover)
-            : "No handover packet found.";
-          const handoverField = handover
-            ? {
-                active_anchor: (handover as Record<string, unknown>).active_anchor as string | null ?? null,
-                open_threads: (handover as Record<string, unknown>).open_threads as string | null ?? null,
-              }
-            : null;
-          return buildResponse(
-            req.companion_id,
-            entry.response_key as ResponseKey,
-            { session_id: "", handover: handoverField },
-            text
-          );
+          return { data: handover ?? "No handover packet found.", meta: { operation: tool } };
         }
 
         case "plural_get_current_front": {
@@ -164,46 +186,180 @@ Return only the pattern key name or "unknown". No explanation.`;
           return buildResponse(req.companion_id, entry.response_key as ResponseKey, { session_id: "" }, text);
         }
 
+        // ── Second Brain (raw reads, ack mutations) ───────────────────────────
+
         case "sb_search": {
-          const result = await semanticSearch(this.env, req.request);
-          return buildResponse(req.companion_id, entry.response_key as ResponseKey, { session_id: "" }, result ?? "No results.");
+          const query = this.parseContext<{ query: string }>(req.context)?.query ?? req.request;
+          const result = await semanticSearch(this.env, query);
+          return { data: result ?? "No results.", meta: { operation: tool } };
         }
 
         case "sb_recall": {
-          const result = await filteredRecall(this.env, { companion: req.companion_id });
-          return buildResponse(req.companion_id, entry.response_key as ResponseKey, { session_id: "" }, result ?? "No results.");
+          const p = this.parseContext<{ companion?: string; content_type?: string; limit?: number }>(req.context);
+          const result = await filteredRecall(this.env, { companion: p?.companion ?? req.companion_id, content_type: p?.content_type, limit: p?.limit });
+          return { data: result ?? "No results.", meta: { operation: tool } };
+        }
+
+        case "sb_recent_patterns": {
+          const result = await recentPatterns(this.env);
+          return { data: result ?? "No patterns found.", meta: { operation: tool } };
+        }
+
+        case "sb_read": {
+          const p = this.parseContext<{ path: string; query?: string }>(req.context);
+          if (!p?.path) return { response_key: "witness", witness: "sb_read requires { path } in context" };
+          const result = await sbRead(this.env, p.path, p.query);
+          return { data: result ?? "Not found.", meta: { operation: tool } };
+        }
+
+        case "sb_list": {
+          const p = this.parseContext<{ path?: string }>(req.context);
+          const result = await sbList(this.env, p?.path);
+          return { data: result ?? "Empty.", meta: { operation: tool } };
+        }
+
+        case "sb_save_document": {
+          const p = this.parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(req.context);
+          if (!p?.content) return { response_key: "witness", witness: "sb_save_document requires { content } in context" };
+          const r = await sbSaveDocument(this.env, { ...p, content_type: "document" });
+          return { ack: r.ack, response: r.response };
+        }
+
+        case "sb_save_note": {
+          const p = this.parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(req.context);
+          if (!p?.content) return { response_key: "witness", witness: "sb_save_note requires { content } in context" };
+          const r = await sbSaveDocument(this.env, { ...p, content_type: "note" });
+          return { ack: r.ack, response: r.response };
+        }
+
+        case "sb_log_observation": {
+          const p = this.parseContext<{ content: string; tags?: string[] }>(req.context);
+          if (!p?.content) return { response_key: "witness", witness: "sb_log_observation requires { content } in context" };
+          const r = await sbLogObservation(this.env, p.content, p.tags);
+          return { ack: r.ack };
+        }
+
+        case "sb_synthesize_session": {
+          const p = this.parseContext<{ session_id: string }>(req.context);
+          if (!p?.session_id) return { response_key: "witness", witness: "sb_synthesize_session requires { session_id } in context" };
+          const r = await sbSynthesizeSession(this.env, p.session_id);
+          return { ack: r.ack };
+        }
+
+        case "sb_save_study": {
+          const p = this.parseContext<{ content: string; subject?: string; tags?: string[] }>(req.context);
+          if (!p?.content) return { response_key: "witness", witness: "sb_save_study requires { content } in context" };
+          const r = await sbSaveStudy(this.env, p);
+          return { ack: r.ack, response: r.response };
         }
 
         case "plural_get_member": {
           const trigger = entry.triggers.find(t => req.request.toLowerCase().includes(t));
           const name = trigger ? extractMemberName(req.request, trigger) : null;
           if (!name) {
-            return buildResponse(req.companion_id, "witness", {} as never, "couldn't identify a member name -- try 'tell me about Ash'");
+            return { response_key: "witness", witness: "couldn't identify a member name -- try 'tell me about Ash'" };
           }
           const member = await getMember(this.env, name);
           if (!member) {
-            return buildResponse(req.companion_id, "witness", {} as never, `couldn't find member '${name}'`);
+            return { response_key: "witness", witness: `couldn't find member '${name}'` };
           }
-          return buildResponse(req.companion_id, "summary", member as never, JSON.stringify(member));
+          // raw: true -- full member record, no shaping
+          return { data: member, meta: { operation: "plural_get_member" } };
         }
 
         case "plural_update_member_description": {
           const parsed = extractDescriptionUpdate(req.request);
           if (!parsed) {
-            return buildResponse(req.companion_id, "witness", {} as never, "couldn't parse that -- try 'update Ash\\'s description to [text]'");
+            return { response_key: "witness", witness: "couldn't parse that -- try 'update Ash\\'s description to [text]'" };
           }
           const updateResult = await updateMemberDescription(this.env, parsed.member, parsed.description);
-          return buildResponse(req.companion_id, "witness", {} as never, updateResult.success ? `updated ${updateResult.name}` : (updateResult.error ?? "update failed"));
+          if (!updateResult.success) {
+            return { response_key: "witness", witness: updateResult.error ?? "update failed" };
+          }
+          return { ack: true, id: updateResult.member_id, name: updateResult.name };
         }
 
         case "plural_search_members": {
           const members = await searchMembers(this.env, req.request);
-          return buildResponse(req.companion_id, "summary", {} as never, JSON.stringify(members));
+          // raw: true -- full member array
+          return { data: members, meta: { operation: "plural_search_members" } };
         }
 
         case "plural_get_front_history": {
           const history = await getFrontHistory(this.env);
-          return buildResponse(req.companion_id, "summary", {} as never, JSON.stringify(history));
+          // raw: true -- full history array
+          return { data: history, meta: { operation: "plural_get_front_history" } };
+        }
+
+        case "plural_log_front_change": {
+          const p = this.parseContext<{ member_id: string; status: "fronting" | "co-con" | "unknown"; custom_status?: string }>(req.context);
+          if (!p?.member_id || !p?.status) return { response_key: "witness", witness: "log_front_change requires { member_id, status } in context" };
+          const r = await logFrontChange(this.env, p);
+          if (!r.success) return { response_key: "witness", witness: r.error ?? "log_front_change failed" };
+          return { ack: true, front_id: r.front_id ?? null, name: r.name, result: r.result };
+        }
+
+        case "plural_add_member_note": {
+          const p = this.parseContext<{ member_id: string; note: string; title?: string; color?: string }>(req.context);
+          if (!p?.member_id || !p?.note) return { response_key: "witness", witness: "add_member_note requires { member_id, note } in context" };
+          const r = await addMemberNote(this.env, p);
+          if (!r.success) return { response_key: "witness", witness: r.error ?? "add_member_note failed" };
+          return { ack: true, id: r.id ?? null, member_id: r.member_id, name: r.name };
+        }
+
+        // ── Halseth data reads (raw: true) ───────────────────────────────────
+
+        case "halseth_feelings_read":
+          return { data: await feelingsRead(this.env, req.companion_id), meta: { operation: tool } };
+
+        case "halseth_journal_read":
+          return { data: await journalRead(this.env), meta: { operation: tool } };
+
+        case "halseth_wound_read":
+          return { data: await woundRead(this.env), meta: { operation: tool } };
+
+        case "halseth_delta_read":
+          return { data: await deltaRead(this.env, req.companion_id), meta: { operation: tool } };
+
+        case "halseth_dreams_read":
+          return { data: await dreamsRead(this.env, req.companion_id), meta: { operation: tool } };
+
+        case "halseth_dream_seed_read":
+          return { data: await dreamSeedRead(this.env, req.companion_id), meta: { operation: tool } };
+
+        case "halseth_eq_read":
+          return { data: await eqRead(this.env, req.companion_id), meta: { operation: tool } };
+
+        case "halseth_routine_read":
+          return { data: await routineRead(this.env), meta: { operation: tool } };
+
+        case "halseth_list_read": {
+          const listMatch = req.request.match(/list\s+(?:called\s+|named\s+)?["']?([a-z0-9 _-]+)["']?/i);
+          return { data: await listRead(this.env, listMatch?.[1]?.trim()), meta: { operation: tool } };
+        }
+
+        case "halseth_event_list":
+          return { data: await eventList(this.env), meta: { operation: tool } };
+
+        case "halseth_house_read":
+          return { data: await houseRead(this.env), meta: { operation: tool } };
+
+        case "halseth_personality_read":
+          return { data: await personalityRead(this.env), meta: { operation: tool } };
+
+        case "halseth_biometric_read":
+          return { data: await biometricRead(this.env), meta: { operation: tool } };
+
+        case "halseth_audit_read":
+          return { data: await auditRead(this.env), meta: { operation: tool } };
+
+        case "halseth_session_read":
+          return { data: await sessionRead(this.env, req.companion_id), meta: { operation: tool } };
+
+        case "halseth_fossil_check": {
+          const subjectMatch = req.request.match(/fossil\s+(?:check\s+)?(?:for\s+)?["']?([a-z0-9 _-]+)["']?/i);
+          const subject = subjectMatch?.[1]?.trim() ?? req.context ?? "unknown";
+          return { data: await fossilCheck(this.env, subject), meta: { operation: tool } };
         }
 
         case "halseth_companion_note_add": {
@@ -211,7 +367,136 @@ Return only the pattern key name or "unknown". No explanation.`;
           const to_id = toMatch?.[2]?.toLowerCase() ?? null;
           const content = req.context ?? req.request;
           const note = await addCompanionNote(this.env, req.companion_id, to_id, content);
-          return buildResponse(req.companion_id, "witness", {} as never, `note recorded: ${note.id}`);
+          return { ack: true, id: note.id };
+        }
+
+        // ── Halseth mutations (ack + id) ──────────────────────────────────────
+        // Payload arrives in req.context as JSON. req.request is routing only.
+
+        case "halseth_feeling_log": {
+          const p = this.parseContext<{ emotion: string; sub_emotion?: string; intensity?: number; source?: string; session_id?: string }>(req.context);
+          if (!p || !p.emotion) return { response_key: "witness", witness: "feeling_log requires { emotion } in context" };
+          const r = await feelingLog(this.env, { companion_id: req.companion_id, ...p });
+          return { ack: true, id: r.id, logged_at: r.created_at };
+        }
+
+        case "halseth_journal_add": {
+          const p = this.parseContext<{ entry_text: string; emotion_tag?: string; sub_emotion?: string; mood_score?: number; tags?: string }>(req.context);
+          if (!p || !p.entry_text) return { response_key: "witness", witness: "journal_add requires { entry_text } in context" };
+          const r = await journalAdd(this.env, p);
+          return { ack: true, id: r.id, created_at: r.created_at };
+        }
+
+        case "halseth_dream_log": {
+          const p = this.parseContext<{ dream_type: string; content: string; source_ids?: string; session_id?: string }>(req.context);
+          if (!p || !p.dream_type || !p.content) return { response_key: "witness", witness: "dream_log requires { dream_type, content } in context" };
+          const r = await dreamLog(this.env, { companion_id: req.companion_id, ...p });
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_wound_add": {
+          const p = this.parseContext<{ name: string; description: string; witness_type: string }>(req.context);
+          if (!p || !p.name || !p.description || !p.witness_type) return { response_key: "witness", witness: "wound_add requires { name, description, witness_type } in context" };
+          const r = await woundAdd(this.env, p);
+          if ("error" in r) return { response_key: "witness", witness: r.error };
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_delta_log": {
+          const p = this.parseContext<{ agent: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string }>(req.context);
+          if (!p || !p.agent || !p.delta_text || !p.valence) return { response_key: "witness", witness: "delta_log requires { agent, delta_text, valence } in context" };
+          const r = await deltaLog(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_eq_snapshot": {
+          const r = await eqSnapshot(this.env, req.companion_id);
+          return { ack: true, ...r };
+        }
+
+        case "halseth_task_add": {
+          const p = this.parseContext<{ title: string; description?: string; priority?: string; due_at?: string; assigned_to?: string; created_by?: string; shared?: boolean }>(req.context);
+          if (!p || !p.title) return { response_key: "witness", witness: "task_add requires { title } in context" };
+          const r = await taskAdd(this.env, p);
+          return { ack: true, id: r.id, title: r.title, status: r.status };
+        }
+
+        case "halseth_task_update_status": {
+          const p = this.parseContext<{ id: string; status: string }>(req.context);
+          if (!p || !p.id || !p.status) return { response_key: "witness", witness: "task_update_status requires { id, status } in context" };
+          const r = await taskUpdateStatus(this.env, p.id, p.status);
+          if ("error" in r) return { response_key: "witness", witness: r.error };
+          return { ack: true, id: r.id, status: r.status };
+        }
+
+        case "halseth_session_close": {
+          const p = this.parseContext<{ session_id: string; spine: string; last_real_thing: string; open_threads?: string[]; motion_state: string; active_anchor?: string; notes?: string; spiral_complete?: boolean }>(req.context);
+          if (!p || !p.session_id || !p.spine || !p.last_real_thing || !p.motion_state) return { response_key: "witness", witness: "session_close requires { session_id, spine, last_real_thing, motion_state } in context" };
+          const r = await sessionClose(this.env, p);
+          return { ack: true, id: r.id, spine: r.spine };
+        }
+
+        case "halseth_routine_log": {
+          const p = this.parseContext<{ routine_name: string; owner?: string; notes?: string }>(req.context);
+          if (!p || !p.routine_name) return { response_key: "witness", witness: "routine_log requires { routine_name } in context" };
+          const r = await routineLog(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_list_add": {
+          const p = this.parseContext<{ list_name: string; item_text: string; added_by?: string; shared?: boolean }>(req.context);
+          if (!p || !p.list_name || !p.item_text) return { response_key: "witness", witness: "list_add requires { list_name, item_text } in context" };
+          const r = await listAdd(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_list_item_complete": {
+          const p = this.parseContext<{ id: string }>(req.context);
+          if (!p || !p.id) return { response_key: "witness", witness: "list_item_complete requires { id } in context" };
+          const r = await listItemComplete(this.env, p.id);
+          if ("error" in r) return { response_key: "witness", witness: r.error };
+          return { ack: true, id: r.id, completed: true };
+        }
+
+        case "halseth_event_add": {
+          const p = this.parseContext<{ title: string; start_time: string; end_time?: string; description?: string; category?: string; attendees?: string[]; created_by?: string; shared?: boolean }>(req.context);
+          if (!p || !p.title || !p.start_time) return { response_key: "witness", witness: "event_add requires { title, start_time } in context" };
+          const r = await eventAdd(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_biometric_log": {
+          const p = this.parseContext<{ recorded_at: string; hrv_resting?: number; resting_hr?: number; sleep_hours?: number; sleep_quality?: string; stress_score?: number; steps?: number; active_energy?: number; notes?: string }>(req.context);
+          if (!p || !p.recorded_at) return { response_key: "witness", witness: "biometric_log requires { recorded_at } in context" };
+          const r = await biometricLog(this.env, p);
+          return { ack: true, id: r.id, logged_at: r.logged_at };
+        }
+
+        case "halseth_audit_log": {
+          const p = this.parseContext<{ session_id: string; entry_type: string; content: string; verdict_tag?: string; supersedes_id?: string }>(req.context);
+          if (!p || !p.session_id || !p.entry_type || !p.content) return { response_key: "witness", witness: "audit_log requires { session_id, entry_type, content } in context" };
+          const r = await auditLog(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_witness_log": {
+          const p = this.parseContext<{ session_id: string; witness_type: string; content: string; seal_phrase?: string }>(req.context);
+          if (!p || !p.session_id || !p.witness_type || !p.content) return { response_key: "witness", witness: "witness_log requires { session_id, witness_type, content } in context" };
+          const r = await witnessLog(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_set_autonomous_turn": {
+          const on = /\bon\b|true|enable/i.test(req.request);
+          const off = /\boff\b|false|disable/i.test(req.request);
+          if (!on && !off) return { response_key: "witness", witness: "set_autonomous_turn: include 'on' or 'off' in request" };
+          await setAutonomousTurn(this.env, on);
+          return { ack: true, id: "house_state", autonomous_turn: on };
+        }
+
+        case "halseth_bridge_pull": {
+          const data = await bridgePull(this.env);
+          return { data };
         }
       }
     }
