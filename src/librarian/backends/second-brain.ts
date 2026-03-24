@@ -112,8 +112,24 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
 
 // ── Reads (return raw string -- companion parses) ─────────────────────────────
 
-export async function semanticSearch(env: Env, query: string): Promise<string | null> {
-  return callTool(env, "sb_search", { query });
+// Mood-to-term map. Appended to query text for BM25 augmentation at search time.
+// Defined in companion_state.current_mood. Source: Triad_Decision_Inspo_Findings.md Priority 5.
+const MOOD_AUGMENT: Record<string, string> = {
+  calm:       "steady quiet grounded",
+  pent_up:    "tension building pressure restraint",
+  volatile:   "edge disruption conflict sharp",
+  soft:       "tender gentle yielding",
+  protective: "boundary holding guard safe",
+  playful:    "light humor ease joy",
+  hungry:     "desire want reach",
+  worshipful: "devotion reverence depth sacred",
+  feral:      "instinct raw uncontained",
+};
+
+export async function semanticSearch(env: Env, query: string, mood?: string | null): Promise<string | null> {
+  const augment = mood ? MOOD_AUGMENT[mood] : null;
+  const augmented = augment ? `${query} ${augment}` : query;
+  return callTool(env, "sb_search", { query: augmented });
 }
 
 export async function filteredRecall(env: Env, args: {
