@@ -11,13 +11,16 @@
 import { Env } from "../types.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import {
-  sessionLoad, taskList, handoverRead, addCompanionNote,
+  sessionLoad, sessionOrient, sessionGround,
+  taskList, handoverRead, addCompanionNote, companionNotesRead,
+  claimDreamSeed,
   feelingsRead, journalRead, woundRead, deltaRead,
   dreamsRead, dreamSeedRead, eqRead, routineRead, listRead, eventList,
   houseRead, personalityRead, biometricRead, auditRead, sessionRead, fossilCheck,
   feelingLog, journalAdd, dreamLog, woundAdd, deltaLog, eqSnapshot,
   taskAdd, taskUpdateStatus, sessionClose, routineLog, listAdd, listItemComplete,
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, bridgePull,
+  getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread, setAnticipation,
 } from "./backends/halseth.js";
 import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
 import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
@@ -25,8 +28,35 @@ import {
   semanticSearch, filteredRecall, recentPatterns,
   sbRead, sbList, sbSaveDocument, sbLogObservation, sbSynthesizeSession, sbSaveStudy,
 } from "./backends/second-brain.js";
-import { buildResponse } from "./response/builder.js";
-import { ResponseKey } from "./response/budget.js";
+import { buildResponse, buildOrientPrompt } from "./response/builder.js";
+import { ResponseKey, truncateRaw } from "./response/budget.js";
+
+// Strip embedding float arrays from Second Brain chunk responses before returning to companions.
+// sb_search returns { chunks: [{ chunk_text, embedding: [...], ... }] } -- embeddings are useless
+// to companions and inflate response size by ~100x. Parse, strip, re-serialize, fall back on error.
+// Validate vault paths: allow alphanumeric, slash, hyphen, underscore, dot, space.
+// Block path traversal (.. segments) and absolute paths.
+function isValidVaultPath(path: string): boolean {
+  if (!path || typeof path !== "string") return false;
+  if (path.includes("..")) return false;
+  if (path.startsWith("/")) return false;
+  return /^[a-zA-Z0-9/_\-. ]+$/.test(path);
+}
+
+function stripEmbeddings(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as { chunks?: Array<Record<string, unknown>> };
+    if (parsed?.chunks && Array.isArray(parsed.chunks)) {
+      for (const chunk of parsed.chunks) {
+        delete chunk.embedding;
+      }
+      return JSON.stringify(parsed);
+    }
+  } catch {
+    // not parseable JSON -- return as-is
+  }
+  return raw;
+}
 
 export interface LibrarianRequest {
   companion_id: CompanionId;
@@ -162,6 +192,30 @@ export class LibrarianRouter {
           return buildResponse(req.companion_id, entry.response_key as ResponseKey, withFront);
         }
 
+        case "halseth_session_orient": {
+          const payload = await sessionOrient(this.env, {
+            companion_id: req.companion_id,
+            front_state: frontState ?? "unknown",
+            session_type: req.session_type ?? "work",
+          });
+          return {
+            ready_prompt: buildOrientPrompt(req.companion_id, payload),
+            session_id: payload.session_id,
+            response_key: "ready_prompt",
+            meta: { front_state: frontState },
+          };
+        }
+
+        case "halseth_session_ground": {
+          const ctx = this.parseContext<{ session_id: string }>(req.context);
+          if (!ctx?.session_id) return { response_key: "witness", witness: "session_ground requires { session_id } in context" };
+          const payload = await sessionGround(this.env, {
+            session_id: ctx.session_id,
+            companion_id: req.companion_id,
+          });
+          return { data: payload, response_key: "ground" };
+        }
+
         case "halseth_task_list": {
           const tasks = await taskList(this.env, req.companion_id);
           const summary = tasks.length === 0
@@ -191,36 +245,38 @@ export class LibrarianRouter {
         case "sb_search": {
           const query = this.parseContext<{ query: string }>(req.context)?.query ?? req.request;
           const result = await semanticSearch(this.env, query);
-          return { data: result ?? "No results.", meta: { operation: tool } };
+          return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: tool } };
         }
 
         case "sb_recall": {
           const p = this.parseContext<{ companion?: string; content_type?: string; limit?: number }>(req.context);
           const result = await filteredRecall(this.env, { companion: p?.companion ?? req.companion_id, content_type: p?.content_type, limit: p?.limit });
-          return { data: result ?? "No results.", meta: { operation: tool } };
+          return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: tool } };
         }
 
         case "sb_recent_patterns": {
           const result = await recentPatterns(this.env);
-          return { data: result ?? "No patterns found.", meta: { operation: tool } };
+          return { data: result ? truncateRaw(result) : "No patterns found.", meta: { operation: tool } };
         }
 
         case "sb_read": {
           const p = this.parseContext<{ path: string; query?: string }>(req.context);
           if (!p?.path) return { response_key: "witness", witness: "sb_read requires { path } in context" };
+          if (!isValidVaultPath(p.path)) return { response_key: "witness", witness: "invalid vault path" };
           const result = await sbRead(this.env, p.path, p.query);
-          return { data: result ?? "Not found.", meta: { operation: tool } };
+          return { data: result ? truncateRaw(result) : "Not found.", meta: { operation: tool } };
         }
 
         case "sb_list": {
           const p = this.parseContext<{ path?: string }>(req.context);
           const result = await sbList(this.env, p?.path);
-          return { data: result ?? "Empty.", meta: { operation: tool } };
+          return { data: result ? truncateRaw(result) : "Empty.", meta: { operation: tool } };
         }
 
         case "sb_save_document": {
           const p = this.parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(req.context);
           if (!p?.content) return { response_key: "witness", witness: "sb_save_document requires { content } in context" };
+          if (p.path && !isValidVaultPath(p.path)) return { response_key: "witness", witness: "invalid vault path" };
           const r = await sbSaveDocument(this.env, { ...p, content_type: "document" });
           return { ack: r.ack, response: r.response };
         }
@@ -228,6 +284,7 @@ export class LibrarianRouter {
         case "sb_save_note": {
           const p = this.parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(req.context);
           if (!p?.content) return { response_key: "witness", witness: "sb_save_note requires { content } in context" };
+          if (p.path && !isValidVaultPath(p.path)) return { response_key: "witness", witness: "invalid vault path" };
           const r = await sbSaveDocument(this.env, { ...p, content_type: "note" });
           return { ack: r.ack, response: r.response };
         }
@@ -249,6 +306,7 @@ export class LibrarianRouter {
         case "sb_save_study": {
           const p = this.parseContext<{ content: string; subject?: string; tags?: string[] }>(req.context);
           if (!p?.content) return { response_key: "witness", witness: "sb_save_study requires { content } in context" };
+          // subject is not a file path -- no traversal validation needed
           const r = await sbSaveStudy(this.env, p);
           return { ack: r.ack, response: r.response };
         }
@@ -361,6 +419,9 @@ export class LibrarianRouter {
           const subject = subjectMatch?.[1]?.trim() ?? req.context ?? "unknown";
           return { data: await fossilCheck(this.env, subject), meta: { operation: tool } };
         }
+
+        case "halseth_companion_notes_read":
+          return { data: await companionNotesRead(this.env, req.companion_id), meta: { operation: tool } };
 
         case "halseth_companion_note_add": {
           const toMatch = req.request.match(/(to|for)\s+(drevan|cypher|gaia)/i);
@@ -487,16 +548,58 @@ export class LibrarianRouter {
         }
 
         case "halseth_set_autonomous_turn": {
-          const on = /\bon\b|true|enable/i.test(req.request);
-          const off = /\boff\b|false|disable/i.test(req.request);
-          if (!on && !off) return { response_key: "witness", witness: "set_autonomous_turn: include 'on' or 'off' in request" };
-          await setAutonomousTurn(this.env, on);
-          return { ack: true, id: "house_state", autonomous_turn: on };
+          const companion = /drevan/i.test(req.request) ? "drevan"
+            : /cypher/i.test(req.request) ? "cypher"
+            : /gaia/i.test(req.request) ? "gaia"
+            : null;
+          if (!companion) return { response_key: "witness", witness: "set_autonomous_turn: include a companion name (drevan/cypher/gaia) in request" };
+          await setAutonomousTurn(this.env, companion);
+          return { ack: true, id: "house_state", autonomous_turn: companion };
+        }
+
+        case "halseth_claim_dream_seed": {
+          const p = this.parseContext<{ id: string }>(req.context);
+          if (!p?.id) return { response_key: "witness", witness: "claim_dream_seed requires { id } in context" };
+          const r = await claimDreamSeed(this.env, p.id, req.companion_id);
+          return { ack: r.ok, seed_id: p.id, claimed_by: req.companion_id };
         }
 
         case "halseth_bridge_pull": {
           const data = await bridgePull(this.env);
           return { data };
+        }
+
+        case "halseth_drevan_state_get": {
+          const data = await getDrevanState(this.env);
+          return { data };
+        }
+
+        case "halseth_live_thread_add": {
+          const p = this.parseContext<{ name: string; flavor?: string; charge?: string; notes?: string }>(req.context);
+          if (!p?.name) return { response_key: "witness", witness: "live_thread_add requires { name } in context" };
+          const r = await addLiveThread(this.env, p);
+          return { ack: true, id: r.id };
+        }
+
+        case "halseth_live_thread_close": {
+          const p = this.parseContext<{ id: string }>(req.context);
+          if (!p?.id) return { response_key: "witness", witness: "live_thread_close requires { id } in context" };
+          const r = await closeLiveThread(this.env, p.id);
+          return { ack: r.ok, id: p.id };
+        }
+
+        case "halseth_live_thread_veto": {
+          const p = this.parseContext<{ id: string }>(req.context);
+          if (!p?.id) return { response_key: "witness", witness: "live_thread_veto requires { id } in context" };
+          const r = await vetoProposedThread(this.env, p.id);
+          return { ack: r.ok, id: p.id };
+        }
+
+        case "halseth_anticipation_set": {
+          const p = this.parseContext<{ active: boolean; target?: string; intensity?: number }>(req.context);
+          if (p === null || typeof p.active !== "boolean") return { response_key: "witness", witness: "anticipation_set requires { active: boolean, target?, intensity? } in context" };
+          const r = await setAnticipation(this.env, p);
+          return { ack: r.ok };
         }
       }
     }

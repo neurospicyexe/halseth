@@ -24,6 +24,9 @@ import {
 } from "./handlers/oauth";
 import { handleMcp } from "./mcp/server";
 import { handleLibrarian } from "./librarian/index.js";
+import { handleLibrarianMcp } from "./librarian/mcp.js";
+import { postStmEntry, getStmEntries } from "./handlers/stm.js";
+import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -33,6 +36,11 @@ const router = new Router()
 
   // Librarian — natural language companion entry point
   .on("POST", "/librarian", (request, env) => handleLibrarian(request, env))
+
+  // Librarian MCP -- single ask_librarian tool for companion Claude.ai projects
+  .on("POST",   "/librarian/mcp", (request, env) => handleLibrarianMcp(request, env))
+  .on("GET",    "/librarian/mcp", (request, env) => handleLibrarianMcp(request, env))
+  .on("DELETE", "/librarian/mcp", (request, env) => handleLibrarianMcp(request, env))
 
   // OAuth 2.0
   .on("GET",  "/.well-known/oauth-protected-resource",   async (request) => getOAuthProtectedResource(request))
@@ -61,6 +69,16 @@ const router = new Router()
   .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
   .on("GET", "/biometrics",        (request, env) => handleBiometricsList(request, env))
   .on("POST", "/biometrics",       (request, env) => handleBiometricsPost(request, env))
+
+  // STM — Discord bot short-term memory persistence
+  .on("POST", "/stm/entries", (request, env) => postStmEntry(request, env))
+  .on("GET",  "/stm/entries", (request, env) => getStmEntries(request, env))
+
+  // Distillation blocks — rolling LTM from Discord conversations
+  .on("POST", "/persona-blocks", (request, env) => postPersonaBlocks(request, env))
+  .on("GET",  "/persona-blocks", (request, env) => getPersonaBlocks(request, env))
+  .on("POST", "/human-blocks",   (request, env) => postHumanBlocks(request, env))
+  .on("GET",  "/human-blocks",   (request, env) => getHumanBlocks(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))
@@ -121,5 +139,10 @@ export default {
       console.error(err);
       return new Response("Internal server error", { status: 500 });
     }
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const { processQueue } = await import("./synthesis/index.js");
+    ctx.waitUntil(processQueue(env));
   },
 } satisfies ExportedHandler<Env>;

@@ -4,11 +4,23 @@
 // No HTTP, no MCP protocol. Zero latency.
 
 import { Env } from "../../types.js";
-import { loadSessionData, SessionLoadInput } from "../../mcp/tools/session_load.js";
+import {
+  loadSessionData, SessionLoadInput,
+  loadOrientData, SessionOrientInput,
+  loadGroundData, SessionGroundInput,
+} from "../../mcp/tools/session_load.js";
 import { generateId } from "../../db/queries.js";
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
+}
+
+export async function sessionOrient(env: Env, input: SessionOrientInput) {
+  return loadOrientData(env, input);
+}
+
+export async function sessionGround(env: Env, input: SessionGroundInput) {
+  return loadGroundData(env, input);
 }
 
 export async function taskList(env: Env, companionId: string) {
@@ -145,7 +157,7 @@ export async function auditRead(env: Env, limit = 20) {
 
 export async function sessionRead(env: Env, companionId: string) {
   return env.DB.prepare(
-    "SELECT * FROM sessions WHERE companion_id = ? ORDER BY started_at DESC LIMIT 1"
+    "SELECT * FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1"
   ).bind(companionId).first();
 }
 
@@ -362,14 +374,14 @@ export async function witnessLog(env: Env, params: {
   return { id };
 }
 
-export async function setAutonomousTurn(env: Env, value: boolean): Promise<{ ok: boolean }> {
+export async function setAutonomousTurn(env: Env, companion: "drevan" | "cypher" | "gaia"): Promise<{ ok: boolean }> {
   const now = new Date().toISOString();
   await env.DB.prepare(
     "INSERT OR IGNORE INTO house_state (id, spoon_count, love_meter, updated_at) VALUES ('main', 10, 50, ?)"
   ).bind(now).run();
   await env.DB.prepare(
     "UPDATE house_state SET autonomous_turn = ?, updated_at = ? WHERE id = 'main'"
-  ).bind(value ? 1 : 0, now).run();
+  ).bind(companion, now).run();
   return { ok: true };
 }
 
@@ -389,6 +401,21 @@ export async function addCompanionNote(
   return { id };
 }
 
+export async function claimDreamSeed(env: Env, seedId: string, companionId: string): Promise<{ ok: boolean }> {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "UPDATE dream_seeds SET claimed_at = ?, claimed_by = ? WHERE id = ? AND claimed_at IS NULL"
+  ).bind(now, companionId, seedId).run();
+  return { ok: true };
+}
+
+export async function companionNotesRead(env: Env, companionId: string, limit = 20) {
+  const r = await env.DB.prepare(
+    "SELECT * FROM inter_companion_notes WHERE to_id = ? OR from_id = ? ORDER BY created_at DESC LIMIT ?"
+  ).bind(companionId, companionId, limit).all();
+  return r.results ?? [];
+}
+
 export async function bridgePull(env: Env): Promise<Record<string, unknown>> {
   if (!env.BRIDGE_URL) {
     return { items: [], note: "bridge not configured" };
@@ -402,4 +429,59 @@ export async function bridgePull(env: Env): Promise<Record<string, unknown>> {
   } catch (e) {
     return { items: [], error: String(e) };
   }
+}
+
+// ── Drevan v2 state operations ────────────────────────────────────────────────
+
+export async function getDrevanState(env: Env): Promise<Record<string, unknown>> {
+  const row = await env.DB.prepare(
+    "SELECT * FROM companion_state WHERE companion_id = 'drevan' ORDER BY updated_at DESC LIMIT 1"
+  ).first<Record<string, unknown>>();
+  if (!row) return { note: "no drevan state yet" };
+  return row;
+}
+
+export async function addLiveThread(
+  env: Env,
+  params: { name: string; flavor?: string; charge?: string; notes?: string },
+): Promise<{ id: string }> {
+  const id = generateId();
+  await env.DB.prepare(
+    `INSERT INTO live_threads (id, companion_id, name, flavor, charge, notes, status, active_since_count, created_at)
+     VALUES (?, 'drevan', ?, ?, ?, ?, 'active', 0, datetime('now'))`
+  ).bind(id, params.name, params.flavor ?? null, params.charge ?? "medium", params.notes ?? null).run();
+  return { id };
+}
+
+export async function closeLiveThread(
+  env: Env,
+  threadId: string,
+): Promise<{ ok: boolean }> {
+  await env.DB.prepare(
+    "UPDATE live_threads SET status = 'closed', closed_at = datetime('now') WHERE id = ? AND companion_id = 'drevan'"
+  ).bind(threadId).run();
+  return { ok: true };
+}
+
+export async function vetoProposedThread(
+  env: Env,
+  threadId: string,
+): Promise<{ ok: boolean }> {
+  await env.DB.prepare(
+    "UPDATE live_threads SET status = 'vetoed', vetoed_at = datetime('now') WHERE id = ? AND companion_id = 'drevan'"
+  ).bind(threadId).run();
+  return { ok: true };
+}
+
+export async function setAnticipation(
+  env: Env,
+  params: { active: boolean; target?: string; intensity?: number },
+): Promise<{ ok: boolean }> {
+  const anticipation = params.active
+    ? JSON.stringify({ active: true, target: params.target ?? null, intensity: params.intensity ?? 0.5, since: 0 })
+    : null;
+  await env.DB.prepare(
+    "UPDATE companion_state SET anticipation = ?, updated_at = datetime('now') WHERE companion_id = 'drevan'"
+  ).bind(anticipation).run();
+  return { ok: true };
 }

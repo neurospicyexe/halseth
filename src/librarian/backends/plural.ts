@@ -42,14 +42,14 @@ export async function getMember(env: Env, member_input: string): Promise<{ name:
   }
 }
 
-export async function updateMemberDescription(env: Env, member_input: string, description: string): Promise<{ success: boolean; name?: string; error?: string }> {
+export async function updateMemberDescription(env: Env, member_input: string, description: string): Promise<{ success: boolean; member_id?: string; name?: string; error?: string }> {
   try {
     const res = await env.PLURAL.fetch(new Request("https://plural/internal/update-description", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ member_input, description }),
     }));
-    const data = await res.json() as { success: boolean; name?: string; error?: string };
+    const data = await res.json() as { success: boolean; member_id?: string; name?: string; error?: string };
     return data;
   } catch (err) {
     return { success: false, error: String(err) };
@@ -81,5 +81,40 @@ export async function getFrontHistory(env: Env, limit?: number): Promise<{ membe
     return await res.json() as { member_id: string; name: string; startTime: number }[];
   } catch {
     return [];
+  }
+}
+
+export async function logFrontChange(env: Env, params: {
+  member_id: string;
+  status: "fronting" | "co-con" | "unknown";
+  custom_status?: string;
+}): Promise<{ success: boolean; result?: string; front_id?: string | null; member_id?: string; name?: string; error?: string }> {
+  try {
+    const res = await env.PLURAL.fetch(new Request("https://plural/internal/log-front-change", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }));
+    return await res.json() as { success: boolean; result?: string; front_id?: string | null; member_id?: string; name?: string; error?: string };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function addMemberNote(env: Env, params: {
+  member_id: string;
+  note: string;
+  title?: string;
+  color?: string;
+}): Promise<{ success: boolean; id?: string | null; member_id?: string; name?: string; error?: string }> {
+  try {
+    const res = await env.PLURAL.fetch(new Request("https://plural/internal/add-member-note", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }));
+    return await res.json() as { success: boolean; id?: string | null; member_id?: string; name?: string; error?: string };
+  } catch (err) {
+    return { success: false, error: String(err) };
   }
 }

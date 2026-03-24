@@ -17,6 +17,15 @@ export const BUDGET_CHARS = {
 
 export type ResponseKey = "ready_prompt" | "summary" | "witness";
 
+// Raw data truncation (no markdown stripping -- companions parse the structure).
+// 3000 chars ~750 tokens -- enough for several search excerpts without flooding context.
+export const RAW_DATA_CHARS = 3000;
+
+export function truncateRaw(text: string): string {
+  if (text.length <= RAW_DATA_CHARS) return text;
+  return text.slice(0, RAW_DATA_CHARS) + "\n…[truncated]";
+}
+
 export function truncate(text: string, key: ResponseKey): string {
   const limit = BUDGET_CHARS[key];
   // Strip markdown: remove **, ##, __, >, ` characters

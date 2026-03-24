@@ -53,6 +53,14 @@ service = "nullsafe-plural-v2"
 
 # Secrets (set via `wrangler secret put SECOND_BRAIN_TOKEN`):
 # SECOND_BRAIN_TOKEN — OAuth token for mcp.softcrashentity.com
+# DEEPSEEK_API_KEY   — DeepSeek V3 API key (classifier + synthesis worker)
+
+# ── Cron triggers ─────────────────────────────────────────────────────────────
+[triggers]
+crons = [
+  "*/1 * * * *",   # synthesis queue processor (session summaries, ~1min after close)
+  "0 11 * * *",    # day context synthesis (6am ET / 11am UTC) -- Phase 2, stub for now
+]
 
 # ── Local dev overrides ───────────────────────────────────────────────────────
 [env.local]

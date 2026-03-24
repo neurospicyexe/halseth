@@ -45,6 +45,27 @@ interface CompanionState {
   heat: string | null;
   reach: string | null;
   weight: string | null;
+  // v2 floats (migration 0022)
+  heat_value: number | null;
+  reach_value: number | null;
+  weight_value: number | null;
+  prompt_context: string | null;
+  // Priority 4: three-layer affective stack (migration 0025)
+  surface_emotion: string | null;
+  surface_intensity: number | null;
+  undercurrent_emotion: string | null;
+  undercurrent_intensity: number | null;
+  background_emotion: string | null;
+  background_intensity: number | null;
+  current_mood: string | null;
+  // Priority 4: generic SOMA floats (migration 0025)
+  soma_float_1: number | null;
+  soma_float_2: number | null;
+  soma_float_3: number | null;
+  float_1_label: string | null;
+  float_2_label: string | null;
+  float_3_label: string | null;
+  compound_state: string | null;
   updated_at: string;
 }
 
@@ -95,6 +116,111 @@ export interface SessionLoadInput {
   prior_handover_id?: string;
 }
 
+// ── Orient: session creation + identity anchoring ────────────────────────────
+// Returns who-am-I context: identity, SOMA floats, somatic snapshot, last anchor.
+// Session record is created here; session_id flows to ground.
+export type SessionOrientInput = SessionLoadInput;
+
+export async function loadOrientData(env: Env, input: SessionOrientInput) {
+  const sessionId = generateId();
+  const now = new Date().toISOString();
+
+  const stmts = [
+    env.DB.prepare(`
+      INSERT INTO sessions (
+        id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
+        emotional_frequency, key_signature, active_anchor, facet, depth, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      sessionId, now, now,
+      input.session_type ?? "work",
+      input.companion_id, input.front_state,
+      input.hrv_range ?? null, input.emotional_frequency ?? null,
+      input.key_signature ?? null, input.active_anchor ?? null,
+      input.facet ?? null, input.depth ?? null, input.notes ?? null,
+    ),
+  ];
+  if (input.prior_handover_id) {
+    stmts.push(env.DB.prepare(
+      "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
+    ).bind(input.prior_handover_id));
+  }
+  await env.DB.batch(stmts);
+
+  const [state, somaticRaw, lastHandover] = await Promise.all([
+    env.DB.prepare("SELECT * FROM companion_state WHERE companion_id = ?")
+      .bind(input.companion_id).first<CompanionState>(),
+    env.DB.prepare("SELECT * FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1")
+      .bind(input.companion_id).first<SomaticSnapshot>(),
+    env.DB.prepare("SELECT active_anchor, motion_state FROM handover_packets ORDER BY created_at DESC LIMIT 1")
+      .first<{ active_anchor: string | null; motion_state: string | null }>(),
+  ]);
+
+  return {
+    session_id: sessionId,
+    companion: {
+      id: input.companion_id,
+      ...COMPANION_IDENTITY[input.companion_id as CompanionId],
+    },
+    state: state ?? null,
+    somatic: somaticRaw ? { ...somaticRaw, stale: somaticRaw.stale_after < now } : null,
+    last_anchor: lastHandover?.active_anchor ?? null,
+    last_motion_state: lastHandover?.motion_state ?? null,
+  };
+}
+
+// ── Ground: operational context, cross-session pull ───────────────────────────
+// Returns what's-happening context: tasks, notes/deltas across ALL sessions,
+// live threads, last synthesis. Does NOT create a session record.
+// Cross-session is the critical property: notes and deltas are pulled by
+// companion_id regardless of session_id, giving real thread continuity.
+export interface SessionGroundInput {
+  session_id: string;
+  companion_id: "drevan" | "cypher" | "gaia";
+}
+
+export async function loadGroundData(env: Env, input: SessionGroundInput) {
+  const [openTasksResult, recentNotes, recentDeltas, lastSynthesis, liveThreads] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'")
+      .first<{ count: number }>(),
+    // Cross-session: last 20 notes involving this companion (not scoped to any session)
+    env.DB.prepare(
+      "SELECT id, from_id, to_id, content, created_at FROM inter_companion_notes WHERE to_id = ? OR from_id = ? OR to_id IS NULL ORDER BY created_at DESC LIMIT 20"
+    ).bind(input.companion_id, input.companion_id)
+      .all<{ id: string; from_id: string; to_id: string | null; content: string; created_at: string }>(),
+    // Cross-session: last 20 relational deltas for this companion
+    env.DB.prepare(
+      "SELECT delta_text, valence, initiated_by, agent, created_at FROM relational_deltas WHERE delta_text IS NOT NULL AND (companion_id = ? OR agent = ?) ORDER BY created_at DESC LIMIT 20"
+    ).bind(input.companion_id, input.companion_id)
+      .all<{ delta_text: string; valence: string; initiated_by: string | null; agent: string | null; created_at: string }>(),
+    // Latest synthesis summary for this companion
+    env.DB.prepare(
+      "SELECT narrative, emotional_register, open_threads, key_decisions FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(input.companion_id)
+      .first<{ narrative: string | null; emotional_register: string | null; open_threads: string | null; key_decisions: string | null }>(),
+    // Active live threads (Drevan v2 -- other companions return empty)
+    env.DB.prepare(
+      "SELECT id, name, flavor, charge, notes, created_at FROM live_threads WHERE companion_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 10"
+    ).bind(input.companion_id)
+      .all<{ id: string; name: string; flavor: string | null; charge: string | null; notes: string | null; created_at: string }>(),
+  ]);
+
+  return {
+    session_id: input.session_id,
+    open_tasks: openTasksResult?.count ?? 0,
+    recent_notes: recentNotes.results ?? [],
+    recent_deltas: recentDeltas.results ?? [],
+    last_synthesis: lastSynthesis ? {
+      narrative: lastSynthesis.narrative,
+      emotional_register: lastSynthesis.emotional_register,
+      open_threads: lastSynthesis.open_threads ? JSON.parse(lastSynthesis.open_threads) as string[] : null,
+      key_decisions: lastSynthesis.key_decisions ? JSON.parse(lastSynthesis.key_decisions) as string[] : null,
+    } : null,
+    live_threads: liveThreads.results ?? [],
+  };
+}
+
+// ── Legacy: single-call boot (backward compat) ────────────────────────────────
 export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const sessionId = generateId();
   const now = new Date().toISOString();
