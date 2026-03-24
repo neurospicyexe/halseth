@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
+import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
 
 export function registerSessionTools(server: McpServer, env: Env): void {
 
@@ -93,6 +94,11 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       const handoverId = generateId();
       const now = new Date().toISOString();
 
+      // Read companion_id now -- needed for enqueue before we return
+      const sessionRow = await env.DB.prepare(
+        "SELECT companion_id FROM sessions WHERE id = ?"
+      ).bind(input.session_id).first<{ companion_id: string | null }>();
+
       await env.DB.batch([
         env.DB.prepare(`
           INSERT INTO handover_packets
@@ -120,6 +126,15 @@ export function registerSessionTools(server: McpServer, env: Env): void {
           input.session_id,
         ),
       ]);
+
+      // Enqueue synthesis -- non-blocking, processed by scheduled cron
+      await enqueueSessionSummary(input.session_id, sessionRow?.companion_id ?? null, env)
+        .catch(err => console.error("[session_close] enqueue failed (non-fatal):", err));
+
+      if (sessionRow?.companion_id === "drevan") {
+        await enqueueDrevanState(env)
+          .catch(err => console.error("[session_close] drevan_state enqueue failed (non-fatal):", err));
+      }
 
       return {
         content: [{ type: "text", text: JSON.stringify({ handover_id: handoverId, closed_at: now }) }],

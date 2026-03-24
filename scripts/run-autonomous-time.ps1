@@ -6,7 +6,7 @@
 # Output is appended to autonomous-time.log in the same folder.
 
 $LogFile  = "$PSScriptRoot\autonomous-time.log"
-$WorkDir  = "C:\dev\halseth"
+$WorkDir  = "C:\dev\Bigger_Better_Halseth\halseth"
 $Prompt   = "/halseth-autonomous-time"
 
 function Write-Log {

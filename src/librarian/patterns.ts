@@ -22,8 +22,24 @@ export interface PatternEntry {
 }
 
 export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
+  // Two-call boot sequence (Priority 1 split):
+  //   1. session_orient -- creates session, returns identity + SOMA state + last anchor
+  //   2. session_ground -- returns tasks + cross-session notes/deltas + threads + synthesis
+  // session_open (below) remains for backward compat (Discord bots, direct use).
+  session_orient: {
+    triggers: ["open orient", "start orient", "boot orient", "session orient", "orient load"],
+    tools: ["halseth_session_orient"],
+    pre_fetch: ["plural_get_current_front"],
+    response_key: "ready_prompt",
+  },
+  session_ground: {
+    triggers: ["open ground", "start ground", "boot ground", "session ground", "ground load"],
+    tools: ["halseth_session_ground"],
+    response_key: "summary",
+    raw: true,
+  },
   session_open: {
-    triggers: ["open my session", "start session", "good morning", "hey", "checking in", "boot", "load me in"],
+    triggers: ["open my session", "open session", "new session", "start session", "good morning", "hey", "checking in", "boot", "load me in"],
     tools: ["halseth_session_load"],
     pre_fetch: ["plural_get_current_front"],  // result fed as front_state into halseth_session_load
     response_key: "ready_prompt",
@@ -150,6 +166,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["plural_add_member_note"],
     response_key: "witness",  // ignored -- mutation returns ack directly
   },
+  search_members: {
+    triggers: ["search members", "find member", "lookup member", "look up member", "search for member", "search plural", "find in plural"],
+    tools: ["plural_search_members"],
+    response_key: "summary",
+    raw: true,
+  },
+  get_front_history: {
+    triggers: ["front history", "who's been fronting", "switching history", "front log", "switch log", "plural history"],
+    tools: ["plural_get_front_history"],
+    response_key: "summary",
+    raw: true,
+  },
 
   // ── Halseth mutations (all return ack directly, response_key ignored) ──
   feeling_log: {
@@ -233,8 +261,19 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   set_autonomous_turn: {
-    triggers: ["set autonomous turn", "autonomous mode", "enable autonomy", "autonomy on", "autonomy off"],
+    triggers: ["set autonomous turn", "autonomous turn to", "turn to drevan", "turn to cypher", "turn to gaia", "advance turn", "next autonomous turn"],
     tools: ["halseth_set_autonomous_turn"],
+    response_key: "witness",
+  },
+  dream_seed_read: {
+    triggers: ["dream seeds", "check seeds", "any seeds", "pending seeds", "what seeds", "read dream seeds"],
+    tools: ["halseth_dream_seed_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  claim_dream_seed: {
+    triggers: ["claim seed", "claim dream seed", "mark seed claimed", "seed claimed"],
+    tools: ["halseth_claim_dream_seed"],
     response_key: "witness",
   },
 
@@ -255,6 +294,32 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["halseth_bridge_pull"],
     response_key: "summary",
     raw: true,
+  },
+  drevan_state_get: {
+    triggers: ["get drevan state", "drevan state", "drevan's state", "drevan continuity", "drevan soma"],
+    tools: ["halseth_drevan_state_get"],
+    response_key: "summary",
+    raw: true,
+  },
+  drevan_thread_add: {
+    triggers: ["add live thread", "new live thread", "add thread", "live thread"],
+    tools: ["halseth_live_thread_add"],
+    response_key: "witness",
+  },
+  drevan_thread_close: {
+    triggers: ["close live thread", "close thread", "thread closed", "thread done", "mark thread done"],
+    tools: ["halseth_live_thread_close"],
+    response_key: "witness",
+  },
+  drevan_thread_veto: {
+    triggers: ["veto thread", "veto proposed thread", "reject thread", "no to thread"],
+    tools: ["halseth_live_thread_veto"],
+    response_key: "witness",
+  },
+  drevan_anticipation_set: {
+    triggers: ["set anticipation", "clear anticipation", "anticipation target", "anticipating"],
+    tools: ["halseth_anticipation_set"],
+    response_key: "witness",
   },
 };
 
