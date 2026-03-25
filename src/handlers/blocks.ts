@@ -39,8 +39,11 @@ async function writeBatch(
   await env.DB.batch(stmts);
 }
 
+const VALID_COMPANIONS = new Set(["drevan", "cypher", "gaia"]);
+
 export async function postPersonaBlocks(request: Request, env: Env): Promise<Response> {
-  if (!authGuard(request, env)) return new Response("Unauthorized", { status: 401 });
+  const denied = authGuard(request, env);
+  if (denied) return denied;
 
   let body: unknown;
   try { body = await request.json(); } catch { return new Response("Bad JSON", { status: 400 }); }
@@ -51,6 +54,7 @@ export async function postPersonaBlocks(request: Request, env: Env): Promise<Res
   const blocks     = Array.isArray(b["blocks"]) ? b["blocks"] : [];
 
   if (!companionId || !channelId) return new Response("Missing companion_id or channel_id", { status: 400 });
+  if (!VALID_COMPANIONS.has(companionId)) return new Response("Invalid companion_id", { status: 400 });
   if (blocks.length === 0 || blocks.length > BATCH_MAX) return new Response("blocks must be 1-20 items", { status: 400 });
   if (!blocks.every(validateBlock)) return new Response("Invalid block entry", { status: 400 });
 
@@ -62,7 +66,8 @@ export async function postPersonaBlocks(request: Request, env: Env): Promise<Res
 }
 
 export async function postHumanBlocks(request: Request, env: Env): Promise<Response> {
-  if (!authGuard(request, env)) return new Response("Unauthorized", { status: 401 });
+  const denied = authGuard(request, env);
+  if (denied) return denied;
 
   let body: unknown;
   try { body = await request.json(); } catch { return new Response("Bad JSON", { status: 400 }); }
@@ -73,6 +78,7 @@ export async function postHumanBlocks(request: Request, env: Env): Promise<Respo
   const blocks     = Array.isArray(b["blocks"]) ? b["blocks"] : [];
 
   if (!companionId || !channelId) return new Response("Missing companion_id or channel_id", { status: 400 });
+  if (!VALID_COMPANIONS.has(companionId)) return new Response("Invalid companion_id", { status: 400 });
   if (blocks.length === 0 || blocks.length > BATCH_MAX) return new Response("blocks must be 1-20 items", { status: 400 });
   if (!blocks.every(validateBlock)) return new Response("Invalid block entry", { status: 400 });
 
@@ -84,7 +90,8 @@ export async function postHumanBlocks(request: Request, env: Env): Promise<Respo
 }
 
 export async function getPersonaBlocks(request: Request, env: Env): Promise<Response> {
-  if (!authGuard(request, env)) return new Response("Unauthorized", { status: 401 });
+  const denied = authGuard(request, env);
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const companionId = url.searchParams.get("companion_id") ?? "";
@@ -104,7 +111,8 @@ export async function getPersonaBlocks(request: Request, env: Env): Promise<Resp
 }
 
 export async function getHumanBlocks(request: Request, env: Env): Promise<Response> {
-  if (!authGuard(request, env)) return new Response("Unauthorized", { status: 401 });
+  const denied = authGuard(request, env);
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const companionId = url.searchParams.get("companion_id") ?? "";

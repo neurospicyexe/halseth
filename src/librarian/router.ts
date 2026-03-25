@@ -393,7 +393,9 @@ export class LibrarianRouter {
 
         case "halseth_list_read": {
           const listMatch = req.request.match(/list\s+(?:called\s+|named\s+)?["']?([a-z0-9 _-]+)["']?/i);
-          return { data: await listRead(this.env, listMatch?.[1]?.trim()), meta: { operation: tool } };
+          const listName = listMatch?.[1]?.trim();
+          if (listName && listName.length > 100) return { error: "list name too long", meta: { operation: tool } };
+          return { data: await listRead(this.env, listName), meta: { operation: tool } };
         }
 
         case "halseth_event_list":
@@ -417,6 +419,7 @@ export class LibrarianRouter {
         case "halseth_fossil_check": {
           const subjectMatch = req.request.match(/fossil\s+(?:check\s+)?(?:for\s+)?["']?([a-z0-9 _-]+)["']?/i);
           const subject = subjectMatch?.[1]?.trim() ?? req.context ?? "unknown";
+          if (subject.length > 100) return { error: "fossil subject too long", meta: { operation: tool } };
           return { data: await fossilCheck(this.env, subject), meta: { operation: tool } };
         }
 

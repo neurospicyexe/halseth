@@ -30,6 +30,7 @@ export async function postStmEntry(request: Request, env: Env): Promise<Response
   catch { return new Response("Bad JSON", { status: 400 }); }
 
   const { companion_id, channel_id, role, content, author_name } = body;
+  const VALID_COMPANIONS = new Set(["drevan", "cypher", "gaia"]);
   if (
     typeof companion_id !== "string" || !companion_id ||
     typeof channel_id !== "string" || !channel_id ||
@@ -37,6 +38,9 @@ export async function postStmEntry(request: Request, env: Env): Promise<Response
     (role !== "user" && role !== "assistant")
   ) {
     return new Response("Missing or invalid fields", { status: 400 });
+  }
+  if (!VALID_COMPANIONS.has(companion_id)) {
+    return new Response("Invalid companion_id", { status: 400 });
   }
 
   const id = generateId();
