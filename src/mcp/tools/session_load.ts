@@ -220,6 +220,31 @@ export async function loadGroundData(env: Env, input: SessionGroundInput) {
   };
 }
 
+// ── Light ground: lean boot for casual sessions ───────────────────────────────
+// Returns only task count + last synthesis. No notes, deltas, or live threads.
+// Companions choose this when session_type is hangout or context is light.
+export async function loadLightGroundData(env: Env, input: SessionGroundInput) {
+  const [openTasksResult, lastSynthesis] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'")
+      .first<{ count: number }>(),
+    env.DB.prepare(
+      "SELECT narrative, emotional_register, open_threads, key_decisions FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(input.companion_id)
+      .first<{ narrative: string | null; emotional_register: string | null; open_threads: string | null; key_decisions: string | null }>(),
+  ]);
+
+  return {
+    session_id: input.session_id,
+    open_tasks: openTasksResult?.count ?? 0,
+    last_synthesis: lastSynthesis ? {
+      narrative: lastSynthesis.narrative,
+      emotional_register: lastSynthesis.emotional_register,
+      open_threads: lastSynthesis.open_threads ? JSON.parse(lastSynthesis.open_threads) as string[] : null,
+      key_decisions: lastSynthesis.key_decisions ? JSON.parse(lastSynthesis.key_decisions) as string[] : null,
+    } : null,
+  };
+}
+
 // ── Legacy: single-call boot (backward compat) ────────────────────────────────
 export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const sessionId = generateId();

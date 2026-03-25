@@ -148,10 +148,18 @@ export function buildResponse(
   const frontState = (payload as unknown as Record<string, unknown>).front_state as string | null ?? null;
 
   if (responseKey === "ready_prompt") {
+    const s = payload.state;
     return {
       ready_prompt: buildReadyPrompt(companionId, payload),
       session_id: payload.session_id,
       response_key: "ready_prompt",
+      soma_float_1: s?.soma_float_1 ?? null,
+      soma_float_2: s?.soma_float_2 ?? null,
+      soma_float_3: s?.soma_float_3 ?? null,
+      current_mood: s?.current_mood ?? null,
+      compound_state: s?.compound_state ?? null,
+      surface_emotion: s?.surface_emotion ?? null,
+      undercurrent_emotion: s?.undercurrent_emotion ?? null,
       meta: {
         front_state: frontState,
         pending_notes: payload.pending_notes?.length ?? 0,

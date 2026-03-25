@@ -394,8 +394,9 @@ export async function runDrevanState(env: Env): Promise<void> {
   await env.DB.prepare(`
     INSERT INTO companion_state
       (companion_id, heat, heat_value, reach, reach_value, weight, weight_value,
-       processing_type, last_contact, last_resolution, prompt_context, updated_at)
-    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       processing_type, last_contact, last_resolution, prompt_context,
+       soma_float_1, soma_float_2, soma_float_3, compound_state, updated_at)
+    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(companion_id) DO UPDATE SET
       heat            = excluded.heat,
       heat_value      = excluded.heat_value,
@@ -407,6 +408,10 @@ export async function runDrevanState(env: Env): Promise<void> {
       last_contact    = excluded.last_contact,
       last_resolution = excluded.last_resolution,
       prompt_context  = excluded.prompt_context,
+      soma_float_1    = excluded.soma_float_1,
+      soma_float_2    = excluded.soma_float_2,
+      soma_float_3    = excluded.soma_float_3,
+      compound_state  = excluded.compound_state,
       updated_at      = datetime('now')
   `).bind(
     heatState, heatVal,
@@ -416,6 +421,7 @@ export async function runDrevanState(env: Env): Promise<void> {
     JSON.stringify(lastContact),
     lastResolution ? JSON.stringify(lastResolution) : null,
     promptContext,
+    heatVal, reachVal, weightVal, compoundState,
   ).run();
 
   // ── 13. Age live threads ──────────────────────────────────────────────────

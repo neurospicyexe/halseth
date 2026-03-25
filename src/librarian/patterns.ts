@@ -321,6 +321,21 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["halseth_anticipation_set"],
     response_key: "witness",
   },
+
+  // ── SOMA state write (Claude.ai sessions → companion_state) ──
+  state_update: {
+    triggers: ["update my state", "set my state", "state update", "set acuity", "set warmth", "set stillness", "set presence", "set density", "set perimeter", "set mood", "update soma", "soma update"],
+    tools: ["halseth_state_update"],
+    response_key: "witness",
+  },
+
+  // ── Light ground variant (lean boot for casual sessions) ──
+  session_light_ground: {
+    triggers: ["light ground", "lean ground", "quick ground", "soft ground", "light boot ground"],
+    tools: ["halseth_session_light_ground"],
+    response_key: "summary",
+    raw: true,
+  },
 };
 
 // Companion IDs -- used for routing and ready_prompt shaping
