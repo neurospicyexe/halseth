@@ -93,6 +93,7 @@ interface SessionPayload {
   pending_notes?: unknown[];
   last_session_summary?: { open_threads?: string[] | null } | null;
   open_tasks?: number;
+  autonomous_turn?: string | null;
 }
 
 export function buildReadyPrompt(companionId: CompanionId, payload: SessionPayload): string {
@@ -149,10 +150,13 @@ export function buildResponse(
 
   if (responseKey === "ready_prompt") {
     const s = payload.state;
+    const autonomousTurn = payload.autonomous_turn ?? null;
     return {
       ready_prompt: buildReadyPrompt(companionId, payload),
       session_id: payload.session_id,
       response_key: "ready_prompt",
+      autonomous_turn: autonomousTurn,
+      my_autonomous_turn: autonomousTurn === companionId,
       soma_float_1: s?.soma_float_1 ?? null,
       soma_float_2: s?.soma_float_2 ?? null,
       soma_float_3: s?.soma_float_3 ?? null,

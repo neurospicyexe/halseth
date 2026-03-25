@@ -200,10 +200,14 @@ export class LibrarianRouter {
             session_type: req.session_type ?? "work",
           });
           const os = payload.state;
+          const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
+          const isMyTurn = autonomousTurn === req.companion_id;
           return {
             ready_prompt: buildOrientPrompt(req.companion_id, payload),
             session_id: payload.session_id,
             response_key: "ready_prompt",
+            autonomous_turn: autonomousTurn,
+            my_autonomous_turn: isMyTurn,
             soma_float_1: os?.soma_float_1 ?? null,
             soma_float_2: os?.soma_float_2 ?? null,
             soma_float_3: os?.soma_float_3 ?? null,
