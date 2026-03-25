@@ -147,13 +147,15 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
   }
   await env.DB.batch(stmts);
 
-  const [state, somaticRaw, lastHandover] = await Promise.all([
+  const [state, somaticRaw, lastHandover, houseRow] = await Promise.all([
     env.DB.prepare("SELECT * FROM companion_state WHERE companion_id = ?")
       .bind(input.companion_id).first<CompanionState>(),
     env.DB.prepare("SELECT * FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1")
       .bind(input.companion_id).first<SomaticSnapshot>(),
     env.DB.prepare("SELECT active_anchor, motion_state FROM handover_packets ORDER BY created_at DESC LIMIT 1")
       .first<{ active_anchor: string | null; motion_state: string | null }>(),
+    env.DB.prepare("SELECT autonomous_turn FROM house_state WHERE id = 'main'")
+      .first<{ autonomous_turn: string | null }>(),
   ]);
 
   return {
@@ -166,6 +168,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     somatic: somaticRaw ? { ...somaticRaw, stale: somaticRaw.stale_after < now } : null,
     last_anchor: lastHandover?.active_anchor ?? null,
     last_motion_state: lastHandover?.motion_state ?? null,
+    autonomous_turn: houseRow?.autonomous_turn ?? null,
   };
 }
 
@@ -180,7 +183,7 @@ export interface SessionGroundInput {
 }
 
 export async function loadGroundData(env: Env, input: SessionGroundInput) {
-  const [openTasksResult, recentNotes, recentDeltas, lastSynthesis, liveThreads] = await Promise.all([
+  const [openTasksResult, recentNotes, recentDeltas, lastSynthesis, liveThreads, pendingSeedsResult] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'")
       .first<{ count: number }>(),
     // Cross-session: last 20 notes involving this companion (not scoped to any session)
@@ -203,11 +206,16 @@ export async function loadGroundData(env: Env, input: SessionGroundInput) {
       "SELECT id, name, flavor, charge, notes, created_at FROM live_threads WHERE companion_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 10"
     ).bind(input.companion_id)
       .all<{ id: string; name: string; flavor: string | null; charge: string | null; notes: string | null; created_at: string }>(),
+    // Pending dream seeds for this companion (or broadcast)
+    env.DB.prepare(
+      "SELECT COUNT(*) as count FROM dream_seeds WHERE claimed_at IS NULL AND (for_companion IS NULL OR for_companion = ?)"
+    ).bind(input.companion_id).first<{ count: number }>(),
   ]);
 
   return {
     session_id: input.session_id,
     open_tasks: openTasksResult?.count ?? 0,
+    pending_seeds: pendingSeedsResult?.count ?? 0,
     recent_notes: recentNotes.results ?? [],
     recent_deltas: recentDeltas.results ?? [],
     last_synthesis: lastSynthesis ? {
@@ -326,10 +334,13 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     };
   }
 
-  // 6. Count open tasks
-  const openTasksResult = await env.DB.prepare(
-    `SELECT COUNT(*) as count FROM tasks WHERE status = 'open'`,
-  ).first<{ count: number }>();
+  // 6. Count open tasks + fetch autonomous_turn in parallel
+  const [openTasksResult, houseRow] = await Promise.all([
+    env.DB.prepare(`SELECT COUNT(*) as count FROM tasks WHERE status = 'open'`)
+      .first<{ count: number }>(),
+    env.DB.prepare("SELECT autonomous_turn FROM house_state WHERE id = 'main'")
+      .first<{ autonomous_turn: string | null }>(),
+  ]);
   const openTasks = openTasksResult?.count ?? 0;
 
   // 7. Read unread inter_companion_notes addressed to this companion or broadcast (to_id IS NULL)
@@ -362,6 +373,7 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     last_session_summary: lastSessionSummary,
     pending_notes: pendingNotes,
     open_tasks: openTasks,
+    autonomous_turn: houseRow?.autonomous_turn ?? null,
   };
 }
 
