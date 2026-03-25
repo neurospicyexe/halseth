@@ -1,0 +1,19 @@
+# ── Halseth example configuration ────────────────────────────────────────────
+# Copy to wrangler.toml [vars] or reference from your deployment pipeline.
+# These are the modularity knobs. Edit here; do not hardcode values in src/.
+
+[flags]
+# Enable multi-companion deployments.
+# false → enforce single-companion (409 on second POST /companions)
+# true  → unlimited companions
+PLURALITY_ENABLED = "false"
+
+# Enable companion-mode.
+# false → pure memory-store; /companions routes return 403
+# true  → full companion-scoped memory and relational delta support
+COMPANIONS_ENABLED = "true"
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+# Secrets (API keys, signing secrets) go in .dev.vars for local dev and in
+# Cloudflare's secret store for production. Never commit .dev.vars.
+# See .dev.vars.example below for the expected shape.

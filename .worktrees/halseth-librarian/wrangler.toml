@@ -1,0 +1,59 @@
+name = "halseth"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── D1 (relational store) ────────────────────────────────────────────────────
+[[d1_databases]]
+binding  = "DB"
+database_name = "halseth"
+database_id   = "4b5ed7ce-8222-47ae-bca9-56eca4a46157"
+migrations_dir = "migrations"
+
+# ── R2 (artifact / blob store) ───────────────────────────────────────────────
+[[r2_buckets]]
+binding     = "BUCKET"
+bucket_name = "halseth-artifacts"
+
+# ── Config flags & household identity ────────────────────────────────────────
+# These are the modularity knobs — change here, not in code.
+[vars]
+PLURALITY_ENABLED    = "false"   # "true" enables front_state validation against system.members
+COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
+COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
+SYSTEM_NAME          = "Halseth"
+SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
+BRIDGE_URL           = ""   # partner's Halseth base URL; leave empty to disable bridge
+BRIDGE_SECRET        = ""   # shared symmetric secret; same value in both deployments
+
+# Secrets — set via `wrangler secret put <KEY>` for production.
+# For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.
+# ADMIN_SECRET    — protects POST /admin/bootstrap
+# MCP_AUTH_SECRET — protects POST /mcp (optional; endpoint is open if unset)
+
+# ── Workers AI (embeddings for Vectorize) ────────────────────────────────────
+[ai]
+binding = "AI"
+
+# ── Vectorize (semantic memory search) ───────────────────────────────────────
+[[vectorize]]
+binding    = "VECTORIZE"
+index_name = "halseth-memories"
+
+# ── Librarian KV (tool registry + pattern matching) ──────────────────────────
+[[kv_namespaces]]
+binding    = "LIBRARIAN_KV"
+id         = "a9a3b20ea0224c3997bfb4d32bbbc276"
+preview_id = "e3f0d2a9e27b415781d0384d59885546"
+
+# ── Service Binding: nullsafe-plural-v2 ────────────────────────────────────────
+[[services]]
+binding = "PLURAL"
+service = "nullsafe-plural-v2"
+
+# Secrets (set via `wrangler secret put SECOND_BRAIN_TOKEN`):
+# SECOND_BRAIN_TOKEN — OAuth token for mcp.softcrashentity.com
+
+# ── Local dev overrides ───────────────────────────────────────────────────────
+[env.local]
+# Secrets live in .dev.vars (gitignored). See config/.dev.vars.example.
