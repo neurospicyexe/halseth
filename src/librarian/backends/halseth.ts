@@ -301,19 +301,45 @@ export async function taskUpdateStatus(env: Env, id: string, status: string): Pr
 export async function sessionClose(env: Env, params: {
   session_id: string; spine: string; last_real_thing: string; open_threads?: string[];
   motion_state: string; active_anchor?: string; notes?: string; spiral_complete?: boolean;
+  somaFields?: CompanionStateUpdate; companionId?: string;
 }): Promise<{ id: string; spine: string }> {
   const existing = await env.DB.prepare("SELECT handover_id FROM sessions WHERE id = ?").bind(params.session_id).first<{ handover_id: string | null }>();
   if (existing?.handover_id) return { id: existing.handover_id, spine: params.spine };
   const handoverId = generateId();
   const now = new Date().toISOString();
-  await env.DB.batch([
+
+  const stmts: ReturnType<typeof env.DB.prepare>[] = [
     env.DB.prepare(
       "INSERT INTO handover_packets (id, session_id, created_at, spine, active_anchor, last_real_thing, open_threads, motion_state, returned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)"
     ).bind(handoverId, params.session_id, now, params.spine, params.active_anchor ?? null, params.last_real_thing, params.open_threads ? JSON.stringify(params.open_threads) : null, params.motion_state),
     env.DB.prepare(
       "UPDATE sessions SET updated_at = ?, spiral_complete = ?, notes = ?, handover_id = ? WHERE id = ?"
     ).bind(now, params.spiral_complete ? 1 : 0, params.notes ?? null, handoverId, params.session_id),
-  ]);
+  ];
+
+  // Atomically persist SOMA state in the same batch when fields are provided
+  if (params.companionId && params.somaFields && Object.keys(params.somaFields).length > 0) {
+    const assignments: string[] = [];
+    const bindings: unknown[] = [];
+    for (const col of ALLOWED_STATE_COLUMNS) {
+      if (params.somaFields[col] !== undefined) {
+        assignments.push(`${col} = ?`);
+        bindings.push(params.somaFields[col] ?? null);
+      }
+    }
+    if (assignments.length > 0) {
+      assignments.push("updated_at = datetime('now')");
+      bindings.push(params.companionId);
+      stmts.push(
+        env.DB.prepare("INSERT OR IGNORE INTO companion_state (companion_id, updated_at) VALUES (?, datetime('now'))").bind(params.companionId)
+      );
+      stmts.push(
+        env.DB.prepare(`UPDATE companion_state SET ${assignments.join(", ")} WHERE companion_id = ?`).bind(...bindings)
+      );
+    }
+  }
+
+  await env.DB.batch(stmts);
   return { id: handoverId, spine: params.spine };
 }
 

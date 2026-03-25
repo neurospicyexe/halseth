@@ -519,8 +519,6 @@ export class LibrarianRouter {
             prompt_context?: string;
           }>(req.context);
           if (!p || !p.session_id || !p.spine || !p.last_real_thing || !p.motion_state) return { response_key: "witness", witness: "session_close requires { session_id, spine, last_real_thing, motion_state } in context" };
-          const r = await sessionClose(this.env, p);
-          // Commit SOMA state if any fields were provided (fire-and-forget)
           const somaFields: CompanionStateUpdate = {};
           if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
           if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
@@ -534,9 +532,7 @@ export class LibrarianRouter {
           if (p.background_emotion !== undefined) somaFields.background_emotion = p.background_emotion;
           if (p.background_intensity !== undefined) somaFields.background_intensity = p.background_intensity;
           if (p.prompt_context !== undefined) somaFields.prompt_context = p.prompt_context;
-          if (Object.keys(somaFields).length > 0) {
-            void updateCompanionState(this.env, req.companion_id, somaFields);
-          }
+          const r = await sessionClose(this.env, { ...p, somaFields, companionId: req.companion_id });
           return { ack: true, id: r.id, spine: r.spine };
         }
 
