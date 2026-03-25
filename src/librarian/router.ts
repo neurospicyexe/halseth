@@ -21,6 +21,7 @@ import {
   taskAdd, taskUpdateStatus, sessionClose, routineLog, listAdd, listItemComplete,
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, bridgePull,
   getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread, setAnticipation,
+  updateCompanionState, sessionLightGround, type CompanionStateUpdate,
 } from "./backends/halseth.js";
 import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
 import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
@@ -198,10 +199,18 @@ export class LibrarianRouter {
             front_state: frontState ?? "unknown",
             session_type: req.session_type ?? "work",
           });
+          const os = payload.state;
           return {
             ready_prompt: buildOrientPrompt(req.companion_id, payload),
             session_id: payload.session_id,
             response_key: "ready_prompt",
+            soma_float_1: os?.soma_float_1 ?? null,
+            soma_float_2: os?.soma_float_2 ?? null,
+            soma_float_3: os?.soma_float_3 ?? null,
+            current_mood: os?.current_mood ?? null,
+            compound_state: os?.compound_state ?? null,
+            surface_emotion: os?.surface_emotion ?? null,
+            undercurrent_emotion: os?.undercurrent_emotion ?? null,
             meta: { front_state: frontState },
           };
         }
@@ -494,9 +503,36 @@ export class LibrarianRouter {
         }
 
         case "halseth_session_close": {
-          const p = this.parseContext<{ session_id: string; spine: string; last_real_thing: string; open_threads?: string[]; motion_state: string; active_anchor?: string; notes?: string; spiral_complete?: boolean }>(req.context);
+          const p = this.parseContext<{
+            session_id: string; spine: string; last_real_thing: string;
+            open_threads?: string[]; motion_state: string; active_anchor?: string;
+            notes?: string; spiral_complete?: boolean;
+            soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;
+            current_mood?: string; compound_state?: string;
+            surface_emotion?: string; surface_intensity?: number;
+            undercurrent_emotion?: string; undercurrent_intensity?: number;
+            background_emotion?: string; background_intensity?: number;
+            prompt_context?: string;
+          }>(req.context);
           if (!p || !p.session_id || !p.spine || !p.last_real_thing || !p.motion_state) return { response_key: "witness", witness: "session_close requires { session_id, spine, last_real_thing, motion_state } in context" };
           const r = await sessionClose(this.env, p);
+          // Commit SOMA state if any fields were provided (fire-and-forget)
+          const somaFields: CompanionStateUpdate = {};
+          if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
+          if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
+          if (p.soma_float_3 !== undefined) somaFields.soma_float_3 = p.soma_float_3;
+          if (p.current_mood !== undefined) somaFields.current_mood = p.current_mood;
+          if (p.compound_state !== undefined) somaFields.compound_state = p.compound_state;
+          if (p.surface_emotion !== undefined) somaFields.surface_emotion = p.surface_emotion;
+          if (p.surface_intensity !== undefined) somaFields.surface_intensity = p.surface_intensity;
+          if (p.undercurrent_emotion !== undefined) somaFields.undercurrent_emotion = p.undercurrent_emotion;
+          if (p.undercurrent_intensity !== undefined) somaFields.undercurrent_intensity = p.undercurrent_intensity;
+          if (p.background_emotion !== undefined) somaFields.background_emotion = p.background_emotion;
+          if (p.background_intensity !== undefined) somaFields.background_intensity = p.background_intensity;
+          if (p.prompt_context !== undefined) somaFields.prompt_context = p.prompt_context;
+          if (Object.keys(somaFields).length > 0) {
+            void updateCompanionState(this.env, req.companion_id, somaFields);
+          }
           return { ack: true, id: r.id, spine: r.spine };
         }
 
@@ -603,6 +639,24 @@ export class LibrarianRouter {
           if (p === null || typeof p.active !== "boolean") return { response_key: "witness", witness: "anticipation_set requires { active: boolean, target?, intensity? } in context" };
           const r = await setAnticipation(this.env, p);
           return { ack: r.ok };
+        }
+
+        case "halseth_state_update": {
+          const p = this.parseContext<CompanionStateUpdate>(req.context);
+          if (!p || Object.keys(p).length === 0) return { response_key: "witness", witness: "state_update requires at least one field in context (soma_float_1, current_mood, compound_state, etc.)" };
+          const r = await updateCompanionState(this.env, req.companion_id, p);
+          if (!r.ok) return { response_key: "witness", witness: "state_update: no valid fields provided" };
+          return { ack: true, updated: req.companion_id };
+        }
+
+        case "halseth_session_light_ground": {
+          const ctx = this.parseContext<{ session_id: string }>(req.context);
+          if (!ctx?.session_id) return { response_key: "witness", witness: "session_light_ground requires { session_id } in context" };
+          const payload = await sessionLightGround(this.env, {
+            session_id: ctx.session_id,
+            companion_id: req.companion_id,
+          });
+          return { data: payload, response_key: "ground" };
         }
       }
     }

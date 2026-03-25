@@ -8,6 +8,7 @@ import {
   loadSessionData, SessionLoadInput,
   loadOrientData, SessionOrientInput,
   loadGroundData, SessionGroundInput,
+  loadLightGroundData,
 } from "../../mcp/tools/session_load.js";
 import { generateId } from "../../db/queries.js";
 
@@ -21,6 +22,10 @@ export async function sessionOrient(env: Env, input: SessionOrientInput) {
 
 export async function sessionGround(env: Env, input: SessionGroundInput) {
   return loadGroundData(env, input);
+}
+
+export async function sessionLightGround(env: Env, input: SessionGroundInput) {
+  return loadLightGroundData(env, input);
 }
 
 export async function taskList(env: Env, companionId: string) {
@@ -483,5 +488,63 @@ export async function setAnticipation(
   await env.DB.prepare(
     "UPDATE companion_state SET anticipation = ?, updated_at = datetime('now') WHERE companion_id = 'drevan'"
   ).bind(anticipation).run();
+  return { ok: true };
+}
+
+// ── Generic SOMA state write (Claude.ai sessions as primary write source) ─────
+
+export interface CompanionStateUpdate {
+  soma_float_1?: number | null;
+  soma_float_2?: number | null;
+  soma_float_3?: number | null;
+  current_mood?: string | null;
+  compound_state?: string | null;
+  surface_emotion?: string | null;
+  surface_intensity?: number | null;
+  undercurrent_emotion?: string | null;
+  undercurrent_intensity?: number | null;
+  background_emotion?: string | null;
+  background_intensity?: number | null;
+  prompt_context?: string | null;
+}
+
+const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
+  "soma_float_1", "soma_float_2", "soma_float_3",
+  "current_mood", "compound_state",
+  "surface_emotion", "surface_intensity",
+  "undercurrent_emotion", "undercurrent_intensity",
+  "background_emotion", "background_intensity",
+  "prompt_context",
+];
+
+export async function updateCompanionState(
+  env: Env,
+  companionId: string,
+  fields: CompanionStateUpdate,
+): Promise<{ ok: boolean }> {
+  const assignments: string[] = [];
+  const bindings: unknown[] = [];
+
+  for (const col of ALLOWED_STATE_COLUMNS) {
+    if (fields[col] !== undefined) {
+      assignments.push(`${col} = ?`);
+      bindings.push(fields[col] ?? null);
+    }
+  }
+
+  if (assignments.length === 0) return { ok: false };
+
+  // Ensure row exists before updating
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO companion_state (companion_id, updated_at) VALUES (?, datetime('now'))"
+  ).bind(companionId).run();
+
+  assignments.push("updated_at = datetime('now')");
+  bindings.push(companionId);
+
+  await env.DB.prepare(
+    `UPDATE companion_state SET ${assignments.join(", ")} WHERE companion_id = ?`
+  ).bind(...bindings).run();
+
   return { ok: true };
 }
