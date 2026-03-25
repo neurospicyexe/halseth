@@ -89,9 +89,11 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
         console.error(`[sb] SSE response but no data line found tool=${toolName} raw=${rawText.slice(0, 200)}`);
         return null;
       }
-      data = JSON.parse(dataLine.slice(5).trim());
+      try { data = JSON.parse(dataLine.slice(5).trim()); }
+      catch { console.error(`[sb] SSE JSON parse failed tool=${toolName} data=${dataLine.slice(5, 200)}`); return null; }
     } else {
-      data = JSON.parse(rawText);
+      try { data = JSON.parse(rawText); }
+      catch { console.error(`[sb] JSON parse failed tool=${toolName} raw=${rawText.slice(0, 200)}`); return null; }
     }
 
     if (data.error) {

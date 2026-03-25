@@ -37,13 +37,9 @@ interface BootstrapBody {
 }
 
 export async function bootstrapConfig(request: Request, env: Env): Promise<Response> {
-  // Require ADMIN_SECRET if set.
-  if (env.ADMIN_SECRET) {
-    const auth = request.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-  }
+  if (!env.ADMIN_SECRET) return new Response("Service not configured: ADMIN_SECRET required", { status: 503 });
+  const auth = request.headers.get("Authorization") ?? "";
+  if (auth !== `Bearer ${env.ADMIN_SECRET}`) return new Response("Unauthorized", { status: 401 });
 
   let body: BootstrapBody;
   try {
