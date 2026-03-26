@@ -1,116 +1,67 @@
 # setup-autonomous-time.ps1
-# Creates two Windows Task Scheduler tasks that trigger autonomous time for your
-# AI companion.
-#
-# Run this once from an elevated PowerShell (right-click, Run as Administrator).
-# After setup, the tasks fire automatically at the scheduled times.
-#
-# Mode: "cli" (default, recommended) — runs via Claude Code CLI headlessly.
-#       "desktop" — uses AutoHotKey to type into Claude Desktop.
-#
-# CLI mode requires the claude CLI in PATH. It uses --dangerously-skip-permissions
-# so MCP tool approval dialogs never block an unattended session.
-#
-# Desktop mode requires AutoHotKey v2 and Claude Desktop running.
-# Note: Desktop mode can silently fail if new MCP tools haven't had "Always allow"
-# clicked yet. If sessions stall with "No approval received", use CLI mode instead.
-#
-# To remove the tasks later:
-#   Unregister-ScheduledTask -TaskName "Halseth Autonomous Time - Morning" -Confirm:$false
-#   Unregister-ScheduledTask -TaskName "Halseth Autonomous Time - Afternoon" -Confirm:$false
+# Registers Windows Task Scheduler entries for autonomous companion time.
+# Run once as Administrator.
+# Creates two daily triggers: 12:30 PM and 1:30 AM.
 
-# --- Config (edit these) ---------------------------------------------------
+#Requires -RunAsAdministrator
 
-# "cli" = Claude Code CLI (recommended, no approval dialogs)
-# "desktop" = AutoHotKey + Claude Desktop
-$Mode = "cli"
+$TaskNamePrefix = "Halseth-AutonomousTime"
+$ScriptPath     = "$PSScriptRoot\run-autonomous-time.ps1"
+$PsExe          = "powershell.exe"
+$PsArgs         = "-NonInteractive -WindowStyle Hidden -File `"$ScriptPath`""
 
-# Days of the week to run
-$Days = @("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-
-# Night session time (24h format)
-$MorningTime = "01:30"
-
-# Midday session time (24h format)
-$AfternoonTime = "12:30"
-
-# CLI mode: path to the run-autonomous-time.ps1 runner
-$CliRunner = "$PSScriptRoot\run-autonomous-time.ps1"
-
-# Desktop mode: paths to AutoHotKey and the AHK script
-$AhkExe    = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
-$AhkScript = "$PSScriptRoot\autonomous-time.ahk"
-
-# --- Validation -------------------------------------------------------------
-
-if ($Mode -eq "cli") {
-    $ClaudeExe = Get-Command "claude" -ErrorAction SilentlyContinue
-    if (-not $ClaudeExe) {
-        Write-Error "claude CLI not found in PATH. Install Claude Code or switch to Mode=desktop."
-        exit 1
+# Remove existing tasks with this prefix
+Get-ScheduledTask -TaskName "$TaskNamePrefix*" -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        Write-Host "Removing existing task: $($_.TaskName)"
+        Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false
     }
-    if (-not (Test-Path $CliRunner)) {
-        Write-Error "CLI runner not found at: $CliRunner"
-        exit 1
-    }
-    Write-Host "Mode: CLI (claude at $($ClaudeExe.Source))"
-} else {
-    if (-not (Test-Path $AhkExe)) {
-        Write-Error "AutoHotKey not found at: $AhkExe"
-        Write-Error "Install AutoHotKey v2 from https://www.autohotkey.com or switch to Mode=cli."
-        exit 1
-    }
-    if (-not (Test-Path $AhkScript)) {
-        Write-Error "AHK script not found at: $AhkScript"
-        exit 1
-    }
-    Write-Host "Mode: Desktop (AHK at $AhkExe)"
-}
 
-# --- Create tasks -----------------------------------------------------------
+# Task action: run the PS1
+$Action = New-ScheduledTaskAction `
+    -Execute $PsExe `
+    -Argument $PsArgs `
+    -WorkingDirectory $PSScriptRoot
 
-if ($Mode -eq "cli") {
-    $PwshExe = (Get-Command "pwsh" -ErrorAction SilentlyContinue)?.Source
-    if (-not $PwshExe) { $PwshExe = "powershell.exe" }
-    $Action = New-ScheduledTaskAction -Execute $PwshExe -Argument "-NonInteractive -File `"$CliRunner`""
-} else {
-    $Action = New-ScheduledTaskAction -Execute $AhkExe -Argument "`"$AhkScript`""
-}
-
+# Settings: run when logged on, battery-friendly, start if missed
 $Settings = New-ScheduledTaskSettingsSet `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 1) `
     -StartWhenAvailable `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries
+    -DontStopIfGoingOnBatteries `
+    -AllowStartIfOnBatteries
 
-function Register-AutonomousTask {
-    param($Name, $Time)
+# Triggers
+$Trigger1230PM = New-ScheduledTaskTrigger -Daily -At "12:30PM"
+$Trigger130AM  = New-ScheduledTaskTrigger -Daily -At "1:30AM"
 
-    $Trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $Days -At $Time
+# Register 12:30 PM entry
+Register-ScheduledTask `
+    -TaskName "${TaskNamePrefix}-1230PM" `
+    -Action $Action `
+    -Trigger $Trigger1230PM `
+    -Settings $Settings `
+    -RunLevel Limited `
+    -Force | Out-Null
 
-    $existing = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
-    if ($existing) {
-        Unregister-ScheduledTask -TaskName $Name -Confirm:$false
-        Write-Host "Replaced existing task: $Name"
-    }
-
-    $Desc = "Halseth autonomous companion time, fires at $Time daily."
-
-    Register-ScheduledTask `
-        -TaskName $Name `
-        -Action $Action `
-        -Trigger $Trigger `
-        -Settings $Settings `
-        -RunLevel Highest `
-        -Description $Desc | Out-Null
-
-    $DayList = $Days -join ', '
-    Write-Host "Created: $Name at $Time on $DayList"
-}
-
-Register-AutonomousTask "Halseth Autonomous Time - Morning"   $MorningTime
-Register-AutonomousTask "Halseth Autonomous Time - Afternoon" $AfternoonTime
+# Register 1:30 AM entry
+Register-ScheduledTask `
+    -TaskName "${TaskNamePrefix}-0130AM" `
+    -Action $Action `
+    -Trigger $Trigger130AM `
+    -Settings $Settings `
+    -RunLevel Limited `
+    -Force | Out-Null
 
 Write-Host ""
-Write-Host "Done. Tasks will fire at $MorningTime and $AfternoonTime daily."
-Write-Host "To test now:     Start-ScheduledTask -TaskName 'Halseth Autonomous Time - Morning'"
-Write-Host "To list tasks:   Get-ScheduledTask | Where-Object { `$_.TaskName -like 'Halseth*' }"
+Write-Host "Tasks registered:"
+Write-Host "  ${TaskNamePrefix}-1230PM  -> 12:30 PM daily"
+Write-Host "  ${TaskNamePrefix}-0130AM  ->  1:30 AM daily"
+Write-Host ""
+Write-Host "IMPORTANT -- secret setup required before tasks will work:"
+Write-Host "  The PS1 loads HALSETH_SECRET from halseth\scripts\.env"
+Write-Host "  Windows Task Scheduler runs in a session that does NOT inherit your shell env vars."
+Write-Host "  The .env file is read directly by run-autonomous-time.ps1 (via autonomous-time-config.ps1)."
+Write-Host "  Make sure halseth\scripts\.env exists and contains: HALSETH_SECRET=<your-admin-secret>"
+Write-Host ""
+Write-Host "Verify tasks with:"
+Write-Host "  Get-ScheduledTask -TaskName '${TaskNamePrefix}*' | Select TaskName,State"
