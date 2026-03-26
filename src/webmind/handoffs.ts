@@ -31,7 +31,7 @@ export async function writeHandoff(env: Env, input: WmHandoffInput): Promise<WmS
     next_steps: input.next_steps ?? null,
     open_loops: input.open_loops ?? null,
     state_hint: input.state_hint ?? null,
-    actor: (input.actor ?? "agent") as "agent",
+    actor: input.actor ?? "agent",
     source: input.source ?? "system",
     correlation_id: input.correlation_id ?? null,
     created_at: now,
