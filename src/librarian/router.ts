@@ -688,6 +688,12 @@ export class LibrarianRouter {
             actor?: string; source?: string;
           }>(req.context);
           if (!p?.thread_key || !p?.title) return { response_key: "witness", witness: "wm_thread_upsert requires { thread_key, title } in context" };
+          for (const field of ["title", "context", "event_content"] as const) {
+            const val = p[field];
+            if (typeof val === "string" && val.length > 8000) {
+              return { response_key: "witness", witness: `${field} exceeds maximum length of 8000 characters` };
+            }
+          }
           const input: WmThreadUpsertInput = {
             thread_key: p.thread_key,
             agent_id: req.companion_id as WmAgentId,
@@ -711,6 +717,9 @@ export class LibrarianRouter {
             salience?: string; actor?: string;
           }>(req.context);
           if (!p?.content) return { response_key: "witness", witness: "wm_note_add requires { content } in context" };
+          if (p.content.length > 8000) {
+            return { response_key: "witness", witness: "content exceeds maximum length of 8000 characters" };
+          }
           const input: WmNoteInput = {
             agent_id: req.companion_id as WmAgentId,
             content: p.content,
@@ -729,6 +738,12 @@ export class LibrarianRouter {
             next_steps?: string; open_loops?: string; state_hint?: string; actor?: string;
           }>(req.context);
           if (!p?.title || !p?.summary) return { response_key: "witness", witness: "wm_handoff_write requires { title, summary } in context" };
+          for (const field of ["title", "summary", "next_steps", "open_loops", "state_hint"] as const) {
+            const val = p[field];
+            if (typeof val === "string" && val.length > 8000) {
+              return { response_key: "witness", witness: `${field} exceeds maximum length of 8000 characters` };
+            }
+          }
           const input: WmHandoffInput = {
             agent_id: req.companion_id as WmAgentId,
             title: p.title,
