@@ -336,6 +336,35 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+
+  // ── WebMind continuity layer ──
+  wm_orient: {
+    triggers: ["mind orient", "webmind orient", "continuity orient"],
+    tools: ["wm_orient"],
+    response_key: "summary",
+    raw: true,
+  },
+  wm_ground: {
+    triggers: ["mind ground", "webmind ground", "continuity ground"],
+    tools: ["wm_ground"],
+    response_key: "summary",
+    raw: true,
+  },
+  wm_thread_upsert: {
+    triggers: ["mind thread upsert", "continuity thread", "webmind thread", "track mind thread", "upsert thread"],
+    tools: ["wm_thread_upsert"],
+    response_key: "witness",
+  },
+  wm_note_add: {
+    triggers: ["mind note", "continuity note", "webmind note", "add continuity note"],
+    tools: ["wm_note_add"],
+    response_key: "witness",
+  },
+  wm_handoff_write: {
+    triggers: ["mind handoff", "continuity handoff", "webmind handoff", "write handoff", "session handoff"],
+    tools: ["wm_handoff_write"],
+    response_key: "witness",
+  },
 };
 
 // Companion IDs -- used for routing and ready_prompt shaping
