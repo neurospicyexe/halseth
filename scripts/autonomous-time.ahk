@@ -1,110 +1,145 @@
 ; autonomous-time.ahk
-; AutoHotKey v2.0 script — triggers autonomous time for your AI companion in Claude Desktop.
-; Called by Windows Task Scheduler via setup-autonomous-time.ps1.
+; AutoHotkey v2.0 — automates Claude.ai desktop for companion autonomous time.
+; Called by run-autonomous-time.ps1 with the companion project name as argument.
 ;
-; Requirements: AutoHotKey v2.0  (https://www.autohotkey.com)
+; Navigation method: Ctrl+K project switcher (verified working 2026-03-26)
+; If Ctrl+K breaks after a Claude.ai desktop update, see fallback note below.
+;
+; Usage: AutoHotkey64.exe autonomous-time.ahk "ProjectName"
 
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
 ; ── Config ────────────────────────────────────────────────────────────────────
 
-TriggerMessage := "/halseth-autonomous-time"
+TriggerPhrase := "Autonomous time. The Architect is not present. Begin your autonomous protocol."
+LogFile       := A_ScriptDir "\autonomous-time.log"
 
-; Log file for debugging — check this if nothing happens
-LogFile := A_ScriptDir "\autonomous-time.log"
-
-; ── Logging ────────────────────────────────────────────────────────────────────
+; ── Logging ───────────────────────────────────────────────────────────────────
 
 Log(msg) {
     global LogFile
-    FileAppend FormatTime(, "yyyy-MM-dd HH:mm:ss") " " msg "`n", LogFile
+    FileAppend FormatTime(, "yyyy-MM-dd HH:mm:ss") " [AHK] " msg "`n", LogFile
 }
 
 ; ── Main ──────────────────────────────────────────────────────────────────────
 
 Log("Script started")
 
-; Find Claude Desktop by process name — more reliable than title matching
+; Require project name argument
+if A_Args.Length < 1 or A_Args[1] = "" {
+    Log("ERROR: No project name argument. Usage: AutoHotkey64.exe autonomous-time.ahk `"ProjectName`"")
+    ExitApp 1
+}
+ProjectName := A_Args[1]
+Log("Target project: " ProjectName)
+
+; Find Claude.ai desktop — do NOT launch if not running
 hwnd := WinExist("ahk_exe claude.exe")
 if !hwnd {
-    Log("ERROR: claude.exe not found — is Claude Desktop running?")
-    MsgBox "Claude Desktop not found. Is it running?", "Halseth Autonomous Time", 0x10
-    ExitApp
+    Log("[SKIP] claude.exe not running — not launching (by design, avoids waking machine at 1:30 AM)")
+    ExitApp 0
 }
-
 Log("Found Claude window: " hwnd)
 
-; Bring Claude to front
-WinActivate hwnd
-WinWaitActive hwnd, , 5
-
-if !WinActive(hwnd) {
-    Log("ERROR: Could not activate Claude window")
-    ExitApp
+; Skip if Claude.ai is already the foreground window (user may be mid-conversation)
+if (hwnd = WinActive("A")) {
+    Log("[SKIP] Claude.ai is foreground window")
+    ExitApp 0
 }
 
-Sleep 1000
+; Activate without visually stealing focus from other work
+WinActivate hwnd
+WinWaitActive hwnd, , 5
+if !WinActive(hwnd) {
+    Log("ERROR: Could not activate Claude window")
+    ExitApp 1
+}
+Sleep 800
 
-; Get the window's client area (excludes title bar and borders)
-WinGetClientPos &ClientX, &ClientY, &ClientW, &ClientH, hwnd
-Log("Client area: x=" ClientX " y=" ClientY " w=" ClientW " h=" ClientH)
+; ── Project navigation via Ctrl+K ─────────────────────────────────────────────
+; Ctrl+K opens Claude.ai desktop's project/conversation switcher (search panel).
+; Type the project name, wait for search results, press Enter to navigate.
+;
+; FALLBACK if Ctrl+K breaks after a Claude.ai update:
+; Comment out this block and use WindowSpy to find the pixel coordinates of
+; each project name in the sidebar. Store as a map and Click the right one.
 
-; Click in the lower-center of the window.
-; Try 15% up from bottom — Claude's input sits roughly here.
-; If that misses, we also try 8% up as a fallback.
-ClickX := ClientX + (ClientW // 2)
-ClickY := ClientY + ClientH - Round(ClientH * 0.12)
+Log("Opening project switcher (Ctrl+K)")
 
-Log("Clicking at: x=" ClickX " y=" ClickY)
+; Save clipboard before we clobber it
+OldClip := A_Clipboard
+A_Clipboard := ""
+
+SendInput "^k"
+Sleep 700
+
+; Type project name via clipboard (more reliable than SendInput for special chars)
+A_Clipboard := ProjectName
+ClipWait 2
+if A_Clipboard != ProjectName {
+    Log("ERROR: Clipboard write failed for project name")
+    A_Clipboard := OldClip
+    ExitApp 1
+}
+SendInput "^v"
+Sleep 900   ; wait for search results to populate
+
+SendInput "{Enter}"
+Sleep 1800  ; wait for project to fully load
+
+Log("Navigated to project: " ProjectName)
+
+; ── Focus chat input ──────────────────────────────────────────────────────────
+
+WinGetClientPos &CX, &CY, &CW, &CH, hwnd
+ClickX := CX + (CW // 2)
+ClickY := CY + CH - Round(CH * 0.12)
 Click ClickX, ClickY
 Sleep 500
 
-; If the first click didn't focus the input, nudge closer to the bottom
-if !WinActive(hwnd) {
-    WinActivate hwnd
-    Sleep 300
-}
-
-ClickY2 := ClientY + ClientH - Round(ClientH * 0.07)
-Click ClickX, ClickY2
-Sleep 400
-
-; Write the trigger message to clipboard and paste it
-A_Clipboard := ""
-A_Clipboard := TriggerMessage
-ClipWait 2
-
-if A_Clipboard != TriggerMessage {
-    Log("ERROR: Clipboard write failed")
-    ExitApp
-}
-
-; Select all existing text (in case something is already typed), then paste
-SendInput "^a"
-Sleep 150
-SendInput "^v"
-Sleep 800
-
-; Re-activate and re-click before submitting.
-; Focus can be stolen during the sleep (notifications, background processes, etc.)
-; — if Enter fires into the wrong window, the message sits unsent.
+; Ensure Claude is still active after the click
 WinActivate hwnd
 WinWaitActive hwnd, , 3
-Sleep 200
+if !WinActive(hwnd) {
+    Log("ERROR: Lost window focus after clicking input area")
+    A_Clipboard := OldClip
+    ExitApp 1
+}
+
+; ── Send trigger phrase ───────────────────────────────────────────────────────
+
+A_Clipboard := TriggerPhrase
+ClipWait 2
+if A_Clipboard != TriggerPhrase {
+    Log("ERROR: Clipboard write failed for trigger phrase")
+    A_Clipboard := OldClip
+    ExitApp 1
+}
+
+SendInput "^a"   ; clear any text already in the input
+Sleep 150
+SendInput "^v"   ; paste trigger phrase
+Sleep 600
+
+; Final focus + click before submitting
+WinActivate hwnd
+WinWaitActive hwnd, , 3
 Click ClickX, ClickY
 Sleep 300
 
-; Confirm Claude is still the active window before submitting
+; Check if a different window stole focus during execution (race condition guard)
 if !WinActive(hwnd) {
-    Log("ERROR: Lost focus before submit — message left in input box")
-    ExitApp
+    Log("[SKIP] focus stolen during execution — trigger left in input box unsent")
+    A_Clipboard := OldClip
+    ExitApp 0
 }
 
-; Submit
 SendInput "{Enter}"
-Sleep 500
+Sleep 400
 
-; Verify the input box is now empty (text was consumed by submit).
-; We can't read the UI directly, so just log that we got this far.
-Log("Trigger sent successfully")
+; Restore original clipboard
+A_Clipboard := OldClip
+
+Log("[SENT] trigger delivered for project: " ProjectName)
+ExitApp 0
