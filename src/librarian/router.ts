@@ -81,8 +81,13 @@ export class LibrarianRouter {
     // Tier 2: Workers AI classifier
     const patternKey = await this.classify(req.request);
 
-    // Tier 3: KV lookup
+    // Tier 3: fast-path check on classifier result (classifier now sees all keys including fast-path)
     if (patternKey && patternKey !== "unknown") {
+      const fastEntry = FAST_PATH_PATTERNS[patternKey];
+      if (fastEntry) {
+        return this.execute(req, fastEntry);
+      }
+      // Tier 3b: KV lookup for non-fast-path keys
       const kvEntry = await this.env.LIBRARIAN_KV.get(patternKey, "json") as PatternEntry | null;
       if (kvEntry) {
         return this.execute(req, kvEntry);
@@ -140,7 +145,19 @@ export class LibrarianRouter {
         if (idx > 0) hints[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
       }
 
-      const keyList = kvKeys.map(k => hints[k] ? `${k} (e.g. "${hints[k]}")` : k).join(", ");
+      // Include fast-path keys so the classifier has full visibility.
+      // Previously excluded because returning a fast-path key would silently fail KV lookup --
+      // that risk is gone now that route() checks FAST_PATH_PATTERNS before KV.
+      const fastPathKeys = Object.keys(FAST_PATH_PATTERNS);
+      const fastPathHints: Record<string, string> = {};
+      for (const [key, entry] of Object.entries(FAST_PATH_PATTERNS)) {
+        if (entry.triggers[0]) fastPathHints[key] = entry.triggers[0];
+      }
+      const allKeys = [...fastPathKeys, ...kvKeys];
+      const keyList = allKeys.map(k => {
+        const hint = hints[k] ?? fastPathHints[k];
+        return hint ? `${k} (e.g. "${hint}")` : k;
+      }).join(", ");
 
       const res = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
@@ -525,7 +542,7 @@ export class LibrarianRouter {
             background_emotion?: string; background_intensity?: number;
             prompt_context?: string;
           }>(req.context);
-          if (!p || !p.session_id || !p.spine || !p.last_real_thing || !p.motion_state) return { response_key: "witness", witness: "session_close requires { session_id, spine, last_real_thing, motion_state } in context" };
+          if (!p || !p.session_id || !p.spine || !p.last_real_thing || !p.motion_state) return { error: "session_close_failed", reason: "missing required fields: spine, last_real_thing", hint: "Re-run halseth_session_close with all required context populated" };
           const somaFields: CompanionStateUpdate = {};
           if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
           if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
@@ -650,9 +667,9 @@ export class LibrarianRouter {
 
         case "halseth_state_update": {
           const p = this.parseContext<CompanionStateUpdate>(req.context);
-          if (!p || Object.keys(p).length === 0) return { response_key: "witness", witness: "state_update requires at least one field in context (soma_float_1, current_mood, compound_state, etc.)" };
+          if (!p || Object.keys(p).length === 0) return { error: "state_update_failed", reason: "no fields provided -- pass at least one of: soma_float_1, current_mood, compound_state, surface_emotion, etc." };
           const r = await updateCompanionState(this.env, req.companion_id, p);
-          if (!r.ok) return { response_key: "witness", witness: "state_update: no valid fields provided" };
+          if (!r.ok) return { error: "state_update_failed", reason: "no valid fields provided" };
           return { ack: true, updated: req.companion_id };
         }
 
@@ -687,11 +704,11 @@ export class LibrarianRouter {
             context?: string; event_type?: string; event_content?: string;
             actor?: string; source?: string;
           }>(req.context);
-          if (!p?.thread_key || !p?.title) return { response_key: "witness", witness: "wm_thread_upsert requires { thread_key, title } in context" };
+          if (!p?.thread_key || !p?.title) return { error: "wm_thread_upsert_failed", reason: "missing required fields: thread_key, title" };
           for (const field of ["title", "context", "event_content"] as const) {
             const val = p[field];
             if (typeof val === "string" && val.length > 8000) {
-              return { response_key: "witness", witness: `${field} exceeds maximum length of 8000 characters` };
+              return { error: "wm_thread_upsert_failed", reason: `${field} exceeds maximum length of 8000 characters` };
             }
           }
           const input: WmThreadUpsertInput = {
@@ -716,9 +733,9 @@ export class LibrarianRouter {
             content: string; thread_key?: string; note_type?: string;
             salience?: string; actor?: string;
           }>(req.context);
-          if (!p?.content) return { response_key: "witness", witness: "wm_note_add requires { content } in context" };
+          if (!p?.content) return { error: "wm_note_add_failed", reason: "missing required field: content" };
           if (p.content.length > 8000) {
-            return { response_key: "witness", witness: "content exceeds maximum length of 8000 characters" };
+            return { error: "wm_note_add_failed", reason: "content exceeds maximum length of 8000 characters" };
           }
           const input: WmNoteInput = {
             agent_id: req.companion_id as WmAgentId,
@@ -737,11 +754,11 @@ export class LibrarianRouter {
             title: string; summary: string; thread_id?: string;
             next_steps?: string; open_loops?: string; state_hint?: string; actor?: string;
           }>(req.context);
-          if (!p?.title || !p?.summary) return { response_key: "witness", witness: "wm_handoff_write requires { title, summary } in context" };
+          if (!p?.title || !p?.summary) return { error: "wm_handoff_write_failed", reason: "missing required fields: title, summary" };
           for (const field of ["title", "summary", "next_steps", "open_loops", "state_hint"] as const) {
             const val = p[field];
             if (typeof val === "string" && val.length > 8000) {
-              return { response_key: "witness", witness: `${field} exceeds maximum length of 8000 characters` };
+              return { error: "wm_handoff_write_failed", reason: `${field} exceeds maximum length of 8000 characters` };
             }
           }
           const input: WmHandoffInput = {

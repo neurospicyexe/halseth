@@ -27,13 +27,19 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   //   2. session_ground -- returns tasks + cross-session notes/deltas + threads + synthesis
   // session_open (below) remains for backward compat (Discord bots, direct use).
   session_orient: {
-    triggers: ["open orient", "start orient", "boot orient", "session orient", "orient load"],
+    triggers: [
+      "open orient", "start orient", "boot orient", "session orient", "orient load",
+      "run orient", "orient boot", "orient session", "cold start orient", "halseth_session_orient",
+    ],
     tools: ["halseth_session_orient"],
     pre_fetch: ["plural_get_current_front"],
     response_key: "ready_prompt",
   },
   session_ground: {
-    triggers: ["open ground", "start ground", "boot ground", "session ground", "ground load"],
+    triggers: [
+      "open ground", "start ground", "boot ground", "session ground", "ground load",
+      "run ground", "ground me", "get ground", "ground check", "fetch ground", "halseth_session_ground",
+    ],
     tools: ["halseth_session_ground"],
     response_key: "summary",
     raw: true,
@@ -221,7 +227,13 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   session_close: {
-    triggers: ["close session", "end session", "wrap up session", "session wrap", "closing session", "log session close"],
+    triggers: [
+      "close session", "end session", "wrap up session", "session wrap",
+      "closing session", "log session close", "seal session", "seal this session",
+      "session seal", "close this session", "closing now", "closing this",
+      "wrap this", "end this session", "i'm closing", "session close",
+      "halseth_session_close",
+    ],
     tools: ["halseth_session_close"],
     response_key: "witness",
   },
@@ -339,7 +351,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
 
   // ── WebMind continuity layer ──
   wm_orient: {
-    triggers: ["mind orient", "webmind orient", "continuity orient"],
+    triggers: [
+      "mind orient", "webmind orient", "continuity orient",
+      "wm orient", "webmind boot", "continuity load", "mind boot", "wm_orient",
+    ],
     tools: ["wm_orient"],
     response_key: "summary",
     raw: true,
@@ -361,7 +376,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   wm_handoff_write: {
-    triggers: ["mind handoff", "continuity handoff", "webmind handoff", "write handoff", "session handoff"],
+    triggers: [
+      "mind handoff", "continuity handoff", "webmind handoff", "write handoff", "session handoff",
+      "log handoff", "handoff write", "wm handoff", "wm_handoff_write",
+    ],
     tools: ["wm_handoff_write"],
     response_key: "witness",
   },
