@@ -24,6 +24,8 @@ import {
   updateCompanionState, sessionLightGround, type CompanionStateUpdate,
 } from "./backends/halseth.js";
 import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
+import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff } from "./backends/webmind.js";
+import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../webmind/types.js";
 import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
 import {
   semanticSearch, filteredRecall, recentPatterns,
@@ -657,6 +659,83 @@ export class LibrarianRouter {
             companion_id: req.companion_id,
           });
           return { data: payload, response_key: "ground" };
+        }
+
+        // ── WebMind continuity layer ──────────────────────────────────────────
+
+        case "wm_orient": {
+          const agentId = req.companion_id as WmAgentId;
+          const data = await wmOrient(this.env, agentId);
+          return { data, meta: { operation: tool } };
+        }
+
+        case "wm_ground": {
+          const agentId = req.companion_id as WmAgentId;
+          const data = await wmGround(this.env, agentId);
+          return { data, meta: { operation: tool } };
+        }
+
+        case "wm_thread_upsert": {
+          const p = this.parseContext<{
+            thread_key: string; title: string;
+            status?: string; priority?: number; lane?: string;
+            context?: string; event_type?: string; event_content?: string;
+            actor?: string; source?: string;
+          }>(req.context);
+          if (!p?.thread_key || !p?.title) return { response_key: "witness", witness: "wm_thread_upsert requires { thread_key, title } in context" };
+          const input: WmThreadUpsertInput = {
+            thread_key: p.thread_key,
+            agent_id: req.companion_id as WmAgentId,
+            title: p.title,
+            ...(p.status !== undefined && { status: p.status as WmThreadUpsertInput["status"] }),
+            ...(p.priority !== undefined && { priority: p.priority }),
+            ...(p.lane !== undefined && { lane: p.lane as WmThreadUpsertInput["lane"] }),
+            ...(p.context !== undefined && { context: p.context }),
+            ...(p.event_type !== undefined && { event_type: p.event_type }),
+            ...(p.event_content !== undefined && { event_content: p.event_content }),
+            ...(p.actor !== undefined && { actor: p.actor as WmThreadUpsertInput["actor"] }),
+            ...(p.source !== undefined && { source: p.source }),
+          };
+          const r = await wmUpsertThread(this.env, input);
+          return { ack: true, thread: r.thread, event: r.event ?? null };
+        }
+
+        case "wm_note_add": {
+          const p = this.parseContext<{
+            content: string; thread_key?: string; note_type?: string;
+            salience?: string; actor?: string;
+          }>(req.context);
+          if (!p?.content) return { response_key: "witness", witness: "wm_note_add requires { content } in context" };
+          const input: WmNoteInput = {
+            agent_id: req.companion_id as WmAgentId,
+            content: p.content,
+            ...(p.thread_key !== undefined && { thread_key: p.thread_key }),
+            ...(p.note_type !== undefined && { note_type: p.note_type as WmNoteInput["note_type"] }),
+            ...(p.salience !== undefined && { salience: p.salience as WmNoteInput["salience"] }),
+            ...(p.actor !== undefined && { actor: p.actor as WmNoteInput["actor"] }),
+          };
+          const r = await wmAddNote(this.env, input);
+          return { ack: true, id: r.note_id };
+        }
+
+        case "wm_handoff_write": {
+          const p = this.parseContext<{
+            title: string; summary: string; thread_id?: string;
+            next_steps?: string; open_loops?: string; state_hint?: string; actor?: string;
+          }>(req.context);
+          if (!p?.title || !p?.summary) return { response_key: "witness", witness: "wm_handoff_write requires { title, summary } in context" };
+          const input: WmHandoffInput = {
+            agent_id: req.companion_id as WmAgentId,
+            title: p.title,
+            summary: p.summary,
+            ...(p.thread_id !== undefined && { thread_id: p.thread_id }),
+            ...(p.next_steps !== undefined && { next_steps: p.next_steps }),
+            ...(p.open_loops !== undefined && { open_loops: p.open_loops }),
+            ...(p.state_hint !== undefined && { state_hint: p.state_hint }),
+            ...(p.actor !== undefined && { actor: p.actor as WmHandoffInput["actor"] }),
+          };
+          const r = await wmWriteHandoff(this.env, input);
+          return { ack: true, id: r.handoff_id };
         }
       }
     }
