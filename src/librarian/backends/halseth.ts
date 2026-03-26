@@ -79,20 +79,23 @@ export async function dreamsRead(env: Env, companionId: string, limit = 10) {
 }
 
 export async function dreamSeedRead(env: Env, companionId: string) {
-  // Claim-on-read: returns the oldest unclaimed seed and marks it claimed atomically.
-  // Returns null if no seed is waiting. This matches halseth_dream_seed_read MCP behavior.
-  const seed = await env.DB.prepare(
-    "SELECT * FROM dream_seeds WHERE claimed_at IS NULL AND (for_companion IS NULL OR for_companion = ?) ORDER BY created_at ASC LIMIT 1"
-  ).bind(companionId).first<Record<string, unknown>>();
-
-  if (!seed) return null;
-
+  // Atomic claim-on-read: single UPDATE with RETURNING clause.
+  // If no unclaimed seed exists, returns null (no rows updated).
   const now = new Date().toISOString();
-  await env.DB.prepare(
-    "UPDATE dream_seeds SET claimed_at = ?, claimed_by = ? WHERE id = ?"
-  ).bind(now, companionId, seed.id).run();
+  const seed = await env.DB.prepare(
+    `UPDATE dream_seeds
+     SET claimed_at = ?, claimed_by = ?
+     WHERE id = (
+       SELECT id FROM dream_seeds
+       WHERE claimed_at IS NULL
+         AND (for_companion IS NULL OR for_companion = ?)
+       ORDER BY created_at ASC
+       LIMIT 1
+     )
+     RETURNING *`
+  ).bind(now, companionId, companionId).first<Record<string, unknown>>();
 
-  return { ...seed, claimed_at: now, claimed_by: companionId };
+  return seed ?? null;
 }
 
 export async function eqRead(env: Env, companionId: string, limit = 5) {
