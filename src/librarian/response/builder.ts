@@ -15,29 +15,29 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
   const parts: string[] = [];
 
   if (wm.identity_anchor) {
-    parts.push(`[Identity anchor] ${wm.identity_anchor.anchor_summary}`);
+    parts.push(`[Identity anchor] «${wm.identity_anchor.anchor_summary}»`);
     if (wm.identity_anchor.constraints_summary) {
-      parts.push(`[Constraints] ${wm.identity_anchor.constraints_summary}`);
+      parts.push(`[Constraints] «${wm.identity_anchor.constraints_summary}»`);
     }
   }
 
   if (wm.latest_handoff) {
-    parts.push(`[Last handoff] ${wm.latest_handoff.title}: ${wm.latest_handoff.summary}`);
+    parts.push(`[Last handoff by ${wm.latest_handoff.actor}] «${wm.latest_handoff.title}: ${wm.latest_handoff.summary}»`);
     if (wm.latest_handoff.next_steps) {
-      parts.push(`[Next steps] ${wm.latest_handoff.next_steps}`);
+      parts.push(`[Next steps] «${wm.latest_handoff.next_steps}»`);
     }
   }
 
   if (wm.open_thread_count > 0) {
     parts.push(`[Active threads: ${wm.open_thread_count}]`);
     for (const t of wm.top_threads) {
-      parts.push(`  • [${t.lane ?? "general"}] ${t.title} (priority ${t.priority})`);
+      parts.push(`  • [${t.lane ?? "general"}] «${t.title}» (priority ${t.priority})`);
     }
   }
 
   if (wm.recent_notes.length > 0) {
     for (const n of wm.recent_notes) {
-      parts.push(`[Note/${n.salience}] ${n.content}`);
+      parts.push(`[Note/${n.salience} by ${n.actor}] «${n.content}»`);
     }
   }
 
