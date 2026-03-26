@@ -44,12 +44,20 @@ export async function getHandovers(request: Request, env: Env): Promise<Response
   });
 }
 
-// GET /companion-journal?agent=drevan&limit=20
+// GET /companion-journal?agent=drevan&limit=20&since=<ISO8601>
 export async function getCompanionJournal(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const url   = new URL(request.url);
   const agent = url.searchParams.get("agent");
   const limit = clampLimit(url.searchParams.get("limit"), 20, 100);
+  const since = url.searchParams.get("since") ?? undefined;
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return new Response(JSON.stringify({ error: "invalid since parameter" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   const validAgents = new Set(["drevan", "cypher", "gaia"]);
   const conditions: string[] = [];
@@ -59,15 +67,20 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
     conditions.push("agent = ?");
     bindings.push(agent);
   }
+  if (since !== undefined) {
+    conditions.push("created_at > ?");
+    bindings.push(since);
+  }
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
     SELECT id, created_at, agent, note_text, tags, session_id
     FROM companion_journal
     ${where}
-    ORDER BY created_at DESC
+    ORDER BY created_at ${orderDir}
     LIMIT ?
   `).bind(...bindings).all();
 
@@ -141,12 +154,20 @@ export async function getRoutines(request: Request, env: Env): Promise<Response>
   });
 }
 
-// GET /deltas?valence=tender&agent=drevan&limit=20
+// GET /deltas?valence=tender&agent=drevan&limit=20&since=<ISO8601>
 // Cross-companion delta feed — only returns rows with delta_text (spec v0.4 rows).
 export async function getDeltas(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const url    = new URL(request.url);
   const limit  = clampLimit(url.searchParams.get("limit"), 20, 100);
+  const since  = url.searchParams.get("since") ?? undefined;
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return new Response(JSON.stringify({ error: "invalid since parameter" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   const validValences = new Set(["toward", "neutral", "tender", "rupture", "repair"]);
   const validAgents   = new Set(["drevan", "cypher", "gaia"]);
@@ -165,14 +186,19 @@ export async function getDeltas(request: Request, env: Env): Promise<Response> {
     conditions.push("agent = ?");
     bindings.push(agent);
   }
+  if (since !== undefined) {
+    conditions.push("created_at > ?");
+    bindings.push(since);
+  }
 
+  const orderDir = since !== undefined ? "ASC" : "DESC";
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
     SELECT id, session_id, created_at, agent, delta_text, valence, initiated_by
     FROM relational_deltas
     WHERE ${conditions.join(" AND ")}
-    ORDER BY created_at DESC
+    ORDER BY created_at ${orderDir}
     LIMIT ?
   `).bind(...bindings).all<RelationalDeltaV4>();
 

@@ -18,12 +18,20 @@ function clampLimit(raw: string | null, def: number, max: number): number {
   return Math.min(Math.max(1, isNaN(n) ? def : n), max);
 }
 
-// GET /feelings?companion_id=drevan&limit=20
+// GET /feelings?companion_id=drevan&limit=20&since=<ISO8601>
 export async function getFeelings(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const url          = new URL(request.url);
   const limit        = clampLimit(url.searchParams.get("limit"), 20, 100);
   const companionId  = url.searchParams.get("companion_id");
+  const since        = url.searchParams.get("since") ?? undefined;
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return new Response(JSON.stringify({ error: "invalid since parameter" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   const validCompanions = new Set(["drevan", "cypher", "gaia"]);
   const conditions: string[] = [];
@@ -33,12 +41,17 @@ export async function getFeelings(request: Request, env: Env): Promise<Response>
     conditions.push("companion_id = ?");
     bindings.push(companionId);
   }
+  if (since !== undefined) {
+    conditions.push("created_at > ?");
+    bindings.push(since);
+  }
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
-    SELECT * FROM feelings ${where} ORDER BY created_at DESC LIMIT ?
+    SELECT * FROM feelings ${where} ORDER BY created_at ${orderDir} LIMIT ?
   `).bind(...bindings).all<Feeling>();
 
   return new Response(JSON.stringify(result.results ?? []), {
