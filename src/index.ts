@@ -29,6 +29,8 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote } from "./handlers/webmind.js";
+import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs } from "./handlers/ingest.js";
+import { checkRateLimit } from "./lib/rate-limit.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -50,10 +52,16 @@ const router = new Router()
   .on("POST", "/oauth/register",  (request, env) => postOAuthRegister(request, env))
   .on("GET",  "/oauth/authorize", (request, env) => getOAuthAuthorize(request, env))
   .on("POST", "/oauth/authorize", (request, env) => postOAuthAuthorize(request, env))
-  .on("POST", "/oauth/token",     (request, env) => postOAuthToken(request, env))
+  .on("POST", "/oauth/token", async (request, env) => {
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    return (await checkRateLimit(env.RATE_LIMITER, `oauth:${ip}`)) ?? postOAuthToken(request, env);
+  })
 
   // Admin
-  .on("POST", "/admin/bootstrap",            (request, env) => bootstrapConfig(request, env))
+  .on("POST", "/admin/bootstrap", async (request, env) => {
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    return (await checkRateLimit(env.RATE_LIMITER, `bootstrap:${ip}`)) ?? bootstrapConfig(request, env);
+  })
   .on("POST", "/admin/backfill-embeddings",  (request, env) => backfillEmbeddings(request, env))
 
   // Presence (dashboard feed)
@@ -91,6 +99,11 @@ const router = new Router()
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
   .on("POST", "/mind/thread",           (request, env) => postMindThread(request, env))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
+
+  // Ingest — read-only feeds for Second Brain pull pipeline
+  .on("GET", "/ingest/synthesis-summaries",   (request, env) => getSynthesisSummaries(request, env))
+  .on("GET", "/ingest/inter-companion-notes", (request, env) => getInterCompanionNotes(request, env))
+  .on("GET", "/ingest/mind-handoffs",         (request, env) => getMindHandoffs(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))
