@@ -13,9 +13,14 @@ import { addNote } from "../webmind/notes.js";
 import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput } from "../webmind/types.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
+const MAX_TEXT_LENGTH = 8000;
 
 function isValidAgentId(id: string): id is WmAgentId {
   return (VALID_AGENT_IDS as string[]).includes(id);
+}
+
+function exceedsLimit(val: unknown): boolean {
+  return typeof val === "string" && val.length > MAX_TEXT_LENGTH;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -96,6 +101,12 @@ export async function postMindHandoff(
     return json({ error: "summary is required" }, 400);
   }
 
+  for (const field of ["title", "summary", "next_steps", "open_loops", "state_hint"] as const) {
+    if (exceedsLimit(body[field])) {
+      return json({ error: `${field} exceeds maximum length of ${MAX_TEXT_LENGTH} characters` }, 400);
+    }
+  }
+
   try {
     const result = await writeHandoff(env, body);
     return json(result, 201);
@@ -130,6 +141,12 @@ export async function postMindThread(
     return json({ error: "title is required" }, 400);
   }
 
+  for (const field of ["title", "context", "event_content"] as const) {
+    if (exceedsLimit(body[field])) {
+      return json({ error: `${field} exceeds maximum length of ${MAX_TEXT_LENGTH} characters` }, 400);
+    }
+  }
+
   try {
     const result = await upsertThread(env, body);
     return json(result, 201);
@@ -159,6 +176,10 @@ export async function postMindNote(
   }
   if (!body.content || typeof body.content !== "string") {
     return json({ error: "content is required" }, 400);
+  }
+
+  if (exceedsLimit(body.content)) {
+    return json({ error: `content exceeds maximum length of ${MAX_TEXT_LENGTH} characters` }, 400);
   }
 
   try {
