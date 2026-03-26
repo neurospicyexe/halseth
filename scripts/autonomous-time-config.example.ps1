@@ -1,7 +1,7 @@
 # autonomous-time-config.ps1
 # Copy this file to autonomous-time-config.ps1 (gitignored) and fill in values.
 
-# Load secret from .env (copy .env.example to .env and set HALSETH_SECRET)
+# Load secret from .env in this directory (scripts/.env — copy .env.example to .env and set HALSETH_SECRET)
 $EnvFile = "$PSScriptRoot\.env"
 if (Test-Path $EnvFile) {
     Get-Content $EnvFile | ForEach-Object {
