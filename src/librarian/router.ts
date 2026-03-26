@@ -196,11 +196,15 @@ export class LibrarianRouter {
         }
 
         case "halseth_session_orient": {
-          const payload = await sessionOrient(this.env, {
-            companion_id: req.companion_id,
-            front_state: frontState ?? "unknown",
-            session_type: req.session_type ?? "work",
-          });
+          const agentId = req.companion_id as WmAgentId;
+          const [payload, wmResult] = await Promise.all([
+            sessionOrient(this.env, {
+              companion_id: req.companion_id,
+              front_state: frontState ?? "unknown",
+              session_type: req.session_type ?? "work",
+            }),
+            wmOrient(this.env, agentId).catch(() => null),
+          ]);
           const os = payload.state;
           const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
           const isMyTurn = autonomousTurn === req.companion_id;
@@ -218,6 +222,7 @@ export class LibrarianRouter {
             surface_emotion: os?.surface_emotion ?? null,
             undercurrent_emotion: os?.undercurrent_emotion ?? null,
             meta: { front_state: frontState },
+            continuity: wmResult,
           };
         }
 

@@ -9,6 +9,40 @@
 
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
+import type { WmOrientResponse } from "../../webmind/types.js";
+
+export function buildContinuityBlock(wm: WmOrientResponse): string {
+  const parts: string[] = [];
+
+  if (wm.identity_anchor) {
+    parts.push(`[Identity anchor] ${wm.identity_anchor.anchor_summary}`);
+    if (wm.identity_anchor.constraints_summary) {
+      parts.push(`[Constraints] ${wm.identity_anchor.constraints_summary}`);
+    }
+  }
+
+  if (wm.latest_handoff) {
+    parts.push(`[Last handoff] ${wm.latest_handoff.title}: ${wm.latest_handoff.summary}`);
+    if (wm.latest_handoff.next_steps) {
+      parts.push(`[Next steps] ${wm.latest_handoff.next_steps}`);
+    }
+  }
+
+  if (wm.open_thread_count > 0) {
+    parts.push(`[Active threads: ${wm.open_thread_count}]`);
+    for (const t of wm.top_threads) {
+      parts.push(`  • [${t.lane ?? "general"}] ${t.title} (priority ${t.priority})`);
+    }
+  }
+
+  if (wm.recent_notes.length > 0) {
+    for (const n of wm.recent_notes) {
+      parts.push(`[Note/${n.salience}] ${n.content}`);
+    }
+  }
+
+  return parts.join("\n");
+}
 
 interface OrientPayload {
   session_id: string;
@@ -153,8 +187,10 @@ export function buildResponse(
     const autonomousTurn = payload.autonomous_turn ?? null;
     const basePrompt = buildReadyPrompt(companionId, payload);
     const frontTag = frontState && frontState !== "unknown" ? ` | front: ${frontState}` : "";
+    const continuityData = (payload as unknown as Record<string, unknown>).continuity as WmOrientResponse | null ?? null;
+    const continuityBlock = continuityData ? "\n" + buildContinuityBlock(continuityData) : "";
     return {
-      ready_prompt: basePrompt + frontTag,
+      ready_prompt: basePrompt + frontTag + continuityBlock,
       session_id: payload.session_id,
       response_key: "ready_prompt",
       autonomous_turn: autonomousTurn,
