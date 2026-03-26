@@ -233,9 +233,12 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "session seal", "close this session", "closing now", "closing this",
       "wrap this", "end this session", "i'm closing", "session close",
       "halseth_session_close",
-      // Matches the natural language form companions actually send:
-      // "Close the Halseth session. Spine: [...]. Last real thing: [...]."
-      "close the halseth session", "close halseth session",
+      // Matches the natural language forms companions actually send.
+      // "Close this Halseth session" / "Close the Halseth session. Spine: [...]."
+      // Note: "close session" does NOT match "close the/this halseth session"
+      // because "halseth" sits between the words -- these explicit forms are required.
+      "close the halseth session", "close this halseth session",
+      "close halseth session",
       "spine:", "last real thing:",
     ],
     tools: ["halseth_session_close"],

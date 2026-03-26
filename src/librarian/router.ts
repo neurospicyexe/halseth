@@ -532,7 +532,7 @@ export class LibrarianRouter {
 
         case "halseth_session_close": {
           const p = this.parseContext<{
-            session_id: string; spine: string; last_real_thing: string;
+            session_id?: string; spine: string; last_real_thing: string;
             open_threads?: string[]; motion_state: string; active_anchor?: string;
             notes?: string; spiral_complete?: boolean;
             soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;
@@ -542,7 +542,25 @@ export class LibrarianRouter {
             background_emotion?: string; background_intensity?: number;
             prompt_context?: string;
           }>(req.context);
-          if (!p || !p.session_id || !p.spine || !p.last_real_thing || !p.motion_state) return { error: "session_close_failed", reason: "missing required fields: spine, last_real_thing", hint: "Re-run halseth_session_close with all required context populated" };
+          // Auto-resolve session_id: if not supplied in context, look up the most recent
+          // open session for this companion (handover_id IS NULL = not yet closed).
+          // Companions track session_id at orient time but may not always forward it to close.
+          let resolvedSessionId = p?.session_id ?? null;
+          if (!resolvedSessionId) {
+            const latest = await this.env.DB.prepare(
+              "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
+            ).bind(req.companion_id).first<{ id: string }>();
+            resolvedSessionId = latest?.id ?? null;
+          }
+          // Validate required fields and surface exactly what is missing.
+          if (!p || !resolvedSessionId || !p.spine || !p.last_real_thing || !p.motion_state) {
+            const missing: string[] = [];
+            if (!resolvedSessionId) missing.push("session_id (no open session found for this companion)");
+            if (!p?.spine) missing.push("spine");
+            if (!p?.last_real_thing) missing.push("last_real_thing");
+            if (!p?.motion_state) missing.push("motion_state");
+            return { error: "session_close_failed", reason: `missing required fields: ${missing.join(", ")}`, hint: "Re-run halseth_session_close with spine, last_real_thing, and motion_state in context" };
+          }
           const somaFields: CompanionStateUpdate = {};
           if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
           if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
@@ -556,7 +574,7 @@ export class LibrarianRouter {
           if (p.background_emotion !== undefined) somaFields.background_emotion = p.background_emotion;
           if (p.background_intensity !== undefined) somaFields.background_intensity = p.background_intensity;
           if (p.prompt_context !== undefined) somaFields.prompt_context = p.prompt_context;
-          const r = await sessionClose(this.env, { ...p, somaFields, companionId: req.companion_id });
+          const r = await sessionClose(this.env, { ...p, session_id: resolvedSessionId, somaFields, companionId: req.companion_id });
           return { ack: true, id: r.id, spine: r.spine };
         }
 
