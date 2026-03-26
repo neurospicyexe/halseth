@@ -47,5 +47,6 @@ export async function seedIdentityAnchor(env: Env, agentId: WmAgentId): Promise<
     "SELECT * FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
   ).bind(agentId).first<WmIdentityAnchor>();
 
-  return row!;
+  if (!row) throw new Error(`seedIdentityAnchor: failed to read back anchor for ${agentId}`);
+  return row;
 }

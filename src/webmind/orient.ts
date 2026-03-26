@@ -21,24 +21,21 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     anchor = await seedIdentityAnchor(env, agentId);
   }
 
-  // 2. Latest handoff
-  const latestHandoff = await env.DB.prepare(
-    "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
-  ).bind(agentId).first<WmSessionHandoff>();
-
-  // 3. Open thread count + top 5
-  const threadCount = await env.DB.prepare(
-    "SELECT COUNT(*) as cnt FROM wm_mind_threads WHERE agent_id = ? AND status = 'open'"
-  ).bind(agentId).first<{ cnt: number }>();
-
-  const topThreads = await env.DB.prepare(
-    "SELECT * FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY priority DESC, last_touched_at DESC LIMIT 5"
-  ).bind(agentId).all<WmMindThread>();
-
-  // 4. Recent high-salience notes
-  const recentNotes = await env.DB.prepare(
-    "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND salience = 'high' ORDER BY created_at DESC LIMIT 5"
-  ).bind(agentId).all<WmContinuityNote>();
+  // 2-4. Remaining queries are independent -- run concurrently
+  const [latestHandoff, threadCount, topThreads, recentNotes] = await Promise.all([
+    env.DB.prepare(
+      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(agentId).first<WmSessionHandoff>(),
+    env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM wm_mind_threads WHERE agent_id = ? AND status = 'open'"
+    ).bind(agentId).first<{ cnt: number }>(),
+    env.DB.prepare(
+      "SELECT * FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY priority DESC, last_touched_at DESC LIMIT 5"
+    ).bind(agentId).all<WmMindThread>(),
+    env.DB.prepare(
+      "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND salience = 'high' ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<WmContinuityNote>(),
+  ]);
 
   return {
     identity_anchor: anchor,

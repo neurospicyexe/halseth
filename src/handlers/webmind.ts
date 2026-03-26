@@ -86,6 +86,16 @@ export async function postMindHandoff(
     return json({ error: "Invalid JSON body" }, 400);
   }
 
+  if (!body.agent_id || !isValidAgentId(body.agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!body.title || typeof body.title !== "string") {
+    return json({ error: "title is required" }, 400);
+  }
+  if (!body.summary || typeof body.summary !== "string") {
+    return json({ error: "summary is required" }, 400);
+  }
+
   try {
     const result = await writeHandoff(env, body);
     return json(result, 201);
@@ -110,6 +120,16 @@ export async function postMindThread(
     return json({ error: "Invalid JSON body" }, 400);
   }
 
+  if (!body.agent_id || !isValidAgentId(body.agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!body.thread_key || typeof body.thread_key !== "string") {
+    return json({ error: "thread_key is required" }, 400);
+  }
+  if (!body.title || typeof body.title !== "string") {
+    return json({ error: "title is required" }, 400);
+  }
+
   try {
     const result = await upsertThread(env, body);
     return json(result, 201);
@@ -132,6 +152,13 @@ export async function postMindNote(
     body = await request.json() as WmNoteInput;
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.agent_id || !isValidAgentId(body.agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!body.content || typeof body.content !== "string") {
+    return json({ error: "content is required" }, 400);
   }
 
   try {
