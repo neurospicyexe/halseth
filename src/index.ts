@@ -28,6 +28,7 @@ import { handleLibrarianMcp } from "./librarian/mcp.js";
 import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
+import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote } from "./handlers/webmind.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -83,6 +84,13 @@ const router = new Router()
 
   // Soma — companion SOMA state for Hearth
   .on("GET", "/soma", (request, env) => getSoma(request, env))
+
+  // WebMind — companion continuity and thread state
+  .on("GET",  "/mind/orient/:agent_id", (request, env, params) => getMindOrient(request, env, params ?? {}))
+  .on("GET",  "/mind/ground/:agent_id", (request, env, params) => getMindGround(request, env, params ?? {}))
+  .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
+  .on("POST", "/mind/thread",           (request, env) => postMindThread(request, env))
+  .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))
