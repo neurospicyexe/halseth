@@ -26,7 +26,7 @@ export async function upsertThread(
   const status = input.status ?? "open";
   const priority = input.priority ?? 0;
 
-  await env.DB.prepare(`
+  const threadStmt = env.DB.prepare(`
     INSERT INTO wm_mind_threads (thread_key, agent_id, title, status, priority, lane, context, do_not_archive, do_not_resolve, actor, source, correlation_id, last_touched_at, updated_at, status_changed, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(thread_key, agent_id) DO UPDATE SET
@@ -53,12 +53,14 @@ export async function upsertThread(
     input.correlation_id ?? null,
     now, now,
     status !== "open" ? now : null, now,
-  ).run();
+  );
 
   let event: WmThreadEvent | null = null;
+  const stmts: Parameters<typeof env.DB.batch>[0] = [threadStmt];
+
   if (input.event_type) {
     const eventId = generateId();
-    await env.DB.prepare(`
+    const eventStmt = env.DB.prepare(`
       INSERT INTO wm_thread_events (event_id, thread_key, agent_id, event_type, content, actor, source, correlation_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
@@ -66,23 +68,30 @@ export async function upsertThread(
       input.event_type, input.event_content ?? null,
       input.actor ?? "agent", input.source ?? "system",
       input.correlation_id ?? null, now,
-    ).run();
+    );
+    stmts.push(eventStmt);
     event = {
       event_id: eventId,
       thread_key: input.thread_key,
       agent_id: input.agent_id,
       event_type: input.event_type,
       content: input.event_content ?? null,
-      actor: (input.actor ?? "agent") as "agent",
+      actor: input.actor ?? "agent",
       source: input.source ?? "system",
       correlation_id: input.correlation_id ?? null,
       created_at: now,
     };
   }
 
+  await env.DB.batch(stmts);
+
   const thread = await env.DB.prepare(
     "SELECT * FROM wm_mind_threads WHERE thread_key = ? AND agent_id = ?"
   ).bind(input.thread_key, input.agent_id).first<WmMindThread>();
 
-  return { thread: thread!, event };
+  if (!thread) {
+    throw new Error(`upsertThread: thread not found after insert: ${input.thread_key}`);
+  }
+
+  return { thread, event };
 }
