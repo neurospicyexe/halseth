@@ -32,6 +32,7 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     const initRes = await fetch(SECOND_BRAIN_URL, {
       method: "POST",
       headers,
+      signal: AbortSignal.timeout(5_000),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -58,6 +59,7 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     await fetch(SECOND_BRAIN_URL, {
       method: "POST",
       headers: { ...headers, "mcp-session-id": sessionId },
+      signal: AbortSignal.timeout(3_000),
       body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
     }).catch((e: unknown) => console.error("[sb] notifications/initialized failed (non-fatal):", e));
 
@@ -65,6 +67,7 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     const toolRes = await fetch(SECOND_BRAIN_URL, {
       method: "POST",
       headers: { ...headers, "mcp-session-id": sessionId },
+      signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
