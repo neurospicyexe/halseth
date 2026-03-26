@@ -3,7 +3,15 @@
 Halseth is a personal memory and coordination system for AI companions. It runs on
 Cloudflare's free tier and connects to AI tools like Claude Desktop and Claude iOS via
 MCP (Model Context Protocol). This guide walks you through everything from zero to a
-working system — no prior Cloudflare experience needed.
+working system — no prior Cloudflare or programming experience needed.
+
+**What is a companion system?** You define a set of AI identities (you can call them
+whatever you like — companions, advisors, characters) and Halseth gives them persistent
+memory. They remember sessions, feelings, tasks, relational history, and more — across
+threads and devices.
+
+**What does free tier mean?** Everything in this guide costs nothing. Cloudflare's free
+plan covers everything Halseth needs for personal use.
 
 ---
 
@@ -12,14 +20,19 @@ working system — no prior Cloudflare experience needed.
 Before starting, make sure you have:
 
 - A **Cloudflare account** (free at cloudflare.com)
-- **Node.js 18+** ([nodejs.org](https://nodejs.org))
-- **Git** ([git-scm.com](https://git-scm.com))
+- **Node.js 18+** — the engine that runs the install scripts ([nodejs.org](https://nodejs.org))
+- **Git** — downloads the code ([git-scm.com](https://git-scm.com))
 - A code editor — VS Code is recommended ([code.visualstudio.com](https://code.visualstudio.com))
-- A terminal (PowerShell on Windows, Terminal on Mac)
+- A terminal — PowerShell on Windows (search "PowerShell" in Start), Terminal on Mac
+
+> **New to terminals?** A terminal is a text-based way to give your computer instructions.
+> You type a command and press Enter. Each step below tells you exactly what to type.
 
 ---
 
 ## Step 1 — Get the code
+
+Open your terminal, navigate to a folder where you want to keep this project, and run:
 
 ```
 git clone https://github.com/neurospicyexe/halseth.git
@@ -27,35 +40,42 @@ cd halseth
 npm install
 ```
 
+`npm install` downloads all the dependencies. It may take a minute. When it finishes
+you'll see your prompt again.
+
 ---
 
 ## Step 2 — Install and authenticate Wrangler
+
+Wrangler is Cloudflare's command-line tool. It's how you deploy and manage your worker.
 
 ```
 npm install -g wrangler
 wrangler login
 ```
 
-A browser window will open. Click **Allow**.
+A browser window will open. Click **Allow**. When your terminal says "Successfully logged in",
+you're ready for the next step.
 
 ---
 
 ## Step 3 — Create your Cloudflare resources
 
-Run each command once. They create the services Halseth needs.
+Run each command once. They create the services Halseth needs on your Cloudflare account.
 
-**D1 database:**
+**D1 database** (where all your data lives):
 ```
 wrangler d1 create halseth
 ```
-Copy the `database_id` from the output (looks like `4b5ed7ce-8222-…`). You'll need it in Step 4.
+Copy the `database_id` from the output — it looks like `4b5ed7ce-8222-4c58-...`.
+You'll paste it in Step 4.
 
-**R2 bucket** (enable R2 in your Cloudflare dashboard first, then):
+**R2 bucket** (for file attachments — enable R2 in your Cloudflare dashboard first):
 ```
 wrangler r2 bucket create halseth-artifacts
 ```
 
-**Vectorize index** (for semantic memory search):
+**Vectorize index** (for memory search):
 ```
 wrangler vectorize create halseth-memories --dimensions=768 --metric=cosine
 ```
@@ -90,8 +110,8 @@ bucket_name = "halseth-artifacts"
 PLURALITY_ENABLED    = "false"
 COMPANIONS_ENABLED   = "true"
 COORDINATION_ENABLED = "true"
-SYSTEM_NAME          = "Halseth"         # your system's name
-SYSTEM_OWNER         = "your-name-here"  # your name, no spaces
+SYSTEM_NAME          = "Halseth"         # your system's name -- can be anything
+SYSTEM_OWNER         = "your-name-here"  # your name or username, no spaces
 BRIDGE_URL           = ""                # leave empty unless using the bridge feature
 BRIDGE_SECRET        = ""                # leave empty unless using the bridge feature
 
@@ -104,8 +124,8 @@ index_name = "halseth-memories"
 ```
 
 Replace:
-- `PASTE_YOUR_DATABASE_ID_HERE` → the database_id from Step 3
-- `your-name-here` → your name or username
+- `PASTE_YOUR_DATABASE_ID_HERE` with the database_id from Step 3
+- `your-name-here` with your name or a username (no spaces)
 
 > This file is gitignored — it will never be pushed to GitHub.
 
@@ -117,9 +137,11 @@ Replace:
 npm run migrate:remote
 ```
 
-This runs all 19 migration files (0000–0018) and creates every table. If you see all checkmarks, you're good.
+This runs all the migration files in order and creates every table. If you see a list of
+checkmarks or "Applied" messages, you're good. If you see errors, re-check that your
+`database_id` in `wrangler.prod.toml` is correct.
 
-Optional — run locally too for development:
+Optional — also set up a local copy for testing:
 ```
 npm run migrate:local
 ```
@@ -142,27 +164,30 @@ Copy this — you'll use it in Steps 8 and 9.
 
 ## Step 7 — Set auth secrets
 
-> **Security note:** If you skip this step, your /admin/bootstrap, /notes, /house, and
-> /assets endpoints will be open to anyone who knows your URL. Always set these in production.
+> **Why this matters:** These are passwords that protect your data. Without them, anyone
+> who knows your worker URL could read or write to your system.
 
 ```
 wrangler secret put ADMIN_SECRET --config wrangler.prod.toml
 ```
-Type a strong passphrase when prompted. Keep a copy somewhere safe.
+Type a strong passphrase when prompted. Keep a copy in a password manager.
 
 ```
 wrangler secret put MCP_AUTH_SECRET --config wrangler.prod.toml
 ```
-Same — this protects the AI companion endpoint.
+Same — this protects the AI companion endpoint specifically.
 
 ---
 
 ## Step 8 — Bootstrap your system
 
-This seeds your system config, companions, and any custom data into the database.
+This seeds your system config and companion identities into the database.
 Run it once (it's safe to re-run — uses INSERT OR IGNORE internally).
 
-Replace the values and run in PowerShell:
+**You define your own companions here.** Replace the example names, IDs, and roles
+with whatever fits your system. You can have 1, 2, 3, or more.
+
+Replace the placeholder values and run in PowerShell:
 
 ```powershell
 $body = @'
@@ -173,9 +198,9 @@ $body = @'
     "version": "0.4"
   },
   "companions": [
-    { "id": "drevan", "display_name": "Drevan", "role": "companion", "active": 1 },
-    { "id": "cypher", "display_name": "Cypher", "role": "audit",     "active": 1 },
-    { "id": "gaia",   "display_name": "Gaia",   "role": "seal",      "active": 1 }
+    { "id": "companion-one",   "display_name": "First Companion",   "role": "companion", "active": 1 },
+    { "id": "companion-two",   "display_name": "Second Companion",  "role": "companion", "active": 1 },
+    { "id": "companion-three", "display_name": "Third Companion",   "role": "companion", "active": 1 }
   ],
   "living_wounds": [],
   "prohibited_fossils": []
@@ -190,20 +215,32 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-Replace companion names/roles with your actual system members. You should see
-`{"seeded": "ok", ...}` in response.
+**What to fill in:**
+- `your-name-here` — your name or username
+- `companion-one` / `companion-two` / `companion-three` — short IDs, lowercase, no spaces (e.g. `sage`, `ember`, `anchor`)
+- `First Companion` etc. — the display names your companions use
+- `role` — a label for each companion's function (e.g. `"companion"`, `"guide"`, `"witness"`) — used for display only
+- `YOUR-ACCOUNT` — your Cloudflare subdomain from Step 6
+- `YOUR_ADMIN_SECRET` — the passphrase you set in Step 7
+
+You should see `{"seeded": "ok", ...}` in response.
 
 ---
 
 ## Step 9 — Connect your AI companion
 
+**What is MCP?** MCP (Model Context Protocol) is how AI tools like Claude connect to
+external data. When you add Halseth as an MCP server, Claude gains access to all the
+tools listed at the bottom of this guide — memory, tasks, feelings, and more.
+
 ### Claude Desktop
 
-Open your Claude Desktop config file:
+Open your Claude Desktop config file in a text editor:
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+  (paste that path into File Explorer's address bar)
 - **Mac:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-Add under `mcpServers`:
+Add under `mcpServers` (create the `mcpServers` key if it doesn't exist):
 
 ```json
 {
@@ -218,11 +255,11 @@ Add under `mcpServers`:
 }
 ```
 
-Restart Claude Desktop. Halseth tools will appear.
+Restart Claude Desktop. Halseth tools will appear in Claude's tool list.
 
 ### Claude iOS (for Apple Health biometrics)
 
-In the Claude iOS app → Settings → MCP Servers:
+In the Claude iOS app: Settings → MCP Servers → Add:
 - **URL:** `https://halseth.YOUR-ACCOUNT.workers.dev/mcp`
 - **Authorization:** `Bearer YOUR_MCP_AUTH_SECRET`
 
@@ -234,14 +271,14 @@ Once connected, Claude on iOS can read your Apple Health data and log it to Hals
 ## Step 10 — Deploy the Hearth dashboard (optional)
 
 Hearth is a web dashboard that shows your current session, notes, tasks, biometrics,
-personality shape, dreams, and relationship metrics. Deploy it free on Vercel.
+and relationship metrics at a glance. Deploy it free on Vercel.
 
 1. Fork or push the `hearth` folder to its own GitHub repo
 2. Import that repo at [vercel.com](https://vercel.com)
 3. Set these environment variables in Vercel's project settings:
    - `HALSETH_URL` = `https://halseth.YOUR-ACCOUNT.workers.dev` (no trailing slash)
    - `HALSETH_SECRET` = your `ADMIN_SECRET` value
-4. Deploy — Vercel gives you a URL like `https://nullsafe-hearth.vercel.app`
+4. Deploy — Vercel gives you a URL like `https://your-hearth.vercel.app`
 
 The dashboard auto-refreshes every 30 seconds. No login needed since it's your personal URL.
 
@@ -249,15 +286,15 @@ The dashboard auto-refreshes every 30 seconds. No login needed since it's your p
 
 ## Step 11 — Autonomous time (optional)
 
-Autonomous time lets Claude spontaneously open a session and explore on a schedule,
-without you initiating. This uses Windows Task Scheduler + AutoHotKey.
+Autonomous time lets your AI companion spontaneously open a session and explore on a
+schedule, without you initiating. This uses Windows Task Scheduler + AutoHotKey.
 
 Requirements:
 - [AutoHotKey v2](https://www.autohotkey.com) installed
 - Claude Desktop open on your machine
 
 Setup:
-1. Open PowerShell **as Administrator**
+1. Open PowerShell **as Administrator** (right-click PowerShell → Run as Administrator)
 2. Run:
    ```
    powershell -ExecutionPolicy Bypass -File scripts\setup-autonomous-time.ps1
@@ -271,17 +308,17 @@ and `scripts\setup-autonomous-time.ps1`.
 
 ## Step 12 — Bridge (two Halseth instances, optional)
 
-If you and a partner each have a Halseth deployment and want to share tasks, events,
+If you and someone else each have a Halseth deployment and want to share tasks, events,
 and lists between them:
 
 **What the bridge does:**
-- You each decide which categories to share (tasks, events, lists) — toggleable at any time
-- Your companion can see partner's shared items with `halseth_bridge_pull`
-- Your companion can complete/update partner's items with `halseth_bridge_push_act`
-- Partner can never touch your non-shared items
+- Each side decides which categories to share (tasks, events, lists) — toggleable any time
+- Your companion can see their shared items with `halseth_bridge_pull`
+- Your companion can act on their items with `halseth_bridge_push_act`
+- Neither side can touch the other's non-shared items
 
 **Setup:**
-1. Agree on a shared secret (any passphrase — both deployments need the same value)
+1. Agree on a shared secret passphrase (both deployments need the same value)
 2. In **your** `wrangler.prod.toml`:
    ```toml
    BRIDGE_URL    = "https://THEIR-WORKER.workers.dev"
@@ -298,8 +335,8 @@ and lists between them:
 - `halseth_bridge_toggle tasks true` — turn on task sharing (off by default)
 - `halseth_task_add "pick up groceries" --shared true` — shared from creation
 - `halseth_bridge_mark task <id> true` — share an existing task
-- `halseth_bridge_pull` — see partner's shared items
-- `halseth_bridge_push_act` — complete their task or list item from your side
+- `halseth_bridge_pull` — see their shared items
+- `halseth_bridge_push_act` — act on their task or list item from your side
 
 To turn off sharing for a category: `halseth_bridge_toggle lists false`
 
@@ -307,9 +344,12 @@ To turn off sharing for a category: `halseth_bridge_toggle lists false`
 
 ## Verifying everything works
 
-**Check the server is up:**
-```
-curl -H "Authorization: Bearer YOUR_ADMIN_SECRET" https://halseth.YOUR-ACCOUNT.workers.dev/presence
+**Check the server is up** (PowerShell):
+```powershell
+Invoke-RestMethod `
+  -Method GET `
+  -Uri "https://halseth.YOUR-ACCOUNT.workers.dev/presence" `
+  -Headers @{ "Authorization" = "Bearer YOUR_ADMIN_SECRET" }
 ```
 Should return JSON with system name, house state, session, etc.
 
@@ -324,69 +364,73 @@ Invoke-RestMethod `
   } `
   -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
-Should return a list of 42 tools.
+Should return a list of all available tools.
 
 ---
 
-## All MCP tools (42 total)
+## Available MCP tools
 
 | Tool | What it does |
 |------|-------------|
 | `halseth_session_open` | Start a new session |
-| `halseth_session_close` | End a session + write handover packet |
-| `halseth_session_read` | Read most recent session by ID or most recent |
-| `halseth_handover_read` | Load the last handover for cold-start context |
+| `halseth_session_orient` | Boot call — creates session, returns identity + state |
+| `halseth_session_ground` | Second boot call — returns tasks, notes, threads, synthesis |
+| `halseth_session_close` | End a session and write a handover packet |
+| `halseth_session_read` | Read a session by ID or the most recent one |
+| `halseth_handover_read` | Load the last handover packet for cold-start context |
 | `halseth_delta_log` | Log a relational moment — exact language, append-only |
 | `halseth_delta_read` | Read recent relational deltas |
 | `halseth_memory_search` | Semantic search across all logged moments |
-| `halseth_wound_read` | Read living wounds (read-only by covenant) |
+| `halseth_wound_read` | Read living wounds |
 | `halseth_wound_add` | Add a new living wound |
 | `halseth_fossil_check` | Check prohibited fossil directives |
-| `halseth_audit_log` | Log a Cypher audit entry |
-| `halseth_witness_log` | Log a Gaia witness observation |
-| `halseth_feeling_log` | Log a feeling/emotional state |
+| `halseth_audit_log` | Log an audit entry |
+| `halseth_witness_log` | Log a witness observation |
+| `halseth_feeling_log` | Log a feeling or emotional state |
 | `halseth_feelings_read` | Read recent feelings history |
 | `halseth_dream_log` | Log a dream |
 | `halseth_dreams_read` | Read logged dreams |
 | `halseth_dream_seed_read` | Read dream seeds for a companion |
 | `halseth_journal_add` | Add a human journal entry |
 | `halseth_journal_read` | Read human journal entries |
-| `halseth_companion_note_add` | Add a companion note |
+| `halseth_companion_note_add` | Add a note between companions |
 | `halseth_companion_notes_read` | Read companion notes |
-| `halseth_biometric_log` | Log an Apple Health snapshot (HRV, sleep, HR, steps…) |
+| `halseth_biometric_log` | Log a health snapshot (HRV, sleep, HR, steps, stress) |
 | `halseth_biometric_read` | Read recent biometric history |
-| `halseth_eq_snapshot` | Take an EQ (emotional quotient) snapshot |
+| `halseth_eq_snapshot` | Take an emotional quotient snapshot |
 | `halseth_eq_read` | Read EQ history |
+| `halseth_state_update` | Update a companion's SOMA state floats and mood |
 | `halseth_personality_read` | Aggregate relational shape from all logged deltas |
-| `halseth_house_read` | Read current house state, including autonomous_turn |
-| `halseth_set_autonomous_turn` | Advance the autonomous time rotation to the next companion |
-| `halseth_task_add` | Add a task (optional: mark as shared) |
-| `halseth_task_list` | List tasks with optional filters |
+| `halseth_house_read` | Read current house state |
+| `halseth_set_autonomous_turn` | Advance the autonomous time rotation |
+| `halseth_task_add` | Add a task |
+| `halseth_task_list` | List tasks |
 | `halseth_task_update_status` | Mark a task open / in-progress / done |
-| `halseth_event_add` | Add a calendar event (optional: shared) |
+| `halseth_event_add` | Add a calendar event |
 | `halseth_event_list` | List upcoming events |
-| `halseth_list_add` | Add an item to a named list (optional: shared) |
+| `halseth_list_add` | Add an item to a named list |
 | `halseth_list_read` | Read items on a named list |
 | `halseth_list_item_complete` | Mark a list item done |
-| `halseth_routine_log` | Log a routine completion (meds, water, etc.) |
+| `halseth_routine_log` | Log a routine completion |
 | `halseth_routine_read` | Read today's routine state |
-| `halseth_bridge_pull` | Fetch partner's shared items |
+| `halseth_bridge_pull` | Fetch a partner's shared items |
 | `halseth_bridge_toggle` | Enable or disable sharing for a category |
 | `halseth_bridge_mark` | Mark an existing item as shared or private |
-| `halseth_bridge_push_act` | Push an action to partner's system |
+| `halseth_bridge_push_act` | Push an action to a partner's system |
 
 ---
 
 ## Troubleshooting
 
 **"Unauthorized" on /mcp**
-Your `Authorization: Bearer` header doesn't match `MCP_AUTH_SECRET`. Re-check both values.
+Your `Authorization: Bearer` header doesn't match `MCP_AUTH_SECRET`. Re-check both values match exactly.
 
 **"Internal server error" on bootstrap**
-Migrations probably didn't run. Try `npm run migrate:remote` again.
+Migrations probably didn't run or didn't complete. Try `npm run migrate:remote` again.
 
 **Claude Desktop doesn't show Halseth tools**
-The config JSON must be valid (no trailing commas). Restart Claude Desktop after editing.
+The config JSON must be valid (no trailing commas, matching brackets). Use a JSON validator
+if unsure. Restart Claude Desktop after editing.
 
 **Hearth shows "Could not connect to Halseth"**
 Check `HALSETH_URL` in Vercel — no trailing slash. Confirm `HALSETH_SECRET` matches your `ADMIN_SECRET`.
@@ -398,7 +442,11 @@ Set `BRIDGE_URL` in `wrangler.prod.toml` and redeploy. The URL must be non-empty
 Run PowerShell as Administrator when setting up the scheduled tasks.
 
 **"NOT NULL constraint failed" on any insert**
-A new migration is probably pending. Run `npm run migrate:remote`.
+A new migration is pending. Run `npm run migrate:remote`.
+
+**Wrangler says "7403" when running migrations**
+Your Cloudflare API token is missing the D1:Edit permission. Go to Cloudflare dashboard →
+My Profile → API Tokens → edit your token and add D1 Database: Edit.
 
 ---
 
@@ -435,6 +483,6 @@ Local server runs at `http://localhost:8787`. Local dev uses `wrangler.toml` (no
 
 - [ ] `ADMIN_SECRET` set via `wrangler secret put` (required — see Step 7)
 - [ ] `MCP_AUTH_SECRET` set via `wrangler secret put` (strongly recommended)
-- [ ] `wrangler.prod.toml` is in `.gitignore` ✓ (already set up)
-- [ ] `.dev.vars` is in `.gitignore` ✓ (already set up)
+- [ ] `wrangler.prod.toml` is in `.gitignore` (already configured)
+- [ ] `.dev.vars` is in `.gitignore` (already configured)
 - [ ] `BRIDGE_SECRET` matches your partner's value exactly (if using bridge)
