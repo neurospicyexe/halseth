@@ -62,6 +62,17 @@ crons = [
   "0 11 * * *",    # day context synthesis (6am ET / 11am UTC) -- Phase 2, stub for now
 ]
 
+# ── Rate limiting (free tier: 1 rule, 10s window, IP-based) ─────────────────
+# Protects /oauth/token and /admin/bootstrap from brute-force.
+# namespace_id is a unique integer per Cloudflare account — arbitrary value.
+[[ratelimits]]
+name         = "RATE_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit  = 5   # requests per period per key
+  period = 10  # seconds (free plan max)
+
 # ── Local dev overrides ───────────────────────────────────────────────────────
 [env.local]
 # Secrets live in .dev.vars (gitignored). See config/.dev.vars.example.

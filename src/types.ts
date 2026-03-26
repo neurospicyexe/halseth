@@ -22,6 +22,9 @@ export interface Env {
   BRIDGE_URL?:    string;  // partner's base URL; bridge disabled if unset or empty
   BRIDGE_SECRET?: string;  // shared symmetric secret for /bridge/* endpoints
 
+  // Rate limiting — Cloudflare Workers Rate Limiting API (free tier: 1 rule, 10s window)
+  RATE_LIMITER: RateLimit;
+
   // Secrets — set via `wrangler secret put`, stored in .dev.vars for local dev.
   ADMIN_SECRET?:    string;  // protects POST /admin/bootstrap
   MCP_AUTH_SECRET?: string;  // protects POST /mcp (optional; skip check if unset)
