@@ -15,6 +15,60 @@ import { Env } from "../../types.js";
 
 const SECOND_BRAIN_URL = "https://mcp.softcrashentity.com/mcp";
 
+// Cached MCP session. Cloudflare Workers are short-lived but may handle
+// multiple Librarian calls within a single request (e.g. orient does
+// vault_search + retrieval). Cache avoids repeated init handshake.
+let cachedSessionId: string | null = null;
+let cachedSessionAt = 0;
+const SESSION_TTL_MS = 4 * 60 * 1000; // 4 minutes; conservative vs typical 5min server TTL
+
+async function acquireSession(headers: Record<string, string>): Promise<string | null> {
+  const now = Date.now();
+  if (cachedSessionId && (now - cachedSessionAt) < SESSION_TTL_MS) {
+    return cachedSessionId;
+  }
+
+  const initRes = await fetch(SECOND_BRAIN_URL, {
+    method: "POST",
+    headers,
+    signal: AbortSignal.timeout(5_000),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "halseth-librarian", version: "1.0.0" },
+      },
+    }),
+  });
+
+  if (!initRes.ok) {
+    console.error(`[sb] init failed: status=${initRes.status}`);
+    cachedSessionId = null;
+    return null;
+  }
+  const sessionId = initRes.headers.get("mcp-session-id");
+  if (!sessionId) {
+    console.error("[sb] init OK but no mcp-session-id header");
+    cachedSessionId = null;
+    return null;
+  }
+
+  // Fire-and-forget notification (required by MCP spec for state transition)
+  fetch(SECOND_BRAIN_URL, {
+    method: "POST",
+    headers: { ...headers, "mcp-session-id": sessionId },
+    signal: AbortSignal.timeout(3_000),
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  }).catch((e: unknown) => console.error("[sb] notifications/initialized failed (non-fatal):", e));
+
+  cachedSessionId = sessionId;
+  cachedSessionAt = now;
+  return sessionId;
+}
+
 async function callTool(env: Env, toolName: string, args: Record<string, unknown>): Promise<string | null> {
   if (!env.SECOND_BRAIN_TOKEN) {
     console.error("[sb] callTool: SECOND_BRAIN_TOKEN not set");
@@ -28,42 +82,10 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
   };
 
   try {
-    // Step 1: Initialize MCP session
-    const initRes = await fetch(SECOND_BRAIN_URL, {
-      method: "POST",
-      headers,
-      signal: AbortSignal.timeout(5_000),
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "halseth-librarian", version: "1.0.0" },
-        },
-      }),
-    });
+    const sessionId = await acquireSession(headers);
+    if (!sessionId) return null;
 
-    if (!initRes.ok) {
-      console.error(`[sb] init failed: status=${initRes.status} tool=${toolName}`);
-      return null;
-    }
-    const sessionId = initRes.headers.get("mcp-session-id");
-    if (!sessionId) {
-      console.error(`[sb] init OK but no mcp-session-id header tool=${toolName}`);
-      return null;
-    }
-
-    // Step 1.5: notifications/initialized (fire-and-forget, SDK state transition)
-    await fetch(SECOND_BRAIN_URL, {
-      method: "POST",
-      headers: { ...headers, "mcp-session-id": sessionId },
-      signal: AbortSignal.timeout(3_000),
-      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-    }).catch((e: unknown) => console.error("[sb] notifications/initialized failed (non-fatal):", e));
-
-    // Step 2: Call the tool
+    // Call the tool
     const toolRes = await fetch(SECOND_BRAIN_URL, {
       method: "POST",
       headers: { ...headers, "mcp-session-id": sessionId },
@@ -76,14 +98,39 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
       }),
     });
 
-    if (!toolRes.ok) {
+    let finalRes = toolRes;
+
+    if (toolRes.status === 404 || toolRes.status === 410) {
+      console.warn(`[sb] session expired (${toolRes.status}), retrying with fresh session tool=${toolName}`);
+      cachedSessionId = null;
+      const freshId = await acquireSession(headers);
+      if (!freshId) return null;
+
+      finalRes = await fetch(SECOND_BRAIN_URL, {
+        method: "POST",
+        headers: { ...headers, "mcp-session-id": freshId },
+        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: toolName, arguments: args },
+        }),
+      });
+
+      if (!finalRes.ok) {
+        const body = await finalRes.text().catch(() => "(unreadable)");
+        console.error(`[sb] tools/call retry failed: status=${finalRes.status} tool=${toolName} body=${body}`);
+        return null;
+      }
+    } else if (!toolRes.ok) {
       const body = await toolRes.text().catch(() => "(unreadable)");
       console.error(`[sb] tools/call failed: status=${toolRes.status} tool=${toolName} body=${body}`);
       return null;
     }
 
     // Server may return SSE ("event: message\ndata: {...}") or plain JSON depending on Accept negotiation
-    const rawText = await toolRes.text();
+    const rawText = await finalRes.text();
     let data: { result?: { content?: Array<{ type: string; text: string }> }; error?: { code: number; message: string } };
     if (rawText.trimStart().startsWith("event:") || rawText.trimStart().startsWith("data:")) {
       // SSE -- extract the first data: line
