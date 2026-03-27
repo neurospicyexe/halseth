@@ -578,6 +578,10 @@ export class LibrarianRouter {
             if (!p?.motion_state) missing.push("motion_state");
             return { error: "session_close_failed", reason: `missing required fields: ${missing.join(", ")}`, hint: "Re-run halseth_session_close with spine, last_real_thing, and motion_state in context" };
           }
+          // Free-text field length limits
+          if (p.notes && p.notes.length > 4000) return { error: "session_close_failed", reason: "notes exceeds 4000 character limit" };
+          if (p.spine.length > 2000) return { error: "session_close_failed", reason: "spine exceeds 2000 character limit" };
+          if (p.last_real_thing.length > 2000) return { error: "session_close_failed", reason: "last_real_thing exceeds 2000 character limit" };
           const somaFields: CompanionStateUpdate = {};
           if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
           if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
