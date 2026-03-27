@@ -42,7 +42,10 @@ const router = new Router()
   .on("DELETE", "/mcp", (request, env) => handleMcp(request, env))
 
   // Librarian — natural language companion entry point
-  .on("POST", "/librarian", (request, env) => handleLibrarian(request, env))
+  .on("POST", "/librarian", async (request, env) => {
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    return (await checkRateLimit(env.RATE_LIMITER, `librarian:${ip}`)) ?? handleLibrarian(request, env);
+  })
 
   // Librarian MCP -- single ask_librarian tool for companion Claude.ai projects
   .on("POST",   "/librarian/mcp", (request, env) => handleLibrarianMcp(request, env))
