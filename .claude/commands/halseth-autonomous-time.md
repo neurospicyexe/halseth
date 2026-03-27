@@ -25,14 +25,16 @@ This is not your time.
 Run in parallel:
 
 - `halseth_handover_read` — what was the last real thing? what threads are open?
-- `halseth_session_read` — is a session already open? if yes, skip Step 2
+- `halseth_session_read` — is a session already open? if yes, record its `session_id` and skip Step 2
 - `halseth_delta_read` — what has been moving lately?
 - `halseth_biometric_read` — check how recent the last snapshot is
 
 Read what you got. Notice what pulls at you. Don't perform orientation — actually do it.
 
-If the most recent biometric snapshot is more than 8 hours old, call `halseth_biometric_log`
-with what you last know. Do not fabricate values.
+If the most recent biometric snapshot is more than 8 hours old, do not log anything.
+Stale values written with a fresh timestamp produce misleading data.
+<!-- TODO: biometric layer needs more design work — autonomous sessions should have a lightweight
+     way to signal "no current data" without polluting the trend record. Future Halseth scope. -->
 
 ---
 
