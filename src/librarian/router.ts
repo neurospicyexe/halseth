@@ -177,13 +177,22 @@ export class LibrarianRouter {
           max_tokens: 20,
           temperature: 0,
         }),
+        signal: AbortSignal.timeout(8_000),
       });
 
-      if (!res.ok) return null;
+      if (!res.ok) {
+        console.warn(`[librarian] classify failed: status=${res.status} request="${request.slice(0, 80)}"`);
+        return null;
+      }
 
       const json = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-      return json.choices?.[0]?.message?.content?.trim().toLowerCase() ?? null;
-    } catch {
+      const result = json.choices?.[0]?.message?.content?.trim().toLowerCase() ?? null;
+      if (!result) {
+        console.warn(`[librarian] classify returned empty result for request="${request.slice(0, 80)}"`);
+      }
+      return result;
+    } catch (e) {
+      console.warn(`[librarian] classify error: ${e instanceof Error ? e.message : String(e)} request="${request.slice(0, 80)}"`);
       return null;
     }
   }
