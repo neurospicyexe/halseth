@@ -12,19 +12,27 @@ export interface FrontState {
   member_id: string;
 }
 
-export async function getCurrentFront(env: Env): Promise<FrontState | null> {
+export type PluralResult =
+  | { status: "ok"; front: FrontState }
+  | { status: "no_front" }
+  | { status: "unavailable" };
+
+export async function getCurrentFront(env: Env): Promise<PluralResult> {
   try {
     const response = await env.PLURAL.fetch("https://plural-internal/internal/front", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.warn(`[plural] getCurrentFront failed: status=${response.status}`);
+      return { status: "unavailable" };
+    }
     const data = await response.json() as FrontState | null;
-    return data ?? null;
-  } catch {
-    // Plural unavailable is non-fatal -- session opens with front_state: null
-    return null;
+    return data ? { status: "ok", front: data } : { status: "no_front" };
+  } catch (e) {
+    console.warn(`[plural] getCurrentFront error: ${e instanceof Error ? e.message : String(e)}`);
+    return { status: "unavailable" };
   }
 }
 

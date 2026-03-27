@@ -23,7 +23,7 @@ import {
   getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread, setAnticipation,
   updateCompanionState, sessionLightGround, type CompanionStateUpdate,
 } from "./backends/halseth.js";
-import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
+import { getCurrentFront, type PluralResult, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
 import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff } from "./backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../webmind/types.js";
 import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
@@ -200,9 +200,15 @@ export class LibrarianRouter {
   private async execute(req: LibrarianRequest, entry: PatternEntry): Promise<Record<string, unknown>> {
     // Pre-fetch (runs before main tools, feeds front_state)
     let frontState: string | null = null;
+    let pluralAvailable = true;
     if (entry.pre_fetch?.includes("plural_get_current_front")) {
-      const front = await getCurrentFront(this.env);
-      frontState = front?.name ?? null;
+      const result = await getCurrentFront(this.env);
+      if (result.status === "ok") {
+        frontState = result.front.name;
+      } else if (result.status === "unavailable") {
+        pluralAvailable = false;
+      }
+      // "no_front" leaves frontState as null (correct behavior)
     }
 
     // Execute tools
@@ -217,7 +223,7 @@ export class LibrarianRouter {
             front_state: frontState ?? "unknown",
             session_type: req.session_type ?? "work",
           });
-          const withFront = { ...payload, front_state: frontState };
+          const withFront = { ...payload, front_state: frontState, plural_available: pluralAvailable };
           return buildResponse(req.companion_id, entry.response_key as ResponseKey, withFront);
         }
 
@@ -247,7 +253,7 @@ export class LibrarianRouter {
             compound_state: os?.compound_state ?? null,
             surface_emotion: os?.surface_emotion ?? null,
             undercurrent_emotion: os?.undercurrent_emotion ?? null,
-            meta: { front_state: frontState },
+            meta: { front_state: frontState, plural_available: pluralAvailable },
             continuity: wmResult,
           };
         }
@@ -279,9 +285,11 @@ export class LibrarianRouter {
         }
 
         case "plural_get_current_front": {
-          const front = await getCurrentFront(this.env);
-          const text = front
-            ? `${front.name} is fronting.`
+          const result = await getCurrentFront(this.env);
+          const text = result.status === "ok"
+            ? `${result.front.name} is fronting.`
+            : result.status === "no_front"
+            ? "No one is currently fronting."
             : "Front state unavailable.";
           return buildResponse(req.companion_id, entry.response_key as ResponseKey, { session_id: "" }, text);
         }
