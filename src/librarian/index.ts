@@ -7,12 +7,13 @@
 import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
+import { safeEqual } from "../lib/auth.js";
 
 export async function handleLibrarian(request: Request, env: Env): Promise<Response> {
   // Auth guard -- same pattern as MCP
   if (env.MCP_AUTH_SECRET) {
     const auth = request.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${env.MCP_AUTH_SECRET}`) {
+    if (!safeEqual(auth, `Bearer ${env.MCP_AUTH_SECRET}`)) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
