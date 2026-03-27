@@ -29,7 +29,7 @@ import { handleLibrarianMcp } from "./librarian/mcp.js";
 import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
-import { getUnreadInterCompanionNotes } from "./handlers/inter_companion_notes.js";
+import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote } from "./handlers/webmind.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs } from "./handlers/ingest.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
@@ -84,6 +84,7 @@ const router = new Router()
 
   // Inter-companion notes — Discord bot note delivery poll
   .on("GET", "/inter-companion-notes/unread/:companionId", (request, env, params) => getUnreadInterCompanionNotes(request, env, params ?? {}))
+  .on("POST", "/inter-companion-notes/ack", (request, env) => ackInterCompanionNotes(request, env))
 
   // STM — Discord bot short-term memory persistence
   .on("POST", "/stm/entries", (request, env) => postStmEntry(request, env))
