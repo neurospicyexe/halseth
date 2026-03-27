@@ -1,6 +1,7 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { embedAndStoreAsync } from "../mcp/embed.js";
+import { safeEqual } from "../lib/auth.js";
 
 interface CompanionSeed {
   id: string;
@@ -39,7 +40,7 @@ interface BootstrapBody {
 export async function bootstrapConfig(request: Request, env: Env): Promise<Response> {
   if (!env.ADMIN_SECRET) return new Response("Service not configured: ADMIN_SECRET required", { status: 503 });
   const auth = request.headers.get("Authorization") ?? "";
-  if (auth !== `Bearer ${env.ADMIN_SECRET}`) return new Response("Unauthorized", { status: 401 });
+  if (!safeEqual(auth, `Bearer ${env.ADMIN_SECRET}`)) return new Response("Unauthorized", { status: 401 });
 
   let body: BootstrapBody;
   try {
@@ -135,11 +136,10 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
  * Remove this endpoint once backfill is complete.
  */
 export async function backfillEmbeddings(request: Request, env: Env): Promise<Response> {
-  if (env.ADMIN_SECRET) {
-    const auth = request.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
-      return new Response("Unauthorized", { status: 401 });
-    }
+  if (!env.ADMIN_SECRET) return new Response("Service not configured: ADMIN_SECRET required", { status: 503 });
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!safeEqual(auth, `Bearer ${env.ADMIN_SECRET}`)) {
+    return new Response("Unauthorized", { status: 401 });
   }
 
   const url = new URL(request.url);
