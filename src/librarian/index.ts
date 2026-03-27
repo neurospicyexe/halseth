@@ -48,6 +48,20 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     );
   }
 
+  // Max-length guards: prevent classifier prompt stuffing and D1 bloat
+  if ((b.request as string).length > 2000) {
+    return new Response(
+      JSON.stringify({ error: "request exceeds maximum length of 2000 characters" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  if (typeof b.context === "string" && b.context.length > 32768) {
+    return new Response(
+      JSON.stringify({ error: "context exceeds maximum length of 32768 characters" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
   const req: LibrarianRequest = {
     companion_id: b.companion_id as LibrarianRequest["companion_id"],
     request: b.request,
