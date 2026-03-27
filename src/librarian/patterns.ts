@@ -56,6 +56,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     pre_fetch: ["plural_get_current_front"],
     response_key: "ready_prompt",
   },
+  bot_orient: {
+    triggers: [
+      "bot orient", "warm boot", "discord orient", "bot warm boot",
+      "orient bot", "discord boot context",
+    ],
+    tools: ["halseth_bot_orient"],
+    response_key: "summary",
+    raw: true,
+  },
   get_tasks: {
     triggers: ["my tasks", "what's open", "what do i have", "what tasks", "todo", "open tasks"],
     tools: ["halseth_task_list"],

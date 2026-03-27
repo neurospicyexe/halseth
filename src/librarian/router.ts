@@ -792,6 +792,53 @@ export class LibrarianRouter {
           const r = await wmWriteHandoff(this.env, input);
           return { ack: true, id: r.handoff_id };
         }
+
+        case "halseth_bot_orient": {
+          // Aggregate three sources in parallel: synthesis summary, WebMind ground, RAG excerpts.
+          const agentId = req.companion_id as WmAgentId;
+          const [synthResult, groundResult, ragResult] = await Promise.allSettled([
+            // Most recent synthesis summary for this companion
+            this.env.DB.prepare(
+              `SELECT content FROM synthesis_summary WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1`
+            ).bind(req.companion_id).first<{ content: string }>(),
+            // WebMind ground: open threads + recent handoffs + notes
+            wmGround(this.env, agentId),
+            // Second Brain RAG: semantic search for recent companion context
+            semanticSearch(this.env, `companion state presence recent context ${req.companion_id}`),
+          ]);
+
+          const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
+            ? String(synthResult.value.content ?? "")
+            : null;
+
+          const ground = groundResult.status === "fulfilled" ? groundResult.value : null;
+          const ground_threads: string[] = Array.isArray(ground?.threads)
+            ? (ground.threads as Array<{ thread_key: string; title?: string }>)
+                .map(t => t.title ?? t.thread_key)
+                .slice(0, 3)
+            : [];
+          const ground_handoff: string | null = Array.isArray(ground?.recent_handoffs) && ground.recent_handoffs.length > 0
+            ? String((ground.recent_handoffs[0] as { summary?: string; title?: string }).summary ?? (ground.recent_handoffs[0] as { summary?: string; title?: string }).title ?? "")
+            : null;
+
+          const ragRaw = ragResult.status === "fulfilled" && ragResult.value ? ragResult.value : null;
+          const rag_excerpts: string[] = ragRaw
+            ? (() => {
+                try {
+                  const parsed = JSON.parse(ragRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+                  const chunks = parsed?.chunks ?? [];
+                  return chunks.slice(0, 2).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 120)).filter(Boolean);
+                } catch {
+                  return [ragRaw.slice(0, 120)];
+                }
+              })()
+            : [];
+
+          return {
+            data: { synthesis_summary, ground_threads, ground_handoff, rag_excerpts },
+            meta: { operation: "halseth_bot_orient" },
+          };
+        }
       }
     }
 
