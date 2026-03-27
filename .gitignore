@@ -7,6 +7,7 @@ node_modules/
 .env.*
 !.env.example
 !.env.*.example
+!.env.schema
 dist/
 *.local.db
 *.local.db-shm
