@@ -10,7 +10,8 @@ import { getNotes, createNote } from "./handlers/notes";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists, patchTask, completeListItem } from "./handlers/history";
-import { getSessions, getSessionById } from "./handlers/sessions";
+import { postCompanionJournal } from "./handlers/companion_journal";
+import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
 import { getBridgeShared, postBridgeAct, postBridgeToggle } from "./handlers/bridge";
@@ -115,12 +116,14 @@ const router = new Router()
   .on("POST", "/bridge/toggle",  (request, env) => postBridgeToggle(request, env))
 
   // Sessions (read-only — used by nullsafe-second-brain synthesis tools)
+  .on("GET", "/sessions/recent-relational", (request, env) => getRecentRelationalSessions(request, env))
   .on("GET", "/sessions",    (request, env) => getSessions(request, env))
   .on("GET", "/sessions/:id", (request, env, params) => getSessionById(request, env, params))
 
   // History feeds (read-only, authenticated)
   .on("GET", "/handovers",         (request, env) => getHandovers(request, env))
-  .on("GET", "/companion-journal", (request, env) => getCompanionJournal(request, env))
+  .on("GET",  "/companion-journal", (request, env) => getCompanionJournal(request, env))
+  .on("POST", "/companion-journal", (request, env) => postCompanionJournal(request, env))
   // Alias: Hearth API proxy calls /companion-notes
   .on("GET", "/companion-notes",   (request, env) => getCompanionJournal(request, env))
   .on("GET", "/cypher-audit",      (request, env) => getCypherAudit(request, env))
