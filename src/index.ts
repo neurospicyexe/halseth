@@ -33,6 +33,7 @@ import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote } from "./handlers/webmind.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs } from "./handlers/ingest.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
+import { authGuard } from "./lib/auth.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -164,9 +165,31 @@ const router = new Router()
   .on("GET",  "/companions/:companionId/deltas",           listDeltas)
   .on("POST", "/companions/:companionId/deltas",           appendDelta);
 
+// Routes that do NOT require auth (OAuth flow + presence read-only dashboard feed)
+const PUBLIC_PATHS = new Set([
+  "/.well-known/oauth-protected-resource",
+  "/.well-known/oauth-authorization-server",
+  "/oauth/register",
+  "/oauth/authorize",
+  "/oauth/token",
+  "/presence",
+]);
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.has(pathname);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      const url = new URL(request.url);
+
+      // Public paths skip auth entirely
+      if (!isPublicPath(url.pathname)) {
+        const denied = authGuard(request, env);
+        if (denied) return denied;
+      }
+
       return await router.handle(request, env);
     } catch (err) {
       console.error(err);
