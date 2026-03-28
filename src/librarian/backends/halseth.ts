@@ -586,3 +586,36 @@ export async function updateCompanionState(
 
   return { ok: true };
 }
+
+// ── Companion self-defense: basins + tensions ─────────────────────────────────
+
+export async function queryTensions(
+  env: Env,
+  companionId: string,
+  status = "simmering",
+): Promise<{ tensions: unknown[] }> {
+  const rows = await env.DB.prepare(
+    "SELECT id, tension_text, status, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = ? ORDER BY first_noted_at ASC"
+  ).bind(companionId, status).all();
+  return { tensions: rows.results };
+}
+
+export async function queryLatestBasinHistory(
+  env: Env,
+  companionId: string,
+): Promise<{ entry: unknown | null }> {
+  const row = await env.DB.prepare(
+    "SELECT drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? ORDER BY recorded_at DESC LIMIT 1"
+  ).bind(companionId).first();
+  return { entry: row ?? null };
+}
+
+export async function queryPressureFlags(
+  env: Env,
+  companionId: string,
+): Promise<{ flags: unknown[] }> {
+  const rows = await env.DB.prepare(
+    "SELECT drift_score, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 5"
+  ).bind(companionId).all();
+  return { flags: rows.results };
+}

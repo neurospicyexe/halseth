@@ -32,6 +32,11 @@ import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote } from "./handlers/webmind.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs } from "./handlers/ingest.js";
+import {
+  getBasins, postBasin,
+  getBasinHistory, postBasinHistory, confirmBasinHistory,
+  getTensions, postTension, patchTension,
+} from "./handlers/companion-growth.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
 
 const router = new Router()
@@ -105,6 +110,16 @@ const router = new Router()
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
   .on("POST", "/mind/thread",           (request, env) => postMindThread(request, env))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
+
+  // Companion self-defense layer -- basins, tensions, drift history
+  .on("GET",  "/companion-growth/basins/:companion_id",           (request, env, params) => getBasins(request, env, params ?? {}))
+  .on("POST", "/companion-growth/basins",                         (request, env)         => postBasin(request, env))
+  .on("GET",  "/companion-growth/basin-history/:companion_id",    (request, env, params) => getBasinHistory(request, env, params ?? {}))
+  .on("POST", "/companion-growth/basin-history",                  (request, env)         => postBasinHistory(request, env))
+  .on("POST", "/companion-growth/basin-history/:id/confirm",      (request, env, params) => confirmBasinHistory(request, env, params ?? {}))
+  .on("GET",  "/companion-growth/tensions/:companion_id",         (request, env, params) => getTensions(request, env, params ?? {}))
+  .on("POST", "/companion-growth/tensions",                       (request, env)         => postTension(request, env))
+  .on("PATCH","/companion-growth/tensions/:id",                   (request, env, params) => patchTension(request, env, params ?? {}))
 
   // Ingest — read-only feeds for Second Brain pull pipeline
   .on("GET", "/ingest/synthesis-summaries",   (request, env) => getSynthesisSummaries(request, env))
