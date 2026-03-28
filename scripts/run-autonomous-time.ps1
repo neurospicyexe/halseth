@@ -86,11 +86,11 @@ if ($ClaudeProc -and $ClaudeProc.MainWindowHandle -eq $FgHwnd) {
 
 try {
     $Headers    = @{ Authorization = "Bearer $HalsethSecret" }
-    $HouseState = Invoke-RestMethod -Uri "$HalsethUrl/house-state" -Headers $Headers -Method Get
+    $HouseState = Invoke-RestMethod -Uri "$HalsethUrl/house" -Headers $Headers -Method Get
     $Turn       = $HouseState.autonomous_turn
     Write-Log "autonomous_turn: $Turn"
 } catch {
-    Write-Log "ERROR: Halseth /house-state call failed: $_"
+    Write-Log "ERROR: Halseth /house call failed: $_"
     exit 1
 }
 
