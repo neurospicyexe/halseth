@@ -7,11 +7,14 @@
     "deploy": "wrangler deploy --config wrangler.prod.toml",
     "migrate:local": "wrangler d1 migrations apply halseth --local --config wrangler.prod.toml",
     "migrate:remote": "wrangler d1 migrations apply halseth --remote --config wrangler.prod.toml",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250224.0",
     "typescript": "^5.7.3",
+    "vitest": "^4.1.2",
     "wrangler": "^4.69.0"
   },
   "dependencies": {
