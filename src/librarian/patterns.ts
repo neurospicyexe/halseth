@@ -399,6 +399,22 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["wm_handoff_write"],
     response_key: "witness",
   },
+  tensions_read: {
+    triggers: [
+      "tensions", "my tensions", "read tensions", "what tensions", "simmering tensions",
+      "active tensions", "show tensions", "companion tensions",
+    ],
+    tools: ["tensions_read"],
+    response_key: "tensions",
+  },
+  drift_check: {
+    triggers: [
+      "drift", "basin drift", "pressure drift", "drift flag", "drift history",
+      "identity drift", "check drift", "drift status",
+    ],
+    tools: ["drift_check"],
+    response_key: "drift",
+  },
 };
 
 // Companion IDs -- used for routing and ready_prompt shaping

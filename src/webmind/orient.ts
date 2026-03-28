@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (last 5)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 
 export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
@@ -21,8 +21,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     anchor = await seedIdentityAnchor(env, agentId);
   }
 
-  // 2-4. Remaining queries are independent -- run concurrently
-  const [latestHandoff, threadCount, topThreads, recentNotes] = await Promise.all([
+  // 2-7. Remaining queries are independent -- run concurrently
+  const [latestHandoff, threadCount, topThreads, recentNotes, activeTensions, pressureFlags] = await Promise.all([
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<WmSessionHandoff>(),
@@ -35,6 +35,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND salience = 'high' ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmContinuityNote>(),
+    // Self-defense: active (simmering) tensions -- carried into every session
+    env.DB.prepare(
+      "SELECT id, tension_text, status, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC"
+    ).bind(agentId).all<WmTensionRow>(),
+    // Self-defense: unconfirmed pressure drift flags -- surface for self-correction
+    env.DB.prepare(
+      "SELECT drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
+    ).bind(agentId).all<WmBasinHistoryRow>(),
   ]);
 
   return {
@@ -43,5 +51,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     open_thread_count: threadCount?.cnt ?? 0,
     top_threads: topThreads.results ?? [],
     recent_notes: recentNotes.results ?? [],
+    active_tensions: activeTensions.results ?? [],
+    pressure_flags: pressureFlags.results ?? [],
   };
 }

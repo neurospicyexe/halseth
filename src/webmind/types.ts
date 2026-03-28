@@ -129,6 +129,24 @@ export interface WmOrientResponse {
   open_thread_count: number;
   top_threads: WmMindThread[];
   recent_notes: WmContinuityNote[];
+  active_tensions: WmTensionRow[];
+  pressure_flags: WmBasinHistoryRow[];
+}
+
+export interface WmTensionRow {
+  id: string;
+  tension_text: string;
+  status: string;
+  first_noted_at: string;
+  last_surfaced_at: string | null;
+  notes: string | null;
+}
+
+export interface WmBasinHistoryRow {
+  drift_score: number;
+  drift_type: string;
+  worst_basin: string | null;
+  recorded_at: string;
 }
 
 export interface WmGroundResponse {

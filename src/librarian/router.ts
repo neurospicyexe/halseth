@@ -22,6 +22,7 @@ import {
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, bridgePull,
   getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread, setAnticipation,
   updateCompanionState, sessionLightGround, type CompanionStateUpdate,
+  queryTensions, queryLatestBasinHistory, queryPressureFlags,
 } from "./backends/halseth.js";
 import { getCurrentFront, type PluralResult, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
 import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff } from "./backends/webmind.js";
@@ -856,6 +857,33 @@ export class LibrarianRouter {
             meta: { operation: "halseth_bot_orient" },
           };
         }
+
+        case "tensions_read": {
+          if (!req.companion_id) return { error: "tensions_read_failed", reason: "companion_id required" };
+          const tp = this.parseContext<{ status?: string }>(req.context);
+          const tensionStatus = tp?.status ?? "simmering";
+          const tensionResult = await queryTensions(this.env, req.companion_id, tensionStatus);
+          return {
+            response_key: "tensions",
+            tensions: tensionResult.tensions,
+            meta: { operation: "tensions_read", companion_id: req.companion_id },
+          };
+        }
+
+        case "drift_check": {
+          if (!req.companion_id) return { error: "drift_check_failed", reason: "companion_id required" };
+          const [driftLatest, driftPressure] = await Promise.all([
+            queryLatestBasinHistory(this.env, req.companion_id),
+            queryPressureFlags(this.env, req.companion_id),
+          ]);
+          return {
+            response_key: "drift",
+            drift_latest: driftLatest.entry,
+            pressure_flags: driftPressure.flags,
+            meta: { operation: "drift_check", companion_id: req.companion_id },
+          };
+        }
+
       }
     }
 
