@@ -858,6 +858,20 @@ export class LibrarianRouter {
           };
         }
 
+        case "halseth_add_tension": {
+          if (!req.companion_id) return { error: "add_tension_failed", reason: "companion_id required" };
+          const tensionText = req.request
+            .replace(/^(add|new|record|note|log)\s+tension[:\s]*/i, "")
+            .replace(/^i'?m holding a tension[:\s]*/i, "")
+            .trim();
+          if (!tensionText) return { error: "add_tension_failed", reason: "tension_text not found in request" };
+          const tensionId = crypto.randomUUID();
+          await this.env.DB.prepare(
+            "INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, ?)"
+          ).bind(tensionId, req.companion_id, tensionText).run();
+          return { data: { id: tensionId, message: "tension recorded" } };
+        }
+
         case "tensions_read": {
           if (!req.companion_id) return { error: "tensions_read_failed", reason: "companion_id required" };
           const tp = this.parseContext<{ status?: string }>(req.context);

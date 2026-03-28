@@ -399,6 +399,14 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["wm_handoff_write"],
     response_key: "witness",
   },
+  tension_add: {
+    triggers: [
+      "add tension", "new tension", "record tension", "log tension",
+      "note tension", "i'm holding a tension", "im holding a tension",
+    ],
+    tools: ["halseth_add_tension"],
+    response_key: "witness",
+  },
   tensions_read: {
     triggers: [
       "tensions", "my tensions", "read tensions", "what tensions", "simmering tensions",
