@@ -30,7 +30,8 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote } from "./handlers/webmind.js";
+import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational } from "./handlers/webmind.js";
+import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs } from "./handlers/ingest.js";
 import {
   getBasins, postBasin,
@@ -110,6 +111,17 @@ const router = new Router()
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
   .on("POST", "/mind/thread",           (request, env) => postMindThread(request, env))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
+  .on("POST", "/mind/dream",            (request, env) => postMindDream(request, env))
+  .on("GET",  "/mind/dreams/:agent_id", (request, env, params) => getMindDreams(request, env, params ?? {}))
+  .on("POST", "/mind/dream/:id/examine",(request, env, params) => postMindDreamExamine(request, env, params ?? {}))
+  .on("POST", "/mind/loop",             (request, env) => postMindLoop(request, env))
+  .on("GET",  "/mind/loops/:agent_id",  (request, env, params) => getMindLoops(request, env, params ?? {}))
+  .on("POST", "/mind/loop/:id/close",   (request, env, params) => postMindLoopClose(request, env, params ?? {}))
+  .on("POST", "/mind/relational",       (request, env) => postMindRelational(request, env))
+  .on("GET",  "/mind/relational/:agent_id", (request, env, params) => getMindRelational(request, env, params ?? {}))
+  .on("POST", "/mind/note/:id/sit",         (request, env, params) => postNoteSit(request, env, params ?? {}))
+  .on("POST", "/mind/note/:id/metabolize",  (request, env, params) => postNoteMetabolize(request, env, params ?? {}))
+  .on("GET",  "/mind/sitting/:agent_id",    (request, env, params) => getSittingNotes(request, env, params ?? {}))
 
   // Companion self-defense layer -- basins, tensions, drift history
   .on("GET",  "/companion-growth/basins/:companion_id",           (request, env, params) => getBasins(request, env, params ?? {}))

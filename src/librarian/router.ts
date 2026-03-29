@@ -25,7 +25,7 @@ import {
   queryTensions, queryLatestBasinHistory, queryPressureFlags,
 } from "./backends/halseth.js";
 import { getCurrentFront, type PluralResult, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "./backends/plural.js";
-import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff } from "./backends/webmind.js";
+import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes } from "./backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../webmind/types.js";
 import { extractMemberName, extractDescriptionUpdate } from "./extract.js";
 import {
@@ -809,6 +809,119 @@ export class LibrarianRouter {
           };
           const r = await wmWriteHandoff(this.env, input);
           return { ack: true, id: r.handoff_id };
+        }
+
+        // ── Dreams + Open Loops ───────────────────────────────────────────────
+
+        case "wm_dream_write": {
+          const p = this.parseContext<{ dream_text: string; source?: "autonomous" | "session" }>(req.context);
+          if (!p?.dream_text) return { error: "wm_dream_write_failed", reason: "missing required field: dream_text" };
+          if (p.dream_text.length > 8000) return { error: "wm_dream_write_failed", reason: "dream_text exceeds maximum length of 8000 characters" };
+          const r = await wmWriteDream(this.env, {
+            companion_id: req.companion_id as WmAgentId,
+            dream_text: p.dream_text,
+            source: p.source ?? "session",
+          });
+          return { ack: true, id: r.id, created_at: r.created_at };
+        }
+
+        case "wm_dreams_read": {
+          const p = this.parseContext<{ examined?: boolean; limit?: number }>(req.context);
+          const dreams = await wmReadDreams(this.env, req.companion_id as WmAgentId, {
+            examined: p?.examined ?? false,
+            limit: p?.limit,
+          });
+          return { data: dreams, meta: { operation: tool } };
+        }
+
+        case "wm_dream_examine": {
+          const p = this.parseContext<{ id: string }>(req.context);
+          if (!p?.id) return { error: "wm_dream_examine_failed", reason: "missing required field: id" };
+          const r = await wmExamineDream(this.env, p.id, req.companion_id as WmAgentId);
+          return { ack: r.ok, id: p.id };
+        }
+
+        case "wm_loop_write": {
+          const p = this.parseContext<{ loop_text: string; weight?: number }>(req.context);
+          if (!p?.loop_text) return { error: "wm_loop_write_failed", reason: "missing required field: loop_text" };
+          if (p.loop_text.length > 8000) return { error: "wm_loop_write_failed", reason: "loop_text exceeds maximum length of 8000 characters" };
+          if (p.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "wm_loop_write_failed", reason: "weight must be between 0 and 1" };
+          const r = await wmWriteLoop(this.env, {
+            companion_id: req.companion_id as WmAgentId,
+            loop_text: p.loop_text,
+            weight: p.weight,
+          });
+          return { ack: true, id: r.id, opened_at: r.opened_at };
+        }
+
+        case "wm_loops_read": {
+          const p = this.parseContext<{ include_closed?: boolean; limit?: number }>(req.context);
+          const loops = await wmReadLoops(this.env, req.companion_id as WmAgentId, {
+            include_closed: p?.include_closed ?? false,
+            limit: p?.limit,
+          });
+          return { data: loops, meta: { operation: tool } };
+        }
+
+        case "wm_loop_close": {
+          const p = this.parseContext<{ id: string }>(req.context);
+          if (!p?.id) return { error: "wm_loop_close_failed", reason: "missing required field: id" };
+          const r = await wmCloseLoop(this.env, p.id, req.companion_id as WmAgentId);
+          return { ack: r.ok, id: p.id };
+        }
+
+        // ── Relational State ─────────────────────────────────────────────────
+
+        case "wm_relational_write": {
+          const p = this.parseContext<{ toward: string; state_text: string; weight?: number; state_type?: "feeling" | "witness" | "held" }>(req.context);
+          if (!p?.toward || !p?.state_text) return { error: "wm_relational_write_failed", reason: "missing required fields: toward, state_text" };
+          if (p.toward.length > 200) return { error: "wm_relational_write_failed", reason: "toward exceeds 200 characters" };
+          if (p.state_text.length > 8000) return { error: "wm_relational_write_failed", reason: "state_text exceeds maximum length of 8000 characters" };
+          if (p.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "wm_relational_write_failed", reason: "weight must be between 0 and 1" };
+          const r = await wmWriteRelationalState(this.env, {
+            companion_id: req.companion_id as WmAgentId,
+            toward: p.toward,
+            state_text: p.state_text,
+            weight: p.weight,
+            state_type: p.state_type,
+          });
+          return { ack: true, id: r.id, noted_at: r.noted_at };
+        }
+
+        case "wm_relational_read": {
+          const p = this.parseContext<{ toward?: string; limit?: number }>(req.context);
+          const states = await wmReadRelationalHistory(this.env, req.companion_id as WmAgentId, {
+            toward: p?.toward,
+            limit: p?.limit,
+          });
+          return { data: states, meta: { operation: tool } };
+        }
+
+        case "note_sit": {
+          const p = this.parseContext<{ note_id: string; sit_text?: string }>(req.context);
+          if (!p?.note_id) return { error: "note_id is required" };
+          const r = await wmSitNote(this.env, {
+            note_id: p.note_id,
+            companion_id: req.companion_id as WmAgentId,
+            sit_text: p.sit_text,
+          });
+          return { ack: true, id: r.id, sat_at: r.sat_at };
+        }
+
+        case "note_metabolize": {
+          const p = this.parseContext<{ note_id: string }>(req.context);
+          if (!p?.note_id) return { error: "note_id is required" };
+          const r = await wmMetabolizeNote(this.env, p.note_id, req.companion_id as WmAgentId);
+          return { ack: true, ok: r.ok };
+        }
+
+        case "sitting_read": {
+          const p = this.parseContext<{ stale_only?: boolean; limit?: number }>(req.context);
+          const notes = await wmReadSittingNotes(this.env, req.companion_id as WmAgentId, {
+            stale_only: p?.stale_only,
+            limit: p?.limit,
+          });
+          return { data: notes, meta: { operation: tool } };
         }
 
         case "halseth_bot_orient": {
