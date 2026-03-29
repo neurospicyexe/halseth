@@ -1,6 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import {
-  addCompanionNote, feelingLog, journalAdd, dreamLog, woundAdd, deltaLog, eqSnapshot,
+  addCompanionNote, companionJournalAdd, feelingLog, journalAdd, dreamLog, woundAdd, deltaLog, eqSnapshot,
   taskAdd, taskUpdateStatus, taskList, handoverRead, routineLog, listAdd, listItemComplete,
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, claimDreamSeed,
   bridgePull, getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread,
@@ -13,8 +13,14 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   const toMatch = ctx.req.request.match(/(to|for)\s+(drevan|cypher|gaia)/i);
   const to_id = toMatch?.[2]?.toLowerCase() ?? null;
   const content = ctx.req.context ?? ctx.req.request;
-  const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, content);
-  return { ack: true, id: note.id };
+  if (to_id) {
+    // Addressed to another companion — inter_companion_notes
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, content);
+    return { ack: true, id: note.id };
+  }
+  // Self-note or unaddressed — companion_journal (visible in Hearth)
+  const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, content);
+  return { ack: true, id: r.id };
 }
 
 export async function execFeelingLog(ctx: ExecutorContext): Promise<ExecutorResult> {
