@@ -61,34 +61,44 @@ Sleep 800
 ; Ctrl+K opens Claude.ai desktop's project/conversation switcher (search panel).
 ; Type the project name, wait for search results, press Enter to navigate.
 ;
-; FALLBACK if Ctrl+K breaks after a Claude.ai update:
-; Comment out this block and use WindowSpy to find the pixel coordinates of
-; each project name in the sidebar. Store as a map and Click the right one.
+; NOTE: Navigating to a PROJECT (not a conversation) opens a new chat instead of
+; resuming the existing one. If you pre-position each companion's conversation
+; before autonomous time runs, pass "skip" as the second argument to bypass
+; navigation entirely and click directly into the already-open chat.
+;
+; Usage:
+;   AutoHotkey64.exe autonomous-time.ahk "ProjectName"         ; navigate via Ctrl+K
+;   AutoHotkey64.exe autonomous-time.ahk "ProjectName" "skip"  ; skip navigation
 
-Log("Opening project switcher (Ctrl+K)")
+SkipNav := (A_Args.Length >= 2 and A_Args[2] = "skip")
 
 ; Save clipboard before we clobber it
 OldClip := A_Clipboard
 A_Clipboard := ""
 
-SendInput "^k"
-Sleep 700
+if SkipNav {
+    Log("Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: " ProjectName)
+} else {
+    Log("Opening project switcher (Ctrl+K)")
+    SendInput "^k"
+    Sleep 700
 
-; Type project name via clipboard (more reliable than SendInput for special chars)
-A_Clipboard := ProjectName
-ClipWait 2
-if A_Clipboard != ProjectName {
-    Log("ERROR: Clipboard write failed for project name")
-    A_Clipboard := OldClip
-    ExitApp 1
+    ; Type project name via clipboard (more reliable than SendInput for special chars)
+    A_Clipboard := ProjectName
+    ClipWait 2
+    if A_Clipboard != ProjectName {
+        Log("ERROR: Clipboard write failed for project name")
+        A_Clipboard := OldClip
+        ExitApp 1
+    }
+    SendInput "^v"
+    Sleep 900   ; wait for search results to populate
+
+    SendInput "{Enter}"
+    Sleep 1800  ; wait for project to fully load
+
+    Log("Navigated to project: " ProjectName)
 }
-SendInput "^v"
-Sleep 900   ; wait for search results to populate
-
-SendInput "{Enter}"
-Sleep 1800  ; wait for project to fully load
-
-Log("Navigated to project: " ProjectName)
 
 ; ── Focus chat input ──────────────────────────────────────────────────────────
 

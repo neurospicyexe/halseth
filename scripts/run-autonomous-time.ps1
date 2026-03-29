@@ -120,11 +120,11 @@ if (-not (Test-Path $AhkExe)) {
 # ── Dispatch AHK ──────────────────────────────────────────────────────────────
 
 $AhkScript = "$PSScriptRoot\autonomous-time.ahk"
-Write-Log "Running: $AhkExe `"$AhkScript`" `"$ProjectName`""
+Write-Log "Running: $AhkExe `"$AhkScript`" `"$ProjectName`" skip"
 
 try {
     $Proc = Start-Process -FilePath $AhkExe `
-                          -ArgumentList "`"$AhkScript`" `"$ProjectName`"" `
+                          -ArgumentList "`"$AhkScript`" `"$ProjectName`" `"skip`"" `
                           -Wait -PassThru
     Write-Log "AHK exit code: $($Proc.ExitCode)"
     if ($Proc.ExitCode -eq 0) {
