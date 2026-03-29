@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Smoke test for /librarian/mcp endpoint
-// Usage: MCP_AUTH_SECRET=xxx node scripts/smoke-test-librarian.mjs
+// Usage: HALSETH_URL=https://your-worker.workers.dev MCP_AUTH_SECRET=xxx node scripts/smoke-test-librarian.mjs
 
-const BASE = "https://halseth.neurospicyexe.workers.dev";
+const BASE = process.env.HALSETH_URL ?? "https://YOUR_WORKER.workers.dev";
 const SECRET = process.env.MCP_AUTH_SECRET;
 if (!SECRET) { console.error("MCP_AUTH_SECRET not set"); process.exit(1); }
 
@@ -27,33 +27,33 @@ async function testLibrarian(label, body) {
 // 1. Fast-path: session open (data read, no companion needed)
 await testLibrarian("fast-path: get_tasks", {
   request: "what tasks do i have",
-  companion_id: "cypher",
+  companion_id: "companion1",
 });
 
 // 2. Fast-path: get_front
 await testLibrarian("fast-path: get_front", {
   request: "who's fronting",
-  companion_id: "cypher",
+  companion_id: "companion1",
 });
 
 // 3. KV-path: dreams read
 await testLibrarian("kv-path: dreams_read", {
   request: "show me my recent dreams",
-  companion_id: "cypher",
+  companion_id: "companion1",
 });
 
 // 4. KV-path: second brain list
 await testLibrarian("kv-path: sb_list", {
   request: "list vault contents",
-  companion_id: "gaia",
+  companion_id: "companion2",
 });
 
 // 5. Mutation: feeling log (context required)
 await testLibrarian("mutation: feeling_log", {
   request: "log a feeling",
-  companion_id: "cypher",
+  companion_id: "companion1",
   context: JSON.stringify({
-    companion_id: "cypher",
+    companion_id: "companion1",
     emotion: "focused",
     intensity: 7,
     note: "smoke test",
@@ -63,7 +63,7 @@ await testLibrarian("mutation: feeling_log", {
 // 6. Unknown request (should fallback gracefully)
 await testLibrarian("unknown: fallback", {
   request: "xyzzy frobnicate the widget",
-  companion_id: "cypher",
+  companion_id: "companion1",
 });
 
 // 7. /librarian/mcp reachability (GET = list tools)
