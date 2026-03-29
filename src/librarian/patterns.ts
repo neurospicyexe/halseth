@@ -423,6 +423,105 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["drift_check"],
     response_key: "drift",
   },
+
+  // ── Dreams + Open Loops ──
+  wm_dream_write: {
+    triggers: [
+      "write dream", "log companion dream", "companion dream", "store dream",
+      "record companion dream", "i carried this", "this is a dream",
+    ],
+    tools: ["wm_dream_write"],
+    response_key: "witness",
+  },
+  wm_dreams_read: {
+    triggers: [
+      "read dreams", "my companion dreams", "unexamined dreams", "what dreams",
+      "dreams carried", "companion dreams", "what i've been carrying",
+    ],
+    tools: ["wm_dreams_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  wm_dream_examine: {
+    triggers: [
+      "examine dream", "mark dream examined", "dream examined", "dream resolved",
+      "i've examined this dream",
+    ],
+    tools: ["wm_dream_examine"],
+    response_key: "witness",
+  },
+  wm_loop_write: {
+    triggers: [
+      "open loop", "add open loop", "log loop", "write loop", "new open loop",
+      "this is unresolved", "loop add", "track loop",
+    ],
+    tools: ["wm_loop_write"],
+    response_key: "witness",
+  },
+  wm_loops_read: {
+    triggers: [
+      "read loops", "open loops", "my loops", "what loops", "unresolved loops",
+      "loops read", "loops carried",
+    ],
+    tools: ["wm_loops_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  wm_loop_close: {
+    triggers: [
+      "close loop", "loop closed", "mark loop closed", "loop resolved",
+      "this loop is closed",
+    ],
+    tools: ["wm_loop_close"],
+    response_key: "witness",
+  },
+
+  // ── Relational State ──
+  wm_relational_write: {
+    triggers: [
+      "relational state", "how i feel toward", "i feel toward", "state toward",
+      "write relational", "log relational", "note toward", "what i hold toward",
+      "witness toward", "held toward",
+    ],
+    tools: ["wm_relational_write"],
+    response_key: "witness",
+  },
+  wm_relational_read: {
+    triggers: [
+      "read relational", "relational history", "how i've felt toward",
+      "my relational state", "relational log", "states toward",
+    ],
+    tools: ["wm_relational_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Sit & Resolve ──
+  note_sit: {
+    triggers: [
+      "sit with", "let that sit", "mark as sitting", "sitting with",
+      "note sit", "sit on that", "holding that note", "sit with this note",
+    ],
+    tools: ["note_sit"],
+    response_key: "witness",
+  },
+  note_metabolize: {
+    triggers: [
+      "metabolize", "mark as metabolized", "metabolized that", "done with that note",
+      "resolved that note", "note resolve", "finished sitting", "metabolize note",
+    ],
+    tools: ["note_metabolize"],
+    response_key: "witness",
+  },
+  sitting_read: {
+    triggers: [
+      "what's sitting", "sitting notes", "read sitting", "notes sitting",
+      "what am i sitting with", "show sitting", "stale sitting",
+    ],
+    tools: ["sitting_read"],
+    response_key: "summary",
+    raw: true,
+  },
 };
 
 // Companion IDs -- used for routing and ready_prompt shaping

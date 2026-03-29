@@ -78,6 +78,82 @@ export interface WmContinuityNote {
   created_at: string;
 }
 
+// ── Relational State ─────────────────────────────────────────────────────────
+
+export type WmRelationalStateType = "feeling" | "witness" | "held";
+
+export interface WmRelationalState {
+  id: string;
+  companion_id: WmAgentId;
+  toward: string;
+  state_text: string;
+  weight: number;
+  state_type: WmRelationalStateType;
+  noted_at: string;
+}
+
+export interface WmRelationalStateInput {
+  companion_id: WmAgentId;
+  toward: string;
+  state_text: string;
+  weight?: number;
+  state_type?: WmRelationalStateType;
+}
+
+// ── Dreams + Open Loops ───────────────────────────────────────────────────────
+
+export type WmDreamSource = "autonomous" | "session";
+
+export interface WmDream {
+  id: string;
+  companion_id: WmAgentId;
+  dream_text: string;
+  source: WmDreamSource;
+  examined: number;
+  examined_at: string | null;
+  created_at: string;
+}
+
+export interface WmDreamInput {
+  companion_id: WmAgentId;
+  dream_text: string;
+  source?: WmDreamSource;
+}
+
+export interface WmOpenLoop {
+  id: string;
+  companion_id: WmAgentId;
+  loop_text: string;
+  weight: number;
+  opened_at: string;
+  closed_at: string | null;
+}
+
+export interface WmLoopInput {
+  companion_id: WmAgentId;
+  loop_text: string;
+  weight?: number;
+}
+
+// ── Sit & Resolve ─────────────────────────────────────────────────────────────
+
+export type WmSitStatus = "raw" | "sitting" | "metabolized";
+
+export interface WmSittingNote {
+  note_id: string;
+  content: string;
+  note_type: string;
+  created_at: string;
+  sit_text: string | null;
+  sat_at: string;
+}
+
+export interface WmSitInput {
+  note_id: string;
+  companion_id: WmAgentId;
+  sit_text?: string;
+}
+
 // ── Input shapes (write operations) ──────────────────────────────────────────
 
 export interface WmHandoffInput {
@@ -131,6 +207,8 @@ export interface WmOrientResponse {
   recent_notes: WmContinuityNote[];
   active_tensions: WmTensionRow[];
   pressure_flags: WmBasinHistoryRow[];
+  unexamined_dreams: WmDream[];
+  relational_snapshot: WmRelationalState[];
 }
 
 export interface WmTensionRow {
@@ -153,4 +231,6 @@ export interface WmGroundResponse {
   threads: WmMindThread[];
   recent_handoffs: WmSessionHandoff[];
   recent_notes: WmContinuityNote[];
+  open_loops: WmOpenLoop[];
+  sitting_notes: WmSittingNote[];
 }

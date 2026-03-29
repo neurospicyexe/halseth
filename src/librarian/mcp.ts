@@ -54,14 +54,15 @@ function buildServer(env: Env): McpServer {
 }
 
 export async function handleLibrarianMcp(request: Request, env: Env): Promise<Response> {
-  // Auth guard -- accepts MCP_AUTH_SECRET (Claude Code direct) OR OAuth token (Claude.ai)
+  // Auth guard -- accepts MCP_AUTH_SECRET or ADMIN_SECRET (same as authGuard, covers
+  // Discord bots using HALSETH_SECRET) OR OAuth token (Claude.ai projects).
   const auth = request.headers.get("Authorization") ?? "";
   if (!auth.startsWith("Bearer ")) {
     return new Response("Unauthorized", { status: 401 });
   }
   const token = auth.slice(7);
-  const secret = env.MCP_AUTH_SECRET;
-  if (!secret || token !== secret) {
+  const validSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean);
+  if (!validSecrets.some(s => s === token)) {
     // Fall back to OAuth token lookup (issued by /oauth/token)
     const row = await env.DB.prepare(
       "SELECT expires_at FROM oauth_tokens WHERE token = ?"

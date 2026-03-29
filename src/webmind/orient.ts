@@ -8,8 +8,9 @@
 //   4. Recent high-salience continuity notes (last 5)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
+import { readRelationalSnapshot } from "./relational.js";
 
 export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
   // 1. Identity anchor (auto-seed if missing)
@@ -21,8 +22,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     anchor = await seedIdentityAnchor(env, agentId);
   }
 
-  // 2-7. Remaining queries are independent -- run concurrently
-  const [latestHandoff, threadCount, topThreads, recentNotes, activeTensions, pressureFlags] = await Promise.all([
+  // 2-9. Remaining queries are independent -- run concurrently
+  const [latestHandoff, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot] = await Promise.all([
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<WmSessionHandoff>(),
@@ -43,6 +44,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<WmBasinHistoryRow>(),
+    // Dreams: unexamined things carried since last session -- surface until examined
+    env.DB.prepare(
+      "SELECT * FROM companion_dreams WHERE companion_id = ? AND examined = 0 ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<WmDream>(),
+    // Relational snapshot: most recent state per relationship target
+    readRelationalSnapshot(env, agentId),
   ]);
 
   return {
@@ -53,5 +60,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     recent_notes: recentNotes.results ?? [],
     active_tensions: activeTensions.results ?? [],
     pressure_flags: pressureFlags.results ?? [],
+    unexamined_dreams: unexaminedDreams.results ?? [],
+    relational_snapshot: relationalSnapshot,
   };
 }
