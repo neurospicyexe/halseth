@@ -4,6 +4,7 @@
 // No HTTP, no MCP protocol. Zero latency.
 
 import { Env } from "../../types.js";
+import { embedAndStore } from "../../mcp/embed.js";
 import {
   loadSessionData, SessionLoadInput,
   loadOrientData, SessionOrientInput,
@@ -442,6 +443,21 @@ export async function addCompanionNote(
     .bind(id, from_id, to_id, content)
     .run();
   return { id };
+}
+
+export async function companionJournalAdd(
+  env: Env,
+  agent: string,
+  note_text: string,
+  tags?: string,
+): Promise<{ id: string; created_at: string }> {
+  const id = generateId();
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id) VALUES (?, ?, ?, ?, ?, ?)"
+  ).bind(id, now, agent, note_text, tags ?? null, null).run();
+  embedAndStore(env, note_text, "companion_journal", id, agent);
+  return { id, created_at: now };
 }
 
 export async function claimDreamSeed(env: Env, seedId: string, companionId: string): Promise<{ ok: boolean }> {
