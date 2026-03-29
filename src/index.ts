@@ -22,6 +22,7 @@ import {
   getOAuthAuthorize,
   postOAuthAuthorize,
   postOAuthToken,
+  handleOAuthCors,
 } from "./handlers/oauth";
 import { handleMcp } from "./mcp/server";
 import { handleLibrarian } from "./librarian/index.js";
@@ -59,6 +60,11 @@ const router = new Router()
   .on("DELETE", "/librarian/mcp", (request, env) => handleLibrarianMcp(request, env))
 
   // OAuth 2.0
+  .on("OPTIONS", "/.well-known/oauth-protected-resource",   async () => handleOAuthCors())
+  .on("OPTIONS", "/.well-known/oauth-authorization-server", async () => handleOAuthCors())
+  .on("OPTIONS", "/oauth/register",  async () => handleOAuthCors())
+  .on("OPTIONS", "/oauth/authorize", async () => handleOAuthCors())
+  .on("OPTIONS", "/oauth/token",     async () => handleOAuthCors())
   .on("GET",  "/.well-known/oauth-protected-resource",   async (request) => getOAuthProtectedResource(request))
   .on("GET",  "/.well-known/oauth-authorization-server", async (request) => getOAuthAuthServerMetadata(request))
   .on("POST", "/oauth/register",  (request, env) => postOAuthRegister(request, env))
@@ -203,6 +209,7 @@ const PUBLIC_PATHS = new Set([
   "/oauth/authorize",
   "/oauth/token",
   "/presence",
+  "/librarian/mcp",  // has its own auth gate that accepts OAuth tokens
 ]);
 
 function isPublicPath(pathname: string): boolean {
@@ -214,8 +221,8 @@ export default {
     try {
       const url = new URL(request.url);
 
-      // Public paths skip auth entirely
-      if (!isPublicPath(url.pathname)) {
+      // OPTIONS preflight and public paths skip auth entirely
+      if (request.method !== "OPTIONS" && !isPublicPath(url.pathname)) {
         const denied = authGuard(request, env);
         if (denied) return denied;
       }
