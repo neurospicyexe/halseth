@@ -66,6 +66,8 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   if (agent && validAgents.has(agent)) {
     conditions.push("agent = ?");
     bindings.push(agent);
+  } else {
+    conditions.push("agent != 'system'");
   }
   if (since !== undefined) {
     conditions.push("created_at > ?");
