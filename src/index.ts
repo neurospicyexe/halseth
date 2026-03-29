@@ -33,7 +33,7 @@ import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
-import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs } from "./handlers/ingest.js";
+import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions } from "./handlers/ingest.js";
 import {
   getBasins, postBasin,
   getBasinHistory, postBasinHistory, confirmBasinHistory,
@@ -147,6 +147,11 @@ const router = new Router()
   .on("GET", "/ingest/synthesis-summaries",   (request, env) => getSynthesisSummaries(request, env))
   .on("GET", "/ingest/inter-companion-notes", (request, env) => getInterCompanionNotes(request, env))
   .on("GET", "/ingest/mind-handoffs",         (request, env) => getMindHandoffs(request, env))
+  .on("GET", "/ingest/wounds",                (request, env) => getIngestWounds(request, env))
+  .on("GET", "/ingest/companion-dreams",      (request, env) => getIngestCompanionDreams(request, env))
+  .on("GET", "/ingest/open-loops",            (request, env) => getIngestOpenLoops(request, env))
+  .on("GET", "/ingest/relational-state",      (request, env) => getIngestRelationalState(request, env))
+  .on("GET", "/ingest/tensions",              (request, env) => getIngestTensions(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))
@@ -213,7 +218,7 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.has(pathname);
+  return PUBLIC_PATHS.has(pathname) || pathname.startsWith("/assets/");
 }
 
 export default {
