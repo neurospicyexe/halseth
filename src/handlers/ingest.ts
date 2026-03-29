@@ -4,6 +4,11 @@
 // GET /ingest/synthesis-summaries
 // GET /ingest/inter-companion-notes
 // GET /ingest/mind-handoffs
+// GET /ingest/wounds
+// GET /ingest/companion-dreams
+// GET /ingest/open-loops
+// GET /ingest/relational-state
+// GET /ingest/tensions
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
@@ -53,7 +58,8 @@ export async function getSynthesisSummaries(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, companion_id, summary_type, content, thread_key, created_at
+      SELECT id, companion_id, summary_type, subject, narrative, emotional_register,
+             open_threads, drevan_state, created_at
       FROM synthesis_summary
       ${where}
       ORDER BY created_at ${orderDir}
@@ -97,7 +103,7 @@ export async function getInterCompanionNotes(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, from_id, to_id, note_text, tags, created_at
+      SELECT id, from_id, to_id, content, read_at, created_at
       FROM inter_companion_notes
       ${where}
       ORDER BY created_at ${orderDir}
@@ -141,7 +147,8 @@ export async function getMindHandoffs(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, agent_id, session_id, handoff_text, key_threads, mood_snapshot, created_at
+      SELECT handoff_id AS id, agent_id, thread_id, title, summary, next_steps, open_loops,
+             state_hint, created_at
       FROM wm_session_handoffs
       ${where}
       ORDER BY created_at ${orderDir}
@@ -151,6 +158,230 @@ export async function getMindHandoffs(
     return json(result.results ?? []);
   } catch (err) {
     console.error("[ingest/mind-handoffs] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/wounds?since=<ISO8601>&limit=<n>
+export async function getIngestWounds(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url   = new URL(request.url);
+  const since = url.searchParams.get("since") ?? undefined;
+  const limit = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) {
+    conditions.push("created_at > ?");
+    bindings.push(since);
+  }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, name, description, last_visited, last_surfaced_by, created_at
+      FROM living_wounds
+      ${where}
+      ORDER BY created_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/wounds] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/companion-dreams?since=<ISO8601>&limit=<n>
+export async function getIngestCompanionDreams(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url   = new URL(request.url);
+  const since = url.searchParams.get("since") ?? undefined;
+  const limit = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) {
+    conditions.push("created_at > ?");
+    bindings.push(since);
+  }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, dream_text, source, examined, examined_at, created_at
+      FROM companion_dreams
+      ${where}
+      ORDER BY created_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/companion-dreams] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/open-loops?since=<ISO8601>&limit=<n>
+// Returns all loops (open and closed) for full history in Second Brain.
+// opened_at is used as the canonical timestamp for HWM tracking.
+export async function getIngestOpenLoops(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url   = new URL(request.url);
+  const since = url.searchParams.get("since") ?? undefined;
+  const limit = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) {
+    conditions.push("opened_at > ?");
+    bindings.push(since);
+  }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, loop_text, weight, opened_at, closed_at
+      FROM companion_open_loops
+      ${where}
+      ORDER BY opened_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/open-loops] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/relational-state?since=<ISO8601>&limit=<n>
+// noted_at is used as the canonical timestamp for HWM tracking.
+export async function getIngestRelationalState(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url   = new URL(request.url);
+  const since = url.searchParams.get("since") ?? undefined;
+  const limit = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) {
+    conditions.push("noted_at > ?");
+    bindings.push(since);
+  }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, toward, state_text, weight, state_type, noted_at
+      FROM companion_relational_state
+      ${where}
+      ORDER BY noted_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/relational-state] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/tensions?since=<ISO8601>&limit=<n>
+// first_noted_at is used as the canonical timestamp for HWM tracking.
+export async function getIngestTensions(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url   = new URL(request.url);
+  const since = url.searchParams.get("since") ?? undefined;
+  const limit = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) {
+    conditions.push("first_noted_at > ?");
+    bindings.push(since);
+  }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, tension_text, status, first_noted_at, last_surfaced_at, notes
+      FROM companion_tensions
+      ${where}
+      ORDER BY first_noted_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/tensions] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
