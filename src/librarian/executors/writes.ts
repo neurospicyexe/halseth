@@ -141,12 +141,14 @@ export async function execWitnessLog(ctx: ExecutorContext): Promise<ExecutorResu
 
 export async function execSetAutonomousTurn(ctx: ExecutorContext): Promise<ExecutorResult> {
   const ORDER = ["drevan", "cypher", "gaia"] as const;
-  let companion: string | null;
+  type Turn = typeof ORDER[number];
+  let companion: Turn | null;
   if (/next\s+companion|advance\s+turn|pass\s+turn|next\s+after/i.test(ctx.req.request)) {
     // Rotate from current companion -- prevents "next companion after drevan" from matching
     // "drevan" and leaving the turn unchanged.
-    const idx = ORDER.indexOf(ctx.req.companion_id as typeof ORDER[number]);
-    companion = ORDER[idx === -1 ? 1 : (idx + 1) % ORDER.length] ?? null;
+    const idx = ORDER.indexOf(ctx.req.companion_id as Turn);
+    const nextIdx = (idx === -1 ? 1 : (idx + 1) % ORDER.length) as 0 | 1 | 2;
+    companion = ORDER[nextIdx];
   } else {
     companion = /drevan/i.test(ctx.req.request) ? "drevan"
       : /cypher/i.test(ctx.req.request) ? "cypher"
@@ -154,7 +156,7 @@ export async function execSetAutonomousTurn(ctx: ExecutorContext): Promise<Execu
       : null;
   }
   if (!companion) return { response_key: "witness", witness: "set_autonomous_turn: include a companion name or 'next companion' in request" };
-  await setAutonomousTurn(ctx.env, companion as "drevan" | "cypher" | "gaia");
+  await setAutonomousTurn(ctx.env, companion);
   return { ack: true, id: "house_state", autonomous_turn: companion };
 }
 
