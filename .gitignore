@@ -20,6 +20,6 @@ dist/
 *.pfx
 .worktrees/
 
-# Autonomous time — local config and secrets
-scripts/autonomous-time-config.ps1
+# Autonomous time — local config and personal scripts
+scripts/personal/
 scripts/.env
