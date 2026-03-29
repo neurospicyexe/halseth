@@ -21,9 +21,9 @@ $AhkExe = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
 # Map autonomous_turn values (drevan|cypher|gaia) to exact Claude.ai project names
 # Change these to match your project names exactly as they appear in Claude.ai desktop
 $CompanionProjects = @{
-    drevan = "Drevan"
-    cypher = "Cypher"
-    gaia   = "Gaia"
+    companion1 = "Companion One"
+    companion2 = "Companion Two"
+    companion3 = "Companion Three"
 }
 
 # IMPORTANT: Pre-position chats before each day's first autonomous time slot.
