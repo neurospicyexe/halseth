@@ -427,8 +427,9 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // ── Dreams + Open Loops ──
   wm_dream_write: {
     triggers: [
-      "write dream", "log companion dream", "companion dream", "store dream",
+      "write dream", "write a dream", "log companion dream", "companion dream", "store dream",
       "record companion dream", "i carried this", "this is a dream",
+      "dream for", "carry forward", "carry this dream",
     ],
     tools: ["wm_dream_write"],
     response_key: "witness",

@@ -7,12 +7,13 @@
 import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
+import { safeEqual } from "../lib/auth.js";
 
 export async function handleLibrarian(request: Request, env: Env): Promise<Response> {
   // Auth guard -- same pattern as MCP
   if (env.MCP_AUTH_SECRET) {
     const auth = request.headers.get("Authorization") ?? "";
-    if (auth !== `Bearer ${env.MCP_AUTH_SECRET}`) {
+    if (!safeEqual(auth, `Bearer ${env.MCP_AUTH_SECRET}`)) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
@@ -43,6 +44,20 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
   if (!b.request || typeof b.request !== "string") {
     return new Response(
       JSON.stringify({ error: "request field required (string)" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  // Max-length guards: prevent classifier prompt stuffing and D1 bloat
+  if ((b.request as string).length > 2000) {
+    return new Response(
+      JSON.stringify({ error: "request exceeds maximum length of 2000 characters" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  if (typeof b.context === "string" && b.context.length > 32768) {
+    return new Response(
+      JSON.stringify({ error: "context exceeds maximum length of 32768 characters" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
