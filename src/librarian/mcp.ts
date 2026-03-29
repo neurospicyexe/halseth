@@ -56,9 +56,12 @@ function buildServer(env: Env): McpServer {
 export async function handleLibrarianMcp(request: Request, env: Env): Promise<Response> {
   // Auth guard -- accepts MCP_AUTH_SECRET or ADMIN_SECRET (same as authGuard, covers
   // Discord bots using HALSETH_SECRET) OR OAuth token (Claude.ai projects).
+  const base = new URL(request.url).origin;
+  const wwwAuth = `Bearer realm="Halseth", resource_metadata_url="${base}/.well-known/oauth-protected-resource"`;
+
   const auth = request.headers.get("Authorization") ?? "";
   if (!auth.startsWith("Bearer ")) {
-    return new Response("Unauthorized", { status: 401 });
+    return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": wwwAuth } });
   }
   const token = auth.slice(7);
   const validSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean);
@@ -68,7 +71,7 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
       "SELECT expires_at FROM oauth_tokens WHERE token = ?"
     ).bind(token).first<{ expires_at: string }>();
     if (!row || new Date(row.expires_at) < new Date()) {
-      return new Response("Unauthorized", { status: 401 });
+      return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": wwwAuth } });
     }
   }
 

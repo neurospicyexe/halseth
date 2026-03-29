@@ -3,11 +3,21 @@ import { generateId } from "../db/queries";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+};
+
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+export function handleOAuthCors(): Response {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
 }
 
 function oauthError(error: string, description: string, status = 400): Response {
