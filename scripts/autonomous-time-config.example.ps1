@@ -25,3 +25,8 @@ $CompanionProjects = @{
     cypher = "Cypher"
     gaia   = "Gaia"
 }
+
+# IMPORTANT: Pre-position chats before each day's first autonomous time slot.
+# The AHK script does NOT navigate to a project — it types directly into whichever
+# conversation is already visible in Claude.ai desktop. Open the correct companion's
+# chat and leave it showing before the scheduled time fires.
