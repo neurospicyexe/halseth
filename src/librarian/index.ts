@@ -55,9 +55,9 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
-  if (typeof b.context === "string" && b.context.length > 32768) {
+  if (typeof b.context === "string" && b.context.length > 65536) {
     return new Response(
-      JSON.stringify({ error: "context exceeds maximum length of 32768 characters" }),
+      JSON.stringify({ error: "context exceeds maximum length of 65536 characters" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }

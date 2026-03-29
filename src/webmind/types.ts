@@ -199,6 +199,15 @@ export interface WmNoteInput {
 
 // ── Orient/Ground response shapes ────────────────────────────────────────────
 
+export interface WmRazielLetter {
+  id: string;
+  author: string;
+  content: string;
+  note_type: string;
+  created_at: string;
+  processing_status: string;
+}
+
 export interface WmOrientResponse {
   identity_anchor: WmIdentityAnchor | null;
   latest_handoff: WmSessionHandoff | null;
@@ -209,6 +218,7 @@ export interface WmOrientResponse {
   pressure_flags: WmBasinHistoryRow[];
   unexamined_dreams: WmDream[];
   relational_snapshot: WmRelationalState[];
+  recent_letters: WmRazielLetter[];
 }
 
 export interface WmTensionRow {

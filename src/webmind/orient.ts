@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (last 5)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 
@@ -22,8 +22,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     anchor = await seedIdentityAnchor(env, agentId);
   }
 
-  // 2-9. Remaining queries are independent -- run concurrently
-  const [latestHandoff, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot] = await Promise.all([
+  // 2-10. Remaining queries are independent -- run concurrently
+  const [latestHandoff, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters] = await Promise.all([
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<WmSessionHandoff>(),
@@ -50,6 +50,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(agentId).all<WmDream>(),
     // Relational snapshot: most recent state per relationship target
     readRelationalSnapshot(env, agentId),
+    // Letters from Raziel: recent unread/raw letters addressed to this companion
+    env.DB.prepare(
+      "SELECT id, author, content, note_type, created_at, processing_status FROM companion_notes WHERE note_type = ? ORDER BY created_at DESC LIMIT 3"
+    ).bind(`letter:${agentId}`).all<WmRazielLetter>(),
   ]);
 
   return {
@@ -62,5 +66,6 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     pressure_flags: pressureFlags.results ?? [],
     unexamined_dreams: unexaminedDreams.results ?? [],
     relational_snapshot: relationalSnapshot,
+    recent_letters: recentLetters.results ?? [],
   };
 }
