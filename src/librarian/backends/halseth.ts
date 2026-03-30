@@ -344,6 +344,16 @@ export async function sessionClose(env: Env, params: {
   }
 
   await env.DB.batch(stmts);
+
+  // Enqueue synthesis jobs (non-blocking, mirrors MCP session_close behavior)
+  const { enqueueSessionSummary, enqueueDrevanState } = await import("../../synthesis/index.js");
+  await enqueueSessionSummary(params.session_id, params.companionId ?? null, env)
+    .catch(err => console.error("[librarian/session_close] enqueue summary failed (non-fatal):", err));
+  if (params.companionId === "drevan") {
+    await enqueueDrevanState(env)
+      .catch(err => console.error("[librarian/session_close] drevan_state enqueue failed (non-fatal):", err));
+  }
+
   return { id: handoverId, spine: params.spine };
 }
 

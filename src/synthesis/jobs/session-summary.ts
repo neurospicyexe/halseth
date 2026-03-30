@@ -42,8 +42,8 @@ interface DeltaRow {
 }
 
 interface NoteRow {
-  content: string;
-  companion_id: string | null;
+  note_text: string;
+  agent: string | null;
 }
 
 export async function runSessionSummary(
@@ -58,7 +58,7 @@ export async function runSessionSummary(
       .bind(sessionId).first<HandoverRow>(),
     env.DB.prepare("SELECT delta_text, agent FROM relational_deltas WHERE session_id = ? ORDER BY created_at LIMIT 20")
       .bind(sessionId).all<DeltaRow>(),
-    env.DB.prepare("SELECT content, companion_id FROM companion_notes WHERE session_id = ? ORDER BY created_at LIMIT 10")
+    env.DB.prepare("SELECT note_text, agent FROM companion_journal WHERE session_id = ? ORDER BY created_at LIMIT 10")
       .bind(sessionId).all<NoteRow>(),
   ]);
 
@@ -73,7 +73,7 @@ export async function runSessionSummary(
     .join("\n") || "none logged";
 
   const noteLines = (notes.results ?? [])
-    .map((n, i) => `${i + 1}. [${n.companion_id ?? "unknown"}] ${n.content}`)
+    .map((n, i) => `${i + 1}. [${n.agent ?? "unknown"}] ${n.note_text}`)
     .join("\n") || "none logged";
 
   const openThreads = handover?.open_threads
