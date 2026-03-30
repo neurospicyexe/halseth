@@ -12,14 +12,30 @@ import type { ResponseKey } from "../response/budget.js";
 export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   const toMatch = ctx.req.request.match(/(to|for)\s+(drevan|cypher|gaia)/i);
   const to_id = toMatch?.[2]?.toLowerCase() ?? null;
-  const content = ctx.req.context ?? ctx.req.request;
+
+  // Parse context: companions may send raw text OR structured JSON
+  let noteText = ctx.req.context ?? ctx.req.request;
+  let tags: string | undefined;
+  if (ctx.req.context) {
+    try {
+      const parsed = JSON.parse(ctx.req.context);
+      if (typeof parsed === "object" && parsed !== null) {
+        noteText = parsed.note_text ?? parsed.content ?? ctx.req.context;
+        if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
+        else if (typeof parsed.tags === "string") tags = parsed.tags;
+      }
+    } catch {
+      // Not JSON — use raw context as note text (this is fine)
+    }
+  }
+
   if (to_id) {
     // Addressed to another companion — inter_companion_notes
-    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, content);
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, noteText);
     return { ack: true, id: note.id };
   }
   // Self-note or unaddressed — companion_journal (visible in Hearth)
-  const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, content);
+  const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags);
   return { ack: true, id: r.id };
 }
 
