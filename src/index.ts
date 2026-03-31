@@ -33,7 +33,7 @@ import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
-import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions } from "./handlers/ingest.js";
+import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory } from "./handlers/ingest.js";
 import {
   getBasins, postBasin,
   getBasinHistory, postBasinHistory, confirmBasinHistory,
@@ -152,6 +152,10 @@ const router = new Router()
   .on("GET", "/ingest/open-loops",            (request, env) => getIngestOpenLoops(request, env))
   .on("GET", "/ingest/relational-state",      (request, env) => getIngestRelationalState(request, env))
   .on("GET", "/ingest/tensions",              (request, env) => getIngestTensions(request, env))
+  .on("GET", "/ingest/somatic-snapshots",     (request, env) => getIngestSomaticSnapshots(request, env))
+  .on("GET", "/ingest/drift-log",             (request, env) => getIngestDriftLog(request, env))
+  .on("GET", "/ingest/live-threads",          (request, env) => getIngestLiveThreads(request, env))
+  .on("GET", "/ingest/basin-history",         (request, env) => getIngestBasinHistory(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))

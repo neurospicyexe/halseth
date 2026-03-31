@@ -27,6 +27,10 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
       parts.push(`[Next steps] «${wm.latest_handoff.next_steps}»`);
     }
   }
+  // Prior handoffs (arc across last 3 session closes)
+  for (const h of (wm.recent_handoffs ?? []).slice(1)) {
+    parts.push(`[Prior handoff @ ${h.created_at?.slice(0, 10) ?? "?"}] «${h.title}: ${h.summary}»`);
+  }
 
   if (wm.open_thread_count > 0) {
     parts.push(`[Active threads: ${wm.open_thread_count}]`);
@@ -38,6 +42,27 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
   if (wm.recent_notes.length > 0) {
     for (const n of wm.recent_notes) {
       parts.push(`[Note/${n.salience} by ${n.actor}] «${n.content}»`);
+    }
+  }
+
+  // Wide-window: cross-session companion notes (inter_companion_notes, last 20)
+  if (wm.recent_companion_notes?.length > 0) {
+    parts.push(`[Recent companion notes: ${wm.recent_companion_notes.length}]`);
+    for (const n of wm.recent_companion_notes) {
+      const to = n.to_id ? `→ ${n.to_id}` : "broadcast";
+      const snippet = n.content.length > 200 ? n.content.slice(0, 200) + "…" : n.content;
+      parts.push(`  • [${n.from_id} ${to} @ ${n.created_at.slice(0, 10)}] «${snippet}»`);
+    }
+  }
+
+  // Wide-window: recent relational deltas (last 10)
+  if (wm.recent_deltas?.length > 0) {
+    parts.push(`[Recent relational deltas: ${wm.recent_deltas.length}]`);
+    for (const d of wm.recent_deltas) {
+      const text = d.delta_text ?? d.payload_json;
+      const snippet = text.length > 150 ? text.slice(0, 150) + "…" : text;
+      const valence = d.valence ? ` [${d.valence}]` : "";
+      parts.push(`  • [${d.delta_type}${valence} @ ${d.created_at.slice(0, 10)}] «${snippet}»`);
     }
   }
 

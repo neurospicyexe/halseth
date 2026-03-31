@@ -21,6 +21,7 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
     recentDeltasResult,
     routinesTodayResult,
     companionFeelingsResult,
+    recentJournalResult,
   ] = await Promise.all([
     getAllOpenSessions(env),
     env.DB.prepare("SELECT * FROM house_state WHERE id = 'main'").first<HouseState>(),
@@ -76,6 +77,9 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
         GROUP BY companion_id
       ) latest ON f.companion_id = latest.companion_id AND f.created_at = latest.max_at
     `).all<{ companion_id: string; emotion: string; intensity: number; created_at: string }>(),
+    env.DB.prepare(
+      "SELECT id, agent, note_text, tags, created_at FROM companion_journal ORDER BY created_at DESC LIMIT 6"
+    ).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string }>(),
   ]);
 
   // Latest open session — kept for backwards compat as single `session` field.
@@ -200,6 +204,13 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
       companion_id: d.companion_id,
       content:      d.content,
       created_at:   d.created_at,
+    })),
+    recent_companion_notes: (recentJournalResult.results ?? []).map((n) => ({
+      id:         n.id,
+      agent:      n.agent,
+      note_text:  n.note_text.length > 300 ? n.note_text.slice(0, 300) + "\u2026" : n.note_text,
+      tags:       (() => { try { return n.tags ? (JSON.parse(n.tags) as string[]) : []; } catch { return []; } })(),
+      created_at: n.created_at,
     })),
     latest_biometrics: biometricRow
       ? {

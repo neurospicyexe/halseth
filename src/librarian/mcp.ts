@@ -28,7 +28,7 @@ function buildServer(env: Env): McpServer {
     "ask_librarian",
     "Route a natural language request to Halseth, Plural, or Second Brain. Returns shaped boot data for session opens, raw records for data reads, or mutation acks. Pass structured payload as JSON string in context for mutations.",
     {
-      request:      z.string().describe("Natural language request. Used for routing. E.g. 'open my session', 'log a feeling', 'search vault'."),
+      request:      z.string().max(2000).describe("Natural language request. Used for routing. E.g. 'open my session', 'log a feeling', 'search vault'. Max 2000 chars — pass document content in context field, not here."),
       companion_id: z.enum(COMPANION_IDS).describe("Which companion is making the request."),
       context:      z.string().optional().describe("JSON-encoded payload for mutations. E.g. '{\"emotion\":\"grief\",\"intensity\":70}'. Also used for context hints on reads."),
       session_type: z.enum(["checkin", "hangout", "work", "ritual"]).optional().describe("Session type — used for session_open shaping. Defaults to 'work'."),

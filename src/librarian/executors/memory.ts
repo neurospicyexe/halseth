@@ -14,6 +14,25 @@ function isValidVaultPath(path: string): boolean {
   return /^[a-zA-Z0-9/_\-. ]+$/.test(path);
 }
 
+// Parse inline vault args from the request string when context field is absent.
+// Handles the natural companion format: "save to vault: path=some/path.md content=# Document..."
+// The path token ends at the first " content=" boundary. Content is everything after.
+// Returns null if the inline format is not detectable (no " content=" present).
+function parseInlineVaultArgs(request: string): { path?: string; content: string } | null {
+  const lower = request.toLowerCase();
+  const contentMarker = " content=";
+  const contentIdx = lower.indexOf(contentMarker);
+  if (contentIdx === -1) return null;
+
+  const content = request.slice(contentIdx + contentMarker.length).trim();
+  if (!content) return null;
+
+  const pathMatch = request.slice(0, contentIdx).match(/\bpath=(\S+)/i);
+  const path = pathMatch ? pathMatch[1] : undefined;
+
+  return { path, content };
+}
+
 // Strip embedding float arrays from Second Brain chunk responses before returning to companions.
 // sb_search returns { chunks: [{ chunk_text, embedding: [...], ... }] } -- embeddings are useless
 // to companions and inflate response size by ~100x. Parse, strip, re-serialize, fall back on error.
@@ -64,25 +83,31 @@ export async function execSbList(ctx: ExecutorContext): Promise<ExecutorResult> 
 }
 
 export async function execSbSaveDocument(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(ctx.req.context);
-  if (!p?.content) return { response_key: "witness", witness: "sb_save_document requires { content } in context" };
+  const p = parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(ctx.req.context)
+    ?? parseInlineVaultArgs(ctx.req.request);
+  if (!p?.content) return { response_key: "witness", witness: "sb_save_document requires { content } in context or inline as 'path=<path> content=<text>'" };
   if (p.path && !isValidVaultPath(p.path)) return { response_key: "witness", witness: "invalid vault path" };
   const r = await sbSaveDocument(ctx.env, { ...p, content_type: "document" });
   return { ack: r.ack, response: r.response };
 }
 
 export async function execSbSaveNote(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(ctx.req.context);
-  if (!p?.content) return { response_key: "witness", witness: "sb_save_note requires { content } in context" };
+  const p = parseContext<{ content: string; path?: string; companion?: string; tags?: string[] }>(ctx.req.context)
+    ?? parseInlineVaultArgs(ctx.req.request);
+  if (!p?.content) return { response_key: "witness", witness: "sb_save_note requires { content } in context or inline as 'path=<path> content=<text>'" };
   if (p.path && !isValidVaultPath(p.path)) return { response_key: "witness", witness: "invalid vault path" };
   const r = await sbSaveDocument(ctx.env, { ...p, content_type: "note" });
   return { ack: r.ack, response: r.response };
 }
 
 export async function execSbLogObservation(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ content: string; tags?: string[] }>(ctx.req.context);
-  if (!p?.content) return { response_key: "witness", witness: "sb_log_observation requires { content } in context" };
-  const r = await sbLogObservation(ctx.env, p.content, p.tags);
+  const structured = parseContext<{ content: string; tags?: string[] }>(ctx.req.context);
+  // Fallback: use the request string directly as the observation content (companions naturally
+  // write "log observation: <text>" -- strip any leading trigger phrase).
+  const inlineContent = ctx.req.request.replace(/^(log observation|note observation|observe|inbox observation)[:\s]*/i, "").trim() || null;
+  const content = structured?.content ?? inlineContent;
+  if (!content) return { response_key: "witness", witness: "sb_log_observation requires { content } in context or inline text after the trigger phrase" };
+  const r = await sbLogObservation(ctx.env, content, structured?.tags);
   return { ack: r.ack };
 }
 
