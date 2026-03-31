@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (last 5)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 
@@ -22,11 +22,11 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     anchor = await seedIdentityAnchor(env, agentId);
   }
 
-  // 2-10. Remaining queries are independent -- run concurrently
-  const [latestHandoff, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters] = await Promise.all([
+  // 2-12. Remaining queries are independent -- run concurrently
+  const [recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, recentDeltas] = await Promise.all([
     env.DB.prepare(
-      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(agentId).first<WmSessionHandoff>(),
+      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<WmSessionHandoff>(),
     env.DB.prepare(
       "SELECT COUNT(*) as cnt FROM wm_mind_threads WHERE agent_id = ? AND status = 'open'"
     ).bind(agentId).first<{ cnt: number }>(),
@@ -54,11 +54,20 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT id, author, content, note_type, created_at, processing_status FROM companion_notes WHERE note_type = ? ORDER BY created_at DESC LIMIT 3"
     ).bind(`letter:${agentId}`).all<WmRazielLetter>(),
+    // Wide-window: notes written BY this companion across all sessions (cross-thread texture)
+    env.DB.prepare(
+      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 20"
+    ).bind(agentId).all<WmCompanionNote>(),
+    // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
+    env.DB.prepare(
+      "SELECT id, delta_type, delta_text, payload_json, valence, created_at FROM relational_deltas WHERE (companion_id = ? OR (agent = ? AND delta_text IS NOT NULL)) ORDER BY created_at DESC LIMIT 10"
+    ).bind(agentId, agentId).all<WmRecentDelta>(),
   ]);
 
   return {
     identity_anchor: anchor,
-    latest_handoff: latestHandoff ?? null,
+    latest_handoff: recentHandoffs.results?.[0] ?? null,
+    recent_handoffs: recentHandoffs.results ?? [],
     open_thread_count: threadCount?.cnt ?? 0,
     top_threads: topThreads.results ?? [],
     recent_notes: recentNotes.results ?? [],
@@ -67,5 +76,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     unexamined_dreams: unexaminedDreams.results ?? [],
     relational_snapshot: relationalSnapshot,
     recent_letters: recentLetters.results ?? [],
+    recent_companion_notes: recentCompanionNotes.results ?? [],
+    recent_deltas: recentDeltas.results ?? [],
   };
 }

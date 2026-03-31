@@ -385,3 +385,163 @@ export async function getIngestTensions(
     return json({ error: "Internal server error" }, 500);
   }
 }
+
+// GET /ingest/somatic-snapshots?since=<ISO8601>&companion_id=<id>&limit=<n>
+export async function getIngestSomaticSnapshots(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url         = new URL(request.url);
+  const since       = url.searchParams.get("since") ?? undefined;
+  const companionId = url.searchParams.get("companion_id") ?? undefined;
+  const limit       = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) { conditions.push("created_at > ?"); bindings.push(since); }
+  if (companionId !== undefined) { conditions.push("companion_id = ?"); bindings.push(companionId); }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, snapshot, model_used, stale_after, created_at
+      FROM somatic_snapshot
+      ${where}
+      ORDER BY created_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/somatic-snapshots] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/drift-log?since=<ISO8601>&companion_id=<id>&limit=<n>
+export async function getIngestDriftLog(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url         = new URL(request.url);
+  const since       = url.searchParams.get("since") ?? undefined;
+  const companionId = url.searchParams.get("companion_id") ?? undefined;
+  const limit       = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) { conditions.push("detected_at > ?"); bindings.push(since); }
+  if (companionId !== undefined) { conditions.push("companion_id = ?"); bindings.push(companionId); }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, signal_type, context, detected_at
+      FROM drift_log
+      ${where}
+      ORDER BY detected_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/drift-log] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/live-threads?companion_id=<id>&status=<active|all>&limit=<n>
+export async function getIngestLiveThreads(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url         = new URL(request.url);
+  const companionId = url.searchParams.get("companion_id") ?? undefined;
+  const status      = url.searchParams.get("status") ?? "active";
+  const limit       = clampLimit(url.searchParams.get("limit"));
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (companionId !== undefined) { conditions.push("companion_id = ?"); bindings.push(companionId); }
+  if (status !== "all") { conditions.push("status = ?"); bindings.push(status); }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, name, flavor, charge, status, active_since_count, notes, created_at, closed_at
+      FROM live_threads
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/live-threads] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/basin-history?companion_id=<id>&limit=<n>
+export async function getIngestBasinHistory(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url         = new URL(request.url);
+  const companionId = url.searchParams.get("companion_id") ?? undefined;
+  const limit       = clampLimit(url.searchParams.get("limit"));
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (companionId !== undefined) { conditions.push("companion_id = ?"); bindings.push(companionId); }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, drift_score, drift_type, caleth_confirmed, worst_basin, notes, recorded_at
+      FROM companion_basin_history
+      ${where}
+      ORDER BY recorded_at DESC
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/basin-history] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}

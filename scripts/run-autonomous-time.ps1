@@ -16,10 +16,14 @@ Write-Log "--- autonomous time start ---"
 
 # ── Load config ────────────────────────────────────────────────────────────────
 
-$ConfigFile = "$PSScriptRoot\autonomous-time-config.ps1"
+$ConfigFile = "$PSScriptRoot\personal\autonomous-time-config.ps1"
+if (-not (Test-Path $ConfigFile)) {
+    $ConfigFile = "$PSScriptRoot\autonomous-time-config.ps1"
+}
 if (-not (Test-Path $ConfigFile)) {
     Write-Log "ERROR: autonomous-time-config.ps1 not found."
-    Write-Log "  Copy autonomous-time-config.example.ps1 to autonomous-time-config.ps1 and fill in values."
+    Write-Log "  Expected at: $PSScriptRoot\personal\autonomous-time-config.ps1"
+    Write-Log "  Fallback:    $PSScriptRoot\autonomous-time-config.ps1"
     exit 1
 }
 . $ConfigFile

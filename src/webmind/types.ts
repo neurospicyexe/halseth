@@ -219,6 +219,30 @@ export interface WmOrientResponse {
   unexamined_dreams: WmDream[];
   relational_snapshot: WmRelationalState[];
   recent_letters: WmRazielLetter[];
+  // Wide-window cross-session reads (added to fix boot-time compression artifacts)
+  recent_handoffs: WmSessionHandoff[];      // last 3 session closes (latest_handoff = [0])
+  recent_companion_notes: WmCompanionNote[];
+  recent_deltas: WmRecentDelta[];
+}
+
+// Notes written between companions (inter_companion_notes table)
+export interface WmCompanionNote {
+  id: string;
+  from_id: string;
+  to_id: string | null;  // null = broadcast
+  content: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+// Relational deltas -- relationship moments logged by companions (relational_deltas table)
+export interface WmRecentDelta {
+  id: string;
+  delta_type: string;
+  delta_text: string | null;
+  payload_json: string;
+  valence: string | null;
+  created_at: string;
 }
 
 export interface WmTensionRow {
