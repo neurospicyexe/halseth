@@ -238,26 +238,31 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
 }
 
 export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ conclusion_text: string; supersedes?: string; source_sessions?: string[] }>(ctx.req.context);
-  if (!p?.conclusion_text) return { error: "conclusion_add_failed", reason: "missing required field: conclusion_text" };
-  if (p.conclusion_text.length > 8000) return { error: "conclusion_add_failed", reason: "conclusion_text exceeds maximum length of 8000 characters" };
+  const p = parseContext<{ conclusion_text?: string; supersedes?: string; source_sessions?: string[] }>(ctx.req.context);
+  // Structured context wins; fall back to stripping trigger from natural language request
+  const conclusionText = p?.conclusion_text?.trim() || ctx.req.request
+    .replace(/^(?:i've\s+concluded|i\s+conclude|my\s+conclusion|thesis|i\s+believe|i\s+hold\s+that|i\s+assert|conclusion|i've\s+come\s+to\s+believe|i've\s+realized|what\s+i\s+know\s+now)\s*:?\s*/i, "")
+    .trim();
+  if (!conclusionText) return { error: "conclusion_add_failed", reason: "missing required field: conclusion_text" };
+  if (conclusionText.length > 8000) return { error: "conclusion_add_failed", reason: "conclusion_text exceeds maximum length of 8000 characters" };
   const newId = crypto.randomUUID().replace(/-/g, "");
   const now = new Date().toISOString();
-  const sourceSessions = Array.isArray(p.source_sessions) ? JSON.stringify(p.source_sessions) : null;
+  const sourceSessions = Array.isArray(p?.source_sessions) ? JSON.stringify(p.source_sessions) : null;
+  const supersedes = p?.supersedes;
   const stmts = [
     ctx.env.DB.prepare(
       "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-    ).bind(newId, ctx.req.companion_id, p.conclusion_text.trim(), sourceSessions, now),
+    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, now),
   ];
-  if (p.supersedes) {
+  if (supersedes) {
     stmts.push(
       ctx.env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
-      ).bind(newId, p.supersedes, ctx.req.companion_id)
+      ).bind(newId, supersedes, ctx.req.companion_id)
     );
   }
   await ctx.env.DB.batch(stmts);
-  return { ack: true, id: newId, created_at: now, superseded: !!p.supersedes };
+  return { ack: true, id: newId, created_at: now, superseded: !!supersedes };
 }
 
 export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
