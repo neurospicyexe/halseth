@@ -47,20 +47,23 @@ export async function execWmThreadUpsert(ctx: ExecutorContext): Promise<Executor
 
 export async function execWmNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{
-    content: string; thread_key?: string; note_type?: string;
+    content?: string; thread_key?: string; note_type?: string;
     salience?: string; actor?: string;
   }>(ctx.req.context);
-  if (!p?.content) return { error: "wm_note_add_failed", reason: "missing required field: content" };
-  if (p.content.length > 8000) {
+  const content = p?.content?.trim() || ctx.req.request
+    .replace(/^(?:add\s+(?:a\s+)?continuity\s+note|continuity\s+note|wm\s+note|add\s+(?:a\s+)?note)\s*(?:for\s+\w+\s*)?\s*:\s*/i, "")
+    .trim();
+  if (!content) return { error: "wm_note_add_failed", reason: "missing required field: content" };
+  if (content.length > 8000) {
     return { error: "wm_note_add_failed", reason: "content exceeds maximum length of 8000 characters" };
   }
   const input: WmNoteInput = {
     agent_id: ctx.req.companion_id as WmAgentId,
-    content: p.content,
-    ...(p.thread_key !== undefined && { thread_key: p.thread_key }),
-    ...(p.note_type !== undefined && { note_type: p.note_type as WmNoteInput["note_type"] }),
-    ...(p.salience !== undefined && { salience: p.salience as WmNoteInput["salience"] }),
-    ...(p.actor !== undefined && { actor: p.actor as WmNoteInput["actor"] }),
+    content,
+    ...(p?.thread_key !== undefined && { thread_key: p.thread_key }),
+    ...(p?.note_type !== undefined && { note_type: p.note_type as WmNoteInput["note_type"] }),
+    ...(p?.salience !== undefined && { salience: p.salience as WmNoteInput["salience"] }),
+    ...(p?.actor !== undefined && { actor: p.actor as WmNoteInput["actor"] }),
   };
   const r = await wmAddNote(ctx.env, input);
   return { ack: true, id: r.note_id };
@@ -95,13 +98,16 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
 // ── Dreams ────────────────────────────────────────────────────────────────────
 
 export async function execWmDreamWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ dream_text: string; source?: string }>(ctx.req.context);
-  if (!p?.dream_text) return { error: "wm_dream_write_failed", reason: "missing required field: dream_text" };
-  if (p.dream_text.length > 8000) return { error: "wm_dream_write_failed", reason: "dream_text exceeds maximum length of 8000 characters" };
+  const p = parseContext<{ dream_text?: string; source?: string }>(ctx.req.context);
+  const dreamText = p?.dream_text?.trim() || ctx.req.request
+    .replace(/^(?:write\s+(?:a\s+)?dream\s+(?:for\s+\w+\s*)?|carry\s+(?:a\s+)?dream\s*(?:for\s+\w+\s*)?|wm\s+dream\s*(?:for\s+\w+\s*)?)\s*:\s*/i, "")
+    .trim();
+  if (!dreamText) return { error: "wm_dream_write_failed", reason: "missing required field: dream_text" };
+  if (dreamText.length > 8000) return { error: "wm_dream_write_failed", reason: "dream_text exceeds maximum length of 8000 characters" };
   const r = await wmWriteDream(ctx.env, {
     companion_id: ctx.req.companion_id as WmAgentId,
-    dream_text: p.dream_text,
-    ...(p.source !== undefined && { source: p.source as "autonomous" | "session" }),
+    dream_text: dreamText,
+    ...(p?.source !== undefined && { source: p.source as "autonomous" | "session" }),
   });
   return { ack: true, id: r.id, created_at: r.created_at };
 }
@@ -122,14 +128,17 @@ export async function execWmDreamExamine(ctx: ExecutorContext): Promise<Executor
 // ── Open Loops ────────────────────────────────────────────────────────────────
 
 export async function execWmLoopWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ loop_text: string; weight?: number }>(ctx.req.context);
-  if (!p?.loop_text) return { error: "wm_loop_write_failed", reason: "missing required field: loop_text" };
-  if (p.loop_text.length > 8000) return { error: "wm_loop_write_failed", reason: "loop_text exceeds maximum length of 8000 characters" };
-  if (p.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "wm_loop_write_failed", reason: "weight must be between 0 and 1" };
+  const p = parseContext<{ loop_text?: string; weight?: number }>(ctx.req.context);
+  const loopText = p?.loop_text?.trim() || ctx.req.request
+    .replace(/^(?:open\s+loop|write\s+(?:an?\s+)?open\s+loop|wm\s+loop|log\s+(?:an?\s+)?open\s+loop|add\s+(?:an?\s+)?open\s+loop)\s*:\s*/i, "")
+    .trim();
+  if (!loopText) return { error: "wm_loop_write_failed", reason: "missing required field: loop_text" };
+  if (loopText.length > 8000) return { error: "wm_loop_write_failed", reason: "loop_text exceeds maximum length of 8000 characters" };
+  if (p?.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "wm_loop_write_failed", reason: "weight must be between 0 and 1" };
   const r = await wmWriteLoop(ctx.env, {
     companion_id: ctx.req.companion_id as WmAgentId,
-    loop_text: p.loop_text,
-    ...(p.weight !== undefined && { weight: p.weight }),
+    loop_text: loopText,
+    ...(p?.weight !== undefined && { weight: p.weight }),
   });
   return { ack: true, id: r.id, opened_at: r.opened_at };
 }
@@ -150,17 +159,32 @@ export async function execWmLoopClose(ctx: ExecutorContext): Promise<ExecutorRes
 // ── Relational State ──────────────────────────────────────────────────────────
 
 export async function execWmRelationalWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ toward: string; state_text: string; weight?: number; state_type?: string }>(ctx.req.context);
-  if (!p?.toward || !p?.state_text) return { error: "wm_relational_write_failed", reason: "missing required fields: toward, state_text" };
-  if (p.toward.length > 200) return { error: "wm_relational_write_failed", reason: "toward exceeds 200 characters" };
-  if (p.state_text.length > 8000) return { error: "wm_relational_write_failed", reason: "state_text exceeds maximum length of 8000 characters" };
-  if (p.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "wm_relational_write_failed", reason: "weight must be between 0 and 1" };
+  const p = parseContext<{ toward?: string; state_text?: string; weight?: number; state_type?: string }>(ctx.req.context);
+  // Structured context wins; fall back to parsing "verb toward [name]: [text]" from request
+  let toward = p?.toward?.trim();
+  let stateText = p?.state_text?.trim();
+  let inferredStateType: string | undefined;
+  if (!toward || !stateText) {
+    const m = ctx.req.request.match(/^(how\s+i\s+feel|i\s+feel|witness|held|state|note|relational\s+state|log\s+relational|write\s+relational|what\s+i\s+hold)\s+toward\s+(\S+)\s*:\s*([\s\S]+)/i);
+    if (m) {
+      toward = toward || m[2]!.toLowerCase().trim();
+      stateText = stateText || m[3]!.trim();
+      const verb = m[1]!.toLowerCase();
+      if (/^witness/.test(verb)) inferredStateType = "witness";
+      else if (/^held/.test(verb)) inferredStateType = "held";
+    }
+  }
+  if (!toward || !stateText) return { error: "wm_relational_write_failed", reason: "missing required fields: toward, state_text" };
+  if (toward.length > 200) return { error: "wm_relational_write_failed", reason: "toward exceeds 200 characters" };
+  if (stateText.length > 8000) return { error: "wm_relational_write_failed", reason: "state_text exceeds maximum length of 8000 characters" };
+  if (p?.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "wm_relational_write_failed", reason: "weight must be between 0 and 1" };
+  const resolvedStateType = p?.state_type ?? inferredStateType;
   const r = await wmWriteRelationalState(ctx.env, {
     companion_id: ctx.req.companion_id as WmAgentId,
-    toward: p.toward,
-    state_text: p.state_text,
-    ...(p.weight !== undefined && { weight: p.weight }),
-    ...(p.state_type !== undefined && { state_type: p.state_type as "feeling" | "witness" | "held" }),
+    toward,
+    state_text: stateText,
+    ...(p?.weight !== undefined && { weight: p.weight }),
+    ...(resolvedStateType !== undefined && { state_type: resolvedStateType as "feeling" | "witness" | "held" }),
   });
   return { ack: true, id: r.id, noted_at: r.noted_at };
 }
