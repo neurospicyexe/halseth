@@ -16,6 +16,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   // Parse context: companions may send raw text OR structured JSON
   let noteText = ctx.req.context ?? ctx.req.request;
   let tags: string | undefined;
+  let source: string | undefined;
   if (ctx.req.context) {
     try {
       const parsed = JSON.parse(ctx.req.context);
@@ -23,6 +24,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
         noteText = parsed.note_text ?? parsed.content ?? ctx.req.context;
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
+        if (typeof parsed.source === "string") source = parsed.source;
       }
     } catch {
       // Not JSON — use raw context as note text (this is fine)
@@ -35,7 +37,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
     return { ack: true, id: note.id };
   }
   // Self-note or unaddressed — companion_journal (visible in Hearth)
-  const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags);
+  const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
   return { ack: true, id: r.id };
 }
 
@@ -233,4 +235,34 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
   const r = await updateCompanionState(ctx.env, ctx.req.companion_id, p);
   if (!r.ok) return { error: "state_update_failed", reason: "no valid fields provided" };
   return { ack: true, updated: ctx.req.companion_id };
+}
+
+export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ conclusion_text: string; supersedes?: string; source_sessions?: string[] }>(ctx.req.context);
+  if (!p?.conclusion_text) return { error: "conclusion_add_failed", reason: "missing required field: conclusion_text" };
+  if (p.conclusion_text.length > 8000) return { error: "conclusion_add_failed", reason: "conclusion_text exceeds maximum length of 8000 characters" };
+  const newId = crypto.randomUUID().replace(/-/g, "");
+  const now = new Date().toISOString();
+  const sourceSessions = Array.isArray(p.source_sessions) ? JSON.stringify(p.source_sessions) : null;
+  const stmts = [
+    ctx.env.DB.prepare(
+      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).bind(newId, ctx.req.companion_id, p.conclusion_text.trim(), sourceSessions, now),
+  ];
+  if (p.supersedes) {
+    stmts.push(
+      ctx.env.DB.prepare(
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+      ).bind(newId, p.supersedes, ctx.req.companion_id)
+    );
+  }
+  await ctx.env.DB.batch(stmts);
+  return { ack: true, id: newId, created_at: now, superseded: !!p.supersedes };
+}
+
+export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const rows = await ctx.env.DB.prepare(
+    "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10"
+  ).bind(ctx.req.companion_id).all();
+  return { data: rows.results ?? [], meta: { operation: "conclusions_read" } };
 }

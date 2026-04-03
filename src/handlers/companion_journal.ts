@@ -61,15 +61,15 @@ export async function postCompanionJournal(
     ? session_id
     : null;
   const safeTags = Array.isArray(tags) ? JSON.stringify(tags) : null;
-  const _source = typeof source === "string" ? source : "http"; // for audit; not stored in DB
+  const safeSource = typeof source === "string" ? source : null;
 
   const id = generateId();
   const now = new Date().toISOString();
 
   await env.DB.prepare(`
-    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).bind(id, now, agent, note_text.trim(), safeTags, safeSessionId).run();
+    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, now, agent, note_text.trim(), safeTags, safeSessionId, safeSource).run();
 
   embedAndStore(env, note_text.trim(), "companion_journal", id, agent);
 

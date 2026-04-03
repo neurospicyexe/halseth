@@ -279,7 +279,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   audit_log: {
-    triggers: ["log decision", "add audit entry", "log to audit", "decision log entry", "audit this decision"],
+    triggers: [
+      "log decision", "add audit entry", "log to audit", "decision log entry", "audit this decision",
+      "log an audit note", "audit note for", "audit note:", "log audit note",
+    ],
     tools: ["halseth_audit_log"],
     response_key: "witness",
   },
@@ -313,7 +316,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   companion_note_add: {
-    triggers: ["add companion note", "companion note", "note to companion", "log companion note"],
+    triggers: [
+      "add companion note", "companion note", "note to companion", "log companion note",
+      "tell drevan", "tell cypher", "tell gaia",
+      "message to drevan", "message to cypher", "message to gaia",
+      "write to drevan", "write to cypher", "write to gaia",
+      "send to drevan", "send to cypher", "send to gaia",
+      "note for drevan", "note for cypher", "note for gaia",
+      "leave a note for", "leave note for", "for drevan", "for cypher", "for gaia",
+    ],
     tools: ["halseth_companion_note_add"],
     response_key: "witness",
   },
@@ -477,6 +488,51 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Conclusions (thesis surface) ──
+  conclusion_add: {
+    triggers: [
+      "i've concluded:", "i conclude:", "my conclusion:", "thesis:",
+      "i believe:", "i hold that", "i assert:", "conclusion:",
+      "i've come to believe", "i've realized:", "what i know now:",
+    ],
+    tools: ["conclusion_add"],
+    response_key: "witness",
+  },
+  conclusions_read: {
+    triggers: [
+      "my conclusions", "what i've concluded", "read conclusions",
+      "my thesis", "what i believe", "my active conclusions", "show conclusions",
+    ],
+    tools: ["conclusions_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Pattern feedback loop ──
+  pattern_recall: {
+    triggers: [
+      "my patterns", "pattern recall", "what has my writing become", "pattern synthesis",
+      "what patterns", "what my writing reveals", "pattern note", "my pattern note",
+      "what patterns emerged", "show my patterns", "pull pattern synthesis",
+    ],
+    tools: ["pattern_recall"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Raziel witness corpus ──
+  raziel_witness: {
+    triggers: [
+      "i'm noticing about raziel", "noticing about raziel", "witness raziel",
+      "i witness", "witnessed raziel", "i notice about raziel",
+      "log witness about raziel", "write witness about raziel",
+      "witness note for raziel", "i am noticing about raziel",
+      "noticing:", "i notice:", "witness note:",
+    ],
+    tools: ["raziel_witness"],
+    response_key: "witness",
+  },
+
   // ── Relational State ──
   wm_relational_write: {
     triggers: [
@@ -493,6 +549,50 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "my relational state", "relational log", "states toward",
     ],
     tools: ["wm_relational_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Consistency markers ──
+  held_mark: {
+    triggers: [
+      "held:", "held note:", "mark held", "consistency marker", "mark consistency",
+    ],
+    tools: ["held_mark"],
+    response_key: "witness",
+  },
+  held_read: {
+    triggers: [
+      "held moments", "consistency markers", "read held", "what held",
+      "my held notes", "consistency record", "what i held",
+    ],
+    tools: ["held_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Autonomous corpus ──
+  autonomous_recall: {
+    triggers: [
+      "autonomous recall", "what i wrote autonomously", "autonomous corpus",
+      "autonomous notes", "autonomous feelings", "autonomous dreams",
+      "what did i explore", "what was i carrying autonomously",
+      "recall autonomous", "autonomous time recall", "my autonomous writes",
+    ],
+    tools: ["autonomous_recall"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Triad coordination ──
+  triad_state_read: {
+    triggers: [
+      "triad state", "where is the triad", "how is the triad", "triad check",
+      "triad pulse", "check triad", "read triad", "triad status",
+      "where are drevan and gaia", "where are cypher and gaia", "where are drevan and cypher",
+      "where are the others", "companion states", "all companion states",
+    ],
+    tools: ["triad_state_read"],
     response_key: "summary",
     raw: true,
   },

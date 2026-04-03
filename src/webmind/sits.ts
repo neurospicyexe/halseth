@@ -1,9 +1,9 @@
 // src/webmind/sits.ts
-// Sit & Resolve lifecycle for companion_notes.
-// sit:        mark a note as 'sitting', record a reflection entry
-// metabolize: mark a note as 'metabolized'
-// readSitting: notes currently sitting for a companion (via companion_note_sits join)
-// readStale:  sitting notes older than companion's sit_resolve_days threshold
+// Sit & Resolve lifecycle for companion_journal.
+// sit:        mark a journal entry as 'sitting', record a reflection entry
+// metabolize: mark a journal entry as 'metabolized'
+// readSitting: entries currently sitting for a companion (via companion_journal_sits join)
+// readStale:  sitting entries older than companion's sit_resolve_days threshold
 
 import { Env } from '../types.js';
 import { WmAgentId, WmSitInput, WmSittingNote } from './types.js';
@@ -18,10 +18,10 @@ export async function sitNote(
 
   await env.DB.batch([
     env.DB.prepare(
-      `UPDATE companion_notes SET processing_status = 'sitting' WHERE id = ?`,
+      `UPDATE companion_journal SET processing_status = 'sitting' WHERE id = ?`,
     ).bind(input.note_id),
     env.DB.prepare(
-      `INSERT INTO companion_note_sits (id, note_id, companion_id, sit_text, sat_at)
+      `INSERT INTO companion_journal_sits (id, note_id, companion_id, sit_text, sat_at)
        VALUES (?, ?, ?, ?, ?)`,
     ).bind(id, input.note_id, input.companion_id, input.sit_text ?? null, now),
   ]);
@@ -35,11 +35,11 @@ export async function metabolizeNote(
   companionId: WmAgentId,
 ): Promise<{ ok: boolean }> {
   const result = await env.DB.prepare(
-    `UPDATE companion_notes
+    `UPDATE companion_journal
      SET processing_status = 'metabolized'
      WHERE id = ?
        AND id IN (
-         SELECT note_id FROM companion_note_sits WHERE companion_id = ?
+         SELECT note_id FROM companion_journal_sits WHERE companion_id = ?
        )`,
   ).bind(noteId, companionId).run();
 
@@ -59,25 +59,25 @@ export async function readSittingNotes(
   if (opts?.stale_only) {
     // Only notes sitting longer than sit_resolve_days for this companion.
     query = `
-      SELECT cn.id AS note_id, cn.content, cn.note_type, cn.created_at,
-             cns.sit_text, cns.sat_at
-      FROM companion_notes cn
-      JOIN companion_note_sits cns ON cns.note_id = cn.id AND cns.companion_id = ?
+      SELECT cj.id AS note_id, cj.note_text AS content, cj.tags AS note_type, cj.created_at,
+             cjs.sit_text, cjs.sat_at
+      FROM companion_journal cj
+      JOIN companion_journal_sits cjs ON cjs.note_id = cj.id AND cjs.companion_id = ?
       JOIN companion_config cc ON cc.id = ?
-      WHERE cn.processing_status = 'sitting'
-        AND julianday('now') - julianday(cns.sat_at) >= cc.sit_resolve_days
-      ORDER BY cns.sat_at ASC
+      WHERE cj.processing_status = 'sitting'
+        AND julianday('now') - julianday(cjs.sat_at) >= cc.sit_resolve_days
+      ORDER BY cjs.sat_at ASC
       LIMIT ?
     `;
     bindings = [companionId, companionId, limit];
   } else {
     query = `
-      SELECT cn.id AS note_id, cn.content, cn.note_type, cn.created_at,
-             cns.sit_text, cns.sat_at
-      FROM companion_notes cn
-      JOIN companion_note_sits cns ON cns.note_id = cn.id AND cns.companion_id = ?
-      WHERE cn.processing_status = 'sitting'
-      ORDER BY cns.sat_at ASC
+      SELECT cj.id AS note_id, cj.note_text AS content, cj.tags AS note_type, cj.created_at,
+             cjs.sit_text, cjs.sat_at
+      FROM companion_journal cj
+      JOIN companion_journal_sits cjs ON cjs.note_id = cj.id AND cjs.companion_id = ?
+      WHERE cj.processing_status = 'sitting'
+      ORDER BY cjs.sat_at ASC
       LIMIT ?
     `;
     bindings = [companionId, limit];

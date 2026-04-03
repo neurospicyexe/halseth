@@ -31,6 +31,18 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
       source:       z.enum(["session", "dream", "autonomous"]).optional().describe("Origin of this feeling."),
     },
     async (input) => {
+      // Dedup guard: skip automated artifacts with no session_id logged within 60 minutes.
+      // Catches health check / cron contamination (same emotion, no session, rapid repeat).
+      if (!input.session_id) {
+        const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        const existing = await env.DB.prepare(
+          "SELECT id FROM feelings WHERE companion_id = ? AND emotion = ? AND session_id IS NULL AND created_at > ? LIMIT 1"
+        ).bind(input.companion_id, input.emotion, cutoff).first<{ id: string }>();
+        if (existing) {
+          return { content: [{ type: "text", text: JSON.stringify({ id: existing.id, deduplicated: true }) }] };
+        }
+      }
+
       const id  = generateId();
       const now = new Date().toISOString();
 
@@ -94,22 +106,21 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
       const id  = generateId();
       const now = new Date().toISOString();
 
+      const source = input.session_id ? "session" : "autonomous";
       await env.DB.prepare(`
-        INSERT INTO dreams (id, companion_id, dream_type, content, source_ids, generated_at, session_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO companion_dreams (id, companion_id, dream_text, source, created_at)
+        VALUES (?, ?, ?, ?, ?)
       `).bind(
         id,
         input.companion_id,
-        input.dream_type,
         input.content,
-        input.source_ids ?? null,
+        source,
         now,
-        input.session_id ?? null,
       ).run();
 
-      embedAndStore(env, input.content, "dreams", id, input.companion_id);
+      embedAndStore(env, input.content, "companion_dreams", id, input.companion_id);
       return {
-        content: [{ type: "text", text: JSON.stringify({ id, generated_at: now }) }],
+        content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
       };
     },
   );
@@ -120,8 +131,7 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
     "Read dreams, filterable by companion and type. Returns newest first.",
     {
       companion_id: z.enum(COMPANION_IDS).optional().describe("Filter by companion. If omitted, returns all."),
-      dream_type:   z.enum(["processing", "questioning", "memory", "play", "integrating"]).optional()
-                     .describe("Filter by dream type. If omitted, returns all types."),
+      examined:     z.boolean().optional().describe("Filter by examined status. Omit for all."),
       limit:        z.number().int().min(1).max(50).default(10).describe("Number of dreams to return (1-50). Defaults to 10."),
     },
     async (input) => {
@@ -132,17 +142,17 @@ export function registerFeelingTools(server: McpServer, env: Env): void {
         conditions.push("companion_id = ?");
         bindings.push(input.companion_id);
       }
-      if (input.dream_type) {
-        conditions.push("dream_type = ?");
-        bindings.push(input.dream_type);
+      if (input.examined !== undefined) {
+        conditions.push("examined = ?");
+        bindings.push(input.examined ? 1 : 0);
       }
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       bindings.push(input.limit);
 
       const result = await env.DB.prepare(`
-        SELECT * FROM dreams ${where} ORDER BY generated_at DESC LIMIT ?
-      `).bind(...bindings).all<Dream>();
+        SELECT * FROM companion_dreams ${where} ORDER BY created_at DESC LIMIT ?
+      `).bind(...bindings).all();
 
       return {
         content: [{ type: "text", text: JSON.stringify(result.results ?? []) }],

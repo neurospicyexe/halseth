@@ -79,7 +79,7 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
-    SELECT id, created_at, agent, note_text, tags, session_id
+    SELECT id, created_at, agent, note_text, tags, session_id, source
     FROM companion_journal
     ${where}
     ORDER BY created_at ${orderDir}

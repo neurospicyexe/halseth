@@ -74,7 +74,7 @@ export async function deltaRead(env: Env, companionId: string, limit = 20) {
 
 export async function dreamsRead(env: Env, companionId: string, limit = 10) {
   const r = await env.DB.prepare(
-    "SELECT * FROM dreams WHERE companion_id = ? ORDER BY generated_at DESC LIMIT ?"
+    "SELECT * FROM companion_dreams WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?"
   ).bind(companionId, limit).all();
   return r.results ?? [];
 }
@@ -215,13 +215,14 @@ export async function journalAdd(env: Env, params: {
 
 export async function dreamLog(env: Env, params: {
   companion_id: string; dream_type: string; content: string; source_ids?: string; session_id?: string;
-}): Promise<{ id: string; generated_at: string }> {
+}): Promise<{ id: string; created_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
+  const source = params.session_id ? "session" : "autonomous";
   await env.DB.prepare(
-    "INSERT INTO dreams (id, companion_id, dream_type, content, source_ids, generated_at, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, params.companion_id, params.dream_type, params.content, params.source_ids ?? null, now, params.session_id ?? null).run();
-  return { id, generated_at: now };
+    "INSERT INTO companion_dreams (id, companion_id, dream_text, source, created_at) VALUES (?, ?, ?, ?, ?)"
+  ).bind(id, params.companion_id, params.content, source, now).run();
+  return { id, created_at: now };
 }
 
 export async function woundAdd(env: Env, params: {
@@ -460,12 +461,13 @@ export async function companionJournalAdd(
   agent: string,
   note_text: string,
   tags?: string,
+  source?: string,
 ): Promise<{ id: string; created_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
   await env.DB.prepare(
-    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id) VALUES (?, ?, ?, ?, ?, ?)"
-  ).bind(id, now, agent, note_text, tags ?? null, null).run();
+    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, now, agent, note_text, tags ?? null, null, source ?? null).run();
   embedAndStore(env, note_text, "companion_journal", id, agent);
   return { id, created_at: now };
 }

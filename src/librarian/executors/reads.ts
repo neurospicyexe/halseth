@@ -79,3 +79,10 @@ export async function execFossilCheck(ctx: ExecutorContext): Promise<ExecutorRes
 export async function execCompanionNotesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   return { data: await companionNotesRead(ctx.env, ctx.req.companion_id), meta: { operation: "halseth_companion_notes_read" } };
 }
+
+export async function execPatternRecall(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const rows = await ctx.env.DB.prepare(
+    "SELECT id, agent, note_text, tags, created_at FROM companion_journal WHERE agent = ? AND tags LIKE '%pattern_synthesis%' ORDER BY created_at DESC LIMIT 3"
+  ).bind(ctx.req.companion_id).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string }>();
+  return { data: rows.results ?? [], meta: { operation: "pattern_recall" } };
+}
