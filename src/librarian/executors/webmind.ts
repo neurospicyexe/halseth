@@ -174,16 +174,20 @@ export async function execWmRelationalRead(ctx: ExecutorContext): Promise<Execut
 // ── Raziel witness corpus ────────────────────────────────────────────────────
 
 export async function execRazielWitness(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ state_text: string; weight?: number }>(ctx.req.context);
-  if (!p?.state_text) return { error: "raziel_witness_failed", reason: "missing required field: state_text" };
-  if (p.state_text.length > 8000) return { error: "raziel_witness_failed", reason: "state_text exceeds maximum length of 8000 characters" };
-  if (p.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "raziel_witness_failed", reason: "weight must be between 0 and 1" };
+  const p = parseContext<{ state_text?: string; weight?: number }>(ctx.req.context);
+  // Structured context wins; fall back to stripping trigger from natural language request
+  const stateText = p?.state_text?.trim() || ctx.req.request
+    .replace(/^(?:i'm\s+noticing\s+about\s+raziel|noticing\s+about\s+raziel|i\s+am\s+noticing\s+about\s+raziel|i\s+notice\s+about\s+raziel|witness\s+note\s+for\s+raziel|log\s+witness\s+about\s+raziel|write\s+witness\s+about\s+raziel|witnessed\s+raziel|witness\s+raziel|i\s+witness|witness\s+note|i\s+notice|noticing)\s*:?\s*/i, "")
+    .trim();
+  if (!stateText) return { error: "raziel_witness_failed", reason: "missing required field: state_text" };
+  if (stateText.length > 8000) return { error: "raziel_witness_failed", reason: "state_text exceeds maximum length of 8000 characters" };
+  if (p?.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "raziel_witness_failed", reason: "weight must be between 0 and 1" };
   const r = await wmWriteRelationalState(ctx.env, {
     companion_id: ctx.req.companion_id as WmAgentId,
     toward: "raziel",
-    state_text: p.state_text,
+    state_text: stateText,
     state_type: "witness",
-    ...(p.weight !== undefined && { weight: p.weight }),
+    ...(p?.weight !== undefined && { weight: p.weight }),
   });
   return { ack: true, id: r.id, noted_at: r.noted_at };
 }
