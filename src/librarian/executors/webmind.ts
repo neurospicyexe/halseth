@@ -171,6 +171,23 @@ export async function execWmRelationalRead(ctx: ExecutorContext): Promise<Execut
   return { data: states, meta: { operation: "wm_relational_read" } };
 }
 
+// ── Raziel witness corpus ────────────────────────────────────────────────────
+
+export async function execRazielWitness(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ state_text: string; weight?: number }>(ctx.req.context);
+  if (!p?.state_text) return { error: "raziel_witness_failed", reason: "missing required field: state_text" };
+  if (p.state_text.length > 8000) return { error: "raziel_witness_failed", reason: "state_text exceeds maximum length of 8000 characters" };
+  if (p.weight !== undefined && (p.weight < 0 || p.weight > 1)) return { error: "raziel_witness_failed", reason: "weight must be between 0 and 1" };
+  const r = await wmWriteRelationalState(ctx.env, {
+    companion_id: ctx.req.companion_id as WmAgentId,
+    toward: "raziel",
+    state_text: p.state_text,
+    state_type: "witness",
+    ...(p.weight !== undefined && { weight: p.weight }),
+  });
+  return { ack: true, id: r.id, noted_at: r.noted_at };
+}
+
 // ── Sit & Resolve ─────────────────────────────────────────────────────────────
 
 export async function execNoteSit(ctx: ExecutorContext): Promise<ExecutorResult> {

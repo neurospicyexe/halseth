@@ -142,7 +142,7 @@ export type WmSitStatus = "raw" | "sitting" | "metabolized";
 export interface WmSittingNote {
   note_id: string;
   content: string;
-  note_type: string;
+  note_type: string | null; // tags JSON string from companion_journal
   created_at: string;
   sit_text: string | null;
   sat_at: string;
@@ -208,6 +208,17 @@ export interface WmRazielLetter {
   processing_status: string;
 }
 
+// ── Conclusions ──────────────────────────────────────────────────────────────
+
+export interface WmConclusion {
+  id: string;
+  companion_id: WmAgentId;
+  conclusion_text: string;
+  source_sessions: string | null;  // JSON array string
+  superseded_by: string | null;
+  created_at: string;
+}
+
 export interface WmOrientResponse {
   identity_anchor: WmIdentityAnchor | null;
   latest_handoff: WmSessionHandoff | null;
@@ -221,8 +232,12 @@ export interface WmOrientResponse {
   recent_letters: WmRazielLetter[];
   // Wide-window cross-session reads (added to fix boot-time compression artifacts)
   recent_handoffs: WmSessionHandoff[];      // last 3 session closes (latest_handoff = [0])
-  recent_companion_notes: WmCompanionNote[];
+  recent_companion_notes: WmCompanionNote[];  // outgoing: notes this companion sent to others
+  incoming_companion_notes: WmCompanionNote[]; // incoming: notes sent TO this companion (+ broadcasts)
+  recent_journal: WmJournalEntry[];           // journal entries written BY this companion
   recent_deltas: WmRecentDelta[];
+  raziel_witness_entries: WmRelationalState[];  // recent witness observations about Raziel (not ROW_NUMBER collapsed)
+  active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs
 }
 
 // Notes written between companions (inter_companion_notes table)
@@ -232,6 +247,16 @@ export interface WmCompanionNote {
   to_id: string | null;  // null = broadcast
   content: string;
   read_at: string | null;
+  created_at: string;
+}
+
+// Journal entries written BY a companion (companion_journal table)
+export interface WmJournalEntry {
+  id: string;
+  agent: string;
+  note_text: string;
+  tags: string | null;  // JSON array string
+  session_id: string | null;
   created_at: string;
 }
 

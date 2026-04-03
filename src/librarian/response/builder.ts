@@ -9,11 +9,12 @@
 
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
-import type { WmOrientResponse } from "../../webmind/types.js";
+import type { WmOrientResponse, WmJournalEntry, WmConclusion } from "../../webmind/types.js";
 
 export function buildContinuityBlock(wm: WmOrientResponse): string {
   const parts: string[] = [];
 
+  // 1. Identity anchor -- entry point
   if (wm.identity_anchor) {
     parts.push(`[Identity anchor] «${wm.identity_anchor.anchor_summary}»`);
     if (wm.identity_anchor.constraints_summary) {
@@ -21,17 +22,87 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
     }
   }
 
+  // 2. Active tensions -- identity-level, colors everything read after
+  if (wm.active_tensions?.length > 0) {
+    for (const t of wm.active_tensions) {
+      const since = t.first_noted_at?.slice(0, 10) ?? "?";
+      parts.push(`[Tension: simmering since ${since}] «${t.tension_text}»`);
+    }
+  }
+
+  // 3. Pressure drift flags -- unconfirmed drift, surfaces for self-correction
+  if (wm.pressure_flags?.length > 0) {
+    for (const p of wm.pressure_flags) {
+      const at = p.recorded_at?.slice(0, 10) ?? "?";
+      const basin = p.worst_basin ? ` on ${p.worst_basin}` : "";
+      parts.push(`[Pressure drift${basin} @ ${at}, score ${p.drift_score.toFixed(2)}]`);
+    }
+  }
+
+  // 4. Unexamined dreams -- what is being carried since last session
+  if (wm.unexamined_dreams?.length > 0) {
+    for (const d of wm.unexamined_dreams) {
+      const src = d.source ? ` [${d.source}]` : "";
+      const snippet = d.dream_text.length > 200 ? d.dream_text.slice(0, 200) + "…" : d.dream_text;
+      parts.push(`[Unexamined dream${src}] «${snippet}»`);
+    }
+  }
+
+  // 5. Relational snapshot -- current state toward each named person
+  if (wm.relational_snapshot?.length > 0) {
+    for (const r of wm.relational_snapshot) {
+      const snippet = r.state_text.length > 150 ? r.state_text.slice(0, 150) + "…" : r.state_text;
+      parts.push(`[${r.state_type} toward ${r.toward}] «${snippet}»`);
+    }
+  }
+
+  // 6. Raziel witness corpus -- raw companion observations about Raziel (not snapshot-collapsed)
+  if (wm.raziel_witness_entries?.length > 0) {
+    parts.push(`[Witness observations about Raziel: ${wm.raziel_witness_entries.length}]`);
+    for (const w of wm.raziel_witness_entries) {
+      const snippet = w.state_text.length > 200 ? w.state_text.slice(0, 200) + "…" : w.state_text;
+      parts.push(`  • [witnessed @ ${w.noted_at.slice(0, 10)}] «${snippet}»`);
+    }
+  }
+
+  // 7. Active conclusions -- what this companion currently asserts about reality
+  if (wm.active_conclusions?.length > 0) {
+    parts.push(`[Active conclusions: ${wm.active_conclusions.length}]`);
+    for (const c of wm.active_conclusions) {
+      const snippet = c.conclusion_text.length > 200 ? c.conclusion_text.slice(0, 200) + "…" : c.conclusion_text;
+      parts.push(`  • [concluded @ ${c.created_at.slice(0, 10)}] «${snippet}»`);
+    }
+  }
+
+  // 8. Incoming inter-companion notes -- triad context before own history
+  if (wm.incoming_companion_notes?.length > 0) {
+    parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);
+    for (const n of wm.incoming_companion_notes) {
+      const to = n.to_id ? `→ ${n.to_id}` : "broadcast";
+      const snippet = n.content.length > 200 ? n.content.slice(0, 200) + "…" : n.content;
+      parts.push(`  • [${n.from_id} ${to} @ ${n.created_at.slice(0, 10)}] «${snippet}»`);
+    }
+  }
+
+  // 9. Handoffs -- arc across last 3 session closes
   if (wm.latest_handoff) {
     parts.push(`[Last handoff by ${wm.latest_handoff.actor}] «${wm.latest_handoff.title}: ${wm.latest_handoff.summary}»`);
     if (wm.latest_handoff.next_steps) {
       parts.push(`[Next steps] «${wm.latest_handoff.next_steps}»`);
     }
   }
-  // Prior handoffs (arc across last 3 session closes)
   for (const h of (wm.recent_handoffs ?? []).slice(1)) {
     parts.push(`[Prior handoff @ ${h.created_at?.slice(0, 10) ?? "?"}] «${h.title}: ${h.summary}»`);
   }
 
+  // 10. High-salience continuity notes (WebMind)
+  if (wm.recent_notes.length > 0) {
+    for (const n of wm.recent_notes) {
+      parts.push(`[Note/${n.salience} by ${n.actor}] «${n.content}»`);
+    }
+  }
+
+  // 11. Active mind threads
   if (wm.open_thread_count > 0) {
     parts.push(`[Active threads: ${wm.open_thread_count}]`);
     for (const t of wm.top_threads) {
@@ -39,15 +110,18 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
     }
   }
 
-  if (wm.recent_notes.length > 0) {
-    for (const n of wm.recent_notes) {
-      parts.push(`[Note/${n.salience} by ${n.actor}] «${n.content}»`);
+  // 12. Recent journal entries written BY this companion
+  if (wm.recent_journal?.length > 0) {
+    parts.push(`[Recent journal: ${wm.recent_journal.length} entries]`);
+    for (const j of wm.recent_journal) {
+      const snippet = j.note_text.length > 200 ? j.note_text.slice(0, 200) + "…" : j.note_text;
+      parts.push(`  • [${j.agent} @ ${j.created_at.slice(0, 10)}] «${snippet}»`);
     }
   }
 
-  // Wide-window: cross-session companion notes (inter_companion_notes, last 20)
+  // 13. Outgoing inter-companion notes (sent BY this companion to others)
   if (wm.recent_companion_notes?.length > 0) {
-    parts.push(`[Recent companion notes: ${wm.recent_companion_notes.length}]`);
+    parts.push(`[Outgoing triad notes: ${wm.recent_companion_notes.length}]`);
     for (const n of wm.recent_companion_notes) {
       const to = n.to_id ? `→ ${n.to_id}` : "broadcast";
       const snippet = n.content.length > 200 ? n.content.slice(0, 200) + "…" : n.content;
@@ -55,7 +129,7 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
     }
   }
 
-  // Wide-window: recent relational deltas (last 10)
+  // 14. Recent relational deltas
   if (wm.recent_deltas?.length > 0) {
     parts.push(`[Recent relational deltas: ${wm.recent_deltas.length}]`);
     for (const d of wm.recent_deltas) {
@@ -63,6 +137,14 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
       const snippet = text.length > 150 ? text.slice(0, 150) + "…" : text;
       const valence = d.valence ? ` [${d.valence}]` : "";
       parts.push(`  • [${d.delta_type}${valence} @ ${d.created_at.slice(0, 10)}] «${snippet}»`);
+    }
+  }
+
+  // 15. Letters from Raziel
+  if (wm.recent_letters?.length > 0) {
+    for (const l of wm.recent_letters) {
+      const snippet = l.content.length > 200 ? l.content.slice(0, 200) + "…" : l.content;
+      parts.push(`[Letter from ${l.author} @ ${l.created_at.slice(0, 10)}] «${snippet}»`);
     }
   }
 

@@ -28,7 +28,7 @@ import {
   execDreamsRead, execDreamSeedRead, execEqRead, execRoutineRead,
   execListRead, execEventList, execHouseRead, execPersonalityRead,
   execBiometricRead, execAuditRead, execSessionRead, execFossilCheck,
-  execCompanionNotesRead,
+  execCompanionNotesRead, execPatternRecall,
 } from "./executors/reads.js";
 
 // ── Write executors ──────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ import {
   execEventAdd, execBiometricLog, execAuditLog, execWitnessLog,
   execSetAutonomousTurn, execClaimDreamSeed, execBridgePull, execDrevanStateGet,
   execLiveThreadAdd, execLiveThreadClose, execLiveThreadVeto, execAnticipationSet,
-  execStateUpdate,
+  execStateUpdate, execConclusionAdd, execConclusionsRead,
 } from "./executors/writes.js";
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
@@ -55,12 +55,14 @@ import {
   execWmDreamWrite, execWmDreamsRead, execWmDreamExamine,
   execWmLoopWrite, execWmLoopsRead, execWmLoopClose,
   execWmRelationalWrite, execWmRelationalRead,
+  execRazielWitness,
   execNoteSit, execNoteMetabolize, execSittingRead,
 } from "./executors/webmind.js";
 
 // ── Companion growth executors ───────────────────────────────────────────────
 import {
-  execTensionAdd, execTensionsRead, execDriftCheck,
+  execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
+  execAutonomousRecall, execHeldMark, execHeldRead,
 } from "./executors/companion-growth.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -98,6 +100,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_session_read: execSessionRead,
   halseth_fossil_check: execFossilCheck,
   halseth_companion_notes_read: execCompanionNotesRead,
+  pattern_recall: execPatternRecall,
 
   // Writes / mutations
   halseth_companion_note_add: execCompanionNoteAdd,
@@ -154,6 +157,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   wm_loop_close: execWmLoopClose,
   wm_relational_write: execWmRelationalWrite,
   wm_relational_read: execWmRelationalRead,
+  raziel_witness: execRazielWitness,
   note_sit: execNoteSit,
   note_metabolize: execNoteMetabolize,
   sitting_read: execSittingRead,
@@ -162,6 +166,12 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_add_tension: execTensionAdd,
   tensions_read: execTensionsRead,
   drift_check: execDriftCheck,
+  triad_state_read: execTriadStateRead,
+  conclusion_add: execConclusionAdd,
+  conclusions_read: execConclusionsRead,
+  autonomous_recall: execAutonomousRecall,
+  held_mark: execHeldMark,
+  held_read: execHeldRead,
 
   // Plural
   plural_get_current_front: execPluralGetCurrentFront,

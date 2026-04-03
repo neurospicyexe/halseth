@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (last 5)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 
@@ -22,8 +22,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     anchor = await seedIdentityAnchor(env, agentId);
   }
 
-  // 2-12. Remaining queries are independent -- run concurrently
-  const [recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, recentDeltas] = await Promise.all([
+  // 2-14. Remaining queries are independent -- run concurrently
+  const [recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, activeConclusions] = await Promise.all([
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
     ).bind(agentId).all<WmSessionHandoff>(),
@@ -54,15 +54,44 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT id, author, content, note_type, created_at, processing_status FROM companion_notes WHERE note_type = ? ORDER BY created_at DESC LIMIT 3"
     ).bind(`letter:${agentId}`).all<WmRazielLetter>(),
-    // Wide-window: notes written BY this companion across all sessions (cross-thread texture)
+    // Wide-window: outgoing inter-companion notes (sent BY this companion to others)
     env.DB.prepare(
       "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 20"
     ).bind(agentId).all<WmCompanionNote>(),
+    // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self)
+    // read_at IS NULL ensures notes don't repeat across sessions. Auto-acked below after fetch.
+    env.DB.prepare(
+      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
+    ).bind(agentId, agentId).all<WmCompanionNote>(),
+    // Wide-window: recent journal entries written BY this companion (companion_journal table)
+    env.DB.prepare(
+      "SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(
       "SELECT id, delta_type, delta_text, payload_json, valence, created_at FROM relational_deltas WHERE (companion_id = ? OR (agent = ? AND delta_text IS NOT NULL)) ORDER BY created_at DESC LIMIT 10"
     ).bind(agentId, agentId).all<WmRecentDelta>(),
+    // Witness corpus: raw (not ROW_NUMBER collapsed) witness observations about Raziel by this companion
+    env.DB.prepare(
+      "SELECT id, companion_id, toward, state_text, weight, state_type, noted_at FROM companion_relational_state WHERE companion_id = ? AND state_type = 'witness' AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 5"
+    ).bind(agentId).all<WmRelationalState>(),
+    // Active conclusions: non-superseded beliefs this companion holds
+    env.DB.prepare(
+      "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<WmConclusion>(),
   ]);
+
+  // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
+  // Fire-and-forget: a failure here doesn't block the orient response.
+  const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
+  if (unreadIds.length > 0) {
+    const placeholders = unreadIds.map(() => "?").join(", ");
+    env.DB.prepare(
+      `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`
+    ).bind(new Date().toISOString(), ...unreadIds).run().catch((e: unknown) => {
+      console.error("[orient] auto-ack failed:", String(e));
+    });
+  }
 
   return {
     identity_anchor: anchor,
@@ -77,6 +106,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     relational_snapshot: relationalSnapshot,
     recent_letters: recentLetters.results ?? [],
     recent_companion_notes: recentCompanionNotes.results ?? [],
+    incoming_companion_notes: incomingCompanionNotes.results ?? [],
+    recent_journal: recentJournal.results ?? [],
     recent_deltas: recentDeltas.results ?? [],
+    raziel_witness_entries: razielWitnessEntries.results ?? [],
+    active_conclusions: activeConclusions.results ?? [],
   };
 }

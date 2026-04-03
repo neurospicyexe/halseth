@@ -47,7 +47,7 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
       "SELECT id, author, content, note_type, created_at FROM companion_notes WHERE note_type != 'dream' ORDER BY created_at DESC LIMIT 3"
     ).all<CompanionNote>(),
     env.DB.prepare(
-      "SELECT id, companion_id, content, generated_at AS created_at FROM dreams ORDER BY generated_at DESC LIMIT 5"
+      "SELECT id, companion_id, dream_text AS content, created_at FROM companion_dreams ORDER BY created_at DESC LIMIT 5"
     ).all<{ id: string; companion_id: string; content: string; created_at: string }>(),
     env.DB.prepare(
       "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"

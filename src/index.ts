@@ -33,6 +33,7 @@ import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
+import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory } from "./handlers/ingest.js";
 import {
   getBasins, postBasin,
@@ -132,6 +133,11 @@ const router = new Router()
   .on("POST", "/mind/note/:id/sit",         (request, env, params) => postNoteSit(request, env, params ?? {}))
   .on("POST", "/mind/note/:id/metabolize",  (request, env, params) => postNoteMetabolize(request, env, params ?? {}))
   .on("GET",  "/mind/sitting/:agent_id",    (request, env, params) => getSittingNotes(request, env, params ?? {}))
+
+  // Companion conclusions (thesis surface)
+  .on("POST", "/companion-conclusions",                     (request, env)         => postConclusion(request, env))
+  .on("GET",  "/companion-conclusions/:agent_id",           (request, env, params) => getConclusions(request, env, params ?? {}))
+  .on("POST", "/companion-conclusions/:id/supersede",       (request, env, params) => supersedeConclusionById(request, env, params ?? {}))
 
   // Companion self-defense layer -- basins, tensions, drift history
   .on("GET",  "/companion-growth/basins/:companion_id",           (request, env, params) => getBasins(request, env, params ?? {}))

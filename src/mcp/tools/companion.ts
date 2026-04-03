@@ -14,14 +14,15 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
       note_text:  z.string().describe("The self-discovery or identity claim, in the companion's own voice."),
       tags:       z.array(z.string()).optional().describe("Optional tags for categorization. E.g. ['identity', 'boundary', 'desire']."),
       session_id: z.string().optional().describe("Session this note belongs to, if any."),
+      source:     z.enum(["session", "autonomous"]).optional().describe("Origin context. Pass 'autonomous' during autonomous time to tag the write for corpus analysis."),
     },
     async (input) => {
       const id  = generateId();
       const now = new Date().toISOString();
 
       await env.DB.prepare(`
-        INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         now,
@@ -29,6 +30,7 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
         input.note_text,
         input.tags ? JSON.stringify(input.tags) : null,
         input.session_id ?? null,
+        input.source ?? null,
       ).run();
 
       embedAndStore(env, input.note_text, "companion_journal", id, input.agent);

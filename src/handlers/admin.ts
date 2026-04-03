@@ -157,7 +157,7 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       getCompanion: (r) => r.companion_id as string,
     },
     dreams: {
-      sql:          "SELECT id, content, companion_id FROM dreams",
+      sql:          "SELECT id, dream_text AS content, companion_id FROM companion_dreams",
       getText:      (r) => r.content as string,
       getCompanion: (r) => r.companion_id as string,
     },

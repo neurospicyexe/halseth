@@ -59,16 +59,15 @@ export async function getFeelings(request: Request, env: Env): Promise<Response>
   });
 }
 
-// GET /dreams?companion_id=drevan&type=processing&limit=10
+// GET /dreams?companion_id=drevan&examined=0&limit=10
 export async function getDreams(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const url         = new URL(request.url);
   const limit       = clampLimit(url.searchParams.get("limit"), 10, 100);
   const companionId = url.searchParams.get("companion_id");
-  const dreamType   = url.searchParams.get("type");
+  const examined    = url.searchParams.get("examined");
 
   const validCompanions = new Set(["drevan", "cypher", "gaia"]);
-  const validTypes      = new Set(["processing", "questioning", "memory", "play", "integrating"]);
 
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
@@ -77,17 +76,18 @@ export async function getDreams(request: Request, env: Env): Promise<Response> {
     conditions.push("companion_id = ?");
     bindings.push(companionId);
   }
-  if (dreamType && validTypes.has(dreamType)) {
-    conditions.push("dream_type = ?");
-    bindings.push(dreamType);
+  if (examined === "0" || examined === "1") {
+    conditions.push("examined = ?");
+    bindings.push(Number(examined));
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
-    SELECT * FROM dreams ${where} ORDER BY generated_at DESC LIMIT ?
-  `).bind(...bindings).all<Dream>();
+    SELECT id, companion_id, dream_text AS content, source, examined, created_at AS generated_at
+    FROM companion_dreams ${where} ORDER BY created_at DESC LIMIT ?
+  `).bind(...bindings).all();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },
