@@ -3,9 +3,9 @@ import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
 } from "../backends/halseth.js";
-import { wmOrient, wmGround } from "../backends/webmind.js";
+import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch } from "../backends/second-brain.js";
-import { buildResponse, buildOrientPrompt } from "../response/builder.js";
+import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 
@@ -32,8 +32,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
+  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult) : "";
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload),
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -108,6 +109,24 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   if (p.background_intensity !== undefined) somaFields.background_intensity = p.background_intensity;
   if (p.prompt_context !== undefined) somaFields.prompt_context = p.prompt_context;
   const r = await sessionClose(ctx.env, { ...p, session_id: resolvedSessionId, somaFields, companionId: ctx.req.companion_id });
+
+  // Auto-write WebMind handoff so mindOrient picks it up at next boot.
+  // sessionClose writes handover_packets; mindOrient reads wm_session_handoffs -- these are
+  // separate tables. Without this, orient shows stale handoff data until companion explicitly
+  // calls "write handoff". Fire-and-forget: failure here doesn't block the close response.
+  const handoffSummary = p.last_real_thing
+    ? `${p.spine}\n\nLast real thing: ${p.last_real_thing}`
+    : p.spine;
+  wmWriteHandoff(ctx.env, {
+    agent_id: ctx.req.companion_id as WmAgentId,
+    title: p.spine.slice(0, 120),
+    summary: handoffSummary,
+    next_steps: p.open_threads?.length ? p.open_threads.join("; ") : undefined,
+    state_hint: p.motion_state,
+    actor: "agent",
+    source: "session_close",
+  }).catch((e: unknown) => console.error("[session_close] wm handoff auto-write failed:", String(e)));
+
   return { ack: true, id: r.id, spine: r.spine };
 }
 
