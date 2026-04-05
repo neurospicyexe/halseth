@@ -1,5 +1,6 @@
 import { Env } from "../types";
 import { generateId } from "../db/queries";
+import { safeEqual } from "../lib/auth.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -231,7 +232,7 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
   }
 
   // Verify admin passphrase.
-  if (!env.ADMIN_SECRET || secret !== env.ADMIN_SECRET) {
+  if (!env.ADMIN_SECRET || !safeEqual(secret, env.ADMIN_SECRET)) {
     return renderAuthorizeForm(clientId, redirectUri, state, codeChallenge, codeChallengeMethod, "Incorrect passphrase.");
   }
 
