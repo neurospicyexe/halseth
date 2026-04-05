@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { toReqRes, toFetchResponse } from "fetch-to-node";
 import { Env } from "../types.js";
+import { hashToken } from "../lib/auth.js";
 import { registerSessionTools } from "./tools/session.js";
 import { registerMemoryTools } from "./tools/memory.js";
 import { registerCoordinationTools } from "./tools/coordination.js";
@@ -27,9 +28,10 @@ async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   if (token === env.MCP_AUTH_SECRET) return true;
 
   // OAuth-issued token — claude.ai web / Claude iOS. Reject expired tokens.
+  const tokenHash = await hashToken(token);
   const row = await env.DB.prepare(
-    "SELECT token FROM oauth_tokens WHERE token = ? AND expires_at > datetime('now')"
-  ).bind(token).first();
+    "SELECT token_hash FROM oauth_tokens WHERE token_hash = ? AND expires_at > datetime('now')"
+  ).bind(tokenHash).first();
   return row !== null;
 }
 
