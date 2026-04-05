@@ -1,6 +1,6 @@
 import { Env } from "../types";
 import { generateId } from "../db/queries";
-import { safeEqual } from "../lib/auth.js";
+import { safeEqual, hashToken } from "../lib/auth.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -324,9 +324,10 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
   const expiresIn = 90 * 24 * 60 * 60; // seconds
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
+  const tokenHash = await hashToken(token);
   await env.DB.prepare(
-    "INSERT INTO oauth_tokens (token, client_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
-  ).bind(token, client_id, now, expiresAt).run();
+    "INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
+  ).bind(tokenHash, client_id, now, expiresAt).run();
 
   return jsonResponse({
     access_token: token,
