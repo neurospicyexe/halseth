@@ -42,6 +42,8 @@ export function registerCompanionStateTools(server: McpServer, env: Env): void {
         weight,
       } = args;
 
+      console.log(`[mcp] halseth_state_update: companion=${companion_id} fields=${Object.keys(args).filter(k => k !== 'companion_id').join(',')}`);
+
       await env.DB.prepare(
         `INSERT INTO companion_state (
           companion_id, emotional_register, depth_level, focus, fatigue,
