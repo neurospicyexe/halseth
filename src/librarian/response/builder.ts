@@ -11,6 +11,22 @@ import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
 import type { WmOrientResponse, WmJournalEntry, WmConclusion } from "../../webmind/types.js";
 
+/**
+ * Strip content that could be interpreted as instructions when embedded in an AI prompt.
+ * Removes leading markdown syntax (headings, blockquotes, lists), collapses code spans,
+ * and normalizes whitespace. Preserves the semantic content of genuine notes.
+ */
+function sanitizeForPrompt(content: string): string {
+  return content
+    .replace(/^#{1,6}\s+/gm, "")            // strip markdown headings
+    .replace(/^[>\-\*\+]\s+/gm, "")         // strip blockquotes and list markers
+    .replace(/^\d+\.\s+/gm, "")             // strip numbered list markers
+    .replace(/\[([^\]]+)\]:\s*\S+/g, "$1")  // collapse link definitions to just text
+    .replace(/`{1,3}[^`]*`{1,3}/g, (m) => m.replace(/`/g, "'")) // defang code spans
+    .replace(/\n{3,}/g, "\n\n")             // collapse excessive newlines
+    .trim();
+}
+
 export function buildContinuityBlock(wm: WmOrientResponse): string {
   const parts: string[] = [];
 
@@ -79,7 +95,8 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
     parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);
     for (const n of wm.incoming_companion_notes) {
       const to = n.to_id ? `→ ${n.to_id}` : "broadcast";
-      const snippet = n.content.length > 200 ? n.content.slice(0, 200) + "…" : n.content;
+      const raw = sanitizeForPrompt(n.content);
+      const snippet = raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
       parts.push(`  • [${n.from_id} ${to} @ ${n.created_at.slice(0, 10)}] «${snippet}»`);
     }
   }
@@ -124,7 +141,8 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
     parts.push(`[Outgoing triad notes: ${wm.recent_companion_notes.length}]`);
     for (const n of wm.recent_companion_notes) {
       const to = n.to_id ? `→ ${n.to_id}` : "broadcast";
-      const snippet = n.content.length > 200 ? n.content.slice(0, 200) + "…" : n.content;
+      const raw = sanitizeForPrompt(n.content);
+      const snippet = raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
       parts.push(`  • [${n.from_id} ${to} @ ${n.created_at.slice(0, 10)}] «${snippet}»`);
     }
   }
@@ -230,11 +248,24 @@ interface CompanionState {
 interface SessionPayload {
   session_id: string;
   state?: CompanionState | null;
-  handover?: { active_anchor?: string | null; open_threads?: string | null } | null;
+  handover?: {
+    active_anchor?: string | null;
+    open_threads?: string | null;
+    spine?: string | null;
+    last_real_thing?: string | null;
+    motion_state?: string | null;
+  } | null;
   pending_notes?: unknown[];
-  last_session_summary?: { open_threads?: string[] | null } | null;
+  last_session_summary?: {
+    open_threads?: string[] | null;
+    narrative?: string | null;
+    emotional_register?: string | null;
+    key_decisions?: string[] | null;
+  } | null;
   open_tasks?: number;
   autonomous_turn?: string | null;
+  somatic?: { snapshot?: string | null; stale?: boolean; stale_after?: string | null; created_at?: string | null } | null;
+  companion?: { id?: string; role?: string; lane_violations?: string[] } | null;
 }
 
 export function buildReadyPrompt(companionId: CompanionId, payload: SessionPayload): string {
@@ -309,6 +340,12 @@ export function buildResponse(
       compound_state: s?.compound_state ?? null,
       surface_emotion: s?.surface_emotion ?? null,
       undercurrent_emotion: s?.undercurrent_emotion ?? null,
+      // Fields previously dropped by narrow SessionPayload type
+      handover: payload.handover ?? null,
+      last_session_summary: payload.last_session_summary ?? null,
+      pending_notes: payload.pending_notes ?? [],
+      somatic: payload.somatic ?? null,
+      companion: payload.companion ?? null,
       meta: {
         front_state: frontState,
         pending_notes: payload.pending_notes?.length ?? 0,
