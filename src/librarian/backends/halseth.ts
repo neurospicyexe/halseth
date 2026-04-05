@@ -29,10 +29,12 @@ export async function sessionLightGround(env: Env, input: SessionGroundInput) {
   return loadLightGroundData(env, input);
 }
 
-export async function taskList(env: Env, companionId: string) {
+export async function taskList(env: Env, companionId: string, status?: string) {
+  const statusClause = status ? "AND status = ?" : "AND status != 'done'";
+  const bindings: unknown[] = status ? [companionId, status] : [companionId];
   const tasks = await env.DB.prepare(
-    "SELECT * FROM tasks WHERE (assigned_to = ? OR assigned_to IS NULL) AND status != 'done' ORDER BY priority DESC, created_at ASC LIMIT 20"
-  ).bind(companionId).all();
+    `SELECT * FROM tasks WHERE (assigned_to = ? OR assigned_to IS NULL) ${statusClause} ORDER BY priority DESC, created_at ASC LIMIT 20`
+  ).bind(...bindings).all();
   return tasks.results ?? [];
 }
 
@@ -66,9 +68,10 @@ export async function woundRead(env: Env) {
 }
 
 export async function deltaRead(env: Env, companionId: string, limit = 20) {
+  // Two row shapes: legacy has companion_id=companionId; MCP-logged has companion_id='' + agent=companionId.
   const r = await env.DB.prepare(
-    "SELECT * FROM relational_deltas WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?"
-  ).bind(companionId, limit).all();
+    "SELECT * FROM relational_deltas WHERE (companion_id = ? OR (agent = ? AND delta_text IS NOT NULL)) ORDER BY created_at DESC LIMIT ?"
+  ).bind(companionId, companionId, limit).all();
   return r.results ?? [];
 }
 
@@ -194,6 +197,23 @@ export async function feelingLog(env: Env, params: {
   companion_id: string; emotion: string; sub_emotion?: string;
   intensity?: number; source?: string; session_id?: string;
 }): Promise<{ id: string; created_at: string }> {
+  // Dedup guard: if no session_id, skip if same emotion+sub_emotion logged within 60 min.
+  // Prevents automated health checks from polluting the feelings record.
+  if (!params.session_id) {
+    const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const conditions: string[] = ["companion_id = ?", "emotion = ?", "session_id IS NULL", "created_at > ?"];
+    const bindings: unknown[] = [params.companion_id, params.emotion, cutoff];
+    if (!params.sub_emotion) {
+      conditions.push("sub_emotion IS NULL");
+    } else {
+      conditions.push("sub_emotion = ?");
+      bindings.push(params.sub_emotion);
+    }
+    const dupe = await env.DB.prepare(
+      `SELECT id, created_at FROM feelings WHERE ${conditions.join(" AND ")} LIMIT 1`
+    ).bind(...bindings).first<{ id: string; created_at: string }>();
+    if (dupe) return { id: dupe.id, created_at: dupe.created_at };
+  }
   const id = generateId();
   const now = new Date().toISOString();
   await env.DB.prepare(
