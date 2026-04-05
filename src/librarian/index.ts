@@ -9,6 +9,20 @@ import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
 import { safeEqual } from "../lib/auth.js";
 
+const COMPANION_SECRET_ENV_KEYS: Record<string, keyof Env> = {
+  cypher: "CYPHER_MCP_SECRET",
+  drevan: "DREVAN_MCP_SECRET",
+  gaia:   "GAIA_MCP_SECRET",
+};
+
+function resolveCompanionFromToken(token: string, env: Env): string | null {
+  for (const [id, key] of Object.entries(COMPANION_SECRET_ENV_KEYS)) {
+    const secret = env[key as keyof Env] as string | undefined;
+    if (secret && safeEqual(token, `Bearer ${secret}`)) return id;
+  }
+  return null;
+}
+
 export async function handleLibrarian(request: Request, env: Env): Promise<Response> {
   // Auth guard -- same pattern as MCP
   if (env.MCP_AUTH_SECRET) {
@@ -18,6 +32,24 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
         status: 401,
         headers: { "Content-Type": "application/json" },
       });
+    }
+  }
+
+  // Per-companion identity enforcement (opt-in via CYPHER/DREVAN/GAIA_MCP_SECRET env vars).
+  // If any per-companion secret is configured, the bearer token must map to a known companion.
+  // If no per-companion secrets are set, falls back to shared MCP_AUTH_SECRET (lean phase).
+  const hasPerCompanionSecrets =
+    !!(env.CYPHER_MCP_SECRET || env.DREVAN_MCP_SECRET || env.GAIA_MCP_SECRET);
+
+  let authenticatedCompanionId: string | null = null;
+  if (hasPerCompanionSecrets) {
+    const auth = request.headers.get("Authorization") ?? "";
+    authenticatedCompanionId = resolveCompanionFromToken(auth, env);
+    if (!authenticatedCompanionId) {
+      return new Response(
+        JSON.stringify({ error: "Token does not map to a known companion" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
     }
   }
 
@@ -68,6 +100,16 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     context: typeof b.context === "string" ? b.context : undefined,
     session_type: (b.session_type as LibrarianRequest["session_type"]) ?? "work",
   };
+
+  if (authenticatedCompanionId && authenticatedCompanionId !== req.companion_id) {
+    console.warn(
+      `[librarian] companion_id mismatch: token=${authenticatedCompanionId} claimed=${req.companion_id}`
+    );
+    return new Response(
+      JSON.stringify({ error: "companion_id does not match authenticated token" }),
+      { status: 403, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
   try {
     const router = new LibrarianRouter(env);

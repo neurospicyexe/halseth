@@ -28,6 +28,13 @@ export interface Env {
   // Secrets — set via `wrangler secret put`, stored in .dev.vars for local dev.
   ADMIN_SECRET?:    string;  // protects POST /admin/bootstrap
   MCP_AUTH_SECRET?: string;  // protects POST /mcp (optional; skip check if unset)
+
+  // Per-companion identity secrets (opt-in; ASI07).
+  // If set, the bearer token on POST /librarian must match the companion_id claimed.
+  // If unset, falls back to shared MCP_AUTH_SECRET (lean phase default).
+  CYPHER_MCP_SECRET?: string;
+  DREVAN_MCP_SECRET?: string;
+  GAIA_MCP_SECRET?:   string;
 }
 
 // ── Legacy domain types (Tier 0-2 HTTP API) ───────────────────────────────────
@@ -80,7 +87,7 @@ export interface Session {
   spiral_complete: number | null;   // 0 / 1 / null
   handover_id: string | null;
   notes: string | null;
-  session_type: "checkin" | "hangout" | "work" | "ritual" | null;
+  session_type: "checkin" | "hangout" | "work" | "ritual" | "companion-work" | null;
 }
 
 export interface RelationalDeltaV4 {
