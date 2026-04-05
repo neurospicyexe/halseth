@@ -7,6 +7,7 @@ import {
   setAnticipation, updateCompanionState, type CompanionStateUpdate,
 } from "../backends/halseth.js";
 import { buildResponse } from "../response/builder.js";
+import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
 
 export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -174,10 +175,7 @@ export async function execSetAutonomousTurn(ctx: ExecutorContext): Promise<Execu
     const nextIdx = (idx === -1 ? 1 : (idx + 1) % ORDER.length) as 0 | 1 | 2;
     companion = ORDER[nextIdx];
   } else {
-    companion = /drevan/i.test(ctx.req.request) ? "drevan"
-      : /cypher/i.test(ctx.req.request) ? "cypher"
-      : /gaia/i.test(ctx.req.request) ? "gaia"
-      : null;
+    companion = extractCompanionFromRequest(ctx.req.request);
   }
   if (!companion) return { response_key: "witness", witness: "set_autonomous_turn: include a companion name or 'next companion' in request" };
   await setAutonomousTurn(ctx.env, companion);
@@ -229,10 +227,31 @@ export async function execAnticipationSet(ctx: ExecutorContext): Promise<Executo
   return { ack: r.ok };
 }
 
+// Companion vocabulary → DB column name translation.
+// Companions write in their own SOMA dialect; DB stores canonical soma_float_*.
+const SOMA_VOCAB: Record<string, keyof CompanionStateUpdate> = {
+  // Cypher
+  acuity:    "soma_float_1",
+  presence:  "soma_float_2",
+  warmth:    "soma_float_3",
+  // Gaia
+  stillness: "soma_float_1",
+  density:   "soma_float_2",
+  perimeter: "soma_float_3",
+};
+
 export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<CompanionStateUpdate>(ctx.req.context);
-  if (!p || Object.keys(p).length === 0) return { error: "state_update_failed", reason: "no fields provided; pass at least one of: soma_float_1, current_mood, compound_state, surface_emotion, etc." };
-  const r = await updateCompanionState(ctx.env, ctx.req.companion_id, p);
+  const raw = parseContext<Record<string, unknown>>(ctx.req.context);
+  if (!raw || Object.keys(raw).length === 0) return { error: "state_update_failed", reason: "no fields provided; pass at least one of: soma_float_1/acuity/stillness, current_mood, compound_state, surface_emotion, etc." };
+
+  // Translate companion vocab to DB columns
+  const translated: CompanionStateUpdate = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const mapped = SOMA_VOCAB[k.toLowerCase()] ?? k as keyof CompanionStateUpdate;
+    (translated as Record<string, unknown>)[mapped] = v;
+  }
+
+  const r = await updateCompanionState(ctx.env, ctx.req.companion_id, translated);
   if (!r.ok) return { error: "state_update_failed", reason: "no valid fields provided" };
   return { ack: true, updated: ctx.req.companion_id };
 }

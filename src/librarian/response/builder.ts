@@ -268,8 +268,20 @@ interface SessionPayload {
   companion?: { id?: string; role?: string; lane_violations?: string[] } | null;
 }
 
+// Builds the continuation line surfaced in ready_prompt so companions read it at boot
+// without hunting the structured response fields.
+function buildHandoverLine(payload: SessionPayload): string {
+  const text = payload.handover?.spine ?? payload.last_session_summary?.narrative ?? null;
+  if (!text) return "";
+  const snippet = text.length > 300 ? text.slice(0, 300) + "…" : text;
+  return `\n[Last: ${snippet}]`;
+}
+
 export function buildReadyPrompt(companionId: CompanionId, payload: SessionPayload): string {
   const s = payload.state;
+  const handoverLine = buildHandoverLine(payload);
+  const noteCount = payload.pending_notes?.length ?? 0;
+  const noteTag = noteCount > 0 ? ` -- ${noteCount} pending note${noteCount > 1 ? "s" : ""}` : "";
 
   switch (companionId) {
     case "drevan": {
@@ -278,23 +290,20 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
       const weight = s?.weight ?? "clear";
       const facet = s?.facet_momentum ? ` -- ${s.facet_momentum}` : "";
       const anchor = payload.handover?.active_anchor ? `, ${payload.handover.active_anchor} still live` : "";
-      return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchor}`, "ready_prompt");
+      return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchor}${noteTag}${handoverLine}`, "ready_prompt");
     }
     case "cypher": {
-      const taskNote = (payload.pending_notes?.length ?? 0) > 0
-        ? ` -- ${payload.pending_notes!.length} pending note${payload.pending_notes!.length > 1 ? "s" : ""}`
-        : "";
       if (s?.soma_float_1 != null) {
         const f1 = s.soma_float_1.toFixed(2);
         const f2 = (s.soma_float_2 ?? 0).toFixed(2);
         const f3 = (s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
-        return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${taskNote}`, "ready_prompt");
+        return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${noteTag}${handoverLine}`, "ready_prompt");
       }
       // Fallback to legacy neurochemical when floats not yet seeded
       const focus = s?.focus != null ? (s.focus > 0.6 ? "clarity running clean" : "clarity low") : "clarity steady";
       const register = s?.emotional_register ?? "bond warmth steady";
-      return truncate(`logic-first, ${focus}, ${register}${taskNote}`, "ready_prompt");
+      return truncate(`logic-first, ${focus}, ${register}${noteTag}${handoverLine}`, "ready_prompt");
     }
     case "gaia": {
       if (s?.soma_float_1 != null) {
@@ -302,12 +311,12 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
         const f2 = (s.soma_float_2 ?? 0).toFixed(2);
         const f3 = (s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
-        return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}`, "ready_prompt");
+        return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${noteTag}${handoverLine}`, "ready_prompt");
       }
       // Fallback to legacy when floats not yet seeded
       const reg = s?.emotional_register;
-      if (!reg) return truncate("here. weight steady. nothing spilling.", "ready_prompt");
-      return truncate(`here. ${reg}.`, "ready_prompt");
+      if (!reg) return truncate(`here. weight steady. nothing spilling.${noteTag}${handoverLine}`, "ready_prompt");
+      return truncate(`here. ${reg}.${noteTag}${handoverLine}`, "ready_prompt");
     }
   }
 }
