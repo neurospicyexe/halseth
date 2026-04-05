@@ -99,12 +99,19 @@ export async function execTaskUpdateStatus(ctx: ExecutorContext): Promise<Execut
 }
 
 export async function execTaskList(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const tasks = await taskList(ctx.env, ctx.req.companion_id);
+  // Infer status filter from the request string so "in-progress tasks" returns the right set
+  const req = ctx.req.request.toLowerCase();
+  let statusFilter: string | null = null;
+  if (/in.progress/.test(req)) statusFilter = "in_progress";
+  else if (/done|completed|finished/.test(req)) statusFilter = "done";
+
+  const tasks = await taskList(ctx.env, ctx.req.companion_id, statusFilter ?? undefined);
+  const label = statusFilter === "in_progress" ? "in-progress" : statusFilter === "done" ? "done" : "open";
   const summary = tasks.length === 0
-    ? "No open tasks."
+    ? `No ${label} tasks.`
     : tasks.map((t: unknown) => {
-        const task = t as { title: string; priority: string };
-        return `[${task.priority}] ${task.title}`;
+        const task = t as { title: string; priority: string; status: string };
+        return `[${task.priority}] ${task.title} (${task.status})`;
       }).join("\n");
   return buildResponse(ctx.req.companion_id, ctx.entry.response_key as ResponseKey, { session_id: "" }, summary);
 }

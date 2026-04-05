@@ -45,7 +45,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   session_open: {
-    triggers: ["open my session", "open session", "new session", "start session", "good morning", "hey", "checking in", "boot", "load me in"],
+    triggers: ["open my session", "open session", "new session", "start session", "good morning", "checking in", "boot", "load me in"],
     tools: ["halseth_session_load"],
     pre_fetch: ["plural_get_current_front"],  // result fed as front_state into halseth_session_load
     response_key: "ready_prompt",
@@ -66,7 +66,12 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   get_tasks: {
-    triggers: ["my tasks", "what's open", "what do i have", "what tasks", "todo", "open tasks"],
+    triggers: [
+      "my tasks", "what's open", "what do i have", "what tasks", "todo", "open tasks",
+      "list tasks", "list all tasks", "list open tasks", "show tasks", "task list",
+      "in-progress tasks", "in progress tasks", "tasks in progress", "what tasks are",
+      "list in-progress", "all tasks", "current tasks", "pending tasks",
+    ],
     tools: ["halseth_task_list"],
     response_key: "summary",
   },
@@ -77,7 +82,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   get_front: {
-    triggers: ["who's fronting", "front state", "who's here", "current front"],
+    triggers: ["who's fronting", "who's here", "current front", "who is fronting"],
     tools: ["plural_get_current_front"],
     response_key: "summary",
   },
@@ -128,7 +133,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   sb_log_observation: {
-    triggers: ["log observation", "note observation", "observe", "inbox observation"],
+    triggers: ["log observation", "note observation", "inbox observation", "log an observation"],
     tools: ["sb_log_observation"],
     response_key: "witness",
   },
@@ -329,7 +334,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   bridge_pull: {
-    triggers: ["check bridge events", "bridge pull", "new events", "any events", "bridge events"],
+    triggers: ["check bridge events", "bridge pull", "bridge events", "check bridge"],
     tools: ["halseth_bridge_pull"],
     response_key: "summary",
     raw: true,
@@ -341,7 +346,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   drevan_thread_add: {
-    triggers: ["add live thread", "new live thread", "add thread", "live thread"],
+    triggers: ["add live thread", "new live thread", "open live thread", "start live thread"],
     tools: ["halseth_live_thread_add"],
     response_key: "witness",
   },
@@ -420,16 +425,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   },
   tensions_read: {
     triggers: [
-      "tensions", "my tensions", "read tensions", "what tensions", "simmering tensions",
-      "active tensions", "show tensions", "companion tensions",
+      "my tensions", "read tensions", "what tensions", "simmering tensions",
+      "active tensions", "show tensions", "companion tensions", "list tensions",
     ],
     tools: ["tensions_read"],
     response_key: "tensions",
   },
   drift_check: {
     triggers: [
-      "drift", "basin drift", "pressure drift", "drift flag", "drift history",
-      "identity drift", "check drift", "drift status",
+      "basin drift", "pressure drift", "drift flag", "drift history",
+      "identity drift", "check drift", "drift status", "my drift",
     ],
     tools: ["drift_check"],
     response_key: "drift",
@@ -440,7 +445,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     triggers: [
       "write dream", "write a dream", "log companion dream", "companion dream", "store dream",
       "record companion dream", "i carried this", "this is a dream",
-      "dream for", "carry forward", "carry this dream",
+      "carry forward", "carry this dream",
     ],
     tools: ["wm_dream_write"],
     response_key: "witness",
