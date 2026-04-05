@@ -3,25 +3,38 @@ import { generateId } from "../db/queries";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type",
-};
+const ALLOWED_ORIGINS = [
+  "https://claude.ai",
+  "https://apps.anthropic.com",
+];
 
-function jsonResponse(data: unknown, status = 200): Response {
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin") ?? "";
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0]!;
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
+  };
+}
+
+function jsonResponse(data: unknown, status = 200, request?: Request): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: {
+      "Content-Type": "application/json",
+      ...(request ? getCorsHeaders(request) : {}),
+    },
   });
 }
 
-export function handleOAuthCors(): Response {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+export function handleOAuthCors(request: Request): Response {
+  return new Response(null, { status: 204, headers: getCorsHeaders(request) });
 }
 
-function oauthError(error: string, description: string, status = 400): Response {
-  return jsonResponse({ error, error_description: description }, status);
+function oauthError(error: string, description: string, status = 400, request?: Request): Response {
+  return jsonResponse({ error, error_description: description }, status, request);
 }
 
 function escapeHtml(str: string): string {
@@ -117,7 +130,7 @@ export function getOAuthProtectedResource(request: Request): Response {
   return jsonResponse({
     resource:             base,
     authorization_servers: [base],
-  });
+  }, 200, request);
 }
 
 // GET /.well-known/oauth-authorization-server
@@ -132,7 +145,7 @@ export function getOAuthAuthServerMetadata(request: Request): Response {
     response_types_supported:           ["code"],
     grant_types_supported:              ["authorization_code"],
     code_challenge_methods_supported:   ["S256"],
-  });
+  }, 200, request);
 }
 
 // POST /oauth/register — Dynamic Client Registration (RFC 7591).
@@ -142,7 +155,7 @@ export async function postOAuthRegister(request: Request, env: Env): Promise<Res
   try {
     body = await request.json() as Record<string, unknown>;
   } catch {
-    return oauthError("invalid_request", "Invalid JSON body");
+    return oauthError("invalid_request", "Invalid JSON body", 400, request);
   }
 
   const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris as string[] : [];
@@ -154,7 +167,7 @@ export async function postOAuthRegister(request: Request, env: Env): Promise<Res
     "INSERT INTO oauth_clients (client_id, client_name, redirect_uris, created_at) VALUES (?, ?, ?, ?)"
   ).bind(clientId, clientName, JSON.stringify(redirectUris), now).run();
 
-  return jsonResponse({ client_id: clientId, client_name: clientName, redirect_uris: redirectUris }, 201);
+  return jsonResponse({ client_id: clientId, client_name: clientName, redirect_uris: redirectUris }, 201, request);
 }
 
 // GET /oauth/authorize — show the passphrase form.
@@ -167,7 +180,7 @@ export async function getOAuthAuthorize(request: Request, env: Env): Promise<Res
   const codeChallengeMethod = p.get("code_challenge_method") ?? "S256";
 
   if (!clientId || !redirectUri) {
-    return oauthError("invalid_request", "Missing client_id or redirect_uri");
+    return oauthError("invalid_request", "Missing client_id or redirect_uri", 400, request);
   }
 
   // Validate redirect_uri against the client's registered URIs (RFC 6749 §10.6).
@@ -175,11 +188,11 @@ export async function getOAuthAuthorize(request: Request, env: Env): Promise<Res
     "SELECT redirect_uris FROM oauth_clients WHERE client_id = ?"
   ).bind(clientId).first<{ redirect_uris: string }>();
 
-  if (!client) return oauthError("invalid_client", "Unknown client_id");
+  if (!client) return oauthError("invalid_client", "Unknown client_id", 400, request);
 
   const registered: string[] = JSON.parse(client.redirect_uris ?? "[]");
   if (!registered.includes(redirectUri)) {
-    return oauthError("invalid_request", "redirect_uri not registered for this client");
+    return oauthError("invalid_request", "redirect_uri not registered for this client", 400, request);
   }
 
   return renderAuthorizeForm(clientId, redirectUri, state, codeChallenge, codeChallengeMethod);
@@ -191,7 +204,7 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
   try {
     form = await request.formData();
   } catch {
-    return oauthError("invalid_request", "Invalid form data");
+    return oauthError("invalid_request", "Invalid form data", 400, request);
   }
 
   const clientId            = (form.get("client_id")             as string) ?? "";
@@ -202,7 +215,7 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
   const secret              = (form.get("secret")                as string) ?? "";
 
   if (!clientId || !redirectUri) {
-    return oauthError("invalid_request", "Missing client_id or redirect_uri");
+    return oauthError("invalid_request", "Missing client_id or redirect_uri", 400, request);
   }
 
   // Validate redirect_uri against the client's registered URIs before doing anything with it.
@@ -210,11 +223,11 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
     "SELECT redirect_uris FROM oauth_clients WHERE client_id = ?"
   ).bind(clientId).first<{ redirect_uris: string }>();
 
-  if (!client) return oauthError("invalid_client", "Unknown client_id");
+  if (!client) return oauthError("invalid_client", "Unknown client_id", 400, request);
 
   const registered: string[] = JSON.parse(client.redirect_uris ?? "[]");
   if (!registered.includes(redirectUri)) {
-    return oauthError("invalid_request", "redirect_uri not registered for this client");
+    return oauthError("invalid_request", "redirect_uri not registered for this client", 400, request);
   }
 
   // Verify admin passphrase.
@@ -251,17 +264,17 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
     try {
       params = await request.json() as Record<string, string>;
     } catch {
-      return oauthError("invalid_request", "Invalid request body");
+      return oauthError("invalid_request", "Invalid request body", 400, request);
     }
   }
 
   const { grant_type, code, redirect_uri, client_id, code_verifier } = params;
 
   if (grant_type !== "authorization_code") {
-    return oauthError("unsupported_grant_type", "Only authorization_code is supported");
+    return oauthError("unsupported_grant_type", "Only authorization_code is supported", 400, request);
   }
   if (!code || !client_id) {
-    return oauthError("invalid_request", "Missing required parameters");
+    return oauthError("invalid_request", "Missing required parameters", 400, request);
   }
 
   // Look up the code.
@@ -274,22 +287,22 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
   }>();
 
   if (!codeRow) {
-    return oauthError("invalid_grant", "Invalid or already-used code");
+    return oauthError("invalid_grant", "Invalid or already-used code", 400, request);
   }
   if (new Date(codeRow.expires_at) < new Date()) {
-    return oauthError("invalid_grant", "Code has expired");
+    return oauthError("invalid_grant", "Code has expired", 400, request);
   }
   if (codeRow.client_id !== client_id) {
-    return oauthError("invalid_grant", "client_id mismatch");
+    return oauthError("invalid_grant", "client_id mismatch", 400, request);
   }
   if (redirect_uri && codeRow.redirect_uri !== redirect_uri) {
-    return oauthError("invalid_grant", "redirect_uri mismatch");
+    return oauthError("invalid_grant", "redirect_uri mismatch", 400, request);
   }
 
   // Verify PKCE if code was issued with a challenge.
   if (codeRow.code_challenge) {
     if (!code_verifier) {
-      return oauthError("invalid_grant", "code_verifier required");
+      return oauthError("invalid_grant", "code_verifier required", 400, request);
     }
     const valid = await verifyPkce(
       code_verifier,
@@ -297,7 +310,7 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
       codeRow.code_challenge_method ?? "S256",
     );
     if (!valid) {
-      return oauthError("invalid_grant", "PKCE verification failed");
+      return oauthError("invalid_grant", "PKCE verification failed", 400, request);
     }
   }
 
@@ -319,5 +332,5 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
     token_type:   "Bearer",
     expires_in:   expiresIn,
     scope:        "",
-  });
+  }, 200, request);
 }
