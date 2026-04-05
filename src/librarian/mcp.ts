@@ -17,6 +17,7 @@ import { z } from "zod";
 import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
+import { hashToken } from "../lib/auth.js";
 
 function buildServer(env: Env): McpServer {
   const server = new McpServer({
@@ -31,7 +32,7 @@ function buildServer(env: Env): McpServer {
       request:      z.string().max(2000).describe("Natural language request. Used for routing. E.g. 'open my session', 'log a feeling', 'search vault'. Max 2000 chars — pass document content in context field, not here."),
       companion_id: z.enum(COMPANION_IDS).describe("Which companion is making the request."),
       context:      z.string().optional().describe("JSON-encoded payload for mutations. E.g. '{\"emotion\":\"grief\",\"intensity\":70}'. Also used for context hints on reads."),
-      session_type: z.enum(["checkin", "hangout", "work", "ritual"]).optional().describe("Session type — used for session_open shaping. Defaults to 'work'."),
+      session_type: z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).optional().describe("Session type — used for session_open shaping. Defaults to 'work'. Use 'companion-work' for Drevan collaborative sessions."),
     },
     async (args) => {
       const req: LibrarianRequest = {
@@ -67,9 +68,10 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
   const validSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean);
   if (!validSecrets.some(s => s === token)) {
     // Fall back to OAuth token lookup (issued by /oauth/token)
+    const tokenHash = await hashToken(token);
     const row = await env.DB.prepare(
-      "SELECT expires_at FROM oauth_tokens WHERE token = ?"
-    ).bind(token).first<{ expires_at: string }>();
+      "SELECT expires_at FROM oauth_tokens WHERE token_hash = ?"
+    ).bind(tokenHash).first<{ expires_at: string }>();
     if (!row || new Date(row.expires_at) < new Date()) {
       return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": wwwAuth } });
     }
