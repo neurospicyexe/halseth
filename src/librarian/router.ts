@@ -12,6 +12,7 @@ import { Env } from "../types.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import { getCurrentFront, type PluralResult } from "./backends/plural.js";
 import type { ExecutorContext, ExecutorFn } from "./executors/types.js";
+import { triggerMatches } from "./lib/trigger.js";
 
 // Re-export LibrarianRequest from executors/types so index.ts import path stays stable.
 export type { LibrarianRequest } from "./executors/types.js";
@@ -218,9 +219,13 @@ export class LibrarianRouter {
   }
 
   private matchFastPath(request: string): PatternEntry | null {
-    const lower = request.toLowerCase().trim();
+    const trimmed = request.trim();
+    if (/\bcompanion note\b/i.test(trimmed)) {
+      const entry = FAST_PATH_PATTERNS["companion_note_add"];
+      if (entry) return entry;
+    }
     for (const entry of Object.values(FAST_PATH_PATTERNS)) {
-      if (entry.triggers.some(t => lower.includes(t))) {
+      if (entry.triggers.some(t => triggerMatches(trimmed, t))) {
         return entry;
       }
     }
@@ -297,11 +302,13 @@ export class LibrarianRouter {
       const json = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
       const result = json.choices?.[0]?.message?.content?.trim().toLowerCase() ?? null;
       if (!result) {
-        console.warn(`[librarian] classify returned empty result for request="${request.slice(0, 80)}"`);
+        console.warn(`[librarian] classify returned empty result`);
+      } else {
+        console.log(`[librarian] classify: key="${result}"`);
       }
       return result;
     } catch (e) {
-      console.warn(`[librarian] classify error: ${e instanceof Error ? e.message : String(e)} request="${request.slice(0, 80)}"`);
+      console.warn(`[librarian] classify error: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }
