@@ -153,7 +153,7 @@ companion_id: ${session.companion_id ?? "unknown"}
 
   // ── 6. Write compact row to synthesis_summary ─────────────────────────────
   const summaryId = generateId();
-  const narrative = generated.slice(0, 500); // compact preview
+  const narrative = generated.length > 500 ? generated.slice(0, 500) + "…" : generated;
   const emotionalRegister = [
     session.emotional_frequency,
     handover?.motion_state,
