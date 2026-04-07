@@ -151,26 +151,15 @@ companion_id: ${session.companion_id ?? "unknown"}
     console.warn(`[synthesis:session-summary] SB write failed for ${sessionId} -- continuing to D1`);
   }
 
-  // ── 6. Write compact row to synthesis_summary ─────────────────────────────
-  const summaryId = generateId();
-  const narrative = generated.length > 500 ? generated.slice(0, 500) + "…" : generated;
-  const emotionalRegister = [
-    session.emotional_frequency,
-    handover?.motion_state,
-  ].filter(Boolean).join(" / ") || null;
-
-  await env.DB.prepare(`
-    INSERT INTO synthesis_summary
-      (id, summary_type, companion_id, subject, narrative, emotional_register,
-       key_decisions, open_threads, drevan_state, full_ref, stale_after, created_at)
-    VALUES (?, 'session', ?, ?, ?, ?, '[]', ?, NULL, ?, NULL, datetime('now'))
-  `).bind(
-    summaryId,
-    session.companion_id ?? null,
-    sessionId,
-    narrative,
-    emotionalRegister,
-    JSON.stringify(openThreads),
-    sbResult.ack ? sbPath : null,
-  ).run();
+  // ── 6. Write SB path pointer to synthesis_summary ─────────────────────────
+  // Narrative lives in Second Brain (sbPath). D1 row is a pointer only -- no text stored here.
+  if (sbResult.ack) {
+    const summaryId = generateId();
+    await env.DB.prepare(`
+      INSERT INTO synthesis_summary
+        (id, summary_type, companion_id, subject, narrative, emotional_register,
+         key_decisions, open_threads, drevan_state, full_ref, stale_after, created_at)
+      VALUES (?, 'session', ?, ?, NULL, NULL, '[]', '[]', NULL, ?, NULL, datetime('now'))
+    `).bind(summaryId, session.companion_id ?? null, sessionId, sbPath).run();
+  }
 }

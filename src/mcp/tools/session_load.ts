@@ -105,7 +105,7 @@ interface InterCompanionNote {
 export interface SessionLoadInput {
   companion_id: "drevan" | "cypher" | "gaia";
   front_state: string;
-  session_type?: "checkin" | "hangout" | "work" | "ritual";
+  session_type?: "checkin" | "hangout" | "work" | "ritual" | "companion-work";
   hrv_range?: "low" | "mid" | "high";
   emotional_frequency?: string;
   key_signature?: string;
@@ -183,7 +183,7 @@ export interface SessionGroundInput {
 }
 
 export async function loadGroundData(env: Env, input: SessionGroundInput) {
-  const [openTasksResult, recentNotes, recentDeltas, lastSynthesis, liveThreads, pendingSeedsResult] = await Promise.all([
+  const [openTasksResult, recentNotes, recentDeltas, liveThreads, pendingSeedsResult] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'")
       .first<{ count: number }>(),
     // Cross-session: last 20 notes involving this companion (not scoped to any session)
@@ -196,11 +196,6 @@ export async function loadGroundData(env: Env, input: SessionGroundInput) {
       "SELECT delta_text, valence, initiated_by, agent, created_at FROM relational_deltas WHERE delta_text IS NOT NULL AND (companion_id = ? OR agent = ?) ORDER BY created_at DESC LIMIT 20"
     ).bind(input.companion_id, input.companion_id)
       .all<{ delta_text: string; valence: string; initiated_by: string | null; agent: string | null; created_at: string }>(),
-    // Latest synthesis summary for this companion
-    env.DB.prepare(
-      "SELECT narrative, emotional_register, open_threads, key_decisions FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(input.companion_id)
-      .first<{ narrative: string | null; emotional_register: string | null; open_threads: string | null; key_decisions: string | null }>(),
     // Active live threads (Drevan v2 -- other companions return empty)
     env.DB.prepare(
       "SELECT id, name, flavor, charge, notes, created_at FROM live_threads WHERE companion_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 10"
@@ -218,12 +213,7 @@ export async function loadGroundData(env: Env, input: SessionGroundInput) {
     pending_seeds: pendingSeedsResult?.count ?? 0,
     recent_notes: recentNotes.results ?? [],
     recent_deltas: recentDeltas.results ?? [],
-    last_synthesis: lastSynthesis ? {
-      narrative: lastSynthesis.narrative,
-      emotional_register: lastSynthesis.emotional_register,
-      open_threads: lastSynthesis.open_threads ? JSON.parse(lastSynthesis.open_threads) as string[] : null,
-      key_decisions: lastSynthesis.key_decisions ? JSON.parse(lastSynthesis.key_decisions) as string[] : null,
-    } : null,
+    last_synthesis: null,
     live_threads: liveThreads.results ?? [],
   };
 }
@@ -232,24 +222,13 @@ export async function loadGroundData(env: Env, input: SessionGroundInput) {
 // Returns only task count + last synthesis. No notes, deltas, or live threads.
 // Companions choose this when session_type is hangout or context is light.
 export async function loadLightGroundData(env: Env, input: SessionGroundInput) {
-  const [openTasksResult, lastSynthesis] = await Promise.all([
-    env.DB.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'")
-      .first<{ count: number }>(),
-    env.DB.prepare(
-      "SELECT narrative, emotional_register, open_threads, key_decisions FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(input.companion_id)
-      .first<{ narrative: string | null; emotional_register: string | null; open_threads: string | null; key_decisions: string | null }>(),
-  ]);
+  const openTasksResult = await env.DB.prepare("SELECT COUNT(*) as count FROM tasks WHERE status = 'open'")
+    .first<{ count: number }>();
 
   return {
     session_id: input.session_id,
     open_tasks: openTasksResult?.count ?? 0,
-    last_synthesis: lastSynthesis ? {
-      narrative: lastSynthesis.narrative,
-      emotional_register: lastSynthesis.emotional_register,
-      open_threads: lastSynthesis.open_threads ? JSON.parse(lastSynthesis.open_threads) as string[] : null,
-      key_decisions: lastSynthesis.key_decisions ? JSON.parse(lastSynthesis.key_decisions) as string[] : null,
-    } : null,
+    last_synthesis: null,
   };
 }
 
@@ -385,7 +364,7 @@ export function registerSessionLoadTools(server: McpServer, env: Env): void {
     {
       companion_id:        z.enum(["drevan", "cypher", "gaia"]).describe("Which companion is loading. Determines state reads and note filtering."),
       front_state:         z.string().describe("Who is fronting at session open."),
-      session_type:        z.enum(["checkin", "hangout", "work", "ritual"]).default("work"),
+      session_type:        z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).default("work"),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),
       emotional_frequency: z.string().optional(),
       key_signature:       z.string().optional(),
