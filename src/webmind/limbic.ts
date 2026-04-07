@@ -53,14 +53,10 @@ export async function getCurrentLimbicState(
   companionId?: string,
 ): Promise<WmLimbicState | null> {
   if (companionId) {
-    // Try companion-specific row first; fall back to global (NULL) row
-    const specific = await env.DB.prepare(
-      "SELECT * FROM limbic_states WHERE companion_id = ? ORDER BY generated_at DESC LIMIT 1"
-    ).bind(companionId).first<WmLimbicState>();
-    if (specific) return specific;
+    // Single query: companion-specific row wins over global (NULL) row via ORDER BY
     return env.DB.prepare(
-      "SELECT * FROM limbic_states WHERE companion_id IS NULL ORDER BY generated_at DESC LIMIT 1"
-    ).first<WmLimbicState>();
+      "SELECT * FROM limbic_states WHERE companion_id = ? OR companion_id IS NULL ORDER BY CASE WHEN companion_id = ? THEN 0 ELSE 1 END, generated_at DESC LIMIT 1"
+    ).bind(companionId, companionId).first<WmLimbicState>();
   }
   return env.DB.prepare(
     "SELECT * FROM limbic_states ORDER BY generated_at DESC LIMIT 1"
