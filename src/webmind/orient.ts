@@ -11,6 +11,7 @@ import { Env } from "../types.js";
 import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
+import { getCurrentLimbicState } from "./limbic.js";
 
 export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
   // 1. Identity anchor (auto-seed if missing)
@@ -23,7 +24,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, activeConclusions] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, activeConclusions] = await Promise.all([
+    getCurrentLimbicState(env),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
     ).bind(agentId).all<WmSessionHandoff>(),
@@ -56,7 +58,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(`letter:${agentId}`).all<WmRazielLetter>(),
     // Wide-window: outgoing inter-companion notes (sent BY this companion to others)
     env.DB.prepare(
-      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 20"
+      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmCompanionNote>(),
     // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self)
     // read_at IS NULL ensures notes don't repeat across sessions. Auto-acked below after fetch.
@@ -65,7 +67,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(agentId, agentId).all<WmCompanionNote>(),
     // Wide-window: recent journal entries written BY this companion (companion_journal table)
     env.DB.prepare(
-      "SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 5"
+      "SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 3"
     ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(
@@ -95,6 +97,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
 
   return {
     identity_anchor: anchor,
+    limbic_state: limbicState,
     latest_handoff: recentHandoffs.results?.[0] ?? null,
     recent_handoffs: recentHandoffs.results ?? [],
     open_thread_count: threadCount?.cnt ?? 0,
