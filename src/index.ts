@@ -28,7 +28,7 @@ import { handleMcp } from "./mcp/server";
 import { handleLibrarian } from "./librarian/index.js";
 import { handleLibrarianMcp } from "./librarian/mcp.js";
 import { postStmEntry, getStmEntries } from "./handlers/stm.js";
-import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
+import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent } from "./handlers/webmind.js";
@@ -108,10 +108,11 @@ const router = new Router()
   .on("GET",  "/stm/entries", (request, env) => getStmEntries(request, env))
 
   // Distillation blocks — rolling LTM from Discord conversations
-  .on("POST", "/persona-blocks", (request, env) => postPersonaBlocks(request, env))
-  .on("GET",  "/persona-blocks", (request, env) => getPersonaBlocks(request, env))
-  .on("POST", "/human-blocks",   (request, env) => postHumanBlocks(request, env))
-  .on("GET",  "/human-blocks",   (request, env) => getHumanBlocks(request, env))
+  .on("POST",   "/persona-blocks",       (request, env) => postPersonaBlocks(request, env))
+  .on("GET",    "/persona-blocks",       (request, env) => getPersonaBlocks(request, env))
+  .on("DELETE", "/persona-blocks/prune", (request, env) => prunePersonaBlocks(request, env))
+  .on("POST",   "/human-blocks",         (request, env) => postHumanBlocks(request, env))
+  .on("GET",    "/human-blocks",         (request, env) => getHumanBlocks(request, env))
 
   // Soma — companion SOMA state for Hearth
   .on("GET", "/soma", (request, env) => getSoma(request, env))
