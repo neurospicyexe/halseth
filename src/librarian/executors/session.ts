@@ -21,6 +21,7 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
 
 export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
+  const siblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
 
   // Phase 1: gather topic seeds from sources that exist independently of session-close discipline.
   // spine is required by session_close (most reliable); continuity_notes accumulate mid-session.
@@ -38,8 +39,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ? `${ctx.req.companion_id} ${topicSeed}`
     : `${ctx.req.companion_id} companion state presence recent context`;
 
-  // Phase 2: all sources in parallel
-  const [payload, wmResult, sbNarrative, ragRaw] = await Promise.all([
+  // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
+  // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -52,6 +54,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
     semanticSearch(ctx.env, ragQuery).catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(siblings[0]).first<{ spine: string; motion_state: string }>().catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(siblings[1]).first<{ spine: string; motion_state: string }>().catch(() => null),
   ]);
 
   const os = payload.state;
@@ -62,6 +70,15 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Session narrative: generous cap for Claude.ai (full context window available)
   const narrativeBlock = sbNarrative
     ? "\n[Last session narrative]\n" + sbNarrative.replace(/^---[\s\S]*?---\n+/, "").slice(0, 3000)
+    : "";
+
+  // Sibling lane block: spine + motion_state for each sibling companion so self can stay in lane.
+  const siblingRows = [sib0Row, sib1Row];
+  const siblingBlock = siblings.some((_, i) => siblingRows[i]?.spine)
+    ? "\n[Sibling lanes]\n" + siblings.map((id, i) => {
+        const row = siblingRows[i];
+        return row?.spine ? `${id}: ${row.motion_state ?? "unknown"} -- ${row.spine.slice(0, 120)}` : null;
+      }).filter(Boolean).join("\n")
     : "";
 
   // RAG excerpts: 5 chunks × 400 chars for deep-work surface
@@ -80,7 +97,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   })();
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + siblingBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -187,9 +204,10 @@ export async function execSessionLightGround(ctx: ExecutorContext): Promise<Exec
 }
 
 export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
-  // All 7 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
+  // All 9 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult] = await Promise.allSettled([
+  const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -216,6 +234,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
     ).bind(agentId, agentId).all<{ from_id: string; content: string }>(),
+    // 8+9. Sibling lane state: last spine + motion_state per sibling.
+    // Uses idx_sessions_companion_created -- one index entry + one rowid lookup each.
+    ctx.env.DB.prepare(
+      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(botSiblings[0]).first<{ spine: string; motion_state: string }>(),
+    ctx.env.DB.prepare(
+      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(botSiblings[1]).first<{ spine: string; motion_state: string }>(),
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
@@ -261,6 +287,12 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ? notesResult.value.results.map(r => ({ from: r.from_id, content: (r.content ?? "").slice(0, 200) }))
     : [];
 
+  const sibling_lanes = botSiblings.map((id, i) => {
+    const settled = i === 0 ? sib0Result : sib1Result;
+    const val = settled.status === "fulfilled" ? settled.value : null;
+    return { companion_id: id, spine: val?.spine?.slice(0, 150) ?? null, motion_state: val?.motion_state ?? null };
+  });
+
   return {
     data: {
       synthesis_summary,
@@ -271,6 +303,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       active_tensions,
       relational_state_raziel,
       incoming_notes,
+      sibling_lanes,
     },
     meta: { operation: "halseth_bot_orient" },
   };

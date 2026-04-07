@@ -85,8 +85,11 @@ export async function getRecentRelationalSessions(
   );
 }
 
-// GET /sessions?days=7&limit=100
+// GET /sessions?days=7&limit=100[&companion_id=drevan]
 // Returns sessions created within the last N days, newest first.
+// When companion_id is provided, query uses idx_sessions_companion_created(companion_id, created_at DESC)
+// -- a composite covering scan. Without it, falls back to idx_sessions_created(created_at DESC)
+// plus rowid lookups for each result row.
 export async function getSessions(
   request: Request,
   env: Env,
@@ -98,15 +101,27 @@ export async function getSessions(
   const rawDays = parseInt(url.searchParams.get("days") ?? "7", 10);
   const days = isNaN(rawDays) || rawDays < 1 ? 7 : Math.min(rawDays, 365);
   const limit = clampLimit(url.searchParams.get("limit"), 100, 200);
+  const companionId = url.searchParams.get("companion_id");
+  const validCompanions = ["drevan", "cypher", "gaia"];
+  const scopedCompanion = companionId && validCompanions.includes(companionId) ? companionId : null;
 
-  const result = await env.DB.prepare(`
-    SELECT id, created_at, updated_at, front_state, co_con,
-           emotional_frequency, active_anchor, facet, notes
-    FROM sessions
-    WHERE created_at >= datetime('now', ? || ' days')
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).bind(`-${days}`, limit).all<Record<string, unknown>>();
+  const result = scopedCompanion
+    ? await env.DB.prepare(`
+        SELECT id, created_at, updated_at, front_state, co_con,
+               emotional_frequency, active_anchor, facet, notes
+        FROM sessions
+        WHERE companion_id = ? AND created_at >= datetime('now', ? || ' days')
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).bind(scopedCompanion, `-${days}`, limit).all<Record<string, unknown>>()
+    : await env.DB.prepare(`
+        SELECT id, created_at, updated_at, front_state, co_con,
+               emotional_frequency, active_anchor, facet, notes
+        FROM sessions
+        WHERE created_at >= datetime('now', ? || ' days')
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).bind(`-${days}`, limit).all<Record<string, unknown>>();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },
