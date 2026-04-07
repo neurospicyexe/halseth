@@ -27,7 +27,7 @@ export async function writeLimbicState(
     JSON.stringify(input.open_questions),
     input.emotional_register,
     JSON.stringify(input.swarm_threads),
-    JSON.stringify(input.companion_notes),
+    JSON.stringify(input.companion_notes ?? {}),
     companionId,
     now,
   ).run();
@@ -42,7 +42,7 @@ export async function writeLimbicState(
     open_questions: JSON.stringify(input.open_questions),
     emotional_register: input.emotional_register,
     swarm_threads: JSON.stringify(input.swarm_threads),
-    companion_notes: JSON.stringify(input.companion_notes),
+    companion_notes: JSON.stringify(input.companion_notes ?? {}),
     companion_id: companionId,
     created_at: now,
   };
