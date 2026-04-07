@@ -21,7 +21,17 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
 
 export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
-  const [payload, wmResult, sbNarrative] = await Promise.all([
+
+  // Phase 1: get last handoff title to seed topic-aware RAG query
+  const lastHandoff = await ctx.env.DB.prepare(
+    "SELECT title FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(agentId).first<{ title: string }>().catch(() => null);
+  const ragQuery = lastHandoff?.title
+    ? `${ctx.req.companion_id} ${lastHandoff.title} memory recall recent session`
+    : `${ctx.req.companion_id} companion state presence recent context`;
+
+  // Phase 2: all sources in parallel
+  const [payload, wmResult, sbNarrative, ragRaw] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -33,16 +43,36 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).bind(agentId).first<{ full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
+    semanticSearch(ctx.env, ragQuery).catch(() => null),
   ]);
+
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
   const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
+
+  // Session narrative: generous cap for Claude.ai (full context window available)
   const narrativeBlock = sbNarrative
-    ? "\n[Last session narrative]\n" + sbNarrative.replace(/^---[\s\S]*?---\n+/, "").slice(0, 1200)
+    ? "\n[Last session narrative]\n" + sbNarrative.replace(/^---[\s\S]*?---\n+/, "").slice(0, 3000)
     : "";
+
+  // RAG excerpts: 5 chunks × 400 chars for deep-work surface
+  const ragBlock = (() => {
+    if (!ragRaw) return "";
+    try {
+      const parsed = JSON.parse(ragRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+      const excerpts = (parsed?.chunks ?? [])
+        .slice(0, 5)
+        .map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 400))
+        .filter(Boolean);
+      return excerpts.length > 0 ? "\n[Vault excerpts]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
+    } catch {
+      return ragRaw ? "\n[Vault excerpts]\n• " + ragRaw.slice(0, 400) : "";
+    }
+  })();
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -200,9 +230,9 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
         try {
           const parsed = JSON.parse(ragRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
           const chunks = parsed?.chunks ?? [];
-          return chunks.slice(0, 2).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 120)).filter(Boolean);
+          return chunks.slice(0, 3).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 250)).filter(Boolean);
         } catch {
-          return [ragRaw.slice(0, 120)];
+          return [ragRaw.slice(0, 250)];
         }
       })()
     : [];
