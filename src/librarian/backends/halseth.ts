@@ -460,6 +460,48 @@ export async function setAutonomousTurn(env: Env, companion: "drevan" | "cypher"
   return { ok: true };
 }
 
+export async function journalEdit(
+  env: Env,
+  id: string,
+  agent: string,
+  noteText: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const now = new Date().toISOString();
+  const r = await env.DB.prepare(
+    "UPDATE companion_journal SET note_text = ?, edited_at = ? WHERE id = ? AND agent = ?"
+  ).bind(noteText, now, id, agent).run();
+  if (!r.meta.changes) return { ok: false, error: "not_found_or_not_owner" };
+  return { ok: true };
+}
+
+export async function tensionEdit(
+  env: Env,
+  id: string,
+  companionId: string,
+  tensionText: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const now = new Date().toISOString();
+  const r = await env.DB.prepare(
+    "UPDATE companion_tensions SET tension_text = ?, edited_at = ? WHERE id = ? AND companion_id = ?"
+  ).bind(tensionText, now, id, companionId).run();
+  if (!r.meta.changes) return { ok: false, error: "not_found_or_not_owner" };
+  return { ok: true };
+}
+
+export async function interNoteEdit(
+  env: Env,
+  id: string,
+  fromId: string,
+  content: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const now = new Date().toISOString();
+  const r = await env.DB.prepare(
+    "UPDATE inter_companion_notes SET content = ?, edited_at = ? WHERE id = ? AND from_id = ? AND read_at IS NULL"
+  ).bind(content, now, id, fromId).run();
+  if (!r.meta.changes) return { ok: false, error: "not_found_or_already_read" };
+  return { ok: true };
+}
+
 export async function addCompanionNote(
   env: Env,
   from_id: string,
@@ -592,6 +634,10 @@ export interface CompanionStateUpdate {
   background_emotion?: string | null;
   background_intensity?: number | null;
   prompt_context?: string | null;
+  // Lane signal: written at session close so sibling queries hit companion_state PK,
+  // not the sessions heap. motion_state is the enum; lane_spine is first 150 chars of spine.
+  motion_state?: string | null;
+  lane_spine?: string | null;
 }
 
 const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
@@ -601,6 +647,7 @@ const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
   "undercurrent_emotion", "undercurrent_intensity",
   "background_emotion", "background_intensity",
   "prompt_context",
+  "motion_state", "lane_spine",
 ];
 
 export async function updateCompanionState(
