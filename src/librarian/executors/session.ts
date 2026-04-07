@@ -149,19 +149,35 @@ export async function execSessionLightGround(ctx: ExecutorContext): Promise<Exec
 }
 
 export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
-  // Aggregate three sources in parallel: synthesis summary, WebMind ground, RAG excerpts.
+  // All 7 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
-  const [synthResult, groundResult, ragResult] = await Promise.allSettled([
-    // Most recent session narrative from SB via path pointer
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult] = await Promise.allSettled([
+    // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
     ).bind(ctx.req.companion_id).first<{ full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t } : null) : null)
       .catch(() => null),
-    // WebMind ground: open threads + recent handoffs + notes
+    // 2. WebMind ground: open threads + recent handoffs + notes
     wmGround(ctx.env, agentId),
-    // Second Brain RAG: semantic search for recent companion context
+    // 3. Second Brain RAG: semantic search for recent companion context
     semanticSearch(ctx.env, `companion state presence recent context ${ctx.req.companion_id}`),
+    // 4. Identity anchor
+    ctx.env.DB.prepare(
+      "SELECT anchor_summary FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
+    ).bind(agentId).first<{ anchor_summary: string }>(),
+    // 5. Active tensions (simmering only, max 3)
+    ctx.env.DB.prepare(
+      "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC LIMIT 3"
+    ).bind(agentId).all<{ tension_text: string }>(),
+    // 6. Relational state toward Raziel (latest)
+    ctx.env.DB.prepare(
+      "SELECT state_text FROM companion_relational_state WHERE companion_id = ? AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 1"
+    ).bind(agentId).all<{ state_text: string }>(),
+    // 7. Unread incoming companion notes (max 3, exclude own notes)
+    ctx.env.DB.prepare(
+      "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
+    ).bind(agentId, agentId).all<{ from_id: string; content: string }>(),
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
@@ -191,54 +207,21 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       })()
     : [];
 
-  // Additional grounding fields -- each wrapped in try/catch so failures don't break orient.
-  let identity_anchor: string | null = null;
-  let active_tensions: string[] = [];
-  let relational_state_raziel: string[] = [];
-  let incoming_notes: Array<{ from: string; content: string }> = [];
+  const identity_anchor: string | null = anchorRow.status === "fulfilled" && anchorRow.value?.anchor_summary
+    ? anchorRow.value.anchor_summary.slice(0, 300)
+    : null;
 
-  try {
-    const [anchorRow, tensionsResult, relationalResult, notesResult] = await Promise.allSettled([
-      // 1. Identity anchor
-      ctx.env.DB.prepare(
-        "SELECT anchor_summary FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
-      ).bind(agentId).first<{ anchor_summary: string }>(),
-      // 2. Active tensions (simmering only, max 3)
-      ctx.env.DB.prepare(
-        "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC LIMIT 3"
-      ).bind(agentId).all<{ tension_text: string }>(),
-      // 3. Relational state toward Raziel (latest)
-      ctx.env.DB.prepare(
-        "SELECT state_text FROM companion_relational_state WHERE companion_id = ? AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 1"
-      ).bind(agentId).all<{ state_text: string }>(),
-      // 4. Unread incoming companion notes (max 3, exclude own notes)
-      ctx.env.DB.prepare(
-        "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
-      ).bind(agentId, agentId).all<{ from_id: string; content: string }>(),
-    ]);
+  const active_tensions: string[] = tensionsResult.status === "fulfilled" && tensionsResult.value?.results
+    ? tensionsResult.value.results.map(r => (r.tension_text ?? "").slice(0, 150)).filter(Boolean)
+    : [];
 
-    if (anchorRow.status === "fulfilled" && anchorRow.value?.anchor_summary) {
-      identity_anchor = anchorRow.value.anchor_summary.slice(0, 300);
-    }
-    if (tensionsResult.status === "fulfilled" && tensionsResult.value?.results) {
-      active_tensions = tensionsResult.value.results
-        .map(r => (r.tension_text ?? "").slice(0, 150))
-        .filter(Boolean);
-    }
-    if (relationalResult.status === "fulfilled" && relationalResult.value?.results) {
-      relational_state_raziel = relationalResult.value.results
-        .map(r => (r.state_text ?? "").slice(0, 150))
-        .filter(Boolean);
-    }
-    if (notesResult.status === "fulfilled" && notesResult.value?.results) {
-      incoming_notes = notesResult.value.results.map(r => ({
-        from: r.from_id,
-        content: (r.content ?? "").slice(0, 200),
-      }));
-    }
-  } catch {
-    // Silently fall through -- new fields return null/[] on any error
-  }
+  const relational_state_raziel: string[] = relationalResult.status === "fulfilled" && relationalResult.value?.results
+    ? relationalResult.value.results.map(r => (r.state_text ?? "").slice(0, 150)).filter(Boolean)
+    : [];
+
+  const incoming_notes: Array<{ from: string; content: string }> = notesResult.status === "fulfilled" && notesResult.value?.results
+    ? notesResult.value.results.map(r => ({ from: r.from_id, content: (r.content ?? "").slice(0, 200) }))
+    : [];
 
   return {
     data: {

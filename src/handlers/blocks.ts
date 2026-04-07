@@ -119,8 +119,8 @@ export async function prunePersonaBlocks(req: Request, env: Env): Promise<Respon
 
   const b = body as Record<string, unknown>;
   const companionId = typeof b["companion_id"] === "string" ? b["companion_id"].trim() : "";
-  if (!companionId) {
-    return new Response(JSON.stringify({ error: "companion_id required" }), {
+  if (!companionId || !VALID_COMPANIONS.has(companionId)) {
+    return new Response(JSON.stringify({ error: "companion_id required and must be drevan, cypher, or gaia" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
