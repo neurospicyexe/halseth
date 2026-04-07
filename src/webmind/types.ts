@@ -232,6 +232,7 @@ export interface WmLimbicState {
   emotional_register: string | null;
   swarm_threads: string | null;
   companion_notes: string | null;
+  companion_id: string | null;
   created_at: string;
 }
 
@@ -244,6 +245,7 @@ export interface WmLimbicStateInput {
   emotional_register: string;
   swarm_threads: string[];
   companion_notes: Record<string, string>;
+  companion_id?: string;
 }
 
 export interface WmOrientResponse {

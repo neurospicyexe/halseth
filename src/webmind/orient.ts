@@ -25,7 +25,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
 
   // 2-14. Remaining queries are independent -- run concurrently
   const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, activeConclusions] = await Promise.all([
-    getCurrentLimbicState(env),
+    getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
     ).bind(agentId).all<WmSessionHandoff>(),
