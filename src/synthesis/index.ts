@@ -28,6 +28,19 @@ export async function processQueue(env: Env): Promise<void> {
     LIMIT ?
   `).bind(MAX_PER_RUN).all<QueueRow>();
 
+  // TTL cleanup: runs every cron tick regardless of queue depth.
+  // wm_thread_events is a pure audit log -- orient/ground never read it.
+  // synthesis_queue 'done' rows are spent after processing.
+  // Both use cheap indexed deletes; failure here is non-fatal.
+  await env.DB.batch([
+    env.DB.prepare(
+      "DELETE FROM wm_thread_events WHERE created_at < datetime('now', '-90 days')"
+    ),
+    env.DB.prepare(
+      "DELETE FROM synthesis_queue WHERE status = 'done' AND processed_at < datetime('now', '-30 days')"
+    ),
+  ]).catch((e: unknown) => console.warn("[synthesis] TTL cleanup failed:", String(e)));
+
   if (!pending.results?.length) return;
 
   for (const job of pending.results) {
