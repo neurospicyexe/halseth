@@ -219,8 +219,36 @@ export interface WmConclusion {
   created_at: string;
 }
 
+// ── Limbic State (swarm-level synthesis output) ────────────────────────────
+
+export interface WmLimbicState {
+  state_id: string;
+  generated_at: string;
+  synthesis_source: string | null;
+  active_concerns: string | null;
+  live_tensions: string | null;
+  drift_vector: string | null;
+  open_questions: string | null;
+  emotional_register: string | null;
+  swarm_threads: string | null;
+  companion_notes: string | null;
+  created_at: string;
+}
+
+export interface WmLimbicStateInput {
+  synthesis_source: string;
+  active_concerns: string[];
+  live_tensions: string[];
+  drift_vector: string;
+  open_questions: string[];
+  emotional_register: string;
+  swarm_threads: string[];
+  companion_notes: Record<string, string>;
+}
+
 export interface WmOrientResponse {
   identity_anchor: WmIdentityAnchor | null;
+  limbic_state: WmLimbicState | null;
   latest_handoff: WmSessionHandoff | null;
   open_thread_count: number;
   top_threads: WmMindThread[];
