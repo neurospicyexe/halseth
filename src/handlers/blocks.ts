@@ -110,6 +110,35 @@ export async function getPersonaBlocks(request: Request, env: Env): Promise<Resp
   });
 }
 
+export async function prunePersonaBlocks(req: Request, env: Env): Promise<Response> {
+  const denied = authGuard(req, env);
+  if (denied) return denied;
+
+  let body: unknown;
+  try { body = await req.json(); } catch { return new Response("Bad JSON", { status: 400 }); }
+
+  const b = body as Record<string, unknown>;
+  const companionId = typeof b["companion_id"] === "string" ? b["companion_id"].trim() : "";
+  if (!companionId) {
+    return new Response(JSON.stringify({ error: "companion_id required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const keep = typeof b["keep"] === "number" ? b["keep"] : 50;
+
+  await env.DB.prepare(`
+    DELETE FROM persona_blocks WHERE companion_id = ? AND id NOT IN (
+      SELECT id FROM persona_blocks WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?
+    )
+  `).bind(companionId, companionId, keep).run();
+
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function getHumanBlocks(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
