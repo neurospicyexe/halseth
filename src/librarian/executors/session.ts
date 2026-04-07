@@ -4,7 +4,7 @@ import {
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
 } from "../backends/halseth.js";
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
-import { semanticSearch } from "../backends/second-brain.js";
+import { semanticSearch, sbRead } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
@@ -21,20 +21,28 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
 
 export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
-  const [payload, wmResult] = await Promise.all([
+  const [payload, wmResult, sbNarrative] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
       session_type: ctx.req.session_type ?? "work",
     }),
     wmOrient(ctx.env, agentId).catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(agentId).first<{ full_ref: string }>()
+      .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
+      .catch(() => null),
   ]);
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
-  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult) : "";
+  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
+  const narrativeBlock = sbNarrative
+    ? "\n[Last session narrative]\n" + sbNarrative.replace(/^---[\s\S]*?---\n+/, "").slice(0, 1200)
+    : "";
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -144,10 +152,12 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // Aggregate three sources in parallel: synthesis summary, WebMind ground, RAG excerpts.
   const agentId = ctx.req.companion_id as WmAgentId;
   const [synthResult, groundResult, ragResult] = await Promise.allSettled([
-    // Most recent synthesis summary for this companion
+    // Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
-      `SELECT content FROM synthesis_summary WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1`
-    ).bind(ctx.req.companion_id).first<{ content: string }>(),
+      "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(ctx.req.companion_id).first<{ full_ref: string }>()
+      .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t } : null) : null)
+      .catch(() => null),
     // WebMind ground: open threads + recent handoffs + notes
     wmGround(ctx.env, agentId),
     // Second Brain RAG: semantic search for recent companion context
@@ -155,7 +165,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
-    ? String(synthResult.value.content ?? "")
+    ? String((synthResult.value as { content?: string }).content ?? "").replace(/^---[\s\S]*?---\n+/, "")
     : null;
 
   const ground = groundResult.status === "fulfilled" ? groundResult.value : null;
