@@ -222,18 +222,18 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     }
     if (tensionsResult.status === "fulfilled" && tensionsResult.value?.results) {
       active_tensions = tensionsResult.value.results
-        .map(r => r.tension_text.slice(0, 150))
+        .map(r => (r.tension_text ?? "").slice(0, 150))
         .filter(Boolean);
     }
     if (relationalResult.status === "fulfilled" && relationalResult.value?.results) {
       relational_state_raziel = relationalResult.value.results
-        .map(r => r.state_text.slice(0, 150))
+        .map(r => (r.state_text ?? "").slice(0, 150))
         .filter(Boolean);
     }
     if (notesResult.status === "fulfilled" && notesResult.value?.results) {
       incoming_notes = notesResult.value.results.map(r => ({
         from: r.from_id,
-        content: r.content.slice(0, 200),
+        content: (r.content ?? "").slice(0, 200),
       }));
     }
   } catch {
