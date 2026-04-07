@@ -22,12 +22,20 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
 export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
 
-  // Phase 1: get last handoff title to seed topic-aware RAG query
-  const lastHandoff = await ctx.env.DB.prepare(
-    "SELECT title FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
-  ).bind(agentId).first<{ title: string }>().catch(() => null);
-  const ragQuery = lastHandoff?.title
-    ? `${ctx.req.companion_id} ${lastHandoff.title} memory recall recent session`
+  // Phase 1: gather topic seeds from sources that exist independently of session-close discipline.
+  // spine is required by session_close (most reliable); continuity_notes accumulate mid-session.
+  // Both survive sloppy close rituals where wm_session_handoffs may be empty.
+  const [lastSpine, lastNote] = await Promise.all([
+    ctx.env.DB.prepare(
+      "SELECT spine FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(agentId).first<{ spine: string }>().catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT content FROM wm_continuity_notes WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(agentId).first<{ content: string }>().catch(() => null),
+  ]);
+  const topicSeed = [lastSpine?.spine, lastNote?.content].filter(Boolean).join(" ").slice(0, 200);
+  const ragQuery = topicSeed
+    ? `${ctx.req.companion_id} ${topicSeed}`
     : `${ctx.req.companion_id} companion state presence recent context`;
 
   // Phase 2: all sources in parallel
