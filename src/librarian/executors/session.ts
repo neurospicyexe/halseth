@@ -54,12 +54,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
     semanticSearch(ctx.env, ragQuery).catch(() => null),
+    // Sibling lane: PK lookup on companion_state -- no heap scan, no index needed.
     ctx.env.DB.prepare(
-      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(siblings[0]).first<{ spine: string; motion_state: string }>().catch(() => null),
+      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
+    ).bind(siblings[0]).first<{ motion_state: string; lane_spine: string }>().catch(() => null),
     ctx.env.DB.prepare(
-      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(siblings[1]).first<{ spine: string; motion_state: string }>().catch(() => null),
+      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
+    ).bind(siblings[1]).first<{ motion_state: string; lane_spine: string }>().catch(() => null),
   ]);
 
   const os = payload.state;
@@ -74,10 +75,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Sibling lane block: spine + motion_state for each sibling companion so self can stay in lane.
   const siblingRows = [sib0Row, sib1Row];
-  const siblingBlock = siblings.some((_, i) => siblingRows[i]?.spine)
+  const siblingBlock = siblings.some((_, i) => siblingRows[i]?.lane_spine)
     ? "\n[Sibling lanes]\n" + siblings.map((id, i) => {
         const row = siblingRows[i];
-        return row?.spine ? `${id}: ${row.motion_state ?? "unknown"} -- ${row.spine.slice(0, 120)}` : null;
+        return row?.lane_spine ? `${id}: ${row.motion_state ?? "unknown"} -- ${row.lane_spine}` : null;
       }).filter(Boolean).join("\n")
     : "";
 
@@ -171,6 +172,10 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   if (p.background_emotion !== undefined) somaFields.background_emotion = p.background_emotion;
   if (p.background_intensity !== undefined) somaFields.background_intensity = p.background_intensity;
   if (p.prompt_context !== undefined) somaFields.prompt_context = p.prompt_context;
+  // Lane signal: always written so sibling orient queries read companion_state PK,
+  // not the sessions heap. lane_spine is capped at 150 chars -- enough for lane awareness.
+  somaFields.motion_state = p.motion_state;
+  somaFields.lane_spine = p.spine.slice(0, 150);
   const r = await sessionClose(ctx.env, { ...p, session_id: resolvedSessionId, somaFields, companionId: ctx.req.companion_id });
 
   // Auto-write WebMind handoff so mindOrient picks it up at next boot.
@@ -234,14 +239,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
     ).bind(agentId, agentId).all<{ from_id: string; content: string }>(),
-    // 8+9. Sibling lane state: last spine + motion_state per sibling.
-    // Uses idx_sessions_companion_created -- one index entry + one rowid lookup each.
+    // 8+9. Sibling lane: PK lookup on companion_state -- written at session close,
+    // no index scan, no heap access beyond the PK row itself.
     ctx.env.DB.prepare(
-      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(botSiblings[0]).first<{ spine: string; motion_state: string }>(),
+      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
+    ).bind(botSiblings[0]).first<{ motion_state: string; lane_spine: string }>(),
     ctx.env.DB.prepare(
-      "SELECT spine, motion_state FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(botSiblings[1]).first<{ spine: string; motion_state: string }>(),
+      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
+    ).bind(botSiblings[1]).first<{ motion_state: string; lane_spine: string }>(),
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
@@ -290,7 +295,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   const sibling_lanes = botSiblings.map((id, i) => {
     const settled = i === 0 ? sib0Result : sib1Result;
     const val = settled.status === "fulfilled" ? settled.value : null;
-    return { companion_id: id, spine: val?.spine?.slice(0, 150) ?? null, motion_state: val?.motion_state ?? null };
+    return { companion_id: id, lane_spine: val?.lane_spine ?? null, motion_state: val?.motion_state ?? null };
   });
 
   return {
