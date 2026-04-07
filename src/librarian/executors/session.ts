@@ -191,8 +191,66 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       })()
     : [];
 
+  // Additional grounding fields -- each wrapped in try/catch so failures don't break orient.
+  let identity_anchor: string | null = null;
+  let active_tensions: string[] = [];
+  let relational_state_raziel: string[] = [];
+  let incoming_notes: Array<{ from: string; content: string }> = [];
+
+  try {
+    const [anchorRow, tensionsResult, relationalResult, notesResult] = await Promise.allSettled([
+      // 1. Identity anchor
+      ctx.env.DB.prepare(
+        "SELECT anchor_summary FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
+      ).bind(agentId).first<{ anchor_summary: string }>(),
+      // 2. Active tensions (simmering only, max 3)
+      ctx.env.DB.prepare(
+        "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC LIMIT 3"
+      ).bind(agentId).all<{ tension_text: string }>(),
+      // 3. Relational state toward Raziel (latest)
+      ctx.env.DB.prepare(
+        "SELECT state_text FROM companion_relational_state WHERE companion_id = ? AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 1"
+      ).bind(agentId).all<{ state_text: string }>(),
+      // 4. Unread incoming companion notes (max 3, exclude own notes)
+      ctx.env.DB.prepare(
+        "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
+      ).bind(agentId, agentId).all<{ from_id: string; content: string }>(),
+    ]);
+
+    if (anchorRow.status === "fulfilled" && anchorRow.value?.anchor_summary) {
+      identity_anchor = anchorRow.value.anchor_summary.slice(0, 300);
+    }
+    if (tensionsResult.status === "fulfilled" && tensionsResult.value?.results) {
+      active_tensions = tensionsResult.value.results
+        .map(r => r.tension_text.slice(0, 150))
+        .filter(Boolean);
+    }
+    if (relationalResult.status === "fulfilled" && relationalResult.value?.results) {
+      relational_state_raziel = relationalResult.value.results
+        .map(r => r.state_text.slice(0, 150))
+        .filter(Boolean);
+    }
+    if (notesResult.status === "fulfilled" && notesResult.value?.results) {
+      incoming_notes = notesResult.value.results.map(r => ({
+        from: r.from_id,
+        content: r.content.slice(0, 200),
+      }));
+    }
+  } catch {
+    // Silently fall through -- new fields return null/[] on any error
+  }
+
   return {
-    data: { synthesis_summary, ground_threads, ground_handoff, rag_excerpts },
+    data: {
+      synthesis_summary,
+      ground_threads,
+      ground_handoff,
+      rag_excerpts,
+      identity_anchor,
+      active_tensions,
+      relational_state_raziel,
+      incoming_notes,
+    },
     meta: { operation: "halseth_bot_orient" },
   };
 }
