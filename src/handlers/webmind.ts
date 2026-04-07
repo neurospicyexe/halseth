@@ -488,6 +488,9 @@ export async function postMindLimbic(
   if (!Array.isArray(body.swarm_threads)) {
     return json({ error: "swarm_threads must be an array" }, 400);
   }
+  if (body.companion_id !== undefined && !isValidAgentId(body.companion_id)) {
+    return json({ error: "companion_id must be one of cypher, drevan, gaia" }, 400);
+  }
 
   try {
     const result = await writeLimbicState(env, body);
