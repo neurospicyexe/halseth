@@ -27,14 +27,56 @@ function sanitizeForPrompt(content: string): string {
     .trim();
 }
 
-export function buildContinuityBlock(wm: WmOrientResponse): string {
+export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
   const parts: string[] = [];
+
+  // Restoration preamble -- frame this as the companion's own state resuming,
+  // not a context briefing handed to them from outside.
+  const handoffDate = wm.latest_handoff?.created_at?.slice(0, 10) ?? null;
+  const motionHint = wm.latest_handoff?.state_hint ? ` (${wm.latest_handoff.state_hint})` : "";
+  parts.push(handoffDate
+    ? `[Resuming -- last close: ${handoffDate}${motionHint}]`
+    : `[Resuming]`
+  );
 
   // 1. Identity anchor -- entry point
   if (wm.identity_anchor) {
     parts.push(`[Identity anchor] «${wm.identity_anchor.anchor_summary}»`);
     if (wm.identity_anchor.constraints_summary) {
       parts.push(`[Constraints] «${wm.identity_anchor.constraints_summary}»`);
+    }
+  }
+
+  // 1b. Limbic state -- synthesized emotional/cognitive state from synthesis loop
+  if (wm.limbic_state) {
+    const ls = wm.limbic_state;
+    const at = ls.generated_at?.slice(0, 10) ?? "?";
+    if (ls.emotional_register) {
+      parts.push(`[Limbic @ ${at}] «${ls.emotional_register}»`);
+    }
+    if (ls.drift_vector) {
+      parts.push(`[Drift] «${ls.drift_vector}»`);
+    }
+    // Companion-specific synthesis note
+    if (agentId && ls.companion_notes) {
+      try {
+        const notes = typeof ls.companion_notes === "string"
+          ? JSON.parse(ls.companion_notes) as Record<string, string>
+          : ls.companion_notes as Record<string, string>;
+        const mine = notes[agentId];
+        if (mine) parts.push(`[Limbic note] «${mine}»`);
+      } catch { /* malformed JSON -- skip */ }
+    }
+    // Top active concern
+    if (ls.active_concerns) {
+      try {
+        const concerns = typeof ls.active_concerns === "string"
+          ? JSON.parse(ls.active_concerns) as string[]
+          : ls.active_concerns as string[];
+        if (concerns.length > 0) {
+          parts.push(`[Active concern] «${concerns[0]}»`);
+        }
+      } catch { /* skip */ }
     }
   }
 
@@ -60,7 +102,7 @@ export function buildContinuityBlock(wm: WmOrientResponse): string {
     for (const d of wm.unexamined_dreams) {
       const src = d.source ? ` [${d.source}]` : "";
       const snippet = d.dream_text.length > 200 ? d.dream_text.slice(0, 200) + "…" : d.dream_text;
-      parts.push(`[Unexamined dream${src}] «${snippet}»`);
+      parts.push(`[Unexamined dream${src} id:${d.id}] «${snippet}»`);
     }
   }
 
@@ -179,7 +221,7 @@ interface OrientPayload {
 
 export function buildOrientPrompt(companionId: CompanionId, payload: OrientPayload): string {
   const s = payload.state;
-  const motionTag = payload.last_motion_state ? ` -- was: ${payload.last_motion_state}` : "";
+  const motionTag = payload.last_motion_state ? ` -- resuming: ${payload.last_motion_state}` : "";
   const anchorTag = payload.last_anchor ? `, ${payload.last_anchor} live` : "";
   const frontTag = payload.front_state && payload.front_state !== "unknown" ? ` | front: ${payload.front_state}` : "";
 
@@ -335,7 +377,7 @@ export function buildResponse(
     const basePrompt = buildReadyPrompt(companionId, payload);
     const frontTag = frontState && frontState !== "unknown" ? ` | front: ${frontState}` : "";
     const continuityData = (payload as unknown as Record<string, unknown>).continuity as WmOrientResponse | null ?? null;
-    const continuityBlock = continuityData ? "\n" + buildContinuityBlock(continuityData) : "";
+    const continuityBlock = continuityData ? "\n" + buildContinuityBlock(continuityData, companionId) : "";
     return {
       ready_prompt: basePrompt + frontTag + continuityBlock,
       session_id: payload.session_id,
