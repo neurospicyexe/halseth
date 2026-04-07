@@ -13,7 +13,8 @@ import { addNote } from "../webmind/notes.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
-import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput } from "../webmind/types.js";
+import { writeLimbicState, getCurrentLimbicState } from "../webmind/limbic.js";
+import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput } from "../webmind/types.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -447,6 +448,72 @@ export async function postMindNote(
     return json(result, 201);
   } catch (err) {
     console.error("[mind/note] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/limbic
+export async function postMindLimbic(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: WmLimbicStateInput;
+  try {
+    body = await request.json() as WmLimbicStateInput;
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.synthesis_source || typeof body.synthesis_source !== "string") {
+    return json({ error: "synthesis_source is required" }, 400);
+  }
+  if (!body.drift_vector || typeof body.drift_vector !== "string") {
+    return json({ error: "drift_vector is required" }, 400);
+  }
+  if (!body.emotional_register || typeof body.emotional_register !== "string") {
+    return json({ error: "emotional_register is required" }, 400);
+  }
+  if (!Array.isArray(body.active_concerns)) {
+    return json({ error: "active_concerns must be an array" }, 400);
+  }
+  if (!Array.isArray(body.live_tensions)) {
+    return json({ error: "live_tensions must be an array" }, 400);
+  }
+  if (!Array.isArray(body.open_questions)) {
+    return json({ error: "open_questions must be an array" }, 400);
+  }
+  if (!Array.isArray(body.swarm_threads)) {
+    return json({ error: "swarm_threads must be an array" }, 400);
+  }
+
+  try {
+    const result = await writeLimbicState(env, body);
+    return json(result, 201);
+  } catch (err) {
+    console.error("[mind/limbic] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/limbic/current
+export async function getMindLimbicCurrent(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  try {
+    const state = await getCurrentLimbicState(env);
+    if (!state) {
+      return json({ limbic_state: null });
+    }
+    return json({ limbic_state: state });
+  } catch (err) {
+    console.error("[mind/limbic/current] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

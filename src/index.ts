@@ -31,7 +31,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational } from "./handlers/webmind.js";
+import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory } from "./handlers/ingest.js";
@@ -122,6 +122,8 @@ const router = new Router()
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
   .on("POST", "/mind/thread",           (request, env) => postMindThread(request, env))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
+  .on("POST", "/mind/limbic",           (request, env) => postMindLimbic(request, env))
+  .on("GET",  "/mind/limbic/current",   (request, env) => getMindLimbicCurrent(request, env))
   .on("POST", "/mind/dream",            (request, env) => postMindDream(request, env))
   .on("GET",  "/mind/dreams/:agent_id", (request, env, params) => getMindDreams(request, env, params ?? {}))
   .on("POST", "/mind/dream/:id/examine",(request, env, params) => postMindDreamExamine(request, env, params ?? {}))
