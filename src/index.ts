@@ -40,6 +40,17 @@ import {
   getBasinHistory, postBasinHistory, confirmBasinHistory,
   getTensions, postTension, patchTension,
 } from "./handlers/companion-growth.js";
+import {
+  postAutonomyRun, patchAutonomyRun, getAutonomyRuns,
+  postAutonomyRunLog, getAutonomyRunLogs,
+  postAutonomySeed, getAutonomySeeds, patchAutonomySeed,
+  postAutonomyReflection, getAutonomyReflections,
+} from "./handlers/autonomy.js";
+import {
+  postGrowthJournal, getGrowthJournal,
+  postGrowthPattern, getGrowthPatterns,
+  postGrowthMarker, getGrowthMarkers,
+} from "./handlers/growth.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
 import { authGuard } from "./lib/auth.js";
 
@@ -141,6 +152,26 @@ const router = new Router()
   .on("POST", "/companion-conclusions",                     (request, env)         => postConclusion(request, env))
   .on("GET",  "/companion-conclusions/:agent_id",           (request, env, params) => getConclusions(request, env, params ?? {}))
   .on("POST", "/companion-conclusions/:id/supersede",       (request, env, params) => supersedeConclusionById(request, env, params ?? {}))
+
+  // Autonomous worker -- execution tracking
+  .on("POST",  "/mind/autonomy/runs",                            (request, env)         => postAutonomyRun(request, env))
+  .on("PATCH", "/mind/autonomy/runs/:id",                        (request, env, params) => patchAutonomyRun(request, env, params ?? {}))
+  .on("GET",   "/mind/autonomy/runs/:companion_id",              (request, env, params) => getAutonomyRuns(request, env, params ?? {}))
+  .on("POST",  "/mind/autonomy/run-logs",                        (request, env)         => postAutonomyRunLog(request, env))
+  .on("GET",   "/mind/autonomy/run-logs/:run_id",                (request, env, params) => getAutonomyRunLogs(request, env, params ?? {}))
+  .on("POST",  "/mind/autonomy/seeds",                           (request, env)         => postAutonomySeed(request, env))
+  .on("GET",   "/mind/autonomy/seeds/:companion_id",             (request, env, params) => getAutonomySeeds(request, env, params ?? {}))
+  .on("PATCH", "/mind/autonomy/seeds/:id",                       (request, env, params) => patchAutonomySeed(request, env, params ?? {}))
+  .on("POST",  "/mind/autonomy/reflections",                     (request, env)         => postAutonomyReflection(request, env))
+  .on("GET",   "/mind/autonomy/reflections/:companion_id",       (request, env, params) => getAutonomyReflections(request, env, params ?? {}))
+
+  // Autonomous worker -- growth artifacts
+  .on("POST", "/mind/growth/journal",                            (request, env)         => postGrowthJournal(request, env))
+  .on("GET",  "/mind/growth/journal/:companion_id",              (request, env, params) => getGrowthJournal(request, env, params ?? {}))
+  .on("POST", "/mind/growth/patterns",                           (request, env)         => postGrowthPattern(request, env))
+  .on("GET",  "/mind/growth/patterns/:companion_id",             (request, env, params) => getGrowthPatterns(request, env, params ?? {}))
+  .on("POST", "/mind/growth/markers",                            (request, env)         => postGrowthMarker(request, env))
+  .on("GET",  "/mind/growth/markers/:companion_id",              (request, env, params) => getGrowthMarkers(request, env, params ?? {}))
 
   // Companion self-defense layer -- basins, tensions, drift history
   .on("GET",  "/companion-growth/basins/:companion_id",           (request, env, params) => getBasins(request, env, params ?? {}))
