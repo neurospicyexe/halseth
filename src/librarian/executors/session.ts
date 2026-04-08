@@ -1,4 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { enqueueBasinDriftCheck } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
@@ -129,7 +130,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   const p = parseContext<{
     session_id?: string; spine: string; last_real_thing: string;
     open_threads?: string[]; motion_state: string; active_anchor?: string;
-    notes?: string; spiral_complete?: boolean;
+    notes?: string; spiral_complete?: boolean; facet?: string;
     soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;
     current_mood?: string; compound_state?: string;
     surface_emotion?: string; surface_intensity?: number;
@@ -181,21 +182,33 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // Auto-write WebMind handoff so mindOrient picks it up at next boot.
   // sessionClose writes handover_packets; mindOrient reads wm_session_handoffs -- these are
   // separate tables. Without this, orient shows stale handoff data until companion explicitly
-  // calls "write handoff". Fire-and-forget: failure here doesn't block the close response.
+  // calls "write handoff". Awaited so failures surface in the response instead of vanishing.
   const handoffSummary = p.last_real_thing
     ? `${p.spine}\n\nLast real thing: ${p.last_real_thing}`
     : p.spine;
-  wmWriteHandoff(ctx.env, {
-    agent_id: ctx.req.companion_id as WmAgentId,
-    title: p.spine.slice(0, 120),
-    summary: handoffSummary,
-    next_steps: p.open_threads?.length ? p.open_threads.join("; ") : undefined,
-    state_hint: p.motion_state,
-    actor: "agent",
-    source: "session_close",
-  }).catch((e: unknown) => console.error("[session_close] wm handoff auto-write failed:", String(e)));
+  let handoff_warning: string | undefined;
+  try {
+    await wmWriteHandoff(ctx.env, {
+      agent_id: ctx.req.companion_id as WmAgentId,
+      title: p.spine.slice(0, 120),
+      summary: handoffSummary,
+      next_steps: p.open_threads?.length ? p.open_threads.join("; ") : undefined,
+      state_hint: p.motion_state,
+      facet: p.facet ?? undefined,
+      actor: "agent",
+      source: "session_close",
+    });
+  } catch (e: unknown) {
+    handoff_warning = "wm handoff write failed — next orient may see stale continuity";
+    console.error("[session_close] wm handoff auto-write failed:", String(e));
+  }
 
-  return { ack: true, id: r.id, spine: r.spine };
+  // Fire-and-forget: enqueue basin drift check. Failure here must not break session close.
+  enqueueBasinDriftCheck(ctx.req.companion_id, resolvedSessionId, ctx.env).catch((e: unknown) => {
+    console.error("[session_close] basin_drift_check enqueue failed:", String(e));
+  });
+
+  return { ack: true, id: r.id, spine: r.spine, ...(handoff_warning ? { handoff_warning } : {}) };
 }
 
 export async function execSessionLightGround(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -209,10 +222,10 @@ export async function execSessionLightGround(ctx: ExecutorContext): Promise<Exec
 }
 
 export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
-  // All 9 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
+  // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -247,6 +260,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
     ).bind(botSiblings[1]).first<{ motion_state: string; lane_spine: string }>(),
+    // 10. Recent growth journal (max 3 -- what the companion has been learning autonomously)
+    ctx.env.DB.prepare(
+      "SELECT entry_type, content FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ entry_type: string; content: string }>(),
+    // 11. Strongest growth patterns (max 2 -- recognized recurring themes)
+    ctx.env.DB.prepare(
+      "SELECT pattern_text FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
+    ).bind(agentId).all<{ pattern_text: string }>(),
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
@@ -298,6 +319,19 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     return { companion_id: id, lane_spine: val?.lane_spine ?? null, motion_state: val?.motion_state ?? null };
   });
 
+  const recent_growth: Array<{ type: string; content: string }> =
+    growthJournalResult.status === "fulfilled" && growthJournalResult.value?.results
+      ? growthJournalResult.value.results.map(r => ({
+          type: r.entry_type ?? "learning",
+          content: (r.content ?? "").slice(0, 200),
+        }))
+      : [];
+
+  const active_patterns: string[] =
+    growthPatternsResult.status === "fulfilled" && growthPatternsResult.value?.results
+      ? growthPatternsResult.value.results.map(r => (r.pattern_text ?? "").slice(0, 150)).filter(Boolean)
+      : [];
+
   return {
     data: {
       synthesis_summary,
@@ -309,6 +343,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       relational_state_raziel,
       incoming_notes,
       sibling_lanes,
+      recent_growth,
+      active_patterns,
     },
     meta: { operation: "halseth_bot_orient" },
   };
