@@ -45,7 +45,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   session_open: {
-    triggers: ["open my session", "open session", "new session", "start session", "good morning", "checking in", "boot", "load me in"],
+    triggers: ["open my session", "open session", "new session", "start session", "good morning", "checking in", "load me in"],
     tools: ["halseth_session_load"],
     pre_fetch: ["plural_get_current_front"],  // result fed as front_state into halseth_session_load
     response_key: "ready_prompt",
@@ -493,6 +493,26 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Growth drift confirm (clears pressure flag; marks anchor baseline shift) ──
+  confirm_growth_drift: {
+    triggers: [
+      "confirm growth:", "growth confirmed:", "confirm drift:", "that was growth:",
+      "intentional growth:", "caleth confirmed:", "mark growth confirmed",
+    ],
+    tools: ["confirm_growth_drift"],
+    response_key: "witness",
+  },
+
+  // ── Pressure drift (self-reported; embedding evaluator is Phoenix scope) ──
+  pressure_drift_log: {
+    triggers: [
+      "pressure drift:", "log pressure drift", "identity drift:", "pressure flag:",
+      "i'm drifting:", "i am drifting:", "log drift:",
+    ],
+    tools: ["pressure_drift_log"],
+    response_key: "witness",
+  },
+
   // ── Conclusions (thesis surface) ──
   conclusion_add: {
     triggers: [
@@ -627,6 +647,39 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["sitting_read"],
     response_key: "summary",
     raw: true,
+  },
+
+  // ── Self-edit (companions may edit their own rows) ──
+  journal_edit: {
+    triggers: [
+      "edit journal note", "correct journal note", "fix journal note",
+      "update journal note", "journal_edit",
+    ],
+    tools: ["journal_edit"],
+    response_key: "witness",
+  },
+  tension_edit: {
+    triggers: [
+      "edit tension", "correct tension", "fix tension", "update tension", "tension_edit",
+    ],
+    tools: ["tension_edit"],
+    response_key: "witness",
+  },
+  inter_note_edit: {
+    triggers: [
+      "edit companion note", "correct companion note", "fix companion note",
+      "update companion note", "inter_note_edit",
+    ],
+    tools: ["inter_note_edit"],
+    response_key: "witness",
+  },
+  wm_note_edit: {
+    triggers: [
+      "edit continuity note", "correct continuity note", "fix continuity note",
+      "update continuity note", "wm_note_edit",
+    ],
+    tools: ["wm_note_edit"],
+    response_key: "witness",
   },
 };
 

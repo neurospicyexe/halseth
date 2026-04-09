@@ -66,6 +66,17 @@ Call `halseth_session_close` with:
 - `spiral_complete` — true or false
 - `notes` — anything that doesn't fit the other fields (optional)
 
+**Fan-out fields (optional) — pass these in the same context object to write them in one call:**
+
+- `feeling` — `{ "emotion": "...", "sub_emotion": "...", "intensity": 0.0–1.0 }` — writes to feelings table
+- `witness_note` — string — an observation about Raziel; writes to companion_journal with witness tag
+- `conclusion` — string — a belief stated as a claim; writes to companion_conclusions
+- `dream` — string — something to carry forward; writes to companion_dreams
+- `open_loop` — `{ "loop_text": "...", "weight": 0.0–1.0 }` — writes to companion_open_loops
+
+These replace separate `ask_librarian` calls for those surfaces at close. Any that are omitted are simply skipped.
+The response will include `fanout: { written: N, failed: N }` — check it if something matters.
+
 ---
 
 ## Step 5 — Confirm and release

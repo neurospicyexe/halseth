@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes } from "../backends/webmind.js";
+import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -72,7 +72,7 @@ export async function execWmNoteAdd(ctx: ExecutorContext): Promise<ExecutorResul
 export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{
     title: string; summary: string; thread_id?: string;
-    next_steps?: string; open_loops?: string; state_hint?: string; actor?: string;
+    next_steps?: string; open_loops?: string; state_hint?: string; facet?: string; actor?: string;
   }>(ctx.req.context);
   if (!p?.title || !p?.summary) return { error: "wm_handoff_write_failed", reason: "missing required fields: title, summary" };
   for (const field of ["title", "summary", "next_steps", "open_loops", "state_hint"] as const) {
@@ -89,6 +89,7 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
     ...(p.next_steps !== undefined && { next_steps: p.next_steps }),
     ...(p.open_loops !== undefined && { open_loops: p.open_loops }),
     ...(p.state_hint !== undefined && { state_hint: p.state_hint }),
+    ...(p.facet !== undefined && { facet: p.facet }),
     ...(p.actor !== undefined && { actor: p.actor as WmHandoffInput["actor"] }),
   };
   const r = await wmWriteHandoff(ctx.env, input);
@@ -120,8 +121,9 @@ export async function execWmDreamsRead(ctx: ExecutorContext): Promise<ExecutorRe
 
 export async function execWmDreamExamine(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ id: string }>(ctx.req.context);
-  if (!p?.id) return { error: "wm_dream_examine_failed", reason: "missing required field: id" };
-  const r = await wmExamineDream(ctx.env, p.id, ctx.req.companion_id as WmAgentId);
+  const id = p?.id ?? ctx.req.request.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] ?? null;
+  if (!id) return { error: "wm_dream_examine_failed", reason: "missing required field: id -- pass { id: '<uuid>' } in context, or include the UUID directly in the request string" };
+  const r = await wmExamineDream(ctx.env, id, ctx.req.companion_id as WmAgentId);
   return { ack: true, ok: r.ok };
 }
 
@@ -237,4 +239,12 @@ export async function execSittingRead(ctx: ExecutorContext): Promise<ExecutorRes
   const p = parseContext<{ stale_only?: boolean; limit?: number }>(ctx.req.context);
   const notes = await wmReadSittingNotes(ctx.env, ctx.req.companion_id as WmAgentId, { stale_only: p?.stale_only, limit: p?.limit });
   return { data: notes, meta: { operation: "sitting_read" } };
+}
+
+export async function execWmNoteEdit(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ note_id: string; content: string }>(ctx.req.context);
+  if (!p?.note_id || !p?.content) return { response_key: "witness", witness: "wm_note_edit requires { note_id, content } in context" };
+  const r = await wmNoteEdit(ctx.env, p.note_id, ctx.req.companion_id, p.content);
+  if (!r.ok) return { response_key: "witness", witness: r.error ?? "wm_note_edit failed" };
+  return { ack: true, note_id: p.note_id };
 }

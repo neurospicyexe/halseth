@@ -28,6 +28,7 @@ export interface WmSessionHandoff {
   next_steps: string | null;
   open_loops: string | null;
   state_hint: string | null;
+  facet: string | null;
   actor: WmActor;
   source: string;
   correlation_id: string | null;
@@ -164,6 +165,7 @@ export interface WmHandoffInput {
   next_steps?: string;
   open_loops?: string;
   state_hint?: string;
+  facet?: string;
   actor?: WmActor;
   source?: string;
   correlation_id?: string;

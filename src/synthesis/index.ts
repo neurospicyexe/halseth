@@ -8,6 +8,7 @@ import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { runSessionSummary } from "./jobs/session-summary.js";
 import { runDrevanState } from "./jobs/drevan-state.js";
+import { runBasinDriftCheck } from "./jobs/basin-drift-check.js";
 
 const MAX_PER_RUN = 5;
 
@@ -54,6 +55,8 @@ export async function processQueue(env: Env): Promise<void> {
         await runSessionSummary(job.session_id, env);
       } else if (job.job_type === "drevan_state") {
         await runDrevanState(env);
+      } else if (job.job_type === "basin_drift_check") {
+        if (job.companion_id) await runBasinDriftCheck(job.companion_id, env);
       } else {
         console.warn(`[synthesis] unknown job_type: ${job.job_type}`);
       }
@@ -78,6 +81,19 @@ export async function enqueueDrevanState(env: Env): Promise<void> {
     INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
     VALUES (?, '', 'drevan', 'drevan_state', 'pending', datetime('now'))
   `).bind(id).run();
+}
+
+// Enqueue a basin drift check. Called from halseth_session_close (fire-and-forget).
+export async function enqueueBasinDriftCheck(
+  companionId: string,
+  sessionId: string,
+  env: Env,
+): Promise<void> {
+  const id = generateId();
+  await env.DB.prepare(`
+    INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
+    VALUES (?, ?, ?, 'basin_drift_check', 'pending', datetime('now'))
+  `).bind(id, sessionId, companionId).run();
 }
 
 // Enqueue a session summary job. Called from halseth_session_close.
