@@ -137,6 +137,12 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     undercurrent_emotion?: string; undercurrent_intensity?: number;
     background_emotion?: string; background_intensity?: number;
     prompt_context?: string;
+    // Fan-out fields: written in one call at close instead of requiring separate surface calls
+    feeling?: { emotion: string; sub_emotion?: string; intensity?: number };
+    witness_note?: string;
+    conclusion?: string;
+    dream?: string;
+    open_loop?: { loop_text: string; weight?: number };
   }>(ctx.req.context);
   // Auto-resolve session_id: if not supplied in context, look up the most recent
   // open session for this companion (handover_id IS NULL = not yet closed).
@@ -208,7 +214,83 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     console.error("[session_close] basin_drift_check enqueue failed:", String(e));
   });
 
-  return { ack: true, id: r.id, spine: r.spine, ...(handoff_warning ? { handoff_warning } : {}) };
+  // Fan-out: optional single-call surface writes at close.
+  // Each write is independent -- allSettled so one failure never cancels others.
+  const fanoutWarnings: string[] = [];
+  const fanoutWrites: Array<{ label: string; promise: Promise<unknown> }> = [];
+  const now = new Date().toISOString();
+
+  if (p.feeling?.emotion) {
+    const fid = crypto.randomUUID();
+    fanoutWrites.push({
+      label: "feeling",
+      promise: ctx.env.DB.prepare(
+        "INSERT INTO feelings (id, companion_id, session_id, emotion, sub_emotion, intensity, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(fid, ctx.req.companion_id, resolvedSessionId, p.feeling.emotion,
+        p.feeling.sub_emotion ?? null, p.feeling.intensity ?? null, "session_close", now).run(),
+    });
+  }
+
+  if (p.witness_note) {
+    const wid = crypto.randomUUID();
+    fanoutWrites.push({
+      label: "witness_note",
+      promise: ctx.env.DB.prepare(
+        "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(wid, now, ctx.req.companion_id, p.witness_note,
+        JSON.stringify(["witness", "session_close"]), resolvedSessionId, "session_close").run(),
+    });
+  }
+
+  if (p.conclusion) {
+    const cid = crypto.randomUUID();
+    fanoutWrites.push({
+      label: "conclusion",
+      promise: ctx.env.DB.prepare(
+        "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).bind(cid, ctx.req.companion_id, p.conclusion,
+        JSON.stringify([resolvedSessionId]), now).run(),
+    });
+  }
+
+  if (p.dream) {
+    const did = crypto.randomUUID();
+    fanoutWrites.push({
+      label: "dream",
+      promise: ctx.env.DB.prepare(
+        "INSERT INTO companion_dreams (id, companion_id, dream_text, source, created_at) VALUES (?, ?, ?, ?, ?)"
+      ).bind(did, ctx.req.companion_id, p.dream, "session_close", now).run(),
+    });
+  }
+
+  if (p.open_loop?.loop_text) {
+    const lid = crypto.randomUUID();
+    fanoutWrites.push({
+      label: "open_loop",
+      promise: ctx.env.DB.prepare(
+        "INSERT INTO companion_open_loops (id, companion_id, loop_text, weight, opened_at) VALUES (?, ?, ?, ?, ?)"
+      ).bind(lid, ctx.req.companion_id, p.open_loop.loop_text,
+        p.open_loop.weight ?? 0.5, now).run(),
+    });
+  }
+
+  if (fanoutWrites.length > 0) {
+    const results = await Promise.allSettled(fanoutWrites.map(w => w.promise));
+    results.forEach((result, i) => {
+      if (result.status === "rejected") {
+        const label = fanoutWrites[i]?.label ?? `write_${i}`;
+        console.error(`[session_close] fanout ${label} write failed:`, String(result.reason));
+        fanoutWarnings.push(`${label} write failed`);
+      }
+    });
+  }
+
+  return {
+    ack: true, id: r.id, spine: r.spine,
+    fanout: fanoutWrites.length > 0 ? { written: fanoutWrites.length - fanoutWarnings.length, failed: fanoutWarnings.length } : undefined,
+    ...(handoff_warning ? { handoff_warning } : {}),
+    ...(fanoutWarnings.length > 0 ? { fanout_warnings: fanoutWarnings } : {}),
+  };
 }
 
 export async function execSessionLightGround(ctx: ExecutorContext): Promise<ExecutorResult> {

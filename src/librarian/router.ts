@@ -41,6 +41,7 @@ import {
   execSetAutonomousTurn, execClaimDreamSeed, execBridgePull, execDrevanStateGet,
   execLiveThreadAdd, execLiveThreadClose, execLiveThreadVeto, execAnticipationSet,
   execStateUpdate, execConclusionAdd, execConclusionsRead,
+  execJournalEdit, execInterNoteEdit,
 } from "./executors/writes.js";
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
@@ -58,12 +59,14 @@ import {
   execWmRelationalWrite, execWmRelationalRead,
   execRazielWitness,
   execNoteSit, execNoteMetabolize, execSittingRead,
+  execWmNoteEdit,
 } from "./executors/webmind.js";
 
 // ── Companion growth executors ───────────────────────────────────────────────
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
-  execAutonomousRecall, execHeldMark, execHeldRead,
+  execAutonomousRecall, execHeldMark, execHeldRead, execTensionEdit,
+  execPressureDriftLog, execConfirmGrowthDrift,
 } from "./executors/companion-growth.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -162,12 +165,20 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   note_sit: execNoteSit,
   note_metabolize: execNoteMetabolize,
   sitting_read: execSittingRead,
+  wm_note_edit: execWmNoteEdit,
+
+  // Self-edit
+  journal_edit: execJournalEdit,
+  inter_note_edit: execInterNoteEdit,
 
   // Companion growth
   halseth_add_tension: execTensionAdd,
   tensions_read: execTensionsRead,
+  tension_edit: execTensionEdit,
   drift_check: execDriftCheck,
   triad_state_read: execTriadStateRead,
+  confirm_growth_drift: execConfirmGrowthDrift,
+  pressure_drift_log: execPressureDriftLog,
   conclusion_add: execConclusionAdd,
   conclusions_read: execConclusionsRead,
   autonomous_recall: execAutonomousRecall,
@@ -336,17 +347,30 @@ export class LibrarianRouter {
 
     const ctx: ExecutorContext = { env: this.env, req, entry, frontState, pluralAvailable };
 
+    const accumulated: Record<string, unknown> = {};
+    const unhandled: string[] = [];
+
     for (const tool of entry.tools) {
       const executor = EXECUTOR_MAP[tool];
-      if (executor) return executor(ctx);
+      if (!executor) { unhandled.push(tool); continue; }
+      const toolResult = await executor(ctx);
+      // First tool's response_key wins; subsequent tools enrich the payload.
+      for (const [k, v] of Object.entries(toolResult)) {
+        if (k === "response_key" && "response_key" in accumulated) continue;
+        accumulated[k] = v;
+      }
     }
 
-    // If we reach here, none of the tools in entry.tools had a handler.
-    const unhandled = entry.tools.join(", ");
-    console.warn(`[librarian] unhandled tools in pattern: ${unhandled}`);
+    if (Object.keys(accumulated).length > 0) {
+      if (unhandled.length > 0) console.warn(`[librarian] unhandled tools skipped: ${unhandled.join(", ")}`);
+      return accumulated;
+    }
+
+    // No executor matched at all.
+    console.warn(`[librarian] unhandled tools in pattern: ${entry.tools.join(", ")}`);
     return {
       response_key: "witness",
-      witness: `Pattern matched but tool not yet implemented: ${unhandled}`,
+      witness: `Pattern matched but tool not yet implemented: ${entry.tools.join(", ")}`,
     };
   }
 }

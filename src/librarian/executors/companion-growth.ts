@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { queryTensions, queryLatestBasinHistory, queryPressureFlags } from "../backends/halseth.js";
+import { queryTensions, queryLatestBasinHistory, queryPressureFlags, tensionEdit } from "../backends/halseth.js";
 
 const COMPANIONS = ["drevan", "cypher", "gaia"] as const;
 
@@ -15,6 +15,15 @@ export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResu
     "INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, ?)"
   ).bind(id, ctx.req.companion_id, tensionText).run();
   return { data: { id, message: "tension recorded" } };
+}
+
+export async function execTensionEdit(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "tension_edit_failed", reason: "companion_id required" };
+  const p = parseContext<{ id: string; tension_text: string }>(ctx.req.context);
+  if (!p?.id || !p?.tension_text) return { response_key: "witness", witness: "tension_edit requires { id, tension_text } in context" };
+  const r = await tensionEdit(ctx.env, p.id, ctx.req.companion_id, p.tension_text);
+  if (!r.ok) return { response_key: "witness", witness: r.error ?? "tension_edit failed" };
+  return { ack: true, id: p.id };
 }
 
 export async function execTensionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -166,6 +175,64 @@ export async function execTriadStateRead(ctx: ExecutorContext): Promise<Executor
     triad,
     meta: { operation: "triad_state_read", caller: ctx.req.companion_id },
   };
+}
+
+export async function execConfirmGrowthDrift(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "confirm_growth_failed", reason: "companion_id required" };
+  const p = parseContext<{ id: string }>(ctx.req.context);
+  if (!p?.id) return { response_key: "witness", witness: "confirm_growth_drift requires { id } in context" };
+
+  // Ownership-guarded: only the companion who owns the flag can confirm it
+  const result = await ctx.env.DB.prepare(
+    "UPDATE companion_basin_history SET caleth_confirmed = 1 WHERE id = ? AND companion_id = ?"
+  ).bind(p.id, ctx.req.companion_id).run();
+
+  if ((result.meta.changes ?? 0) === 0) {
+    return { response_key: "witness", witness: "no matching drift flag found for this companion" };
+  }
+
+  // Mark baseline shift in identity anchor so future drift checks weight from this point
+  const now = new Date().toISOString();
+  let baseline_warning: string | undefined;
+  try {
+    await ctx.env.DB.prepare(
+      "UPDATE wm_identity_anchor_snapshot SET baseline_shift_at = ? WHERE agent_id = ?"
+    ).bind(now, ctx.req.companion_id).run();
+  } catch (e: unknown) {
+    console.error("[confirm_growth] baseline_shift_at update failed:", String(e));
+    baseline_warning = "baseline_shift_at write failed -- future drift checks may not weight correctly";
+  }
+
+  return { ack: true, id: p.id, confirmed: true, baseline_shift_at: now, ...(baseline_warning ? { baseline_warning } : {}) };
+}
+
+export async function execPressureDriftLog(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "pressure_drift_failed", reason: "companion_id required" };
+
+  const text = ctx.req.request
+    .replace(/^pressure\s+drift[:\s]*/i, "")
+    .replace(/^log\s+(?:pressure\s+)?drift[:\s]*/i, "")
+    .replace(/^i(?:'m| am)\s+drifting[:\s]*/i, "")
+    .replace(/^identity\s+drift[:\s]*/i, "")
+    .replace(/^pressure\s+flag[:\s]*/i, "")
+    .trim();
+
+  const p = parseContext<{ drift_score?: number; worst_basin?: string }>(ctx.req.context);
+  const driftScore = typeof p?.drift_score === "number" ? p.drift_score : 0.5;
+  const worstBasin = p?.worst_basin ?? null;
+
+  if (driftScore < 0 || driftScore > 2) {
+    return { error: "pressure_drift_failed", reason: "drift_score must be between 0 and 2" };
+  }
+
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await ctx.env.DB.prepare(
+    "INSERT INTO companion_basin_history (id, companion_id, drift_score, drift_type, caleth_confirmed, worst_basin, notes, recorded_at) VALUES (?, ?, ?, 'pressure', 0, ?, ?, ?)"
+  ).bind(id, ctx.req.companion_id, driftScore, worstBasin, text || null, now).run();
+
+  return { ack: true, id, drift_score: driftScore, drift_type: "pressure", recorded_at: now };
 }
 
 export async function execDriftCheck(ctx: ExecutorContext): Promise<ExecutorResult> {

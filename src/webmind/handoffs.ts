@@ -15,13 +15,13 @@ export async function writeHandoff(env: Env, input: WmHandoffInput): Promise<WmS
   // an index scan. Orient reads LIMIT 5, ground reads LIMIT 5 -- 30 is a 6x buffer.
   await env.DB.batch([
     env.DB.prepare(`
-      INSERT INTO wm_session_handoffs (handoff_id, agent_id, thread_id, title, summary, next_steps, open_loops, state_hint, actor, source, correlation_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO wm_session_handoffs (handoff_id, agent_id, thread_id, title, summary, next_steps, open_loops, state_hint, facet, actor, source, correlation_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id, input.agent_id, input.thread_id ?? null,
       input.title, input.summary,
       input.next_steps ?? null, input.open_loops ?? null,
-      input.state_hint ?? null,
+      input.state_hint ?? null, input.facet ?? null,
       input.actor ?? "agent", input.source ?? "system",
       input.correlation_id ?? null, now,
     ),
@@ -43,6 +43,7 @@ export async function writeHandoff(env: Env, input: WmHandoffInput): Promise<WmS
     next_steps: input.next_steps ?? null,
     open_loops: input.open_loops ?? null,
     state_hint: input.state_hint ?? null,
+    facet: input.facet ?? null,
     actor: input.actor ?? "agent",
     source: input.source ?? "system",
     correlation_id: input.correlation_id ?? null,
