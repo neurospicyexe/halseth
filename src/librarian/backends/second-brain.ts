@@ -227,6 +227,10 @@ export async function sbSynthesizeSession(env: Env, session_id: string): Promise
   return { ack: text !== null };
 }
 
+export async function sbFileChunks(env: Env, filename: string, limit?: number): Promise<string | null> {
+  return callTool(env, "sb_file_chunks", limit ? { filename, limit } : { filename });
+}
+
 export async function sbSaveStudy(env: Env, params: {
   content: string;
   subject?: string;

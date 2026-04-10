@@ -2,6 +2,7 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import {
   semanticSearch, filteredRecall, recentPatterns,
   sbRead, sbList, sbSaveDocument, sbLogObservation, sbSynthesizeSession, sbSaveStudy,
+  sbFileChunks,
 } from "../backends/second-brain.js";
 import { truncateRaw } from "../response/budget.js";
 
@@ -55,6 +56,15 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
   const query = parseContext<{ query: string }>(ctx.req.context)?.query ?? ctx.req.request;
   const result = await semanticSearch(ctx.env, query);
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
+}
+
+export async function execSbFileChunks(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ filename: string; limit?: number }>(ctx.req.context);
+  // Extract filename from context or from the request string after trigger phrase
+  const filename = p?.filename ?? ctx.req.request.replace(/^(read file|show file|file chunks|show chunks from|read chunks from|get file)[:\s]*/i, "").trim();
+  if (!filename) return { response_key: "witness", witness: "sb_file_chunks requires a filename (e.g. 'Calethian2.md')" };
+  const result = await sbFileChunks(ctx.env, filename, p?.limit);
+  return { data: result ? truncateRaw(stripEmbeddings(result)) : "No chunks found.", meta: { operation: "sb_file_chunks" } };
 }
 
 export async function execSbRecall(ctx: ExecutorContext): Promise<ExecutorResult> {

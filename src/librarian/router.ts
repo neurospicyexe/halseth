@@ -46,7 +46,7 @@ import {
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
 import {
-  execSbSearch, execSbRecall, execSbRecentPatterns, execSbRead, execSbList,
+  execSbSearch, execSbFileChunks, execSbRecall, execSbRecentPatterns, execSbRead, execSbList,
   execSbSaveDocument, execSbSaveNote, execSbLogObservation, execSbSynthesizeSession,
   execSbSaveStudy,
 } from "./executors/memory.js";
@@ -137,6 +137,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 
   // Second Brain / memory
   sb_search: execSbSearch,
+  sb_file_chunks: execSbFileChunks,
   sb_recall: execSbRecall,
   sb_recent_patterns: execSbRecentPatterns,
   sb_read: execSbRead,

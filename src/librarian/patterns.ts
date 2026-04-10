@@ -93,13 +93,32 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   sb_search: {
-    triggers: ["search vault", "search second brain", "search my notes", "find in vault", "what do we know about", "anything about"],
+    triggers: [
+      "search vault", "search second brain", "search my notes", "find in vault",
+      "what do we know about", "anything about", "anything in vault about",
+      "have we talked about", "what did we say about", "do we have anything on",
+      "pull context on", "check the vault for", "vault search", "search for",
+      "what do i know about", "what's in vault about",
+    ],
     tools: ["sb_search"],
     response_key: "summary",
     raw: true,
   },
+  sb_file_chunks: {
+    triggers: [
+      "read file", "show file", "file chunks", "show chunks from", "read chunks from",
+      "get file", "show me the file", "pull file", "load file", "read corpus file",
+      "show corpus", "get chunks from", "read the file",
+    ],
+    tools: ["sb_file_chunks"],
+    response_key: "summary",
+    raw: true,
+  },
   sb_recall: {
-    triggers: ["recall", "my recent notes", "recent vault entries", "what i've written", "vault recall"],
+    triggers: [
+      "recall", "my recent notes", "recent vault entries", "what i've written", "vault recall",
+      "what we wrote about", "pull from memory", "what's in memory about",
+    ],
     tools: ["sb_recall"],
     response_key: "summary",
     raw: true,
