@@ -34,7 +34,7 @@ import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
-import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory } from "./handlers/ingest.js";
+import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
 import {
   getBasins, postBasin,
   getBasinHistory, postBasinHistory, confirmBasinHistory,
@@ -196,6 +196,8 @@ const router = new Router()
   .on("GET", "/ingest/drift-log",             (request, env) => getIngestDriftLog(request, env))
   .on("GET", "/ingest/live-threads",          (request, env) => getIngestLiveThreads(request, env))
   .on("GET", "/ingest/basin-history",         (request, env) => getIngestBasinHistory(request, env))
+  .on("GET", "/ingest/growth-journal",        (request, env) => getIngestGrowthJournal(request, env))
+  .on("GET", "/ingest/companion-conclusions", (request, env) => getIngestCompanionConclusions(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))

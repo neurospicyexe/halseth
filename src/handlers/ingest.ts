@@ -386,6 +386,96 @@ export async function getIngestTensions(
   }
 }
 
+// GET /ingest/growth-journal?since=<ISO8601>&companion_id=<id>&limit=<n>
+// created_at is the canonical timestamp for HWM tracking.
+export async function getIngestGrowthJournal(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url         = new URL(request.url);
+  const since       = url.searchParams.get("since") ?? undefined;
+  const companionId = url.searchParams.get("companion_id") ?? undefined;
+  const limit       = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) { conditions.push("created_at > ?"); bindings.push(since); }
+  if (companionId !== undefined) { conditions.push("companion_id = ?"); bindings.push(companionId); }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, entry_type, content, source, tags_json, created_at
+      FROM growth_journal
+      ${where}
+      ORDER BY created_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/growth-journal] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /ingest/companion-conclusions?since=<ISO8601>&companion_id=<id>&limit=<n>
+// Returns all conclusions including superseded -- vault search benefits from knowing
+// what companions used to believe, not just what they currently hold.
+// created_at is the canonical timestamp for HWM tracking.
+export async function getIngestCompanionConclusions(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url         = new URL(request.url);
+  const since       = url.searchParams.get("since") ?? undefined;
+  const companionId = url.searchParams.get("companion_id") ?? undefined;
+  const limit       = clampLimit(url.searchParams.get("limit"));
+
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return json({ error: "invalid since parameter" }, 400);
+  }
+
+  const conditions: string[] = [];
+  const bindings: unknown[]  = [];
+
+  if (since !== undefined) { conditions.push("created_at > ?"); bindings.push(since); }
+  if (companionId !== undefined) { conditions.push("companion_id = ?"); bindings.push(companionId); }
+
+  const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const orderDir = since !== undefined ? "ASC" : "DESC";
+  bindings.push(limit);
+
+  try {
+    const result = await env.DB.prepare(`
+      SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at
+      FROM companion_conclusions
+      ${where}
+      ORDER BY created_at ${orderDir}
+      LIMIT ?
+    `).bind(...bindings).all();
+
+    return json(result.results ?? []);
+  } catch (err) {
+    console.error("[ingest/companion-conclusions] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
 // GET /ingest/somatic-snapshots?since=<ISO8601>&companion_id=<id>&limit=<n>
 export async function getIngestSomaticSnapshots(
   request: Request,
