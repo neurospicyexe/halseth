@@ -72,7 +72,7 @@ export async function execAutonomousRecall(ctx: ExecutorContext): Promise<Execut
   if (!ctx.req.companion_id) return { error: "autonomous_recall_failed", reason: "companion_id required" };
   const id = ctx.req.companion_id;
 
-  const [notes, feelings, dreams] = await Promise.all([
+  const [notes, feelings, dreams, growthEntries, explorations] = await Promise.all([
     ctx.env.DB.prepare(
       "SELECT id, note_text, tags, created_at FROM companion_journal WHERE agent = ? AND source = 'autonomous' ORDER BY created_at DESC LIMIT 20"
     ).bind(id).all<{ id: string; note_text: string; tags: string | null; created_at: string }>(),
@@ -82,6 +82,14 @@ export async function execAutonomousRecall(ctx: ExecutorContext): Promise<Execut
     ctx.env.DB.prepare(
       "SELECT id, dream_text, examined, created_at FROM companion_dreams WHERE companion_id = ? AND source = 'autonomous' ORDER BY created_at DESC LIMIT 10"
     ).bind(id).all<{ id: string; dream_text: string; examined: number; created_at: string }>(),
+    // Growth journal: conclusions/insights written at the end of each autonomous run
+    ctx.env.DB.prepare(
+      "SELECT id, entry_type, content, tags_json, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
+    ).bind(id).all<{ id: string; entry_type: string; content: string; tags_json: string; created_at: string }>(),
+    // Continuity notes tagged autonomous_exploration: seed + first ~700 chars of what was explored (provenance)
+    ctx.env.DB.prepare(
+      "SELECT note_id, content, created_at FROM wm_continuity_notes WHERE agent_id = ? AND source = 'autonomous_exploration' ORDER BY created_at DESC LIMIT 5"
+    ).bind(id).all<{ note_id: string; content: string; created_at: string }>(),
   ]);
 
   return {
@@ -89,6 +97,9 @@ export async function execAutonomousRecall(ctx: ExecutorContext): Promise<Execut
     autonomous_notes: notes.results ?? [],
     autonomous_feelings: feelings.results ?? [],
     autonomous_dreams: dreams.results ?? [],
+    // Full provenance chain: what was explored (seed + path) → what was concluded
+    autonomous_explorations: explorations.results ?? [],
+    growth_journal_entries: growthEntries.results ?? [],
     meta: {
       operation: "autonomous_recall",
       companion_id: id,
@@ -96,6 +107,8 @@ export async function execAutonomousRecall(ctx: ExecutorContext): Promise<Execut
         notes: (notes.results ?? []).length,
         feelings: (feelings.results ?? []).length,
         dreams: (dreams.results ?? []).length,
+        explorations: (explorations.results ?? []).length,
+        growth_journal: (growthEntries.results ?? []).length,
       },
     },
   };
