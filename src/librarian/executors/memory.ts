@@ -60,8 +60,8 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
 
 export async function execSbFileChunks(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ filename: string; limit?: number }>(ctx.req.context);
-  // Extract filename from context or from the request string after trigger phrase
-  const filename = p?.filename ?? ctx.req.request.replace(/^(read file|show file|file chunks|show chunks from|read chunks from|get file)[:\s]*/i, "").trim();
+  // Extract filename from context JSON, or scan the request for a *.md filename
+  const filename = p?.filename ?? (ctx.req.request.match(/[\w\-().]+\.md/i)?.[0]?.trim() ?? "");
   if (!filename) return { response_key: "witness", witness: "sb_file_chunks requires a filename (e.g. 'Calethian2.md')" };
   const result = await sbFileChunks(ctx.env, filename, p?.limit);
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No chunks found.", meta: { operation: "sb_file_chunks" } };
