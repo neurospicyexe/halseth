@@ -10,7 +10,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
     "halseth_session_open",
     "Start a new session. Records session type, front state, HRV range, emotional frequency, key signature, anchor, facet, and depth.",
     {
-      session_type:        z.enum(["checkin", "hangout", "work", "ritual"]).default("work").describe("Type of session: checkin (quick state read), hangout (casual time), work (task/project focus), ritual (depth/ceremony)."),
+      session_type:        z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).default("work").describe("Type of session: checkin (quick state read), hangout (casual time), work (task/project focus), ritual (depth/ceremony), companion-work (Drevan collaborative work with Raziel)."),
       front_state:         z.string().describe("Who is fronting. Must match system_config members if plurality is enabled."),
       companion_id:        z.enum(["drevan", "cypher", "gaia"]).optional().describe("Which companion is opening this session. Used so each companion can find their own session when multiple threads run in parallel."),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),

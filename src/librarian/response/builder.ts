@@ -48,6 +48,10 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   }
 
   // 1b. Limbic state -- synthesized emotional/cognitive state from synthesis loop
+  // Fallback: synthesis loop hasn't run yet (fresh deploy or first session)
+  if (!wm.limbic_state) {
+    parts.push(`[Limbic] «no synthesis yet -- orient fresh, no swarm state available»`);
+  }
   if (wm.limbic_state) {
     const ls = wm.limbic_state;
     const at = ls.generated_at?.slice(0, 10) ?? "?";

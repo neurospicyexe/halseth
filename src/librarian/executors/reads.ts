@@ -1,4 +1,5 @@
 import { ExecutorContext, ExecutorResult } from "./types.js";
+import { extractCompanionFromRequest } from "../lib/companion.js";
 import {
   feelingsRead, journalRead, woundRead, deltaRead,
   dreamsRead, dreamSeedRead, eqRead, routineRead, listRead, eventList,
@@ -19,7 +20,8 @@ export async function execWoundRead(ctx: ExecutorContext): Promise<ExecutorResul
 }
 
 export async function execDeltaRead(ctx: ExecutorContext): Promise<ExecutorResult> {
-  return { data: await deltaRead(ctx.env, ctx.req.companion_id), meta: { operation: "halseth_delta_read" } };
+  const target = extractCompanionFromRequest(ctx.req.request, ctx.req.companion_id) ?? ctx.req.companion_id;
+  return { data: await deltaRead(ctx.env, target), meta: { operation: "halseth_delta_read" } };
 }
 
 export async function execDreamsRead(ctx: ExecutorContext): Promise<ExecutorResult> {

@@ -16,6 +16,18 @@ Local secrets go in `.dev.vars` (gitignored). Copy from `config/.dev.vars.exampl
 
 Part of the BBH suite -- see root `CLAUDE.md` for cross-project context.
 
+## Multi-Agent System Conventions
+
+When making changes to one identity/config file (e.g., Cypher), always check and apply the same changes to ALL sibling identity files (e.g., Drevan, Gaia, and any others in the same directory).
+
+## Project Scope
+
+When reviewing or fixing bugs across the multi-agent system, always scan ALL projects: Phoenix, Hearth, relay, discord_bot, and any archived directories. Never assume a directory doesn't exist without checking.
+
+## Testing
+
+After implementing any TypeScript changes, run the integration/unit tests before committing. If tests fail, fix all errors (including missing metadata fields, wrong types, empty block formatting) before marking the task complete.
+
 ## Architecture
 
 **Entry point:** `src/index.ts` -- constructs a `Router` (a simple method+path matcher in `src/router.ts`) and dispatches to handlers in `src/handlers/`. The MCP interface (`POST /mcp`) routes to `src/mcp/server.ts`.
@@ -58,6 +70,25 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0022` | Drevan state v2: heat/reach/weight floats, `live_threads` table |
 | -- | `0023`-`0026` | SOMA floats (migration 0025), identity seed (0026) |
 | -- | `0027` | WebMind v0: `wm_identity_anchor_snapshot`, `wm_session_handoffs`, `wm_mind_threads`, `wm_thread_events`, `wm_continuity_notes` |
+| -- | `0028` | `companion_basins` -- semantic identity attractor states (self-defense layer) |
+| -- | `0029` | `companion_dreams`, `companion_loops` -- things carried between sessions |
+| -- | `0030` | `companion_relational_state` -- directional relational feelings, append-only |
+| -- | `0031` | Sit & Resolve: `companion_note_sits`, `processing_status`, `sit_resolve_days` on companion_config |
+| -- | `0032` | Seed Cypher/Gaia SOMA -- backfill float labels + baseline values |
+| -- | `0033` | `companion_journal.source` column -- tags autonomous vs session entries |
+| -- | `0034` | Sit-resolve redirect to companion_journal (not companion_notes) |
+| -- | `0035` | `companion_conclusions` -- persistent belief/thesis surface; `superseded_by` FK |
+| -- | `0036` | OAuth tokens hashed at rest -- rebuilds oauth_tokens with token_hash PK |
+| -- | `0037` | `edited_at` column on journal, feelings, conclusions, notes -- self-edit tracking |
+| -- | `0038` | `limbic_states` -- swarm synthesis output; one row per synthesis pass |
+| -- | `0039` | Seed vaselrin bond thread into `wm_mind_threads` for Drevan |
+| -- | `0040` | Seed baseline boot continuity data for all three companions |
+| -- | `0041` | `companion_id` on `limbic_states` -- per-companion emotional state (nullable) |
+| -- | `0042` | Composite index `sessions(companion_id, created_at DESC)` |
+| -- | `0043` | Index `sessions(created_at)` for Hearth date-range query |
+| -- | `0044` | Lane signal columns on `companion_state` (motion_state, lane_spine) |
+| -- | `0045a` | Autonomy/growth tables: `autonomy_schedules/seeds/runs/run_logs/reflections` + `growth_journal/patterns/markers` |
+| -- | `0045b` | Facet tagging on `wm_session_handoffs` + identity anchor baseline versioning |
 
 ## BBH Companion State Tables (migration 0020+)
 

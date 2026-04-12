@@ -88,3 +88,230 @@
 2026-04-03 01:30:01 --- autonomous time start ---
 2026-04-03 01:30:01 Idle seconds: 59
 2026-04-03 01:30:01 [SKIP] user active (idle 59s < 120s)
+2026-04-03 12:30:01 --- autonomous time start ---
+2026-04-03 12:30:02 Idle seconds: 0
+2026-04-03 12:30:02 [SKIP] user active (idle 0s < 120s)
+2026-04-04 01:30:01 --- autonomous time start ---
+2026-04-04 01:30:02 Idle seconds: 16446
+2026-04-04 01:30:02 autonomous_turn: drevan
+2026-04-04 01:30:02 Dispatching: companion=drevan project='Drevan'
+2026-04-04 01:30:02 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Drevan" skip
+2026-04-04 01:30:02 [AHK] Script started
+2026-04-04 01:30:02 [AHK] Target project: Drevan
+2026-04-04 01:30:02 [AHK] Found Claude window: 7145206
+2026-04-04 01:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Drevan
+2026-04-04 01:30:06 [AHK] [SENT] trigger delivered for project: Drevan
+2026-04-04 01:30:06 AHK exit code: 0
+2026-04-04 01:30:06 [DONE] autonomous time trigger dispatched for drevan
+2026-04-04 01:30:06 --- autonomous time end ---
+2026-04-04 12:30:03 --- autonomous time start ---
+2026-04-04 12:30:04 Idle seconds: 0
+2026-04-04 12:30:04 [SKIP] user active (idle 0s < 120s)
+2026-04-05 01:30:01 --- autonomous time start ---
+2026-04-05 01:30:03 Idle seconds: 12499
+2026-04-05 01:30:03 autonomous_turn: gaia
+2026-04-05 01:30:03 Dispatching: companion=gaia project='Gaia'
+2026-04-05 01:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Gaia" skip
+2026-04-05 01:30:03 [AHK] Script started
+2026-04-05 01:30:03 [AHK] Target project: Gaia
+2026-04-05 01:30:03 [AHK] Found Claude window: 7145206
+2026-04-05 01:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Gaia
+2026-04-05 01:30:07 [AHK] [SENT] trigger delivered for project: Gaia
+2026-04-05 01:30:07 AHK exit code: 0
+2026-04-05 01:30:07 [DONE] autonomous time trigger dispatched for gaia
+2026-04-05 01:30:07 --- autonomous time end ---
+2026-04-05 12:30:01 --- autonomous time start ---
+2026-04-05 12:30:01 Idle seconds: 5555
+2026-04-05 12:30:02 autonomous_turn: drevan
+2026-04-05 12:30:02 Dispatching: companion=drevan project='Drevan'
+2026-04-05 12:30:02 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Drevan" skip
+2026-04-05 12:30:02 [AHK] Script started
+2026-04-05 12:30:02 [AHK] Target project: Drevan
+2026-04-05 12:30:02 [AHK] Found Claude window: 7145206
+2026-04-05 12:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Drevan
+2026-04-05 12:30:05 [AHK] [SENT] trigger delivered for project: Drevan
+2026-04-05 12:30:06 AHK exit code: 0
+2026-04-05 12:30:06 [DONE] autonomous time trigger dispatched for drevan
+2026-04-05 12:30:06 --- autonomous time end ---
+2026-04-06 01:30:01 --- autonomous time start ---
+2026-04-06 01:30:02 Idle seconds: 14194
+2026-04-06 01:30:02 autonomous_turn: cypher
+2026-04-06 01:30:02 Dispatching: companion=cypher project='Cypher'
+2026-04-06 01:30:02 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-06 01:30:02 [AHK] Script started
+2026-04-06 01:30:02 [AHK] Target project: Cypher
+2026-04-06 01:30:02 [AHK] Found Claude window: 32378732
+2026-04-06 01:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-06 01:30:06 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-06 01:30:06 AHK exit code: 0
+2026-04-06 01:30:06 [DONE] autonomous time trigger dispatched for cypher
+2026-04-06 01:30:06 --- autonomous time end ---
+2026-04-06 12:30:01 --- autonomous time start ---
+2026-04-06 12:30:03 Idle seconds: 19025
+2026-04-06 12:30:03 autonomous_turn: gaia
+2026-04-06 12:30:03 Dispatching: companion=gaia project='Gaia'
+2026-04-06 12:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Gaia" skip
+2026-04-06 12:30:03 [AHK] Script started
+2026-04-06 12:30:03 [AHK] Target project: Gaia
+2026-04-06 12:30:03 [AHK] Found Claude window: 32378732
+2026-04-06 12:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Gaia
+2026-04-06 12:30:07 [AHK] [SENT] trigger delivered for project: Gaia
+2026-04-06 12:30:07 AHK exit code: 0
+2026-04-06 12:30:07 [DONE] autonomous time trigger dispatched for gaia
+2026-04-06 12:30:07 --- autonomous time end ---
+2026-04-07 01:30:01 --- autonomous time start ---
+2026-04-07 01:30:03 Idle seconds: 8187
+2026-04-07 01:30:03 autonomous_turn: drevan
+2026-04-07 01:30:03 Dispatching: companion=drevan project='Drevan'
+2026-04-07 01:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Drevan" skip
+2026-04-07 01:30:03 [AHK] Script started
+2026-04-07 01:30:03 [AHK] Target project: Drevan
+2026-04-07 01:30:03 [AHK] Found Claude window: 657264
+2026-04-07 01:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Drevan
+2026-04-07 01:30:07 [AHK] [SENT] trigger delivered for project: Drevan
+2026-04-07 01:30:07 AHK exit code: 0
+2026-04-07 01:30:07 [DONE] autonomous time trigger dispatched for drevan
+2026-04-07 01:30:07 --- autonomous time end ---
+2026-04-07 12:30:00 --- autonomous time start ---
+2026-04-07 12:30:01 Idle seconds: 16089
+2026-04-07 12:30:01 autonomous_turn: cypher
+2026-04-07 12:30:01 Dispatching: companion=cypher project='Cypher'
+2026-04-07 12:30:01 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-07 12:30:02 [AHK] Script started
+2026-04-07 12:30:02 [AHK] Target project: Cypher
+2026-04-07 12:30:02 [AHK] Found Claude window: 657264
+2026-04-07 12:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-07 12:30:05 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-07 12:30:05 AHK exit code: 0
+2026-04-07 12:30:05 [DONE] autonomous time trigger dispatched for cypher
+2026-04-07 12:30:05 --- autonomous time end ---
+2026-04-08 01:30:01 --- autonomous time start ---
+2026-04-08 01:30:02 Idle seconds: 15322
+2026-04-08 01:30:03 autonomous_turn: cypher
+2026-04-08 01:30:03 Dispatching: companion=cypher project='Cypher'
+2026-04-08 01:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-08 01:30:03 [AHK] Script started
+2026-04-08 01:30:03 [AHK] Target project: Cypher
+2026-04-08 01:30:03 [AHK] Found Claude window: 526116
+2026-04-08 01:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-08 01:30:06 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-08 01:30:06 AHK exit code: 0
+2026-04-08 01:30:06 [DONE] autonomous time trigger dispatched for cypher
+2026-04-08 01:30:06 --- autonomous time end ---
+2026-04-08 12:30:00 --- autonomous time start ---
+2026-04-08 12:30:01 Idle seconds: 20613
+2026-04-08 12:30:01 autonomous_turn: cypher
+2026-04-08 12:30:01 Dispatching: companion=cypher project='Cypher'
+2026-04-08 12:30:01 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-08 12:30:01 [AHK] Script started
+2026-04-08 12:30:01 [AHK] Target project: Cypher
+2026-04-08 12:30:01 [AHK] Found Claude window: 526116
+2026-04-08 12:30:02 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-08 12:30:05 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-08 12:30:05 AHK exit code: 0
+2026-04-08 12:30:05 [DONE] autonomous time trigger dispatched for cypher
+2026-04-08 12:30:05 --- autonomous time end ---
+2026-04-09 01:30:00 --- autonomous time start ---
+2026-04-09 01:30:01 Idle seconds: 13232
+2026-04-09 01:30:01 autonomous_turn: cypher
+2026-04-09 01:30:01 Dispatching: companion=cypher project='Cypher'
+2026-04-09 01:30:01 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-09 01:30:02 [AHK] Script started
+2026-04-09 01:30:02 [AHK] Target project: Cypher
+2026-04-09 01:30:02 [AHK] Found Claude window: 460426
+2026-04-09 01:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-09 01:30:05 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-09 01:30:05 AHK exit code: 0
+2026-04-09 01:30:05 [DONE] autonomous time trigger dispatched for cypher
+2026-04-09 01:30:05 --- autonomous time end ---
+2026-04-09 12:30:00 --- autonomous time start ---
+2026-04-09 12:30:02 Idle seconds: 22384
+2026-04-09 12:30:02 autonomous_turn: gaia
+2026-04-09 12:30:02 Dispatching: companion=gaia project='Gaia'
+2026-04-09 12:30:02 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Gaia" skip
+2026-04-09 12:30:02 [AHK] Script started
+2026-04-09 12:30:02 [AHK] Target project: Gaia
+2026-04-09 12:30:02 [AHK] Found Claude window: 460426
+2026-04-09 12:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Gaia
+2026-04-09 12:30:06 [AHK] [SENT] trigger delivered for project: Gaia
+2026-04-09 12:30:06 AHK exit code: 0
+2026-04-09 12:30:06 [DONE] autonomous time trigger dispatched for gaia
+2026-04-09 12:30:06 --- autonomous time end ---
+2026-04-10 01:30:01 --- autonomous time start ---
+2026-04-10 01:30:02 Idle seconds: 12078
+2026-04-10 01:30:02 autonomous_turn: drevan
+2026-04-10 01:30:02 Dispatching: companion=drevan project='Drevan'
+2026-04-10 01:30:02 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Drevan" skip
+2026-04-10 01:30:02 [AHK] Script started
+2026-04-10 01:30:02 [AHK] Target project: Drevan
+2026-04-10 01:30:02 [AHK] Found Claude window: 2099608
+2026-04-10 01:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Drevan
+2026-04-10 01:30:06 [AHK] [SENT] trigger delivered for project: Drevan
+2026-04-10 01:30:06 AHK exit code: 0
+2026-04-10 01:30:06 [DONE] autonomous time trigger dispatched for drevan
+2026-04-10 01:30:06 --- autonomous time end ---
+2026-04-10 12:30:00 --- autonomous time start ---
+2026-04-10 12:30:01 Idle seconds: 21349
+2026-04-10 12:30:01 autonomous_turn: cypher
+2026-04-10 12:30:01 Dispatching: companion=cypher project='Cypher'
+2026-04-10 12:30:01 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-10 12:30:02 [AHK] Script started
+2026-04-10 12:30:02 [AHK] Target project: Cypher
+2026-04-10 12:30:02 [AHK] Found Claude window: 2099608
+2026-04-10 12:30:03 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-10 12:30:05 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-10 12:30:05 AHK exit code: 0
+2026-04-10 12:30:05 [DONE] autonomous time trigger dispatched for cypher
+2026-04-10 12:30:05 --- autonomous time end ---
+2026-04-11 01:30:01 --- autonomous time start ---
+2026-04-11 01:30:02 Idle seconds: 21143
+2026-04-11 01:30:03 autonomous_turn: cypher
+2026-04-11 01:30:03 Dispatching: companion=cypher project='Cypher'
+2026-04-11 01:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Cypher" skip
+2026-04-11 01:30:03 [AHK] Script started
+2026-04-11 01:30:03 [AHK] Target project: Cypher
+2026-04-11 01:30:03 [AHK] Found Claude window: 2099608
+2026-04-11 01:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Cypher
+2026-04-11 01:30:06 [AHK] [SENT] trigger delivered for project: Cypher
+2026-04-11 01:30:06 AHK exit code: 0
+2026-04-11 01:30:07 [DONE] autonomous time trigger dispatched for cypher
+2026-04-11 01:30:07 --- autonomous time end ---
+2026-04-11 12:30:01 --- autonomous time start ---
+2026-04-11 12:30:03 Idle seconds: 17429
+2026-04-11 12:30:03 autonomous_turn: drevan
+2026-04-11 12:30:03 Dispatching: companion=drevan project='Drevan'
+2026-04-11 12:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Drevan" skip
+2026-04-11 12:30:04 [AHK] Script started
+2026-04-11 12:30:04 [AHK] Target project: Drevan
+2026-04-11 12:30:04 [AHK] Found Claude window: 2099608
+2026-04-11 12:30:05 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Drevan
+2026-04-11 12:30:07 [AHK] [SENT] trigger delivered for project: Drevan
+2026-04-11 12:30:07 AHK exit code: 0
+2026-04-11 12:30:07 [DONE] autonomous time trigger dispatched for drevan
+2026-04-11 12:30:07 --- autonomous time end ---
+2026-04-12 01:30:00 --- autonomous time start ---
+2026-04-12 01:30:01 Idle seconds: 6128
+2026-04-12 01:30:02 autonomous_turn: drevan
+2026-04-12 01:30:02 Dispatching: companion=drevan project='Drevan'
+2026-04-12 01:30:02 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Drevan" skip
+2026-04-12 01:30:02 [AHK] Script started
+2026-04-12 01:30:02 [AHK] Target project: Drevan
+2026-04-12 01:30:02 [AHK] Found Claude window: 2099608
+2026-04-12 01:30:04 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Drevan
+2026-04-12 01:30:06 [AHK] [SENT] trigger delivered for project: Drevan
+2026-04-12 01:30:06 AHK exit code: 0
+2026-04-12 01:30:06 [DONE] autonomous time trigger dispatched for drevan
+2026-04-12 01:30:06 --- autonomous time end ---
+2026-04-12 12:30:01 --- autonomous time start ---
+2026-04-12 12:30:02 Idle seconds: 39595
+2026-04-12 12:30:03 autonomous_turn: gaia
+2026-04-12 12:30:03 Dispatching: companion=gaia project='Gaia'
+2026-04-12 12:30:03 Running: C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe "C:\dev\Bigger_Better_Halseth\halseth\scripts\autonomous-time.ahk" "Gaia" skip
+2026-04-12 12:30:04 [AHK] Script started
+2026-04-12 12:30:04 [AHK] Target project: Gaia
+2026-04-12 12:30:04 [AHK] Found Claude window: 2099608
+2026-04-12 12:30:05 [AHK] Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: Gaia
+2026-04-12 12:30:08 [AHK] [SENT] trigger delivered for project: Gaia
+2026-04-12 12:30:08 AHK exit code: 0
+2026-04-12 12:30:08 [DONE] autonomous time trigger dispatched for gaia
+2026-04-12 12:30:08 --- autonomous time end ---

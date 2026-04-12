@@ -5,6 +5,7 @@ import {
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, claimDreamSeed,
   bridgePull, getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread,
   setAnticipation, updateCompanionState, type CompanionStateUpdate,
+  journalEdit, interNoteEdit,
 } from "../backends/halseth.js";
 import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
@@ -289,6 +290,22 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   }
   await ctx.env.DB.batch(stmts);
   return { ack: true, id: newId, created_at: now, superseded: !!supersedes };
+}
+
+export async function execJournalEdit(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ id: string; note_text: string }>(ctx.req.context);
+  if (!p?.id || !p?.note_text) return { response_key: "witness", witness: "journal_edit requires { id, note_text } in context" };
+  const r = await journalEdit(ctx.env, p.id, ctx.req.companion_id, p.note_text);
+  if (!r.ok) return { response_key: "witness", witness: r.error ?? "journal_edit failed" };
+  return { ack: true, id: p.id };
+}
+
+export async function execInterNoteEdit(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ id: string; content: string }>(ctx.req.context);
+  if (!p?.id || !p?.content) return { response_key: "witness", witness: "inter_note_edit requires { id, content } in context" };
+  const r = await interNoteEdit(ctx.env, p.id, ctx.req.companion_id, p.content);
+  if (!r.ok) return { response_key: "witness", witness: r.error ?? "inter_note_edit failed" };
+  return { ack: true, id: p.id };
 }
 
 export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {

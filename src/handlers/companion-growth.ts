@@ -35,7 +35,7 @@ export async function getBasins(
   if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
 
   const rows = await env.DB.prepare(
-    "SELECT id, companion_id, basin_name, basin_description, created_at, updated_at FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC"
+    "SELECT id, companion_id, basin_name, basin_description, embedding, created_at, updated_at FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC"
   ).bind(companion_id).all();
   return json({ basins: rows.results });
 }
