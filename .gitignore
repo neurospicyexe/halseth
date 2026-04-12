@@ -20,6 +20,16 @@ dist/
 *.pfx
 .worktrees/
 
-# Autonomous time — local config and personal scripts
+# Local-only scripts
 scripts/personal/
 scripts/.env
+
+# Personal operational docs -- contain VPS IPs, SSH config, credentials
+docs/how-to.md
+docs/how-to*.md
+docs/deployment.md
+docs/deploy*.md
+*-checklist.md
+*_CHECKLIST.md
+OPS-*.md
+DEPLOY_NOTES*.md
