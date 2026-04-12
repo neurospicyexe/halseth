@@ -121,7 +121,26 @@ Keep it under 600 words. End with: source: synthesis-worker`;
     throw new Error("DeepSeek returned null -- API error or missing key");
   }
 
-  // ── 4. Build the full note ────────────────────────────────────────────────
+  // ── 4. Extract structured fields from generated text ──────────────────────
+  // Full narrative lives in Second Brain. D1 row stores compact extracts so
+  // sessionLoad can surface them without a SB round-trip.
+  const emotionalArc = extractSection(generated, "Emotional Arc");
+  const closeState   = extractSection(generated, "Close State");
+  const openThreadsSection = extractSection(generated, "Open Threads");
+
+  // compact narrative: close state first (most relevant at boot), then arc
+  const compactNarrative = [closeState, emotionalArc]
+    .filter(Boolean).join(" | ").slice(0, 500) || generated.slice(0, 500);
+
+  const emotionalRegister = emotionalArc.slice(0, 300) || null;
+
+  // Parse open threads: lines beginning with -, •, or *, strip marker
+  const parsedThreads: string[] = openThreadsSection
+    .split("\n")
+    .map(l => l.replace(/^[-•*]\s*/, "").trim())
+    .filter(l => l.length > 0 && l.toLowerCase() !== "none");
+
+  // ── 5. Build the full note ────────────────────────────────────────────────
   const dateStr = session.created_at.slice(0, 10);
   const sessionShort = sessionId.slice(0, 8);
   const sbPath = `raziel/sessions/${dateStr}-${sessionShort}-summary.md`;
@@ -139,7 +158,7 @@ companion_id: ${session.companion_id ?? "unknown"}
 
   const fullContent = header + generated;
 
-  // ── 5. Write to Second Brain ──────────────────────────────────────────────
+  // ── 6. Write to Second Brain ──────────────────────────────────────────────
   const sbResult = await sbSaveDocument(env, {
     content: fullContent,
     path: sbPath,
@@ -151,15 +170,29 @@ companion_id: ${session.companion_id ?? "unknown"}
     console.warn(`[synthesis:session-summary] SB write failed for ${sessionId} -- continuing to D1`);
   }
 
-  // ── 6. Write SB path pointer to synthesis_summary ─────────────────────────
-  // Narrative lives in Second Brain (sbPath). D1 row is a pointer only -- no text stored here.
-  if (sbResult.ack) {
-    const summaryId = generateId();
-    await env.DB.prepare(`
-      INSERT INTO synthesis_summary
-        (id, summary_type, companion_id, subject, narrative, emotional_register,
-         key_decisions, open_threads, drevan_state, full_ref, stale_after, created_at)
-      VALUES (?, 'session', ?, ?, NULL, NULL, '[]', '[]', NULL, ?, NULL, datetime('now'))
-    `).bind(summaryId, session.companion_id ?? null, sessionId, sbPath).run();
-  }
+  // ── 7. Write structured row to synthesis_summary ──────────────────────────
+  // narrative + emotional_register are compact extracts for quick sessionLoad reads.
+  // full_ref points to SB for full narrative fetch (only written if SB succeeded).
+  const summaryId = generateId();
+  await env.DB.prepare(`
+    INSERT INTO synthesis_summary
+      (id, summary_type, companion_id, subject, narrative, emotional_register,
+       key_decisions, open_threads, drevan_state, full_ref, stale_after, created_at)
+    VALUES (?, 'session', ?, ?, ?, ?, '[]', ?, NULL, ?, NULL, datetime('now'))
+  `).bind(
+    summaryId,
+    session.companion_id ?? null,
+    sessionId,
+    compactNarrative,
+    emotionalRegister,
+    JSON.stringify(parsedThreads),
+    sbResult.ack ? sbPath : null,
+  ).run();
+}
+
+// ── Section extraction helper ─────────────────────────────────────────────────
+function extractSection(text: string, heading: string): string {
+  const pattern = new RegExp(`## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, 'i');
+  const match = pattern.exec(text);
+  return match?.[1]?.trim() ?? '';
 }

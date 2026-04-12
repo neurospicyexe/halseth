@@ -9,6 +9,7 @@ import { generateId } from "../db/queries.js";
 import { runSessionSummary } from "./jobs/session-summary.js";
 import { runDrevanState } from "./jobs/drevan-state.js";
 import { runBasinDriftCheck } from "./jobs/basin-drift-check.js";
+import { runSomaticSnapshot } from "./jobs/somatic-snapshot.js";
 
 const MAX_PER_RUN = 5;
 
@@ -21,6 +22,16 @@ interface QueueRow {
 }
 
 export async function processQueue(env: Env): Promise<void> {
+  // Recovery sweep: revert jobs stuck in 'processing' for >5 minutes.
+  // Cloudflare Workers can be killed mid-job (CPU/wall-clock limit), leaving
+  // rows in 'processing' permanently. Any job that old is definitionally stuck.
+  await env.DB.prepare(
+    `UPDATE synthesis_queue
+     SET status = 'pending', last_error = 'recovered: stuck in processing state'
+     WHERE status = 'processing'
+       AND created_at < datetime('now', '-5 minutes')`
+  ).run().catch((e: unknown) => console.warn("[synthesis] stuck-job recovery failed:", String(e)));
+
   const pending = await env.DB.prepare(`
     SELECT id, session_id, companion_id, job_type, attempts
     FROM synthesis_queue
@@ -57,6 +68,8 @@ export async function processQueue(env: Env): Promise<void> {
         await runDrevanState(env);
       } else if (job.job_type === "basin_drift_check") {
         if (job.companion_id) await runBasinDriftCheck(job.companion_id, env);
+      } else if (job.job_type === "somatic_snapshot") {
+        if (job.companion_id) await runSomaticSnapshot(job.companion_id, env);
       } else {
         console.warn(`[synthesis] unknown job_type: ${job.job_type}`);
       }
@@ -94,6 +107,18 @@ export async function enqueueBasinDriftCheck(
     INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
     VALUES (?, ?, ?, 'basin_drift_check', 'pending', datetime('now'))
   `).bind(id, sessionId, companionId).run();
+}
+
+// Enqueue a somatic snapshot job. Called from session_close for all companions.
+export async function enqueueSomaticSnapshot(
+  companionId: string,
+  env: Env,
+): Promise<void> {
+  const id = generateId();
+  await env.DB.prepare(`
+    INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
+    VALUES (?, '', ?, 'somatic_snapshot', 'pending', datetime('now'))
+  `).bind(id, companionId).run();
 }
 
 // Enqueue a session summary job. Called from halseth_session_close.

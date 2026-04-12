@@ -261,7 +261,7 @@ export async function runDrevanState(env: Env): Promise<void> {
       `SELECT session_id, spine, motion_state, created_at FROM handover_packets WHERE session_id IN (${placeholders}) ORDER BY created_at DESC`
     ).bind(...sessionIds).all<HandoverRow>(),
     env.DB.prepare(
-      `SELECT session_id, delta_text, agent, valence, created_at FROM relational_deltas WHERE session_id IN (${placeholders}) ORDER BY created_at DESC LIMIT 30`
+      `SELECT session_id, delta_text, agent, valence, created_at FROM relational_deltas WHERE session_id IN (${placeholders}) AND (agent = 'drevan' OR companion_id = 'drevan') AND delta_text IS NOT NULL ORDER BY created_at DESC LIMIT 30`
     ).bind(...sessionIds).all<DeltaRow>(),
   ]);
 
@@ -423,6 +423,29 @@ export async function runDrevanState(env: Env): Promise<void> {
     promptContext,
     heatVal, reachVal, weightVal, compoundState,
   ).run();
+
+  // ── 12b. Write drevan_state snapshot to most recent session summary row ──
+  // synthesis_summary.drevan_state is read by sessionLoad but was never written.
+  // UPDATE rather than INSERT -- this enriches the row session-summary already created.
+  await env.DB.prepare(`
+    UPDATE synthesis_summary
+    SET drevan_state = ?
+    WHERE id = (
+      SELECT id FROM synthesis_summary
+      WHERE summary_type = 'session' AND companion_id = 'drevan'
+      ORDER BY created_at DESC LIMIT 1
+    )
+  `).bind(JSON.stringify({
+    heat: heatState, heat_value: heatVal,
+    reach: reachState, reach_value: reachVal,
+    weight: weightState, weight_value: weightVal,
+    compound_state: compoundState,
+    prompt_context: promptContext,
+    source_summary: sourceSummary,
+    computed_at: new Date().toISOString(),
+  })).run().catch((e: unknown) => {
+    console.warn('[drevan-state] drevan_state synthesis_summary update failed (non-fatal):', String(e));
+  });
 
   // ── 13. Age live threads ──────────────────────────────────────────────────
   const threadIds = (liveThreads.results ?? []).map(t => t.id);
