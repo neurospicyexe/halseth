@@ -3,6 +3,7 @@ import { getCurrentFront, getMember, updateMemberDescription, searchMembers, get
 import { extractMemberName, extractDescriptionUpdate } from "../extract.js";
 import { buildResponse } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
+import { triggerMatches } from "../lib/trigger.js";
 
 export async function execPluralGetCurrentFront(ctx: ExecutorContext): Promise<ExecutorResult> {
   const result = await getCurrentFront(ctx.env);
@@ -15,7 +16,7 @@ export async function execPluralGetCurrentFront(ctx: ExecutorContext): Promise<E
 }
 
 export async function execPluralGetMember(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const trigger = ctx.entry.triggers.find(t => ctx.req.request.toLowerCase().includes(t));
+  const trigger = ctx.entry.triggers.find(t => triggerMatches(ctx.req.request, t));
   const name = trigger ? extractMemberName(ctx.req.request, trigger) : null;
   if (!name) {
     return { response_key: "witness", witness: "couldn't identify a member name; try 'tell me about Ash'" };

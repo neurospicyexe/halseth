@@ -30,6 +30,20 @@ export async function wmAddNote(env: Env, input: WmNoteInput) {
   return addNote(env, input);
 }
 
+export async function wmNoteEdit(
+  env: Env,
+  noteId: string,
+  agentId: string,
+  content: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const now = new Date().toISOString();
+  const r = await env.DB.prepare(
+    "UPDATE wm_continuity_notes SET content = ?, edited_at = ? WHERE note_id = ? AND agent_id = ?"
+  ).bind(content, now, noteId, agentId).run();
+  if (!r.meta.changes) return { ok: false, error: "not_found_or_not_owner" };
+  return { ok: true };
+}
+
 export async function wmWriteHandoff(env: Env, input: WmHandoffInput) {
   return writeHandoff(env, input);
 }

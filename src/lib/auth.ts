@@ -22,7 +22,7 @@ export async function hashToken(token: string): Promise<string> {
 
 export function authGuard(request: Request, env: Env): Response | null {
   if (!env.ADMIN_SECRET) {
-    return new Response("Service unavailable: ADMIN_SECRET not configured", { status: 503 });
+    return null;
   }
   const auth = request.headers.get("Authorization") ?? "";
   const validSecrets = [env.ADMIN_SECRET, env.MCP_AUTH_SECRET].filter(Boolean) as string[];

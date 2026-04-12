@@ -5,7 +5,7 @@ export interface LibrarianRequest {
   companion_id: CompanionId;
   request: string;
   context?: string;
-  session_type?: "checkin" | "hangout" | "work" | "ritual";
+  session_type?: "checkin" | "hangout" | "work" | "ritual" | "companion-work";
 }
 
 export interface ExecutorContext {

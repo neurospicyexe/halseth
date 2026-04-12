@@ -56,13 +56,21 @@ async function acquireSession(headers: Record<string, string>): Promise<string |
     return null;
   }
 
-  // Fire-and-forget notification (required by MCP spec for state transition)
-  fetch(SECOND_BRAIN_URL, {
-    method: "POST",
-    headers: { ...headers, "mcp-session-id": sessionId },
-    signal: AbortSignal.timeout(3_000),
-    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-  }).catch((e: unknown) => console.error("[sb] notifications/initialized failed (non-fatal):", e));
+  // Must be awaited: Cloudflare Workers abandon unawaited fetches when the
+  // response is returned. This notification is required by the MCP spec to
+  // transition the server from "initializing" to "ready" before tool calls.
+  try {
+    await fetch(SECOND_BRAIN_URL, {
+      method: "POST",
+      headers: { ...headers, "mcp-session-id": sessionId },
+      signal: AbortSignal.timeout(3_000),
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    });
+  } catch (e: unknown) {
+    // Non-fatal: server may accept tool calls without it; next callTool will
+    // catch 404/410 and re-init if needed.
+    console.error("[sb] notifications/initialized failed (non-fatal):", e);
+  }
 
   cachedSessionId = sessionId;
   cachedSessionAt = now;
