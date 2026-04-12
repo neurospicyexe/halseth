@@ -70,9 +70,11 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_journal", body.companion_id as string, JOURNAL_CAP);
 
+  const run_id = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : null;
+
   const id = crypto.randomUUID();
   await env.DB.prepare(
-    "INSERT INTO growth_journal (id, companion_id, entry_type, content, source, tags_json) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO growth_journal (id, companion_id, entry_type, content, source, tags_json, run_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ).bind(
     id,
     body.companion_id,
@@ -80,6 +82,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
     body.content,
     source,
     body.tags ? JSON.stringify(body.tags) : "[]",
+    run_id,
   ).run();
 
   return json({ id, message: "ok" }, 201);
@@ -123,16 +126,19 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_patterns", body.companion_id as string, PATTERNS_CAP);
 
+  const run_id_pattern = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : null;
+
   const id = crypto.randomUUID();
   const strength = typeof body.strength === "number" ? Math.max(1, Math.min(10, body.strength)) : 1;
   await env.DB.prepare(
-    "INSERT INTO growth_patterns (id, companion_id, pattern_text, evidence_json, strength) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO growth_patterns (id, companion_id, pattern_text, evidence_json, strength, run_id) VALUES (?, ?, ?, ?, ?, ?)"
   ).bind(
     id,
     body.companion_id,
     body.pattern_text,
     body.evidence ? JSON.stringify(body.evidence) : "[]",
     strength,
+    run_id_pattern,
   ).run();
 
   return json({ id, message: "ok" }, 201);
@@ -178,15 +184,18 @@ export async function postGrowthMarker(request: Request, env: Env): Promise<Resp
 
   await enforceCapOldest(env, "growth_markers", body.companion_id as string, MARKERS_CAP);
 
+  const run_id_marker = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : null;
+
   const id = crypto.randomUUID();
   await env.DB.prepare(
-    "INSERT INTO growth_markers (id, companion_id, marker_type, description, related_pattern_id) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO growth_markers (id, companion_id, marker_type, description, related_pattern_id, run_id) VALUES (?, ?, ?, ?, ?, ?)"
   ).bind(
     id,
     body.companion_id,
     marker_type,
     body.description,
     body.related_pattern_id ?? null,
+    run_id_marker,
   ).run();
 
   return json({ id, message: "ok" }, 201);
