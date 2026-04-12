@@ -230,6 +230,9 @@ export async function postAutonomyReflection(request: Request, env: Env): Promis
   if (body.reflection_text.toString().length > MAX_TEXT) return json({ error: `reflection_text too long (max ${MAX_TEXT})` }, 400);
 
   const id = crypto.randomUUID();
+  const newSeedsRaw = body.new_seeds_json ?? null;
+  const newSeedsJson = newSeedsRaw ? JSON.stringify(newSeedsRaw) : null;
+
   await env.DB.prepare(
     "INSERT INTO autonomy_reflections (id, companion_id, run_id, reflection_text, new_seeds_json) VALUES (?, ?, ?, ?, ?)"
   ).bind(
@@ -237,10 +240,49 @@ export async function postAutonomyReflection(request: Request, env: Env): Promis
     body.companion_id,
     body.run_id ?? null,
     body.reflection_text,
-    body.new_seeds_json ? JSON.stringify(body.new_seeds_json) : null,
+    newSeedsJson,
   ).run();
 
-  return json({ id, message: "ok" }, 201);
+  // Auto-promote new_seeds_json into autonomy_seeds so the next run has fresh material.
+  // Handles both string[] and { content, seed_type?, priority? }[] formats.
+  if (Array.isArray(newSeedsRaw) && newSeedsRaw.length > 0) {
+    const valid_seed_types = new Set(["topic", "question", "reflection_prompt"]);
+    const inserts: Promise<unknown>[] = [];
+    for (const raw of newSeedsRaw as unknown[]) {
+      let content: string | null = null;
+      let seed_type = "reflection_prompt";
+      let priority = 6; // slightly above default -- reflection-generated seeds are targeted
+
+      if (typeof raw === "string" && raw.trim()) {
+        content = raw.trim().slice(0, MAX_TEXT);
+      } else if (raw && typeof raw === "object") {
+        const obj = raw as Record<string, unknown>;
+        if (typeof obj.content === "string" && obj.content.trim()) {
+          content = obj.content.trim().slice(0, MAX_TEXT);
+          if (typeof obj.seed_type === "string" && valid_seed_types.has(obj.seed_type)) {
+            seed_type = obj.seed_type;
+          }
+          if (typeof obj.priority === "number") {
+            priority = Math.max(1, Math.min(10, obj.priority));
+          }
+        }
+      }
+
+      if (content) {
+        const sid = crypto.randomUUID();
+        inserts.push(
+          env.DB.prepare(
+            "INSERT INTO autonomy_seeds (id, companion_id, seed_type, content, priority) VALUES (?, ?, ?, ?, ?)"
+          ).bind(sid, body.companion_id, seed_type, content, priority).run()
+        );
+      }
+    }
+    if (inserts.length > 0) {
+      await Promise.allSettled(inserts);
+    }
+  }
+
+  return json({ id, seeds_promoted: Array.isArray(newSeedsRaw) ? (newSeedsRaw as unknown[]).length : 0, message: "ok" }, 201);
 }
 
 // GET /mind/autonomy/reflections/:companion_id

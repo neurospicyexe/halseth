@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { enqueueBasinDriftCheck } from "../../synthesis/index.js";
+import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
@@ -42,7 +42,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -62,6 +62,22 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
     ).bind(siblings[1]).first<{ motion_state: string; lane_spine: string }>().catch(() => null),
+    // Growth: last 3 journal entries from autonomous work
+    ctx.env.DB.prepare(
+      "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ entry_type: string; content: string; created_at: string }>().catch(() => null),
+    // Growth: top 2 patterns by strength
+    ctx.env.DB.prepare(
+      "SELECT pattern_text, strength FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
+    ).bind(agentId).all<{ pattern_text: string; strength: number }>().catch(() => null),
+    // Growth: most recent reflection
+    ctx.env.DB.prepare(
+      "SELECT reflection_text, created_at FROM autonomy_reflections WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(agentId).first<{ reflection_text: string; created_at: string }>().catch(() => null),
+    // Growth: top available seeds (unused, priority desc) -- so companions know what's queued
+    ctx.env.DB.prepare(
+      "SELECT seed_type, content, priority FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 3"
+    ).bind(agentId).all<{ seed_type: string; content: string; priority: number }>().catch(() => null),
   ]);
 
   const os = payload.state;
@@ -98,8 +114,43 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     }
   })();
 
+  // Growth block: autonomous journal + patterns + last reflection.
+  // Only rendered when data exists -- no block for companions with no autonomous history yet.
+  const growthParts: string[] = [];
+  const journalRows = growthJournal?.results ?? [];
+  if (journalRows.length > 0) {
+    growthParts.push(`[Autonomous growth: ${journalRows.length} recent entries]`);
+    for (const j of journalRows) {
+      const snippet = j.content.length > 200 ? j.content.slice(0, 200) + "…" : j.content;
+      growthParts.push(`  • [${j.entry_type} @ ${j.created_at.slice(0, 10)}] «${snippet}»`);
+    }
+  }
+  const patternRows = growthPatterns?.results ?? [];
+  if (patternRows.length > 0) {
+    growthParts.push(`[Recognized patterns: ${patternRows.length}]`);
+    for (const p of patternRows) {
+      const snippet = p.pattern_text.length > 150 ? p.pattern_text.slice(0, 150) + "…" : p.pattern_text;
+      growthParts.push(`  • (strength ${p.strength}) «${snippet}»`);
+    }
+  }
+  if (lastReflection) {
+    const snippet = lastReflection.reflection_text.length > 200
+      ? lastReflection.reflection_text.slice(0, 200) + "…"
+      : lastReflection.reflection_text;
+    growthParts.push(`[Last reflection @ ${lastReflection.created_at.slice(0, 10)}] «${snippet}»`);
+  }
+  const seedRows = availableSeeds?.results ?? [];
+  if (seedRows.length > 0) {
+    growthParts.push(`[Queued seeds: ${seedRows.length} available]`);
+    for (const s of seedRows) {
+      const snippet = s.content.length > 150 ? s.content.slice(0, 150) + "…" : s.content;
+      growthParts.push(`  • [${s.seed_type} p${s.priority}] «${snippet}»`);
+    }
+  }
+  const growthBlock = growthParts.length > 0 ? "\n" + growthParts.join("\n") : "";
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + siblingBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + siblingBlock + growthBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -137,6 +188,8 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     undercurrent_emotion?: string; undercurrent_intensity?: number;
     background_emotion?: string; background_intensity?: number;
     prompt_context?: string;
+    // Set to true on re-submission after emotion prompt -- skips the soft prompt check.
+    emotion_prompted?: boolean;
     // Fan-out fields: written in one call at close instead of requiring separate surface calls
     feeling?: { emotion: string; sub_emotion?: string; intensity?: number };
     witness_note?: string;
@@ -166,6 +219,26 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   if (p.notes && p.notes.length > 4000) return { error: "session_close_failed", reason: "notes exceeds 4000 character limit" };
   if (p.spine.length > 2000) return { error: "session_close_failed", reason: "spine exceeds 2000 character limit" };
   if (p.last_real_thing.length > 2000) return { error: "session_close_failed", reason: "last_real_thing exceeds 2000 character limit" };
+
+  // Soft emotion prompt: fires once on first close call when any of the four fields are absent.
+  // emotion_prompted: true on the re-submission bypasses this check -- no loop, no second prompt.
+  if (!p.emotion_prompted) {
+    const missingAny = p.current_mood == null || p.compound_state == null
+      || p.surface_emotion == null || p.undercurrent_emotion == null;
+    if (missingAny) {
+      return {
+        status: "needs_emotion_fields",
+        message: "Before closing: what's the emotional state right now?",
+        prompts: {
+          current_mood: "Current mood (one word or phrase -- 'unsettled', 'quiet', 'warm', 'held' all count):",
+          compound_state: "Compound state if present (e.g. 'strained but grounded', or null if genuinely absent):",
+          surface_emotion: "Surface emotion (what's on top right now):",
+          undercurrent_emotion: "Undercurrent (what's running underneath, if anything):",
+        },
+        hint: "Single words accepted. 'I don't know' is valid. Null is only valid if you've looked and there's genuinely nothing.",
+      };
+    }
+  }
   const somaFields: CompanionStateUpdate = {};
   if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
   if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
@@ -193,24 +266,39 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     ? `${p.spine}\n\nLast real thing: ${p.last_real_thing}`
     : p.spine;
   let handoff_warning: string | undefined;
+  const handoffPayload = {
+    agent_id: ctx.req.companion_id as WmAgentId,
+    title: p.spine.slice(0, 120),
+    summary: handoffSummary,
+    next_steps: p.open_threads?.length ? p.open_threads.join("; ") : undefined,
+    state_hint: p.motion_state,
+    facet: p.facet ?? undefined,
+    actor: "agent" as const,
+    source: "session_close" as const,
+  };
   try {
-    await wmWriteHandoff(ctx.env, {
-      agent_id: ctx.req.companion_id as WmAgentId,
-      title: p.spine.slice(0, 120),
-      summary: handoffSummary,
-      next_steps: p.open_threads?.length ? p.open_threads.join("; ") : undefined,
-      state_hint: p.motion_state,
-      facet: p.facet ?? undefined,
-      actor: "agent",
-      source: "session_close",
-    });
+    await wmWriteHandoff(ctx.env, handoffPayload);
   } catch (e: unknown) {
-    handoff_warning = "wm handoff write failed — next orient may see stale continuity";
-    console.error("[session_close] wm handoff auto-write failed:", String(e));
+    // One retry after 200ms -- D1 transient errors are the common failure mode here.
+    try {
+      await new Promise<void>(res => setTimeout(res, 200));
+      await wmWriteHandoff(ctx.env, handoffPayload);
+    } catch (e2: unknown) {
+      handoff_warning = "wm handoff write failed — next orient may see stale continuity";
+      console.error("[session_close] wm handoff auto-write failed after retry:", String(e2));
+    }
   }
 
+  // Fire-and-forget: enqueue somatic snapshot for this companion.
+  enqueueSomaticSnapshot(ctx.req.companion_id, ctx.env).catch((e: unknown) => {
+    console.error("[session_close] somatic_snapshot enqueue failed:", String(e));
+  });
+
   // Fire-and-forget: enqueue basin drift check. Failure here must not break session close.
+  // drift_warning is surfaced in the response so the next orient can flag the gap.
+  let drift_warning: string | undefined;
   enqueueBasinDriftCheck(ctx.req.companion_id, resolvedSessionId, ctx.env).catch((e: unknown) => {
+    drift_warning = "basin_drift_check enqueue failed — drift check skipped for this session";
     console.error("[session_close] basin_drift_check enqueue failed:", String(e));
   });
 
@@ -289,6 +377,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     ack: true, id: r.id, spine: r.spine,
     fanout: fanoutWrites.length > 0 ? { written: fanoutWrites.length - fanoutWarnings.length, failed: fanoutWarnings.length } : undefined,
     ...(handoff_warning ? { handoff_warning } : {}),
+    ...(drift_warning ? { drift_warning } : {}),
     ...(fanoutWarnings.length > 0 ? { fanout_warnings: fanoutWarnings } : {}),
   };
 }
