@@ -107,19 +107,25 @@ export async function getSessions(
 
   const result = scopedCompanion
     ? await env.DB.prepare(`
-        SELECT id, created_at, updated_at, front_state, co_con,
-               emotional_frequency, active_anchor, facet, notes
-        FROM sessions
-        WHERE companion_id = ? AND created_at >= datetime('now', ? || ' days')
-        ORDER BY created_at DESC
+        SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
+               s.emotional_frequency, s.active_anchor, s.facet, s.notes,
+               s.companion_id, s.session_type, s.spine,
+               h.last_real_thing, h.motion_state
+        FROM sessions s
+        LEFT JOIN handover_packets h ON h.session_id = s.id
+        WHERE s.companion_id = ? AND s.created_at >= datetime('now', ? || ' days')
+        ORDER BY s.created_at DESC
         LIMIT ?
       `).bind(scopedCompanion, `-${days}`, limit).all<Record<string, unknown>>()
     : await env.DB.prepare(`
-        SELECT id, created_at, updated_at, front_state, co_con,
-               emotional_frequency, active_anchor, facet, notes
-        FROM sessions
-        WHERE created_at >= datetime('now', ? || ' days')
-        ORDER BY created_at DESC
+        SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
+               s.emotional_frequency, s.active_anchor, s.facet, s.notes,
+               s.companion_id, s.session_type, s.spine,
+               h.last_real_thing, h.motion_state
+        FROM sessions s
+        LEFT JOIN handover_packets h ON h.session_id = s.id
+        WHERE s.created_at >= datetime('now', ? || ' days')
+        ORDER BY s.created_at DESC
         LIMIT ?
       `).bind(`-${days}`, limit).all<Record<string, unknown>>();
 
@@ -147,10 +153,13 @@ export async function getSessionById(
   }
 
   const row = await env.DB.prepare(`
-    SELECT id, created_at, updated_at, front_state, co_con,
-           emotional_frequency, active_anchor, facet, notes
-    FROM sessions
-    WHERE id = ?
+    SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
+           s.emotional_frequency, s.active_anchor, s.facet, s.notes,
+           s.companion_id, s.session_type, s.spine,
+           h.last_real_thing, h.motion_state
+    FROM sessions s
+    LEFT JOIN handover_packets h ON h.session_id = s.id
+    WHERE s.id = ?
   `).bind(id).first<Record<string, unknown>>();
 
   if (!row) {
