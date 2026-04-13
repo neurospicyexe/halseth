@@ -551,6 +551,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+  conclusion_supersede: {
+    triggers: [
+      "supersede conclusion", "this supersedes my conclusion", "replaces my conclusion",
+      "conclusion no longer holds", "updating my conclusion", "conclusion_supersede",
+      "i've revised my conclusion", "my conclusion has shifted",
+    ],
+    tools: ["conclusion_add"],
+    response_key: "witness",
+  },
 
   // ── Pattern feedback loop ──
   pattern_recall: {
@@ -682,6 +691,17 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "edit tension", "correct tension", "fix tension", "update tension", "tension_edit",
     ],
     tools: ["tension_edit"],
+    response_key: "witness",
+  },
+  tension_status: {
+    triggers: [
+      "crystallize tension", "crystallize this tension", "crystallized tension",
+      "this tension has crystallized", "tension is crystallized", "mark crystallized",
+      "release tension", "release this tension", "releasing tension",
+      "tension is released", "mark released", "no longer holding this tension",
+      "tension_status",
+    ],
+    tools: ["tension_status"],
     response_key: "witness",
   },
   inter_note_edit: {

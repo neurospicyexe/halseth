@@ -65,7 +65,7 @@ import {
 // ── Companion growth executors ───────────────────────────────────────────────
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
-  execAutonomousRecall, execHeldMark, execHeldRead, execTensionEdit,
+  execAutonomousRecall, execHeldMark, execHeldRead, execTensionEdit, execTensionStatus,
   execPressureDriftLog, execConfirmGrowthDrift,
 } from "./executors/companion-growth.js";
 
@@ -176,6 +176,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_add_tension: execTensionAdd,
   tensions_read: execTensionsRead,
   tension_edit: execTensionEdit,
+  tension_status: execTensionStatus,
   drift_check: execDriftCheck,
   triad_state_read: execTriadStateRead,
   confirm_growth_drift: execConfirmGrowthDrift,

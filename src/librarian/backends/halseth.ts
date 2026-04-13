@@ -492,6 +492,21 @@ export async function tensionEdit(
   return { ok: true };
 }
 
+export async function tensionStatus(
+  env: Env,
+  id: string,
+  companionId: string,
+  status: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const valid = ["simmering", "crystallized", "released"];
+  if (!valid.includes(status)) return { ok: false, error: "invalid_status" };
+  const r = await env.DB.prepare(
+    "UPDATE companion_tensions SET status = ?, last_surfaced_at = datetime('now') WHERE id = ? AND companion_id = ?"
+  ).bind(status, id, companionId).run();
+  if (!r.meta.changes) return { ok: false, error: "not_found_or_not_owner" };
+  return { ok: true };
+}
+
 export async function interNoteEdit(
   env: Env,
   id: string,

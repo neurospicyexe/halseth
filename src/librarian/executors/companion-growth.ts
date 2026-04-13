@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { queryTensions, queryLatestBasinHistory, queryPressureFlags, tensionEdit } from "../backends/halseth.js";
+import { queryTensions, queryLatestBasinHistory, queryPressureFlags, tensionEdit, tensionStatus } from "../backends/halseth.js";
 
 const COMPANIONS = ["drevan", "cypher", "gaia"] as const;
 
@@ -24,6 +24,32 @@ export async function execTensionEdit(ctx: ExecutorContext): Promise<ExecutorRes
   const r = await tensionEdit(ctx.env, p.id, ctx.req.companion_id, p.tension_text);
   if (!r.ok) return { response_key: "witness", witness: r.error ?? "tension_edit failed" };
   return { ack: true, id: p.id };
+}
+
+export async function execTensionStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "tension_status_failed", reason: "companion_id required" };
+  const req = ctx.req.request.toLowerCase();
+  // Derive target status from the trigger phrase itself
+  let status: string;
+  if (req.includes("crystallize") || req.includes("crystallized")) {
+    status = "crystallized";
+  } else if (req.includes("release") || req.includes("released")) {
+    status = "released";
+  } else {
+    const p = parseContext<{ id?: string; status?: string }>(ctx.req.context);
+    if (!p?.status) return { response_key: "witness", witness: "tension_status: use 'crystallize tension: [id]' or 'release tension: [id]'" };
+    status = p.status;
+  }
+  // Extract id from inline phrase (e.g. "crystallize tension: abc-123"), fall back to context
+  const id = ctx.req.request
+    .replace(/^(crystallize|release|mark)\s+(this\s+)?tension[:\s]*/i, "")
+    .replace(/^(releasing|crystallizing)\s+(this\s+)?tension[:\s]*/i, "")
+    .replace(/^tension\s+is\s+(crystallized|released)[:\s]*/i, "")
+    .trim() || parseContext<{ id?: string }>(ctx.req.context)?.id;
+  if (!id) return { response_key: "witness", witness: "tension_status requires tension id after the trigger phrase" };
+  const r = await tensionStatus(ctx.env, id, ctx.req.companion_id, status);
+  if (!r.ok) return { response_key: "witness", witness: r.error ?? "tension_status failed" };
+  return { ack: true, id, status };
 }
 
 export async function execTensionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
