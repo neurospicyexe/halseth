@@ -23,6 +23,22 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       prior_handover_id:   z.string().optional().describe("If returning from a prior session, provide its handover packet ID. Marks that packet as returned per spec semantics."),
     },
     async (input) => {
+      // Idempotency guard: reuse open session for same companion within 24h.
+      // "Open" = handover_id IS NULL (session_close sets handover_id).
+      // Prevents flood from bots restarting every few minutes and orient calls
+      // firing unconditionally on every Claude.ai session start.
+      if (input.companion_id) {
+        const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const existing = await env.DB.prepare(
+          "SELECT id, created_at FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
+        ).bind(input.companion_id, windowStart).first<{ id: string; created_at: string }>();
+        if (existing) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ id: existing.id, created_at: existing.created_at, front_state: input.front_state, reused: true }) }],
+          };
+        }
+      }
+
       const id = generateId();
       const now = new Date().toISOString();
 

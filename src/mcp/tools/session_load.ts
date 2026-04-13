@@ -122,11 +122,27 @@ export interface SessionLoadInput {
 export type SessionOrientInput = SessionLoadInput;
 
 export async function loadOrientData(env: Env, input: SessionOrientInput) {
-  const sessionId = generateId();
   const now = new Date().toISOString();
 
-  const stmts = [
-    env.DB.prepare(`
+  // Idempotency guard: reuse open session for same companion within 24h.
+  // "Open" = handover_id IS NULL. Prevents flood from bots restarting frequently
+  // and orient calls firing unconditionally on every Claude.ai session start.
+  let sessionId = generateId();
+  let skipInsert = false;
+  if (input.companion_id) {
+    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const existing = await env.DB.prepare(
+      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(input.companion_id, windowStart).first<{ id: string }>();
+    if (existing) {
+      sessionId = existing.id;
+      skipInsert = true;
+    }
+  }
+
+  const stmts: ReturnType<typeof env.DB.prepare>[] = [];
+  if (!skipInsert) {
+    stmts.push(env.DB.prepare(`
       INSERT INTO sessions (
         id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
         emotional_frequency, key_signature, active_anchor, facet, depth, notes
@@ -138,14 +154,14 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       input.hrv_range ?? null, input.emotional_frequency ?? null,
       input.key_signature ?? null, input.active_anchor ?? null,
       input.facet ?? null, input.depth ?? null, input.notes ?? null,
-    ),
-  ];
+    ));
+  }
   if (input.prior_handover_id) {
     stmts.push(env.DB.prepare(
       "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
     ).bind(input.prior_handover_id));
   }
-  await env.DB.batch(stmts);
+  if (stmts.length > 0) await env.DB.batch(stmts);
 
   const [state, somaticRaw, lastHandover, houseRow] = await Promise.all([
     env.DB.prepare("SELECT * FROM companion_state WHERE companion_id = ?")
@@ -169,6 +185,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     last_anchor: lastHandover?.active_anchor ?? null,
     last_motion_state: lastHandover?.motion_state ?? null,
     autonomous_turn: houseRow?.autonomous_turn ?? null,
+    emotional_frequency: input.emotional_frequency ?? null,
   };
 }
 
@@ -234,12 +251,26 @@ export async function loadLightGroundData(env: Env, input: SessionGroundInput) {
 
 // ── Legacy: single-call boot (backward compat) ────────────────────────────────
 export async function loadSessionData(env: Env, input: SessionLoadInput) {
-  const sessionId = generateId();
   const now = new Date().toISOString();
 
-  // 1. Create session record
-  const sessionStatements = [
-    env.DB.prepare(`
+  // Idempotency guard: reuse open session for same companion within 24h.
+  let sessionId = generateId();
+  let skipInsert = false;
+  if (input.companion_id) {
+    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const existing = await env.DB.prepare(
+      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(input.companion_id, windowStart).first<{ id: string }>();
+    if (existing) {
+      sessionId = existing.id;
+      skipInsert = true;
+    }
+  }
+
+  // 1. Create session record (skipped if reusing an existing open session)
+  const sessionStatements: ReturnType<typeof env.DB.prepare>[] = [];
+  if (!skipInsert) {
+    sessionStatements.push(env.DB.prepare(`
       INSERT INTO sessions (
         id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
         emotional_frequency, key_signature, active_anchor, facet, depth, notes
@@ -256,8 +287,8 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
       input.facet ?? null,
       input.depth ?? null,
       input.notes ?? null,
-    ),
-  ];
+    ));
+  }
 
   if (input.prior_handover_id) {
     sessionStatements.push(
@@ -267,7 +298,7 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     );
   }
 
-  await env.DB.batch(sessionStatements);
+  if (sessionStatements.length > 0) await env.DB.batch(sessionStatements);
 
   // 2. Read most recent handover packet
   const handover = await env.DB.prepare(

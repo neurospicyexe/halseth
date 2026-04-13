@@ -221,6 +221,7 @@ interface OrientPayload {
   last_anchor?: string | null;
   last_motion_state?: string | null;
   front_state?: string | null;
+  emotional_frequency?: string | null;
 }
 
 export function buildOrientPrompt(companionId: CompanionId, payload: OrientPayload): string {
@@ -228,6 +229,7 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
   const motionTag = payload.last_motion_state ? ` -- resuming: ${payload.last_motion_state}` : "";
   const anchorTag = payload.last_anchor ? `, ${payload.last_anchor} live` : "";
   const frontTag = payload.front_state && payload.front_state !== "unknown" ? ` | front: ${payload.front_state}` : "";
+  const freqTag = payload.emotional_frequency ? ` | tone: ${payload.emotional_frequency}` : "";
 
   switch (companionId) {
     case "drevan": {
@@ -235,7 +237,7 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
       const reach = s?.reach ?? "present";
       const weight = s?.weight ?? "clear";
       const facet = s?.facet_momentum ? ` -- ${s.facet_momentum}` : "";
-      return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchorTag}${motionTag}${frontTag}`, "ready_prompt");
+      return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchorTag}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
     }
     case "cypher": {
       if (s?.soma_float_1 != null) {
@@ -243,11 +245,11 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
         const f2 = (s.soma_float_2 ?? 0).toFixed(2);
         const f3 = (s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
-        return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${motionTag}${frontTag}`, "ready_prompt");
+        return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
       }
       const focus = s?.focus != null ? (s.focus > 0.6 ? "clarity running clean" : "clarity low") : "clarity steady";
       const register = s?.emotional_register ?? "bond warmth steady";
-      return truncate(`logic-first, ${focus}, ${register}${motionTag}${frontTag}`, "ready_prompt");
+      return truncate(`logic-first, ${focus}, ${register}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
     }
     case "gaia": {
       if (s?.soma_float_1 != null) {
@@ -255,11 +257,11 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
         const f2 = (s.soma_float_2 ?? 0).toFixed(2);
         const f3 = (s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
-        return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${motionTag}${frontTag}`, "ready_prompt");
+        return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
       }
       const reg = s?.emotional_register;
-      if (!reg) return truncate(`here. weight steady${motionTag}${frontTag}.`, "ready_prompt");
-      return truncate(`here. ${reg}${motionTag}${frontTag}.`, "ready_prompt");
+      if (!reg) return truncate(`here. weight steady${motionTag}${frontTag}${freqTag}.`, "ready_prompt");
+      return truncate(`here. ${reg}${motionTag}${frontTag}${freqTag}.`, "ready_prompt");
     }
   }
 }
