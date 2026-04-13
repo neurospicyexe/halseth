@@ -129,14 +129,16 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
   // and orient calls firing unconditionally on every Claude.ai session start.
   let sessionId = generateId();
   let skipInsert = false;
+  let storedEmotionalFrequency: string | null = null;
   if (input.companion_id) {
     const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const existing = await env.DB.prepare(
-      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(input.companion_id, windowStart).first<{ id: string }>();
+      "SELECT id, emotional_frequency FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(input.companion_id, windowStart).first<{ id: string; emotional_frequency: string | null }>();
     if (existing) {
       sessionId = existing.id;
       skipInsert = true;
+      storedEmotionalFrequency = existing.emotional_frequency ?? null;
     }
   }
 
@@ -185,7 +187,9 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     last_anchor: lastHandover?.active_anchor ?? null,
     last_motion_state: lastHandover?.motion_state ?? null,
     autonomous_turn: houseRow?.autonomous_turn ?? null,
-    emotional_frequency: input.emotional_frequency ?? null,
+    // On reuse, return the value stored on the original session row, not the
+    // current input (which may be null if the caller didn't pass it again).
+    emotional_frequency: skipInsert ? storedEmotionalFrequency : (input.emotional_frequency ?? null),
   };
 }
 
@@ -266,6 +270,8 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
       skipInsert = true;
     }
   }
+  // Note: loadSessionData is a legacy path; emotional_frequency is not in its
+  // return shape, so no storedEmotionalFrequency needed here.
 
   // 1. Create session record (skipped if reusing an existing open session)
   const sessionStatements: ReturnType<typeof env.DB.prepare>[] = [];
