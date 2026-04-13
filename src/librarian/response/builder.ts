@@ -104,8 +104,8 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   // 4. Unexamined dreams -- what is being carried since last session
   if (wm.unexamined_dreams?.length > 0) {
     for (const d of wm.unexamined_dreams) {
-      const src = d.source !== "autonomous" ? ` [${d.source}]` : " [autonomous]";
-      const pin = d.do_not_auto_examine ? " [pinned]" : "";
+      const src = d.source !== "autonomous" ? ` [${d.source}]` : "";
+      const pin = d.do_not_auto_examine ? " pinned" : "";
       const snippet = d.dream_text.length > 200 ? d.dream_text.slice(0, 200) + "…" : d.dream_text;
       parts.push(`[Unexamined dream${src}${pin} id:${d.id}] «${snippet}»`);
     }
