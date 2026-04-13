@@ -278,11 +278,13 @@ export async function postAutonomyReflection(request: Request, env: Env): Promis
       }
     }
     if (inserts.length > 0) {
-      await Promise.allSettled(inserts);
+      const settled = await Promise.allSettled(inserts);
+      const promoted = settled.filter(r => r.status === "fulfilled").length;
+      return json({ id, seeds_promoted: promoted, message: "ok" }, 201);
     }
   }
 
-  return json({ id, seeds_promoted: Array.isArray(newSeedsRaw) ? (newSeedsRaw as unknown[]).length : 0, message: "ok" }, 201);
+  return json({ id, seeds_promoted: 0, message: "ok" }, 201);
 }
 
 // GET /mind/autonomy/reflections/:companion_id

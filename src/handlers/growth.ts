@@ -70,7 +70,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_journal", body.companion_id as string, JOURNAL_CAP);
 
-  const run_id = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : null;
+  const run_id = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim().slice(0, 64) : null;
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
@@ -126,7 +126,7 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_patterns", body.companion_id as string, PATTERNS_CAP);
 
-  const run_id_pattern = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : null;
+  const run_id_pattern = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim().slice(0, 64) : null;
 
   const id = crypto.randomUUID();
   const strength = typeof body.strength === "number" ? Math.max(1, Math.min(10, body.strength)) : 1;
@@ -184,7 +184,7 @@ export async function postGrowthMarker(request: Request, env: Env): Promise<Resp
 
   await enforceCapOldest(env, "growth_markers", body.companion_id as string, MARKERS_CAP);
 
-  const run_id_marker = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : null;
+  const run_id_marker = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim().slice(0, 64) : null;
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
