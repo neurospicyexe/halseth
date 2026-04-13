@@ -254,6 +254,45 @@ export async function postMindDreamExamine(
   }
 }
 
+// POST /mind/dream/:id/pin
+export async function postMindDreamPin(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id || typeof id !== "string") {
+    return json({ error: "dream id is required" }, 400);
+  }
+
+  let body: { companion_id: string; do_not_auto_examine: number };
+  try {
+    body = await request.json() as { companion_id: string; do_not_auto_examine: number };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.companion_id || !isValidAgentId(body.companion_id)) {
+    return json({ error: "companion_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+
+  const pinValue = body.do_not_auto_examine === 1 ? 1 : 0;
+
+  try {
+    const result = await env.DB.prepare(
+      "UPDATE companion_dreams SET do_not_auto_examine = ? WHERE id = ? AND companion_id = ?"
+    ).bind(pinValue, id, body.companion_id).run();
+    const ok = (result.meta?.changes ?? 0) > 0;
+    return json({ ok });
+  } catch (err) {
+    console.error("[mind/dream/pin] error", { id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
 // POST /mind/loop
 export async function postMindLoop(
   request: Request,
