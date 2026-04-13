@@ -99,7 +99,7 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
 // ── Dreams ────────────────────────────────────────────────────────────────────
 
 export async function execWmDreamWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ dream_text?: string; source?: string }>(ctx.req.context);
+  const p = parseContext<{ dream_text?: string; source?: string; do_not_auto_examine?: boolean }>(ctx.req.context);
   const dreamText = p?.dream_text?.trim() || ctx.req.request
     .replace(/^(?:write\s+(?:a\s+)?dream\s+(?:for\s+\w+\s*)?|carry\s+(?:a\s+)?dream\s*(?:for\s+\w+\s*)?|wm\s+dream\s*(?:for\s+\w+\s*)?)\s*:\s*/i, "")
     .trim();
@@ -109,6 +109,7 @@ export async function execWmDreamWrite(ctx: ExecutorContext): Promise<ExecutorRe
     companion_id: ctx.req.companion_id as WmAgentId,
     dream_text: dreamText,
     ...(p?.source !== undefined && { source: p.source as "autonomous" | "session" }),
+    ...(p?.do_not_auto_examine !== undefined && { do_not_auto_examine: p.do_not_auto_examine }),
   });
   return { ack: true, id: r.id, created_at: r.created_at };
 }
@@ -124,7 +125,7 @@ export async function execWmDreamExamine(ctx: ExecutorContext): Promise<Executor
   const id = p?.id ?? ctx.req.request.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] ?? null;
   if (!id) return { error: "wm_dream_examine_failed", reason: "missing required field: id -- pass { id: '<uuid>' } in context, or include the UUID directly in the request string" };
   const r = await wmExamineDream(ctx.env, id, ctx.req.companion_id as WmAgentId);
-  return { ack: true, ok: r.ok };
+  return { ack: true, ok: r.ok, ...(r.reason !== undefined && { reason: r.reason }) };
 }
 
 // ── Open Loops ────────────────────────────────────────────────────────────────

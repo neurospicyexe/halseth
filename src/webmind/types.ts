@@ -112,6 +112,7 @@ export interface WmDream {
   source: WmDreamSource;
   examined: number;
   examined_at: string | null;
+  do_not_auto_examine: number;  // 1 = requires live session examination
   created_at: string;
 }
 
@@ -119,6 +120,7 @@ export interface WmDreamInput {
   companion_id: WmAgentId;
   dream_text: string;
   source?: WmDreamSource;
+  do_not_auto_examine?: boolean;
 }
 
 export interface WmOpenLoop {
