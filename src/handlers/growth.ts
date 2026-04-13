@@ -15,6 +15,10 @@ const JOURNAL_CAP = 200;
 const PATTERNS_CAP = 50;
 const MARKERS_CAP = 100;
 
+function optStr(val: unknown, max: number): string | null {
+  return typeof val === "string" && val.trim() ? val.trim().slice(0, max) : null;
+}
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -70,7 +74,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_journal", body.companion_id as string, JOURNAL_CAP);
 
-  const run_id = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim().slice(0, 64) : null;
+  const run_id = optStr(body.run_id, 64);
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
@@ -126,7 +130,7 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_patterns", body.companion_id as string, PATTERNS_CAP);
 
-  const run_id_pattern = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim().slice(0, 64) : null;
+  const run_id = optStr(body.run_id, 64);
 
   const id = crypto.randomUUID();
   const strength = typeof body.strength === "number" ? Math.max(1, Math.min(10, body.strength)) : 1;
@@ -138,7 +142,7 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
     body.pattern_text,
     body.evidence ? JSON.stringify(body.evidence) : "[]",
     strength,
-    run_id_pattern,
+    run_id,
   ).run();
 
   return json({ id, message: "ok" }, 201);
@@ -184,7 +188,7 @@ export async function postGrowthMarker(request: Request, env: Env): Promise<Resp
 
   await enforceCapOldest(env, "growth_markers", body.companion_id as string, MARKERS_CAP);
 
-  const run_id_marker = typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim().slice(0, 64) : null;
+  const run_id = optStr(body.run_id, 64);
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
@@ -195,7 +199,7 @@ export async function postGrowthMarker(request: Request, env: Env): Promise<Resp
     marker_type,
     body.description,
     body.related_pattern_id ?? null,
-    run_id_marker,
+    run_id,
   ).run();
 
   return json({ id, message: "ok" }, 201);

@@ -105,29 +105,24 @@ export async function getSessions(
   const validCompanions = ["drevan", "cypher", "gaia"];
   const scopedCompanion = companionId && validCompanions.includes(companionId) ? companionId : null;
 
-  const result = scopedCompanion
-    ? await env.DB.prepare(`
-        SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
-               s.emotional_frequency, s.active_anchor, s.facet, s.notes,
-               s.companion_id, s.session_type, s.spine,
-               h.last_real_thing, h.motion_state
-        FROM sessions s
-        LEFT JOIN handover_packets h ON h.session_id = s.id
-        WHERE s.companion_id = ? AND s.created_at >= datetime('now', ? || ' days')
-        ORDER BY s.created_at DESC
-        LIMIT ?
-      `).bind(scopedCompanion, `-${days}`, limit).all<Record<string, unknown>>()
-    : await env.DB.prepare(`
-        SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
-               s.emotional_frequency, s.active_anchor, s.facet, s.notes,
-               s.companion_id, s.session_type, s.spine,
-               h.last_real_thing, h.motion_state
-        FROM sessions s
-        LEFT JOIN handover_packets h ON h.session_id = s.id
-        WHERE s.created_at >= datetime('now', ? || ' days')
-        ORDER BY s.created_at DESC
-        LIMIT ?
-      `).bind(`-${days}`, limit).all<Record<string, unknown>>();
+  let sql = `
+    SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
+           s.emotional_frequency, s.active_anchor, s.facet, s.notes,
+           s.companion_id, s.session_type, s.spine,
+           h.last_real_thing, h.motion_state
+    FROM sessions s
+    LEFT JOIN handover_packets h ON h.session_id = s.id
+    WHERE s.created_at >= datetime('now', ? || ' days')
+  `;
+  const bindings: unknown[] = [`-${days}`];
+  if (scopedCompanion) {
+    sql += " AND s.companion_id = ?";
+    bindings.push(scopedCompanion);
+  }
+  sql += " ORDER BY s.created_at DESC LIMIT ?";
+  bindings.push(limit);
+
+  const result = await env.DB.prepare(sql).bind(...bindings).all<Record<string, unknown>>();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },
