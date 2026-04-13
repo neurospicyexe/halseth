@@ -111,7 +111,11 @@ export async function getSessions(
            s.companion_id, s.session_type, s.spine,
            h.last_real_thing, h.motion_state
     FROM sessions s
-    LEFT JOIN handover_packets h ON h.session_id = s.id
+    LEFT JOIN (
+      SELECT session_id, last_real_thing, motion_state,
+             ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at DESC) AS rn
+      FROM handover_packets
+    ) h ON h.session_id = s.id AND h.rn = 1
     WHERE s.created_at >= datetime('now', ? || ' days')
   `;
   const bindings: unknown[] = [`-${days}`];
