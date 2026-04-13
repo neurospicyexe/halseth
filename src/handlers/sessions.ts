@@ -108,11 +108,11 @@ export async function getSessions(
   let sql = `
     SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
            s.emotional_frequency, s.active_anchor, s.facet, s.notes,
-           s.companion_id, s.session_type, s.spine,
-           h.last_real_thing, h.motion_state
+           s.companion_id, s.session_type,
+           h.spine, h.last_real_thing, h.motion_state
     FROM sessions s
     LEFT JOIN (
-      SELECT session_id, last_real_thing, motion_state,
+      SELECT session_id, spine, last_real_thing, motion_state,
              ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at DESC) AS rn
       FROM handover_packets
     ) h ON h.session_id = s.id AND h.rn = 1
@@ -154,8 +154,8 @@ export async function getSessionById(
   const row = await env.DB.prepare(`
     SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,
            s.emotional_frequency, s.active_anchor, s.facet, s.notes,
-           s.companion_id, s.session_type, s.spine,
-           h.last_real_thing, h.motion_state
+           s.companion_id, s.session_type,
+           h.spine, h.last_real_thing, h.motion_state
     FROM sessions s
     LEFT JOIN handover_packets h ON h.session_id = s.id
     WHERE s.id = ?
