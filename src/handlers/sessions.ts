@@ -117,6 +117,7 @@ export async function getSessions(
       FROM handover_packets
     ) h ON h.session_id = s.id AND h.rn = 1
     WHERE s.created_at >= datetime('now', ? || ' days')
+    AND h.spine IS NOT NULL
   `;
   const bindings: unknown[] = [`-${days}`];
   if (scopedCompanion) {
