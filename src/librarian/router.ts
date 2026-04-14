@@ -74,6 +74,7 @@ import {
   execPluralGetCurrentFront, execPluralGetMember, execPluralUpdateMemberDescription,
   execPluralSearchMembers, execPluralGetFrontHistory, execPluralLogFrontChange,
   execPluralAddMemberNote,
+  execLogAlterNote, execFrontUpdate, execAlterRecall, execListMembers,
 } from "./executors/plural.js";
 
 // ── Dispatch map ─────────────────────────────────────────────────────────────
@@ -188,7 +189,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   held_mark: execHeldMark,
   held_read: execHeldRead,
 
-  // Plural
+  // Plural (SimplyPlural API)
   plural_get_current_front: execPluralGetCurrentFront,
   plural_get_member: execPluralGetMember,
   plural_update_member_description: execPluralUpdateMemberDescription,
@@ -196,6 +197,12 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   plural_get_front_history: execPluralGetFrontHistory,
   plural_log_front_change: execPluralLogFrontChange,
   plural_add_member_note: execPluralAddMemberNote,
+
+  // Plural (Halseth-native D1 store)
+  log_alter_note: execLogAlterNote,
+  front_update:   execFrontUpdate,
+  alter_recall:   execAlterRecall,
+  list_members:   execListMembers,
 };
 
 export class LibrarianRouter {

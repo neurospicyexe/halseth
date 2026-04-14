@@ -561,6 +561,44 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Halseth-native plural store ──
+  log_alter_note: {
+    triggers: [
+      "log alter note", "log this about", "note about", "write note about",
+      "remember this about", "add to alter record",
+    ],
+    tools: ["log_alter_note"],
+    response_key: "ack",
+    raw: false,
+  },
+  front_update: {
+    triggers: [
+      "who is fronting", "fronting now", "update front", "log front",
+      "is fronting", "co-con", "front change", "now fronting",
+    ],
+    tools: ["front_update"],
+    response_key: "ack",
+    raw: false,
+  },
+  alter_recall: {
+    triggers: [
+      "recall alter", "tell me about", "who is", "alter record",
+      "information about", "notes on", "alter profile",
+    ],
+    tools: ["alter_recall"],
+    response_key: "data",
+    raw: false,
+  },
+  list_members: {
+    triggers: [
+      "list members", "list system members", "who are the members",
+      "show system", "all members", "system roster",
+    ],
+    tools: ["list_members"],
+    response_key: "data",
+    raw: false,
+  },
+
   // ── Signal audit ──
   signal_audit_read: {
     triggers: [

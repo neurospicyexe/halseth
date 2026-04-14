@@ -1,6 +1,10 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "../backends/plural.js";
 import { extractMemberName, extractDescriptionUpdate } from "../extract.js";
+import {
+  listSystemMembers, recallAlter, findMemberByName,
+  logAlterNote, logFrontEvent,
+} from "../backends/plural-store.js";
 import { buildResponse } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
 import { triggerMatches } from "../lib/trigger.js";
@@ -67,4 +71,47 @@ export async function execPluralAddMemberNote(ctx: ExecutorContext): Promise<Exe
   const r = await addMemberNote(ctx.env, p);
   if (!r.success) return { response_key: "witness", witness: r.error ?? "add_member_note failed" };
   return { ack: true, id: r.id ?? null, member_id: r.member_id, name: r.name };
+}
+
+// ── Halseth-native plural store executors (D1) ──
+
+export async function execLogAlterNote(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ member_name: string; note: string }>(ctx.req.context);
+  const memberName = p?.member_name ?? extractMemberName(ctx.req.request, "log alter note");
+  const note = p?.note;
+  if (!memberName || !note) {
+    return { response_key: "witness", witness: "log_alter_note needs member_name and note in context" };
+  }
+  const member = await findMemberByName(ctx.env, memberName);
+  if (!member) return { response_key: "witness", witness: `member '${memberName}' not found -- use list_members to see available members` };
+  const id = await logAlterNote(ctx.env, member.id, note, ctx.req.companion_id, null);
+  return { ack: true, note_id: id, member_name: member.name };
+}
+
+export async function execFrontUpdate(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ member_name: string; status: "fronting" | "co-con" | "unknown"; custom_status?: string }>(ctx.req.context);
+  const memberName = p?.member_name ?? extractMemberName(ctx.req.request, "who is fronting");
+  if (!memberName || !p?.status) {
+    return { response_key: "witness", witness: "front_update needs member_name and status (fronting/co-con/unknown) in context" };
+  }
+  const member = await findMemberByName(ctx.env, memberName);
+  if (!member) return { response_key: "witness", witness: `member '${memberName}' not found` };
+  const id = await logFrontEvent(ctx.env, member.id, p.status, p.custom_status ?? null, null);
+  return { ack: true, front_event_id: id, member_name: member.name, status: p.status };
+}
+
+export async function execAlterRecall(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ member_name: string }>(ctx.req.context);
+  const memberName = p?.member_name ?? extractMemberName(ctx.req.request, "recall alter");
+  if (!memberName) {
+    return { response_key: "witness", witness: "couldn't extract a member name; try 'recall alter Ash' or pass member_name in context" };
+  }
+  const result = await recallAlter(ctx.env, memberName);
+  if (!result.member) return { response_key: "witness", witness: `member '${memberName}' not found` };
+  return { data: result, meta: { operation: "halseth_alter_recall" } };
+}
+
+export async function execListMembers(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const members = await listSystemMembers(ctx.env);
+  return { data: members, meta: { operation: "halseth_list_members" } };
 }
