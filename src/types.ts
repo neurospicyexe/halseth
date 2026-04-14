@@ -8,7 +8,8 @@ export interface Env {
   // Librarian bindings
   PLURAL: Fetcher;              // Service Binding to nullsafe-plural-v2 Worker
   LIBRARIAN_KV: KVNamespace;    // KV namespace for tool registry + pattern matching
-  SECOND_BRAIN_TOKEN?: string;  // OAuth token for mcp.softcrashentity.com (set via wrangler secret)
+  SECOND_BRAIN_TOKEN?: string;       // OAuth token for mcp.softcrashentity.com (set via wrangler secret)
+  SECOND_BRAIN_WEBHOOK_URL?: string; // second-brain HTTP base URL for session-close webhook (e.g. https://mcp.softcrashentity.com)
   DEEPSEEK_API_KEY?: string;    // DeepSeek V3 API key for KV pattern classification (set via wrangler secret)
 
   // Config flags — set in wrangler.toml [vars], not in code.

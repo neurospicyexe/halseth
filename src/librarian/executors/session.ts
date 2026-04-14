@@ -200,11 +200,26 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // Auto-resolve session_id: if not supplied in context, look up the most recent
   // open session for this companion (handover_id IS NULL = not yet closed).
   let resolvedSessionId = p?.session_id ?? null;
+  let sessionIdFallback = false;
   if (!resolvedSessionId) {
     const latest = await ctx.env.DB.prepare(
       "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
     ).bind(ctx.req.companion_id).first<{ id: string }>();
     resolvedSessionId = latest?.id ?? null;
+  } else {
+    // Validate the provided session_id actually exists -- a stale or pruned session_id
+    // causes FK constraint failure when inserting into handover_packets. Fall back to
+    // auto-resolve rather than hard-failing.
+    const exists = await ctx.env.DB.prepare(
+      "SELECT id FROM sessions WHERE id = ?"
+    ).bind(resolvedSessionId).first<{ id: string }>();
+    if (!exists) {
+      const latest = await ctx.env.DB.prepare(
+        "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
+      ).bind(ctx.req.companion_id).first<{ id: string }>();
+      resolvedSessionId = latest?.id ?? null;
+      sessionIdFallback = true;
+    }
   }
   // Validate required fields and surface exactly what is missing.
   if (!p || !resolvedSessionId || !p.spine || !p.last_real_thing || !p.motion_state) {
@@ -299,8 +314,26 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   let drift_warning: string | undefined;
   enqueueBasinDriftCheck(ctx.req.companion_id, resolvedSessionId, ctx.env).catch((e: unknown) => {
     drift_warning = "basin_drift_check enqueue failed — drift check skipped for this session";
-    console.error("[session_close] basin_drift_check enqueue failed:", String(e));
+    console.error(`[basin_drift_skipped] companion=${ctx.req.companion_id} session=${resolvedSessionId} error=${String(e)}`);
   });
+
+  // Fire-and-forget: notify second-brain to ingest immediately after session close.
+  // Non-fatal -- session close and all fan-out writes proceed regardless.
+  if (ctx.env.SECOND_BRAIN_WEBHOOK_URL && ctx.env.SECOND_BRAIN_TOKEN) {
+    fetch(`${ctx.env.SECOND_BRAIN_WEBHOOK_URL}/ingest/session`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${ctx.env.SECOND_BRAIN_TOKEN}`,
+      },
+      body: JSON.stringify({
+        companion_id: ctx.req.companion_id,
+        session_id: resolvedSessionId,
+      }),
+    }).catch((e: unknown) => {
+      console.error("[session_close] second_brain_webhook failed:", String(e));
+    });
+  }
 
   // Fan-out: optional single-call surface writes at close.
   // Each write is independent -- allSettled so one failure never cancels others.
@@ -376,6 +409,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   return {
     ack: true, id: r.id, spine: r.spine,
     fanout: fanoutWrites.length > 0 ? { written: fanoutWrites.length - fanoutWarnings.length, failed: fanoutWarnings.length } : undefined,
+    ...(sessionIdFallback ? { session_id_warning: "provided session_id not found (pruned?); closed latest open session instead" } : {}),
     ...(handoff_warning ? { handoff_warning } : {}),
     ...(drift_warning ? { drift_warning } : {}),
     ...(fanoutWarnings.length > 0 ? { fanout_warnings: fanoutWarnings } : {}),
