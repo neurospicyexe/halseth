@@ -342,7 +342,10 @@ export async function getIngestRelationalState(
 }
 
 // GET /ingest/tensions?since=<ISO8601>&limit=<n>
-// first_noted_at is used as the canonical timestamp for HWM tracking.
+// GET /ingest/tensions?updated_since=<ISO8601>&limit=<n>
+// `since` tracks new tensions by first_noted_at (creation HWM).
+// `updated_since` tracks status changes by last_surfaced_at (update HWM).
+// The two modes are mutually exclusive; `updated_since` takes precedence.
 export async function getIngestTensions(
   request: Request,
   env: Env,
@@ -350,24 +353,35 @@ export async function getIngestTensions(
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  const url   = new URL(request.url);
-  const since = url.searchParams.get("since") ?? undefined;
-  const limit = clampLimit(url.searchParams.get("limit"));
+  const url           = new URL(request.url);
+  const since         = url.searchParams.get("since") ?? undefined;
+  const updatedSince  = url.searchParams.get("updated_since") ?? undefined;
+  const limit         = clampLimit(url.searchParams.get("limit"));
 
   if (since !== undefined && isNaN(Date.parse(since))) {
     return json({ error: "invalid since parameter" }, 400);
   }
+  if (updatedSince !== undefined && isNaN(Date.parse(updatedSince))) {
+    return json({ error: "invalid updated_since parameter" }, 400);
+  }
 
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
+  let orderCol = "first_noted_at";
 
-  if (since !== undefined) {
+  if (updatedSince !== undefined) {
+    // Update sweep: only tensions that have been touched since last check.
+    conditions.push("last_surfaced_at IS NOT NULL");
+    conditions.push("last_surfaced_at > ?");
+    bindings.push(updatedSince);
+    orderCol = "last_surfaced_at";
+  } else if (since !== undefined) {
     conditions.push("first_noted_at > ?");
     bindings.push(since);
   }
 
   const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const orderDir = since !== undefined ? "ASC" : "DESC";
+  const orderDir = (since !== undefined || updatedSince !== undefined) ? "ASC" : "DESC";
   bindings.push(limit);
 
   try {
@@ -375,7 +389,7 @@ export async function getIngestTensions(
       SELECT id, companion_id, tension_text, status, first_noted_at, last_surfaced_at, notes
       FROM companion_tensions
       ${where}
-      ORDER BY first_noted_at ${orderDir}
+      ORDER BY ${orderCol} ${orderDir}
       LIMIT ?
     `).bind(...bindings).all();
 
