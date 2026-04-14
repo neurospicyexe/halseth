@@ -9,7 +9,7 @@ import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread } from "../webmind/threads.js";
-import { addNote } from "../webmind/notes.js";
+import { addNote, getEligibleNotesForCompression, archiveNotes, type CompressibleNote } from "../webmind/notes.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
@@ -556,6 +556,65 @@ export async function getMindLimbicCurrent(
     return json({ limbic_state: state });
   } catch (err) {
     console.error("[mind/limbic/current] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/notes/compress-eligible
+export async function getMindCompressEligible(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const agent_id = url.searchParams.get("agent_id");
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: `agent_id required and must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  try {
+    const notes = await getEligibleNotesForCompression(env, agent_id);
+    return json({ notes });
+  } catch (err) {
+    console.error("[mind/notes/compress-eligible] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/notes/archive
+export async function postMindNotesArchive(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: { agent_id?: string; notes?: unknown[]; summary?: string };
+  try {
+    body = await request.json() as { agent_id?: string; notes?: unknown[]; summary?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const { agent_id, notes, summary } = body;
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!Array.isArray(notes)) {
+    return json({ error: "notes[] is required" }, 400);
+  }
+  if (!summary || typeof summary !== "string") {
+    return json({ error: "summary is required" }, 400);
+  }
+
+  try {
+    const result = await archiveNotes(env, agent_id, notes as CompressibleNote[], summary);
+    return json(result);
+  } catch (err) {
+    console.error("[mind/notes/archive] error", { agent_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
