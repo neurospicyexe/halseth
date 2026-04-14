@@ -564,7 +564,6 @@ export async function getMindLimbicCurrent(
 export async function getMindCompressEligible(
   request: Request,
   env: Env,
-  params: Record<string, string>,
 ): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
@@ -608,6 +607,9 @@ export async function postMindNotesArchive(
   }
   if (!summary || typeof summary !== "string") {
     return json({ error: "summary is required" }, 400);
+  }
+  if (!notes.every(n => typeof (n as { note_id?: unknown }).note_id === "string" && (n as { note_id?: string }).note_id)) {
+    return new Response(JSON.stringify({ error: "each note must have a non-empty note_id string" }), { status: 400, headers: { "Content-Type": "application/json" } });
   }
 
   try {
