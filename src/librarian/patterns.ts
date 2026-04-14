@@ -561,6 +561,17 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Signal audit ──
+  signal_audit_read: {
+    triggers: [
+      "signal audit", "read signal audit", "gap scan", "signal audit results",
+      "what did the audit find", "show signal audit", "pull signal audit",
+    ],
+    tools: ["signal_audit_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── Pattern feedback loop ──
   pattern_recall: {
     triggers: [
