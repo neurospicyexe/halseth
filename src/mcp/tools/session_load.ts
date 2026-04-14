@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
+import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 
 const COMPANION_IDENTITY = {
   cypher: {
@@ -165,7 +166,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
   }
   if (stmts.length > 0) await env.DB.batch(stmts);
 
-  const [state, somaticRaw, lastHandover, houseRow, signalAuditRow] = await Promise.all([
+  const [state, somaticRaw, lastHandover, houseRow, signalAuditRow, currentFronters] = await Promise.all([
     env.DB.prepare("SELECT * FROM companion_state WHERE companion_id = ?")
       .bind(input.companion_id).first<CompanionState>(),
     env.DB.prepare("SELECT * FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1")
@@ -182,6 +183,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
        LIMIT 1`
     ).bind(input.companion_id, new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString())
       .first<{ id: string; created_at: string }>(),
+    getCurrentFronters(env),
   ]);
 
   return {
@@ -200,6 +202,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     emotional_frequency: skipInsert ? storedEmotionalFrequency : (input.emotional_frequency ?? null),
     unread_signal_audit: signalAuditRow ? true : false,
     signal_audit_date: signalAuditRow?.created_at ?? null,
+    current_fronters: currentFronters,
   };
 }
 

@@ -15,9 +15,11 @@ export const BUDGET_CHARS = {
   witness: 40,
   tensions: 0,  // raw data passthrough -- not truncated
   drift: 0,     // raw data passthrough -- not truncated
+  ack: 0,       // short acknowledgement -- not truncated
+  data: 0,      // raw data passthrough -- not truncated
 } as const;
 
-export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift";
+export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift" | "ack" | "data";
 
 // Raw data truncation (no markdown stripping -- companions parse the structure).
 // 3000 chars ~750 tokens -- enough for several search excerpts without flooding context.

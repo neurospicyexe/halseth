@@ -53,6 +53,10 @@ import {
 } from "./handlers/growth.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
 import { authGuard } from "./lib/auth.js";
+import {
+  getPluralMembers, postPluralMember, getPluralMemberByName,
+  postPluralNote, getPluralFront, postPluralFront,
+} from "./handlers/plural-store.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -244,6 +248,14 @@ const router = new Router()
   .on("POST", "/assets/upload", (request, env) => uploadAsset(request, env))
   .on("GET",  "/assets",        (request, env) => listAssets(request, env))
   .on("GET",  "/assets/*",      (request, env) => serveAsset(request, env))
+
+  // Plural store (Halseth-native, replaces SimplyPlural)
+  .on("GET",  "/plural/members",        (request, env) => getPluralMembers(request, env))
+  .on("POST", "/plural/members",        (request, env) => postPluralMember(request, env))
+  .on("GET",  "/plural/members/:name",  (request, env, params) => getPluralMemberByName(request, env, params ?? {}))
+  .on("POST", "/plural/notes",          (request, env) => postPluralNote(request, env))
+  .on("GET",  "/plural/front",          (request, env) => getPluralFront(request, env))
+  .on("POST", "/plural/front",          (request, env) => postPluralFront(request, env))
 
   // Legacy HTTP API (companion-scoped routes)
   .on("GET",  "/companions",                               listCompanions)
