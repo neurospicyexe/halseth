@@ -199,28 +199,20 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   }>(ctx.req.context);
   // Auto-resolve session_id: if not supplied in context, look up the most recent
   // open session for this companion (handover_id IS NULL = not yet closed).
-  let resolvedSessionId = p?.session_id ?? null;
-  let sessionIdFallback = false;
-  if (!resolvedSessionId) {
-    const latest = await ctx.env.DB.prepare(
-      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(ctx.req.companion_id).first<{ id: string }>();
-    resolvedSessionId = latest?.id ?? null;
-  } else {
-    // Validate the provided session_id actually exists -- a stale or pruned session_id
-    // causes FK constraint failure when inserting into handover_packets. Fall back to
-    // auto-resolve rather than hard-failing.
-    const exists = await ctx.env.DB.prepare(
-      "SELECT id FROM sessions WHERE id = ?"
-    ).bind(resolvedSessionId).first<{ id: string }>();
-    if (!exists) {
-      const latest = await ctx.env.DB.prepare(
-        "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
-      ).bind(ctx.req.companion_id).first<{ id: string }>();
-      resolvedSessionId = latest?.id ?? null;
-      sessionIdFallback = true;
-    }
-  }
+  // Auto-resolve session_id in a single query: try exact match first (order 0),
+  // fall back to latest open session for this companion (order 1). When p.session_id
+  // is null, SQL evaluates `id = NULL` as false so only the open-session branch matches --
+  // same result as before, one round-trip instead of up to two.
+  const providedId = p?.session_id ?? null;
+  const sessionRow = await ctx.env.DB.prepare(
+    `SELECT id FROM sessions
+     WHERE (id = ? OR (companion_id = ? AND handover_id IS NULL))
+     ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+     LIMIT 1`
+  ).bind(providedId, ctx.req.companion_id, providedId).first<{ id: string }>();
+  let resolvedSessionId: string | null = sessionRow?.id ?? null;
+  // Fallback fired when a session_id was provided but wasn't found (pruned or stale).
+  const sessionIdFallback = providedId !== null && resolvedSessionId !== providedId;
   // Validate required fields and surface exactly what is missing.
   if (!p || !resolvedSessionId || !p.spine || !p.last_real_thing || !p.motion_state) {
     const missing: string[] = [];
@@ -309,18 +301,21 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     console.error("[session_close] somatic_snapshot enqueue failed:", String(e));
   });
 
-  // Fire-and-forget: enqueue basin drift check. Failure here must not break session close.
-  // drift_warning is surfaced in the response so the next orient can flag the gap.
+  // Await the drift check enqueue so failures surface in the response payload.
+  // Non-fatal: a failed enqueue sets drift_warning; session close continues regardless.
   let drift_warning: string | undefined;
-  enqueueBasinDriftCheck(ctx.req.companion_id, resolvedSessionId, ctx.env).catch((e: unknown) => {
+  try {
+    await enqueueBasinDriftCheck(ctx.req.companion_id, resolvedSessionId, ctx.env);
+  } catch (e: unknown) {
     drift_warning = "basin_drift_check enqueue failed — drift check skipped for this session";
     console.error(`[basin_drift_skipped] companion=${ctx.req.companion_id} session=${resolvedSessionId} error=${String(e)}`);
-  });
+  }
 
   // Fire-and-forget: notify second-brain to ingest immediately after session close.
   // Non-fatal -- session close and all fan-out writes proceed regardless.
   if (ctx.env.SECOND_BRAIN_WEBHOOK_URL && ctx.env.SECOND_BRAIN_TOKEN) {
-    fetch(`${ctx.env.SECOND_BRAIN_WEBHOOK_URL}/ingest/session`, {
+    const webhookBase = ctx.env.SECOND_BRAIN_WEBHOOK_URL.replace(/\/$/, "");
+    fetch(`${webhookBase}/ingest/session`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
