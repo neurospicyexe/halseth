@@ -568,6 +568,39 @@ export async function companionNotesRead(env: Env, companionId: string, limit = 
   return r.results ?? [];
 }
 
+export async function signalAuditRead(
+  env: Env,
+  companionId: string,
+): Promise<{ entries: { id: string; note_text: string; created_at: string }[]; marked_reviewed: number }> {
+  const cutoff = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+
+  const rows = await env.DB.prepare(
+    `SELECT id, note_text, tags, created_at FROM companion_journal
+     WHERE agent = ? AND tags LIKE '%signal_audit%'
+       AND tags NOT LIKE '%signal_audit_reviewed%'
+       AND created_at >= ?
+     ORDER BY created_at DESC LIMIT 5`
+  ).bind(companionId, cutoff).all<{ id: string; note_text: string; tags: string; created_at: string }>();
+
+  const entries = rows.results ?? [];
+
+  if (entries.length > 0) {
+    const updates = entries.map(e => {
+      let tags: string[];
+      try { tags = JSON.parse(e.tags); } catch { tags = []; }
+      tags.push('signal_audit_reviewed');
+      return env.DB.prepare('UPDATE companion_journal SET tags = ? WHERE id = ?')
+        .bind(JSON.stringify(tags), e.id);
+    });
+    await env.DB.batch(updates);
+  }
+
+  return {
+    entries: entries.map(e => ({ id: e.id, note_text: e.note_text, created_at: e.created_at })),
+    marked_reviewed: entries.length,
+  };
+}
+
 export async function bridgePull(env: Env): Promise<Record<string, unknown>> {
   if (!env.BRIDGE_URL) {
     return { items: [], note: "bridge not configured" };

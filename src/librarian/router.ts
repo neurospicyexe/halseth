@@ -29,7 +29,7 @@ import {
   execDreamsRead, execDreamSeedRead, execEqRead, execRoutineRead,
   execListRead, execEventList, execHouseRead, execPersonalityRead,
   execBiometricRead, execAuditRead, execSessionRead, execFossilCheck,
-  execCompanionNotesRead, execPatternRecall,
+  execCompanionNotesRead, execPatternRecall, execSignalAuditRead,
 } from "./executors/reads.js";
 
 // ── Write executors ──────────────────────────────────────────────────────────
@@ -105,6 +105,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_fossil_check: execFossilCheck,
   halseth_companion_notes_read: execCompanionNotesRead,
   pattern_recall: execPatternRecall,
+  signal_audit_read: execSignalAuditRead,
 
   // Writes / mutations
   halseth_companion_note_add: execCompanionNoteAdd,

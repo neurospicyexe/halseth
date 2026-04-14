@@ -4,7 +4,7 @@ import {
   feelingsRead, journalRead, woundRead, deltaRead,
   dreamsRead, dreamSeedRead, eqRead, routineRead, listRead, eventList,
   houseRead, personalityRead, biometricRead, auditRead, sessionRead, fossilCheck,
-  companionNotesRead,
+  companionNotesRead, signalAuditRead,
 } from "../backends/halseth.js";
 
 export async function execFeelingsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -80,6 +80,11 @@ export async function execFossilCheck(ctx: ExecutorContext): Promise<ExecutorRes
 
 export async function execCompanionNotesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   return { data: await companionNotesRead(ctx.env, ctx.req.companion_id), meta: { operation: "halseth_companion_notes_read" } };
+}
+
+export async function execSignalAuditRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const result = await signalAuditRead(ctx.env, ctx.req.companion_id);
+  return { data: result, meta: { operation: "halseth_signal_audit_read" } };
 }
 
 export async function execPatternRecall(ctx: ExecutorContext): Promise<ExecutorResult> {
