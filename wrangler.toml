@@ -25,7 +25,7 @@ SYSTEM_NAME          = "Halseth"
 SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
 BRIDGE_URL           = ""   # partner's Halseth base URL; leave empty to disable bridge
 BRIDGE_SECRET        = ""   # shared symmetric secret; same value in both deployments
-SECOND_BRAIN_WEBHOOK_URL = ""   # set to https://mcp.softcrashentity.com in production; leave empty to disable webhook
+SECOND_BRAIN_WEBHOOK_URL = "https://mcp.softcrashentity.com"
 
 # Secrets — set via `wrangler secret put <KEY>` for production.
 # For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.
