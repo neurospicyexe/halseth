@@ -114,6 +114,9 @@ export async function recallAlter(
   return { member, notes: rows.results ?? [] };
 }
 
+// Invariant: one active status per member at a time.
+// Logging any new event (including co-con) closes all prior open events for that member.
+// Co-con does not persist independently of fronting changes -- update by logging a new event.
 export async function logFrontEvent(
   env: Env,
   memberId: string,
