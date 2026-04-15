@@ -585,14 +585,13 @@ export async function signalAuditRead(
   const entries = rows.results ?? [];
 
   if (entries.length > 0) {
-    const updates = entries.map(e => {
-      let tags: string[];
-      try { tags = JSON.parse(e.tags); } catch { tags = []; }
-      tags.push('signal_audit_reviewed');
-      return env.DB.prepare('UPDATE companion_journal SET tags = ? WHERE id = ?')
-        .bind(JSON.stringify(tags), e.id);
-    });
-    await env.DB.batch(updates);
+    const placeholders = entries.map(() => '?').join(', ');
+    await env.DB.prepare(
+      `UPDATE companion_journal
+       SET tags = COALESCE(json_insert(COALESCE(tags, '[]'), '$[#]', 'signal_audit_reviewed'), tags)
+       WHERE id IN (${placeholders})
+         AND tags NOT LIKE '%signal_audit_reviewed%'`
+    ).bind(...entries.map(e => e.id)).run();
   }
 
   return {
