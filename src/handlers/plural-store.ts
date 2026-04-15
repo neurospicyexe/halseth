@@ -81,14 +81,14 @@ export async function postPluralFront(request: Request, env: Env): Promise<Respo
   try {
     const body = await request.json() as { member_name?: string; status?: string; custom_status?: string; session_id?: string };
     if (!body.member_name || !body.status) return json({ error: "member_name and status required" }, 400);
-    if (!["fronting", "co-con", "unknown"].includes(body.status)) {
+    if (!["fronting", "co-con", "unknown"].includes(body.status.toLowerCase())) {
       return json({ error: "status must be fronting, co-con, or unknown" }, 400);
     }
     const member = await findMemberByName(env, body.member_name);
     if (!member) return json({ error: `member '${body.member_name}' not found` }, 404);
     const id = await logFrontEvent(
       env, member.id,
-      body.status as "fronting" | "co-con" | "unknown",
+      body.status.toLowerCase() as "fronting" | "co-con" | "unknown",
       body.custom_status ?? null,
       body.session_id ?? null,
     );
