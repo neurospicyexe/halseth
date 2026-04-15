@@ -144,7 +144,7 @@ export async function getCurrentFronters(env: Env): Promise<FrontEvent[]> {
      FROM front_events fe
      JOIN system_members sm ON sm.id = fe.member_id
      WHERE fe.ended_at IS NULL
-     ORDER BY fe.started_at DESC LIMIT 5`
+     ORDER BY fe.started_at DESC LIMIT 20`
   ).all<FrontEvent>();
   return rows.results ?? [];
 }
