@@ -52,9 +52,9 @@ export async function findMemberByName(env: Env, name: string): Promise<SystemMe
 
 /**
  * Upserts a system member.
- * Merge semantics: only provided fields overwrite existing values.
- * Fields sent as `null` or omitted DO NOT clear existing data -- use a
- * dedicated update path if explicit clearing is needed.
+ * Merge semantics: optional fields use COALESCE on update, so null or omitted
+ * values DO NOT clear existing data. Exception: `name` always overwrites.
+ * Use a dedicated update path if explicit field clearing is needed.
  * Provide `id` to update an existing member; omit `id` to insert new.
  */
 export async function upsertMember(
