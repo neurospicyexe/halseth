@@ -50,6 +50,13 @@ export async function findMemberByName(env: Env, name: string): Promise<SystemMe
   ).bind(`%${name}%`).first<SystemMember>();
 }
 
+/**
+ * Upserts a system member.
+ * Merge semantics: only provided fields overwrite existing values.
+ * Fields sent as `null` or omitted DO NOT clear existing data -- use a
+ * dedicated update path if explicit clearing is needed.
+ * Provide `id` to update an existing member; omit `id` to insert new.
+ */
 export async function upsertMember(
   env: Env,
   data: Partial<SystemMember> & { name: string },
