@@ -26,9 +26,9 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     ),
     env.DB.prepare(`
       DELETE FROM wm_continuity_notes
-      WHERE agent_id = ? AND note_id NOT IN (
+      WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
         SELECT note_id FROM wm_continuity_notes
-        WHERE agent_id = ? ORDER BY created_at DESC LIMIT 100
+        WHERE agent_id = ? AND archived = 0 ORDER BY created_at DESC LIMIT 100
       )
     `).bind(input.agent_id, input.agent_id),
   ]);
