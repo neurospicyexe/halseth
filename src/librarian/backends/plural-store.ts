@@ -45,8 +45,15 @@ export async function listSystemMembers(env: Env): Promise<SystemMember[]> {
 }
 
 export async function findMemberByName(env: Env, name: string): Promise<SystemMember | null> {
+  // Exact match first (case-insensitive); substring fallback only if no hit.
+  // Prevents wrong-member writes when names share a substring (e.g. "Ray" vs "Rayven").
+  const exact = await env.DB.prepare(
+    `SELECT * FROM system_members WHERE name = ? COLLATE NOCASE LIMIT 1`
+  ).bind(name).first<SystemMember>();
+  if (exact) return exact;
+
   return env.DB.prepare(
-    `SELECT * FROM system_members WHERE name LIKE ? COLLATE NOCASE LIMIT 1`
+    `SELECT * FROM system_members WHERE name LIKE ? COLLATE NOCASE ORDER BY name COLLATE NOCASE LIMIT 1`
   ).bind(`%${name}%`).first<SystemMember>();
 }
 

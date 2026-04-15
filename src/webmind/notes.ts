@@ -119,9 +119,9 @@ export async function archiveNotes(
       JSON.stringify(noteIds), notes.length,
       sortedDates[0], sortedDates[sortedDates.length - 1],
     ),
-    ...noteIds.map(id =>
-      env.DB.prepare(`UPDATE wm_continuity_notes SET archived = 1 WHERE note_id = ?`).bind(id)
-    ),
+    env.DB.prepare(
+      `UPDATE wm_continuity_notes SET archived = 1 WHERE note_id IN (${noteIds.map(() => '?').join(', ')})`
+    ).bind(...noteIds),
   ];
 
   await env.DB.batch(stmts);
