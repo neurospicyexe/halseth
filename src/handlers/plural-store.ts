@@ -28,6 +28,11 @@ export async function postPluralMember(request: Request, env: Env): Promise<Resp
   try {
     const body = await request.json() as Partial<SystemMember> & { name?: string };
     if (!body.name) return json({ error: "name required" }, 400);
+    // Prevent silent duplicate creation: check for existing member with same name
+    const existing = await findMemberByName(env, body.name);
+    if (existing && existing.name.toLowerCase() === body.name.toLowerCase() && !body.id) {
+      return json({ error: `member '${body.name}' already exists (id: ${existing.id}). Provide id to update.` }, 409);
+    }
     const id = await upsertMember(env, body as Partial<SystemMember> & { name: string });
     return json({ id });
   } catch (err) {
