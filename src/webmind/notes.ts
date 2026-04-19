@@ -7,6 +7,31 @@ import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
 
 export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuityNote> {
+  // Write gate: if thread_key is set, return the existing note if one was written
+  // in the last 10 minutes. Prevents Claude Code Stop hooks and Discord synthesis
+  // from flooding the same thread with near-identical notes.
+  if (input.thread_key) {
+    const recent = await env.DB.prepare(
+      `SELECT note_id, content, created_at FROM wm_continuity_notes
+       WHERE agent_id = ? AND archived = 0 AND thread_key = ?
+       AND created_at > datetime('now', '-10 minutes')
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(input.agent_id, input.thread_key)
+     .first<{ note_id: string; content: string; created_at: string }>();
+    if (recent) return {
+      note_id: recent.note_id,
+      agent_id: input.agent_id,
+      thread_key: input.thread_key,
+      note_type: input.note_type ?? "continuity",
+      content: recent.content,
+      salience: input.salience ?? "normal",
+      actor: input.actor ?? "agent",
+      source: input.source ?? "system",
+      correlation_id: input.correlation_id ?? null,
+      created_at: recent.created_at,
+    };
+  }
+
   const id = generateId();
   const now = new Date().toISOString();
 
