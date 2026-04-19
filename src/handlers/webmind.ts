@@ -505,6 +505,7 @@ export async function getMindSearch(
   const url = new URL(request.url);
   const query = url.searchParams.get("query")?.trim();
   if (!query) return json({ error: "query is required" }, 400);
+  if (query.length > 500) return json({ error: "query must be 500 characters or fewer" }, 400);
 
   try {
     const result = await semanticSearch(env, query);
