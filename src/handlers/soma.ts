@@ -67,6 +67,9 @@ interface CompanionSomaRow {
   surface_intensity: number | null;
   undercurrent_emotion: string | null;
   undercurrent_intensity: number | null;
+  heat: string | null;
+  reach: string | null;
+  weight: string | null;
   updated_at: string;
 }
 
@@ -81,6 +84,7 @@ export async function getSoma(request: Request, env: Env): Promise<Response> {
            compound_state, current_mood,
            surface_emotion, surface_intensity,
            undercurrent_emotion, undercurrent_intensity,
+           heat, reach, weight,
            updated_at
     FROM companion_state
     WHERE companion_id IN ('drevan', 'cypher', 'gaia')
