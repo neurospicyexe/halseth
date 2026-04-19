@@ -41,7 +41,7 @@ import {
   execSetAutonomousTurn, execClaimDreamSeed, execBridgePull, execDrevanStateGet,
   execLiveThreadAdd, execLiveThreadClose, execLiveThreadVeto, execAnticipationSet,
   execStateUpdate, execConclusionAdd, execConclusionsRead,
-  execJournalEdit, execInterNoteEdit,
+  execJournalEdit, execInterNoteEdit, execAutonomyClaim,
 } from "./executors/writes.js";
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
@@ -129,6 +129,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_witness_log: execWitnessLog,
   halseth_set_autonomous_turn: execSetAutonomousTurn,
   halseth_claim_dream_seed: execClaimDreamSeed,
+  halseth_autonomy_claim: execAutonomyClaim,
   halseth_bridge_pull: execBridgePull,
   halseth_drevan_state_get: execDrevanStateGet,
   halseth_live_thread_add: execLiveThreadAdd,

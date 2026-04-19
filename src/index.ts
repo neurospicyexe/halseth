@@ -31,7 +31,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindGround, postMindHandoff, postMindThread, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive } from "./handlers/webmind.js";
+import { getMindOrient, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -45,6 +45,7 @@ import {
   postAutonomyRunLog, getAutonomyRunLogs,
   postAutonomySeed, getAutonomySeeds, patchAutonomySeed,
   postAutonomyReflection, getAutonomyReflections,
+  getAutonomyThreads,
 } from "./handlers/autonomy.js";
 import {
   postGrowthJournal, getGrowthJournal,
@@ -136,7 +137,8 @@ const router = new Router()
   .on("GET",  "/mind/orient/:agent_id", (request, env, params) => getMindOrient(request, env, params ?? {}))
   .on("GET",  "/mind/ground/:agent_id", (request, env, params) => getMindGround(request, env, params ?? {}))
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
-  .on("POST", "/mind/thread",           (request, env) => postMindThread(request, env))
+  .on("POST",  "/mind/thread",                        (request, env)         => postMindThread(request, env))
+  .on("PATCH", "/mind/thread/:thread_key/status",     (request, env, params) => patchMindThreadStatus(request, env, params ?? {}))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
   .on("GET",  "/mind/notes/compress-eligible", (request, env) => getMindCompressEligible(request, env))
   .on("POST", "/mind/notes/archive",           (request, env) => postMindNotesArchive(request, env))
@@ -169,6 +171,7 @@ const router = new Router()
   .on("POST",  "/mind/autonomy/seeds",                           (request, env)         => postAutonomySeed(request, env))
   .on("GET",   "/mind/autonomy/seeds/:companion_id",             (request, env, params) => getAutonomySeeds(request, env, params ?? {}))
   .on("PATCH", "/mind/autonomy/seeds/:id",                       (request, env, params) => patchAutonomySeed(request, env, params ?? {}))
+  .on("GET",   "/mind/autonomy/threads/:companion_id",           (request, env, params) => getAutonomyThreads(request, env, params ?? {}))
   .on("POST",  "/mind/autonomy/reflections",                     (request, env)         => postAutonomyReflection(request, env))
   .on("GET",   "/mind/autonomy/reflections/:companion_id",       (request, env, params) => getAutonomyReflections(request, env, params ?? {}))
 

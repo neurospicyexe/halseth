@@ -14,7 +14,7 @@ import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
 import { writeLimbicState, getCurrentLimbicState } from "../webmind/limbic.js";
-import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput } from "../webmind/types.js";
+import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput, WmThreadStatus } from "../webmind/types.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -617,6 +617,47 @@ export async function postMindNotesArchive(
     return json(result);
   } catch (err) {
     console.error("[mind/notes/archive] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// PATCH /mind/thread/:thread_key/status
+export async function patchMindThreadStatus(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const threadKey = params["thread_key"];
+  if (!threadKey) return json({ error: "thread_key param required" }, 400);
+
+  let body: { agent_id?: string; status?: string };
+  try {
+    body = await request.json() as { agent_id?: string; status?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.agent_id || !isValidAgentId(body.agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+
+  const VALID_STATUSES: WmThreadStatus[] = ["open", "paused", "resolved", "archived"];
+  if (!body.status || !VALID_STATUSES.includes(body.status as WmThreadStatus)) {
+    return json({ error: `status must be one of: ${VALID_STATUSES.join(", ")}` }, 400);
+  }
+
+  const now = new Date().toISOString();
+  try {
+    const r = await env.DB.prepare(
+      "UPDATE wm_mind_threads SET status = ?, status_changed = ?, updated_at = ? WHERE thread_key = ? AND agent_id = ?"
+    ).bind(body.status, now, now, threadKey, body.agent_id).run();
+    if (r.meta.changes === 0) return json({ error: "Thread not found" }, 404);
+    return json({ ok: true, thread_key: threadKey, status: body.status });
+  } catch (err) {
+    console.error("[mind/thread/status] error", { thread_key: threadKey, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
