@@ -246,6 +246,10 @@ const SOMA_VOCAB: Record<string, keyof CompanionStateUpdate> = {
   stillness: "soma_float_1",
   density:   "soma_float_2",
   perimeter: "soma_float_3",
+  // Drevan native vocabulary (TEXT enum columns)
+  heat:      "heat",
+  reach:     "reach",
+  weight:    "weight",
 };
 
 export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorResult> {

@@ -689,6 +689,10 @@ export interface CompanionStateUpdate {
   // not the sessions heap. motion_state is the enum; lane_spine is first 150 chars of spine.
   motion_state?: string | null;
   lane_spine?: string | null;
+  // Drevan native vocabulary (TEXT enum columns from 0020 / 0022 migrations)
+  heat?: string | null;
+  reach?: string | null;
+  weight?: string | null;
 }
 
 const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
@@ -699,6 +703,7 @@ const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
   "background_emotion", "background_intensity",
   "prompt_context",
   "motion_state", "lane_spine",
+  "heat", "reach", "weight",
 ];
 
 export async function updateCompanionState(

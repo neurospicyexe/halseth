@@ -29,7 +29,7 @@ import { handleLibrarian } from "./librarian/index.js";
 import { handleLibrarianMcp } from "./librarian/mcp.js";
 import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
-import { getSoma } from "./handlers/soma.js";
+import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
@@ -130,8 +130,9 @@ const router = new Router()
   .on("POST",   "/human-blocks",         (request, env) => postHumanBlocks(request, env))
   .on("GET",    "/human-blocks",         (request, env) => getHumanBlocks(request, env))
 
-  // Soma — companion SOMA state for Hearth
-  .on("GET", "/soma", (request, env) => getSoma(request, env))
+  // Soma — companion SOMA state for Hearth + autonomous worker writes
+  .on("GET",   "/soma",                       (request, env)         => getSoma(request, env))
+  .on("PATCH", "/soma/:companion_id",         (request, env, params) => patchSomaState(request, env, params ?? {}))
 
   // WebMind — companion continuity and thread state
   .on("GET",  "/mind/orient/:agent_id", (request, env, params) => getMindOrient(request, env, params ?? {}))
