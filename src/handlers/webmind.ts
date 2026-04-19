@@ -10,6 +10,7 @@ import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, type CompressibleNote } from "../webmind/notes.js";
+import { semanticSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
@@ -487,6 +488,29 @@ export async function postMindNote(
     return json(result, 201);
   } catch (err) {
     console.error("[mind/note] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/search?query=...
+// Proxies a semantic search against Second Brain for Discord bots (Thalamus pattern).
+// Returns { query, result } where result is the raw sb_search string or null.
+export async function getMindSearch(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const query = url.searchParams.get("query")?.trim();
+  if (!query) return json({ error: "query is required" }, 400);
+
+  try {
+    const result = await semanticSearch(env, query);
+    return json({ query, result });
+  } catch (err) {
+    console.error("[mind/search] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
