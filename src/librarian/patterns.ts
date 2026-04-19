@@ -673,6 +673,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Autonomy claim (companion names what to explore next; bypasses queue at p10) ──
+  autonomy_claim: {
+    triggers: [
+      "autonomy claim", "claim exploration", "i want to explore", "i'm claiming",
+      "exploration claim", "claim seed", "i claim", "autonomous claim",
+      "next i want to explore", "i'd like to explore", "exploration intent",
+      "set my next exploration", "queue exploration", "claim my exploration",
+    ],
+    tools: ["halseth_autonomy_claim"],
+    response_key: "witness",
+  },
+
   // ── Autonomous corpus ──
   autonomous_recall: {
     triggers: [

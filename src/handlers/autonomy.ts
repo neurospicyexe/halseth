@@ -34,13 +34,16 @@ export async function postAutonomyRun(request: Request, env: Env): Promise<Respo
   if (!validateCompanion(body.companion_id)) return json({ error: "invalid companion_id" }, 400);
   if (typeof body.run_type !== "string" || !body.run_type.trim()) return json({ error: "run_type required" }, 400);
 
-  const valid_types = new Set(["exploration", "reflection", "synthesis"]);
-  if (!valid_types.has(body.run_type as string)) return json({ error: "run_type must be exploration, reflection, or synthesis" }, 400);
+  const valid_types = new Set(["exploration", "reflection", "synthesis", "continuation"]);
+  if (!valid_types.has(body.run_type as string)) return json({ error: "run_type must be exploration, reflection, synthesis, or continuation" }, 400);
+
+  const thread_id = typeof body.thread_id === "string" && body.thread_id.trim() ? body.thread_id.trim() : null;
+  const thread_position = typeof body.thread_position === "number" ? Math.max(1, body.thread_position) : null;
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
-    "INSERT INTO autonomy_runs (id, companion_id, run_type, status) VALUES (?, ?, ?, 'running')"
-  ).bind(id, body.companion_id, body.run_type).run();
+    "INSERT INTO autonomy_runs (id, companion_id, run_type, status, thread_id, thread_position) VALUES (?, ?, ?, 'running', ?, ?)"
+  ).bind(id, body.companion_id, body.run_type, thread_id, thread_position).run();
 
   return json({ id, message: "ok" }, 201);
 }
@@ -71,6 +74,8 @@ export async function patchAutonomyRun(
   if (body.tokens_used !== undefined) { fields.push("tokens_used = ?"); bindings.push(body.tokens_used); }
   if (body.artifacts_created !== undefined) { fields.push("artifacts_created = ?"); bindings.push(body.artifacts_created); }
   if (body.error_message !== undefined) { fields.push("error_message = ?"); bindings.push(body.error_message); }
+  if (body.thread_id !== undefined) { fields.push("thread_id = ?"); bindings.push(body.thread_id ?? null); }
+  if (body.thread_position !== undefined) { fields.push("thread_position = ?"); bindings.push(body.thread_position ?? null); }
 
   if (fields.length === 0) return json({ error: "no fields to update" }, 400);
   bindings.push(id);
@@ -163,12 +168,25 @@ export async function postAutonomySeed(request: Request, env: Env): Promise<Resp
   const seed_type = typeof body.seed_type === "string" && valid_seed_types.has(body.seed_type)
     ? body.seed_type
     : "topic";
-  const priority = typeof body.priority === "number" ? Math.max(1, Math.min(10, body.priority)) : 5;
+
+  const claim_source = typeof body.claim_source === "string" && body.claim_source.trim()
+    ? body.claim_source.trim()
+    : null;
+  const justification = typeof body.justification === "string" && body.justification.trim()
+    ? body.justification.trim()
+    : null;
+
+  if (claim_source && !justification) return json({ error: "justification required when claim_source is set" }, 400);
+
+  // Claims float above all queue seeds regardless of what priority was passed in
+  const priority = claim_source
+    ? 10
+    : typeof body.priority === "number" ? Math.max(1, Math.min(9, body.priority)) : 5;
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
-    "INSERT INTO autonomy_seeds (id, companion_id, seed_type, content, priority) VALUES (?, ?, ?, ?, ?)"
-  ).bind(id, body.companion_id, seed_type, body.content, priority).run();
+    "INSERT INTO autonomy_seeds (id, companion_id, seed_type, content, priority, claim_source, justification) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, body.companion_id, seed_type, body.content, priority, claim_source, justification).run();
 
   return json({ id, message: "ok" }, 201);
 }
@@ -285,6 +303,56 @@ export async function postAutonomyReflection(request: Request, env: Env): Promis
   }
 
   return json({ id, seeds_promoted: 0, message: "ok" }, 201);
+}
+
+// GET /mind/autonomy/threads/:companion_id
+// Returns active/paused wm_threads (lane='growth') with last run context.
+export async function getAutonomyThreads(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const companion_id = params.companion_id;
+  if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
+
+  const threads = await env.DB.prepare(`
+    SELECT
+      t.thread_key,
+      t.title,
+      t.status,
+      t.created_at,
+      t.updated_at,
+      r.thread_position  AS last_position,
+      r.run_type         AS last_run_type,
+      r.created_at       AS last_run_at,
+      j.content          AS last_entry_snippet
+    FROM wm_mind_threads t
+    LEFT JOIN autonomy_runs r
+      ON r.thread_id = t.thread_key
+      AND r.created_at = (
+        SELECT MAX(r2.created_at) FROM autonomy_runs r2 WHERE r2.thread_id = t.thread_key
+      )
+    LEFT JOIN growth_journal j
+      ON j.thread_id = t.thread_key
+      AND j.created_at = (
+        SELECT MAX(j2.created_at) FROM growth_journal j2 WHERE j2.thread_id = t.thread_key
+      )
+    WHERE t.agent_id = ? AND t.lane = 'growth' AND t.status IN ('open', 'paused')
+    ORDER BY t.updated_at DESC
+    LIMIT 10
+  `).bind(companion_id).all<Record<string, unknown>>();
+
+  const results = (threads.results ?? []).map(row => ({
+    ...row,
+    last_entry_snippet: typeof row.last_entry_snippet === "string"
+      ? row.last_entry_snippet.slice(0, 200)
+      : null,
+  }));
+
+  return json({ threads: results });
 }
 
 // GET /mind/autonomy/reflections/:companion_id

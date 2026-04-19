@@ -308,6 +308,20 @@ export async function execInterNoteEdit(ctx: ExecutorContext): Promise<ExecutorR
   return { ack: true, id: p.id };
 }
 
+export async function execAutonomyClaim(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ content: string; justification: string; seed_type?: string }>(ctx.req.context);
+  if (!p?.content?.trim()) return { response_key: "witness", witness: "autonomy_claim requires { content, justification } in context" };
+  if (!p?.justification?.trim()) return { response_key: "witness", witness: "autonomy_claim requires { justification } -- explain why this pulls harder than the queue" };
+  const validTypes = ["topic", "question", "reflection_prompt"];
+  const seedType = validTypes.includes(p.seed_type ?? "") ? p.seed_type! : "topic";
+  const id = crypto.randomUUID().replace(/-/g, "");
+  const now = new Date().toISOString();
+  await ctx.env.DB.prepare(
+    "INSERT INTO autonomy_seeds (id, companion_id, seed_type, content, priority, claim_source, justification, created_at) VALUES (?, ?, ?, ?, 10, ?, ?, ?)"
+  ).bind(id, ctx.req.companion_id, seedType, p.content.trim().slice(0, 500), ctx.req.companion_id, p.justification.trim().slice(0, 300), now).run();
+  return { ack: true, id, companion_id: ctx.req.companion_id, priority: 10, claim_source: ctx.req.companion_id };
+}
+
 export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const rows = await ctx.env.DB.prepare(
     "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10"
