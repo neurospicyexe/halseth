@@ -149,6 +149,44 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   }
   const growthBlock = growthParts.length > 0 ? "\n" + growthParts.join("\n") : "";
 
+  const ragHitCount = (() => {
+    try { return (JSON.parse(ragRaw ?? "{}") as { chunks?: unknown[] })?.chunks?.length ?? 0; }
+    catch { return ragRaw ? 1 : 0; }
+  })();
+
+  const debugSnapshot = {
+    assembled_at: new Date().toISOString(),
+    session_id: payload.session_id,
+    front_state: ctx.frontState ?? "unknown",
+    wm: wmResult ? {
+      recent_notes:              wmResult.recent_notes.length,
+      open_thread_count:         wmResult.open_thread_count,
+      active_tensions:           wmResult.active_tensions.length,
+      active_conclusions:        wmResult.active_conclusions.length,
+      incoming_companion_notes:  wmResult.incoming_companion_notes.length,
+      latest_handoff_summary:    wmResult.latest_handoff?.summary?.slice(0, 100) ?? null,
+    } : null,
+    sb_rag: { query: ragQuery.slice(0, 150), hit_count: ragHitCount },
+    sb_narrative: sbNarrative ? "loaded" : "none",
+    growth: {
+      journal_entries: journalRows.length,
+      patterns:        patternRows.length,
+      last_reflection: lastReflection ? 1 : 0,
+      available_seeds: seedRows.length,
+    },
+  };
+  await ctx.env.DB.prepare(
+    `INSERT INTO companion_state (companion_id, last_orient_debug, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(companion_id) DO UPDATE SET
+       last_orient_debug = excluded.last_orient_debug,
+       updated_at        = datetime('now')`
+  ).bind(agentId, JSON.stringify(debugSnapshot)).run().catch(() => null);
+
+  ctx.env.DB.prepare(
+    `INSERT INTO sb_search_log (id, companion_id, query, hit_count, source) VALUES (?, ?, ?, ?, 'orient')`
+  ).bind(crypto.randomUUID(), agentId, ragQuery.slice(0, 200), ragHitCount).run().catch(() => null);
+
   return {
     ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + siblingBlock + growthBlock,
     session_id: payload.session_id,
@@ -505,7 +543,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ? tensionsResult.value.results.map(r => (r.tension_text ?? "").slice(0, 150)).filter(Boolean)
     : [];
 
-  const relational_state_raziel: string[] = relationalResult.status === "fulfilled" && relationalResult.value?.results
+  const relational_state_owner: string[] = relationalResult.status === "fulfilled" && relationalResult.value?.results
     ? relationalResult.value.results.map(r => (r.state_text ?? "").slice(0, 150)).filter(Boolean)
     : [];
 
@@ -540,7 +578,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       rag_excerpts,
       identity_anchor,
       active_tensions,
-      relational_state_raziel,
+      relational_state_owner,
       incoming_notes,
       sibling_lanes,
       recent_growth,

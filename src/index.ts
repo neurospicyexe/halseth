@@ -31,7 +31,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindSpiralRun, getMindSpiralRuns } from "./handlers/webmind.js";
+import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindSpiralRun, getMindSpiralRuns } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -135,13 +135,15 @@ const router = new Router()
   .on("PATCH", "/soma/:companion_id",         (request, env, params) => patchSomaState(request, env, params ?? {}))
 
   // WebMind — companion continuity and thread state
-  .on("GET",  "/mind/orient/:agent_id", (request, env, params) => getMindOrient(request, env, params ?? {}))
-  .on("GET",  "/mind/ground/:agent_id", (request, env, params) => getMindGround(request, env, params ?? {}))
+  .on("GET",  "/mind/orient/:agent_id",       (request, env, params) => getMindOrient(request, env, params ?? {}))
+  .on("GET",  "/mind/orient-debug/:agent_id", (request, env, params) => getMindOrientDebug(request, env, params ?? {}))
+  .on("GET",  "/mind/ground/:agent_id",       (request, env, params) => getMindGround(request, env, params ?? {}))
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
   .on("POST",  "/mind/thread",                        (request, env)         => postMindThread(request, env))
   .on("PATCH", "/mind/thread/:thread_key/status",     (request, env, params) => patchMindThreadStatus(request, env, params ?? {}))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
-  .on("GET",  "/mind/search",           (request, env) => getMindSearch(request, env))
+  .on("GET",  "/mind/search",                        (request, env)         => getMindSearch(request, env))
+  .on("GET",  "/mind/sb-search-log/:agent_id",       (request, env, params) => getMindSbSearchLog(request, env, params ?? {}))
   .on("GET",  "/mind/notes/compress-eligible", (request, env) => getMindCompressEligible(request, env))
   .on("POST", "/mind/notes/archive",           (request, env) => postMindNotesArchive(request, env))
   .on("POST", "/mind/limbic",           (request, env) => postMindLimbic(request, env))

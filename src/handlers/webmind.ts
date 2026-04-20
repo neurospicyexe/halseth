@@ -59,6 +59,37 @@ export async function getMindOrient(
   }
 }
 
+// GET /mind/orient-debug/:agent_id
+export async function getMindOrientDebug(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { agent_id } = params;
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: `Invalid agent_id: must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  try {
+    const row = await env.DB.prepare(
+      "SELECT last_orient_debug FROM companion_state WHERE companion_id = ?"
+    ).bind(agent_id).first<{ last_orient_debug: string | null }>();
+
+    if (!row?.last_orient_debug) {
+      return json({ agent_id, debug: null });
+    }
+
+    const debug = JSON.parse(row.last_orient_debug);
+    return json({ agent_id, debug });
+  } catch (err) {
+    console.error("[mind/orient-debug] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
 // GET /mind/ground/:agent_id
 export async function getMindGround(
   request: Request,
@@ -508,11 +539,55 @@ export async function getMindSearch(
   if (!query) return json({ error: "query is required" }, 400);
   if (query.length > 500) return json({ error: "query must be 500 characters or fewer" }, 400);
 
+  const agentId = url.searchParams.get("agent_id")?.trim() ?? null;
+
   try {
     const result = await semanticSearch(env, query);
+
+    if (agentId && isValidAgentId(agentId)) {
+      const hitCount = (() => {
+        try { return (JSON.parse(result ?? "{}") as { chunks?: unknown[] })?.chunks?.length ?? 0; }
+        catch { return result ? 1 : 0; }
+      })();
+      env.DB.prepare(
+        `INSERT INTO sb_search_log (id, companion_id, query, hit_count, source) VALUES (?, ?, ?, ?, 'message')`
+      ).bind(crypto.randomUUID(), agentId, query.slice(0, 200), hitCount).run().catch(() => null);
+    }
+
     return json({ query, result });
   } catch (err) {
     console.error("[mind/search] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/sb-search-log/:agent_id
+export async function getMindSbSearchLog(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { agent_id } = params;
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: `Invalid agent_id: must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT query, hit_count, source, created_at FROM sb_search_log WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
+    ).bind(agent_id).all<{ query: string; hit_count: number; source: string; created_at: string }>();
+
+    const entries = rows.results ?? [];
+    const total = entries.length;
+    const hits = entries.filter(r => r.hit_count > 0).length;
+    const hit_rate = total > 0 ? Math.round((hits / total) * 100) : null;
+
+    return json({ agent_id, entries, total, hits, hit_rate, last_query: entries[0]?.query ?? null });
+  } catch (err) {
+    console.error("[mind/sb-search-log] error", { agent_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
