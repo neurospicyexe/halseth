@@ -41,6 +41,7 @@ describe('3-pool merge dedup', () => {
     const edge: typeof core = [];
     const result = mergePoolResults(core, novelty, edge);
     expect(result[2]!.note_id).toBe('d');
+    expect(result.length).toBe(3);
   });
 
   test('edge note appears last', () => {
@@ -109,6 +110,13 @@ describe('edge pool age gate', () => {
 
   test('note 29 days old does not qualify for edge pool', () => {
     const n = note('recent', 29);
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    expect(new Date(n.created_at) < cutoff).toBe(false);
+  });
+
+  test('note exactly 30 days old does not qualify for edge pool', () => {
+    const n = note('boundary', 30);
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 30);
     expect(new Date(n.created_at) < cutoff).toBe(false);
