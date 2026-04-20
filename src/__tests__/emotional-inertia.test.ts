@@ -47,8 +47,8 @@ describe('soma_arc orient integration', () => {
       { note_id: 'b', content: '[SOMA shift] acuity: 0.75 / presence: 0.80 / warmth: 0.65 | deepening', created_at: '2026-04-20T15:15:00Z' },
       { note_id: 'a', content: '[SOMA shift] acuity: 0.60 / presence: 0.70 / warmth: 0.55 | warm-and-blade', created_at: '2026-04-20T15:00:00Z' },
     ];
-    expect(notes[0].note_id).toBe('c'); // most recent first
-    expect(notes[2].note_id).toBe('a'); // oldest last
+    expect(notes[0]!.note_id).toBe('c'); // most recent first
+    expect(notes[2]!.note_id).toBe('a'); // oldest last
   });
 
   test('builder reversal produces chronological arc (oldest first)', () => {
@@ -58,8 +58,8 @@ describe('soma_arc orient integration', () => {
       { note_id: 'a', created_at: '2026-04-20T15:00:00Z', content: 'start' },
     ];
     const reversed = [...notes].reverse();
-    expect(reversed[0].note_id).toBe('a'); // oldest first after reverse
-    expect(reversed[2].note_id).toBe('c'); // most recent last
+    expect(reversed[0]!.note_id).toBe('a'); // oldest first after reverse
+    expect(reversed[2]!.note_id).toBe('c'); // most recent last
   });
 
   test('arc time extraction formats HH:MM correctly', () => {
