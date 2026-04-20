@@ -66,11 +66,13 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
 
   if (!run) throw new Error(`spiral run not found: ${runId}`);
   if (run.status === 'completed') return run;
-  if (run.status === 'running') throw new Error(`spiral run ${runId} is already running`);
 
-  await env.DB.prepare(
-    "UPDATE companion_spiral_runs SET status = 'running', started_at = ? WHERE id = ?"
+  const claimResult = await env.DB.prepare(
+    "UPDATE companion_spiral_runs SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'"
   ).bind(new Date().toISOString(), runId).run();
+  if (claimResult.meta.changes === 0) throw new Error(`spiral run ${runId} not in queued state (already running or completed)`);
+
+  let turnNoteId: string | null = null;
 
   try {
     const priorPhases: Partial<Record<SpiralPhase, string>> = {};
@@ -87,7 +89,6 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
     }
 
     // Write TURN to wm_continuity_notes (high salience, excluded from 3-pool by orient)
-    let turnNoteId: string | null = null;
     if (priorPhases.TURN) {
       // defensive: loop always runs TURN, but guard against future refactors
       turnNoteId = crypto.randomUUID();
@@ -125,8 +126,8 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     await env.DB.prepare(
-      "UPDATE companion_spiral_runs SET status = 'failed', error_message = ? WHERE id = ?"
-    ).bind(errMsg, runId).run();
+      "UPDATE companion_spiral_runs SET status = 'failed', error_message = ?, turn_note_id = ? WHERE id = ?"
+    ).bind(errMsg, turnNoteId, runId).run();
     throw e;
   }
 }
