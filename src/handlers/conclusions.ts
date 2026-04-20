@@ -49,10 +49,32 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
     return json({ error: `conclusion_text exceeds ${MAX_TEXT_LENGTH} character limit` }, 400);
   }
 
+  const VALID_BELIEF_TYPES = ["self", "observational", "relational", "systemic"] as const;
+
+  const rawBeliefType = body.belief_type;
+  if (rawBeliefType !== undefined && rawBeliefType !== null) {
+    if (typeof rawBeliefType !== "string" || !(VALID_BELIEF_TYPES as readonly string[]).includes(rawBeliefType)) {
+      return json({ error: "belief_type must be one of: self, observational, relational, systemic" }, 400);
+    }
+  }
+
+  const rawConfidence = body.confidence;
+  if (rawConfidence !== undefined && rawConfidence !== null) {
+    if (typeof rawConfidence !== "number" || rawConfidence < 0.0 || rawConfidence > 1.0) {
+      return json({ error: "confidence must be between 0.0 and 1.0" }, 400);
+    }
+  }
+
   const sourceSessions = Array.isArray(source_sessions)
     ? JSON.stringify(source_sessions.map(String).slice(0, 20))
     : null;
   const supersedesId = typeof supersedes === "string" ? supersedes : null;
+
+  const confidence = (typeof rawConfidence === "number") ? rawConfidence : 0.7;
+  const belief_type = (typeof rawBeliefType === "string") ? rawBeliefType : "self";
+  const subject = (typeof body.subject === "string") ? body.subject : null;
+  const provenance = (typeof body.provenance === "string") ? body.provenance : null;
+  const contradiction_flagged = (typeof body.contradiction_flagged === "number") ? body.contradiction_flagged : 0;
 
   // Atomic: insert new conclusion, then supersede old one if requested.
   const newId = crypto.randomUUID().replace(/-/g, "");
@@ -60,8 +82,8 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
 
   const stmts = [
     env.DB.prepare(
-      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-    ).bind(newId, companion_id, conclusion_text.trim(), sourceSessions, now),
+      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at, confidence, belief_type, subject, provenance, contradiction_flagged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(newId, companion_id, conclusion_text.trim(), sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged),
   ];
 
   if (supersedesId) {
@@ -96,8 +118,8 @@ export async function getConclusions(
   const includeSuperseded = url.searchParams.get("include_superseded") === "true";
 
   const query = includeSuperseded
-    ? "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
-    : "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10";
+    ? "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
+    : "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10";
 
   const rows = await env.DB.prepare(query).bind(agentId).all();
   return json({ conclusions: rows.results ?? [] });
