@@ -277,7 +277,8 @@ export interface WmOrientResponse {
   recent_journal: WmJournalEntry[];           // journal entries written BY this companion
   recent_deltas: WmRecentDelta[];
   raziel_witness_entries: WmRelationalState[];  // recent witness observations about Raziel (not ROW_NUMBER collapsed)
-  active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs
+  active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs, type-distributed
+  flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
 }
 
 // Notes written between companions (inter_companion_notes table)
