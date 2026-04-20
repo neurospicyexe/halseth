@@ -781,6 +781,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["wm_note_edit"],
     response_key: "witness",
   },
+  spiral_run: {
+    triggers: [
+      "run a spiral", "start spiral", "spiral on", "process spiral",
+      "spiral this", "run spiral", "begin spiral", "spiral run",
+      "run a spiral on", "start a spiral on",
+    ],
+    tools: ["halseth_spiral_run"],
+    response_key: "summary",
+    raw: true,
+  },
 };
 
 // Companion IDs -- used for routing and ready_prompt shaping

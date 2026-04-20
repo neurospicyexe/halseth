@@ -42,6 +42,7 @@ import {
   execLiveThreadAdd, execLiveThreadClose, execLiveThreadVeto, execAnticipationSet,
   execStateUpdate, execConclusionAdd, execConclusionsRead,
   execJournalEdit, execInterNoteEdit, execAutonomyClaim,
+  execSpiralRun,
 } from "./executors/writes.js";
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
@@ -137,6 +138,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_live_thread_veto: execLiveThreadVeto,
   halseth_anticipation_set: execAnticipationSet,
   halseth_state_update: execStateUpdate,
+  halseth_spiral_run: execSpiralRun,
 
   // Second Brain / memory
   sb_search: execSbSearch,
