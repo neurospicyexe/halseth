@@ -66,23 +66,31 @@ describe("postConclusion -- belief_type validation", () => {
   });
 
   it("accepts belief_type 'self'", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "self" }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "self" }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain("self");
   });
 
   it("accepts belief_type 'observational'", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "observational" }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "observational" }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain("observational");
   });
 
   it("accepts belief_type 'relational'", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "relational" }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "relational" }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain("relational");
   });
 
   it("accepts belief_type 'systemic'", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "systemic" }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, belief_type: "systemic" }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain("systemic");
   });
 
   it("applies default belief_type 'self' when field is absent", async () => {
@@ -121,18 +129,24 @@ describe("postConclusion -- confidence validation", () => {
   });
 
   it("accepts confidence 0.0 (lower boundary)", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, confidence: 0.0 }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, confidence: 0.0 }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain(0.0);
   });
 
   it("accepts confidence 1.0 (upper boundary)", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, confidence: 1.0 }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, confidence: 1.0 }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain(1.0);
   });
 
   it("accepts confidence 0.85 (mid-range)", async () => {
-    const res = await postConclusion(makeRequest({ ...BASE_BODY, confidence: 0.85 }), makeEnv());
+    const captured: { values: unknown[] } = { values: [] };
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, confidence: 0.85 }), makeEnv(captured));
     expect(res.status).toBe(200);
+    expect(captured.values).toContain(0.85);
   });
 
   it("applies default confidence 0.7 when field is absent", async () => {
