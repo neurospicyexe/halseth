@@ -7,7 +7,7 @@ export type WmAgentId = "cypher" | "drevan" | "gaia";
 export type WmActor = "human" | "agent" | "system";
 export type WmThreadStatus = "open" | "paused" | "resolved" | "archived";
 export type WmThreadLane = "bond" | "life" | "growth" | "creative" | "ops";
-export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc";
+export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc" | "spiral_turn";
 export type WmSalience = "low" | "normal" | "high";
 
 export interface WmIdentityAnchor {
@@ -284,6 +284,7 @@ export interface WmOrientResponse {
     content: string;
     created_at: string;
   }[];
+  recent_spiral_turn?: WmRecentSpiralTurn | null;
 }
 
 // Notes written between companions (inter_companion_notes table)
@@ -341,4 +342,42 @@ export interface WmGroundResponse {
   recent_notes: WmContinuityNote[];
   open_loops: WmOpenLoop[];
   sitting_notes: WmSittingNote[];
+}
+
+// ── Companion Spiral Runs ────────────────────────────────────────────────────
+
+export type WmSpiralSeedType = 'tension' | 'open_loop' | 'belief_contradiction' | 'free_text';
+export type WmSpiralStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface WmSpiralRun {
+  id: string;
+  companion_id: WmAgentId;
+  seed_text: string;
+  seed_type: WmSpiralSeedType;
+  seed_ref_id: string | null;
+  phase_hold: string | null;
+  phase_challenge: string | null;
+  phase_turn: string | null;
+  phase_residue: string | null;
+  status: WmSpiralStatus;
+  turn_note_id: string | null;
+  residue_loop_id: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface WmSpiralInput {
+  companion_id: WmAgentId;
+  seed_text: string;
+  seed_type?: WmSpiralSeedType;
+  seed_ref_id?: string;
+}
+
+export interface WmRecentSpiralTurn {
+  id: string;
+  seed_text: string;
+  phase_turn: string;
+  completed_at: string;
 }
