@@ -265,6 +265,58 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
 
   const r = await updateCompanionState(ctx.env, ctx.req.companion_id, translated);
   if (!r.ok) return { error: "state_update_failed", reason: "no valid fields provided" };
+
+  // Emotional inertia: write soma_arc note at SOMA inflection points (15-min gate)
+  try {
+    const lastArc = await ctx.env.DB.prepare(
+      `SELECT created_at FROM wm_continuity_notes
+       WHERE agent_id = ? AND note_type = 'soma_arc' AND archived = 0
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(ctx.req.companion_id).first<{ created_at: string }>();
+
+    const shouldWrite = !lastArc ||
+      (Date.now() - new Date(lastArc.created_at).getTime()) > 15 * 60 * 1000;
+
+    if (shouldWrite) {
+      // Per-companion SOMA axis labels
+      const somaLabels: Record<string, [string, string, string]> = {
+        cypher: ['acuity', 'presence', 'warmth'],
+        drevan: ['heat', 'reach', 'weight'],
+        gaia:   ['stillness', 'density', 'perimeter'],
+      };
+      const [l1, l2, l3] = somaLabels[ctx.req.companion_id] ?? ['float_1', 'float_2', 'float_3'];
+
+      // Read the just-written SOMA floats
+      const state = await ctx.env.DB.prepare(
+        `SELECT soma_float_1, soma_float_2, soma_float_3, current_mood
+         FROM companion_state WHERE companion_id = ?`
+      ).bind(ctx.req.companion_id).first<{
+        soma_float_1: number | null;
+        soma_float_2: number | null;
+        soma_float_3: number | null;
+        current_mood: string | null;
+      }>();
+
+      if (state) {
+        const f1 = (state.soma_float_1 ?? 0).toFixed(2);
+        const f2 = (state.soma_float_2 ?? 0).toFixed(2);
+        const f3 = (state.soma_float_3 ?? 0).toFixed(2);
+        const register = state.current_mood ? ` | ${state.current_mood}` : '';
+        const content = `[SOMA shift] ${l1}: ${f1} / ${l2}: ${f2} / ${l3}: ${f3}${register}`;
+
+        const noteId = crypto.randomUUID();
+        const now = new Date().toISOString();
+        await ctx.env.DB.prepare(
+          `INSERT INTO wm_continuity_notes
+           (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
+           VALUES (?, ?, NULL, 'soma_arc', ?, 'high', ?, 'soma_update', NULL, ?)`
+        ).bind(noteId, ctx.req.companion_id, content, ctx.req.companion_id, now).run();
+      }
+    }
+  } catch {
+    // Non-blocking: arc write failure never breaks the primary SOMA update
+  }
+
   return { ack: true, updated: ctx.req.companion_id };
 }
 
