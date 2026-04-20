@@ -269,7 +269,15 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
 }
 
 export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ conclusion_text?: string; supersedes?: string; source_sessions?: string[] }>(ctx.req.context);
+  const p = parseContext<{
+    conclusion_text?: string;
+    supersedes?: string;
+    source_sessions?: string[];
+    confidence?: number;
+    type?: string;
+    subject?: string;
+    provenance?: string;
+  }>(ctx.req.context);
   // Structured context wins; fall back to stripping trigger from natural language request
   const conclusionText = p?.conclusion_text?.trim() || ctx.req.request
     .replace(/^(?:i've\s+concluded|i\s+conclude|my\s+conclusion|thesis|i\s+believe|i\s+hold\s+that|i\s+assert|conclusion|i've\s+come\s+to\s+believe|i've\s+realized|what\s+i\s+know\s+now)\s*:?\s*/i, "")
@@ -280,10 +288,15 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   const now = new Date().toISOString();
   const sourceSessions = Array.isArray(p?.source_sessions) ? JSON.stringify(p.source_sessions) : null;
   const supersedes = p?.supersedes;
+  // Worldview fields: companions write `type` in context; DB column is `belief_type`
+  const confidence = (p?.confidence !== undefined && p.confidence >= 0 && p.confidence <= 1) ? p.confidence : 0.7;
+  const beliefType = p?.type ?? "self";
+  const subject = p?.subject ?? null;
+  const provenance = p?.provenance ?? null;
   const stmts = [
     ctx.env.DB.prepare(
-      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, now),
+      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, now),
   ];
   if (supersedes) {
     stmts.push(
