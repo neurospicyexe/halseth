@@ -1,4 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { queueAndRunSpiral } from '../../webmind/spiral.js';
+import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
 import {
   addCompanionNote, companionJournalAdd, feelingLog, journalAdd, dreamLog, woundAdd, deltaLog, eqSnapshot,
   taskAdd, taskUpdateStatus, taskList, handoverRead, routineLog, listAdd, listItemComplete,
@@ -419,4 +421,39 @@ export async function execConclusionsRead(ctx: ExecutorContext): Promise<Executo
     "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10"
   ).bind(ctx.req.companion_id).all();
   return { data: rows.results ?? [], meta: { operation: "conclusions_read" } };
+}
+
+export async function execSpiralRun(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ seed_text?: string; seed_type?: string; seed_ref_id?: string }>(ctx.req.context);
+
+  // Prefer explicit seed_text from context; fall back to stripping the trigger phrase from the request
+  const seed_text = (p?.seed_text?.trim()) || ctx.req.request
+    .replace(/^(?:run\s+a?\s*spiral\s+on|start\s+a?\s*spiral\s+on|spiral\s+on|run\s+spiral|start\s+spiral|begin\s+spiral)\s*/i, '')
+    .trim();
+
+  if (!seed_text) return { error: 'spiral_run_failed', reason: 'missing seed_text -- include what to spiral on' };
+  if (seed_text.length > 8000) return { error: 'spiral_run_failed', reason: 'seed_text too long (max 8000)' };
+
+  const valid_seed_types = new Set(['tension', 'open_loop', 'belief_contradiction', 'free_text']);
+  const seed_type = p?.seed_type && valid_seed_types.has(p.seed_type)
+    ? p.seed_type as WmSpiralInput['seed_type']
+    : 'free_text';
+
+  try {
+    const run = await queueAndRunSpiral(ctx.env, {
+      companion_id: ctx.req.companion_id as WmAgentId,
+      seed_text,
+      seed_type,
+      seed_ref_id: p?.seed_ref_id,
+    });
+    return {
+      ack: true,
+      spiral_id: run.id,
+      status: run.status,
+      phase_turn: run.phase_turn ?? null,
+      phase_residue: run.phase_residue ?? null,
+    };
+  } catch (e) {
+    return { error: 'spiral_run_failed', reason: String(e) };
+  }
 }
