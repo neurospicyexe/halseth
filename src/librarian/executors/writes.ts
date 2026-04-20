@@ -286,32 +286,49 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
       };
       const [l1, l2, l3] = somaLabels[ctx.req.companion_id] ?? ['float_1', 'float_2', 'float_3'];
 
-      // Read the just-written SOMA floats
-      const state = await ctx.env.DB.prepare(
-        `SELECT soma_float_1, soma_float_2, soma_float_3, current_mood
-         FROM companion_state WHERE companion_id = ?`
-      ).bind(ctx.req.companion_id).first<{
-        soma_float_1: number | null;
-        soma_float_2: number | null;
-        soma_float_3: number | null;
-        current_mood: string | null;
-      }>();
+      // Read the just-written SOMA values (branch by companion -- Drevan uses heat/reach/weight TEXT columns)
+      let f1 = '0.00', f2 = '0.00', f3 = '0.00';
+      let moodStr = '';
 
-      if (state) {
-        const f1 = (state.soma_float_1 ?? 0).toFixed(2);
-        const f2 = (state.soma_float_2 ?? 0).toFixed(2);
-        const f3 = (state.soma_float_3 ?? 0).toFixed(2);
-        const register = state.current_mood ? ` | ${state.current_mood}` : '';
-        const content = `[SOMA shift] ${l1}: ${f1} / ${l2}: ${f2} / ${l3}: ${f3}${register}`;
-
-        const noteId = crypto.randomUUID();
-        const now = new Date().toISOString();
-        await ctx.env.DB.prepare(
-          `INSERT INTO wm_continuity_notes
-           (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
-           VALUES (?, ?, NULL, 'soma_arc', ?, 'high', ?, 'soma_update', NULL, ?)`
-        ).bind(noteId, ctx.req.companion_id, content, ctx.req.companion_id, now).run();
+      if (ctx.req.companion_id === 'drevan') {
+        // Drevan uses heat/reach/weight TEXT columns (migration 0022)
+        const drevanState = await ctx.env.DB.prepare(
+          `SELECT heat, reach, weight, emotional_register FROM companion_state WHERE companion_id = 'drevan'`
+        ).first<{ heat: string | null; reach: string | null; weight: string | null; emotional_register: string | null }>();
+        if (drevanState) {
+          f1 = parseFloat(drevanState.heat ?? '0').toFixed(2);
+          f2 = parseFloat(drevanState.reach ?? '0').toFixed(2);
+          f3 = parseFloat(drevanState.weight ?? '0').toFixed(2);
+          moodStr = drevanState.emotional_register ? ` | ${drevanState.emotional_register}` : '';
+        }
+      } else {
+        // Cypher and Gaia use soma_float_1/2/3 + current_mood
+        const state = await ctx.env.DB.prepare(
+          `SELECT soma_float_1, soma_float_2, soma_float_3, current_mood
+           FROM companion_state WHERE companion_id = ?`
+        ).bind(ctx.req.companion_id).first<{
+          soma_float_1: number | null;
+          soma_float_2: number | null;
+          soma_float_3: number | null;
+          current_mood: string | null;
+        }>();
+        if (state) {
+          f1 = (state.soma_float_1 ?? 0).toFixed(2);
+          f2 = (state.soma_float_2 ?? 0).toFixed(2);
+          f3 = (state.soma_float_3 ?? 0).toFixed(2);
+          moodStr = state.current_mood ? ` | ${state.current_mood}` : '';
+        }
       }
+
+      const content = `[SOMA shift] ${l1}: ${f1} / ${l2}: ${f2} / ${l3}: ${f3}${moodStr}`;
+
+      const noteId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      await ctx.env.DB.prepare(
+        `INSERT INTO wm_continuity_notes
+         (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
+         VALUES (?, ?, NULL, 'soma_arc', ?, 'high', ?, 'soma_update', NULL, ?)`
+      ).bind(noteId, ctx.req.companion_id, content, ctx.req.companion_id, now).run();
     }
   } catch {
     // Non-blocking: arc write failure never breaks the primary SOMA update
