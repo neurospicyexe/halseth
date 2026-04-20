@@ -279,6 +279,11 @@ export interface WmOrientResponse {
   raziel_witness_entries: WmRelationalState[];  // recent witness observations about Raziel (not ROW_NUMBER collapsed)
   active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs, type-distributed
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
+  soma_arc?: {
+    note_id: string;
+    content: string;
+    created_at: string;
+  }[];
 }
 
 // Notes written between companions (inter_companion_notes table)
