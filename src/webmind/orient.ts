@@ -24,7 +24,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, activeConclusions] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -77,11 +77,43 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT id, companion_id, toward, state_text, weight, state_type, noted_at FROM companion_relational_state WHERE companion_id = ? AND state_type = 'witness' AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 5"
     ).bind(agentId).all<WmRelationalState>(),
-    // Active conclusions: non-superseded beliefs this companion holds
-    env.DB.prepare(
-      "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 3"
-    ).bind(agentId).all<WmConclusion>(),
   ]);
+
+  // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total)
+  const beliefTypes = ['self', 'relational', 'observational', 'systemic'];
+  const conclusionPromises = beliefTypes.map(type =>
+    env.DB.prepare(
+      `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
+              created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+       FROM companion_conclusions
+       WHERE companion_id = ? AND belief_type = ? AND superseded_by IS NULL
+       ORDER BY created_at DESC LIMIT 2`
+    ).bind(agentId, type).all<WmConclusion>()
+  );
+
+  const [selfResults, relationalResults, observationalResults, systemicResults] = await Promise.all(conclusionPromises);
+
+  const seenIds = new Set<string>();
+  const active_conclusions: WmConclusion[] = [];
+  for (const result of [selfResults, relationalResults, observationalResults, systemicResults] as const) {
+    for (const row of (result?.results ?? [])) {
+      if (!seenIds.has(row.id) && active_conclusions.length < 6) {
+        seenIds.add(row.id);
+        active_conclusions.push(row);
+      }
+    }
+  }
+
+  // Flagged beliefs: separate pass for contradiction-flagged active conclusions
+  const flaggedResult = await env.DB.prepare(
+    `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
+            created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+     FROM companion_conclusions
+     WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1
+     ORDER BY created_at DESC`
+  ).bind(agentId).all<WmConclusion>();
+
+  const flagged_beliefs: WmConclusion[] = flaggedResult.results ?? [];
 
   // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
   // Fire-and-forget: a failure here doesn't block the orient response.
@@ -95,6 +127,20 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     });
   }
 
+  // Cross-reference: annotate simmering tensions that may already be closed by a conclusion.
+  // If a tension's last_surfaced_at predates the oldest active conclusion by > 3 days,
+  // mark it possibly_resolved so synthesis workers don't loop on stale content.
+  const tensionRows = activeTensions.results ?? [];
+  const conclusionRows = active_conclusions;
+  const oldestConclusionMs = conclusionRows.length > 0
+    ? Math.min(...conclusionRows.map(c => new Date(c.created_at).getTime()))
+    : null;
+  const annotatedTensions = tensionRows.map(t => {
+    if (oldestConclusionMs === null || !t.last_surfaced_at) return t;
+    const staleDays = (oldestConclusionMs - new Date(t.last_surfaced_at).getTime()) / 86_400_000;
+    return staleDays > 3 ? { ...t, possibly_resolved: true } : t;
+  });
+
   return {
     identity_anchor: anchor,
     limbic_state: limbicState,
@@ -103,7 +149,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     open_thread_count: threadCount?.cnt ?? 0,
     top_threads: topThreads.results ?? [],
     recent_notes: recentNotes.results ?? [],
-    active_tensions: activeTensions.results ?? [],
+    active_tensions: annotatedTensions,
     pressure_flags: pressureFlags.results ?? [],
     unexamined_dreams: unexaminedDreams.results ?? [],
     relational_snapshot: relationalSnapshot,
@@ -113,6 +159,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     recent_journal: recentJournal.results ?? [],
     recent_deltas: recentDeltas.results ?? [],
     raziel_witness_entries: razielWitnessEntries.results ?? [],
-    active_conclusions: activeConclusions.results ?? [],
+    active_conclusions,
+    flagged_beliefs,
   };
 }
