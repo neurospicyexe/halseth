@@ -695,7 +695,12 @@ export async function postMindSpiralRun(request: Request, env: Env): Promise<Res
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  const body = await request.json() as Record<string, unknown>;
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return json({ error: 'invalid JSON' }, 400);
+  }
 
   if (typeof body.companion_id !== 'string' || !isValidAgentId(body.companion_id)) {
     return json({ error: 'invalid companion_id' }, 400);
@@ -742,11 +747,16 @@ export async function getMindSpiralRuns(
   }
 
   const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '10', 10), 50);
+  const parsed = parseInt(url.searchParams.get('limit') ?? '10', 10);
+  const limit = Math.min(isNaN(parsed) ? 10 : parsed, 50);
 
-  const rows = await env.DB.prepare(
-    'SELECT * FROM companion_spiral_runs WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?'
-  ).bind(companion_id, limit).all();
-
-  return json({ runs: rows.results });
+  try {
+    const rows = await env.DB.prepare(
+      'SELECT * FROM companion_spiral_runs WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?'
+    ).bind(companion_id, limit).all();
+    return json({ runs: rows.results });
+  } catch (err) {
+    console.error('[mind/spiral] DB error', String(err));
+    return json({ error: 'failed to fetch spiral runs' }, 500);
+  }
 }
