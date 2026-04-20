@@ -85,8 +85,10 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   }
 
   // 2. Active tensions -- identity-level, colors everything read after
+  // Skip tensions annotated possibly_resolved by orient (cross-referenced against active conclusions).
   if (wm.active_tensions?.length > 0) {
     for (const t of wm.active_tensions) {
+      if (t.possibly_resolved) continue;
       const since = t.first_noted_at?.slice(0, 10) ?? "?";
       parts.push(`[Tension: simmering since ${since}] «${t.tension_text}»`);
     }
@@ -135,6 +137,14 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
       const snippet = c.conclusion_text.length > 200 ? c.conclusion_text.slice(0, 200) + "…" : c.conclusion_text;
       parts.push(`  • [concluded @ ${c.created_at.slice(0, 10)}] «${snippet}»`);
     }
+  }
+
+  // 7b. Flagged beliefs -- conclusions marked for review (contradiction_flagged)
+  if (wm.flagged_beliefs && wm.flagged_beliefs.length > 0) {
+    const flaggedLines = wm.flagged_beliefs.map((b: WmConclusion) =>
+      `[?] ${b.belief_type}: "${b.conclusion_text.length > 200 ? b.conclusion_text.slice(0, 200) + "…" : b.conclusion_text}"${b.subject ? ` (re: ${b.subject})` : ""}`
+    ).join("\n");
+    parts.push(`[Flagged Beliefs -- review signal]\n${flaggedLines}`);
   }
 
   // 8. Incoming inter-companion notes -- triad context before own history
