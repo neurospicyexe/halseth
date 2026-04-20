@@ -221,6 +221,12 @@ export interface WmConclusion {
   source_sessions: string | null;  // JSON array string
   superseded_by: string | null;
   created_at: string;
+  edited_at: string | null;
+  confidence: number;           // 0.0-1.0, default 0.7 at DB level
+  belief_type: string;          // 'self' | 'observational' | 'relational' | 'systemic'
+  subject: string | null;
+  provenance: string | null;
+  contradiction_flagged: number; // integer boolean (0|1)
 }
 
 // ── Limbic State (swarm-level synthesis output) ────────────────────────────
@@ -311,6 +317,9 @@ export interface WmTensionRow {
   first_noted_at: string;
   last_surfaced_at: string | null;
   notes: string | null;
+  // Set by orient.ts when a tension predates active conclusions by > 3 days.
+  // Signals synthesis workers that this territory may already be resolved.
+  possibly_resolved?: boolean;
 }
 
 export interface WmBasinHistoryRow {
