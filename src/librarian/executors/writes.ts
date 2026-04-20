@@ -277,6 +277,7 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     type?: string;
     subject?: string;
     provenance?: string;
+    contradiction_flagged?: number; // 0|1 -- companion declares a contradiction signal
   }>(ctx.req.context);
   // Structured context wins; fall back to stripping trigger from natural language request
   const conclusionText = p?.conclusion_text?.trim() || ctx.req.request
@@ -297,10 +298,11 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   }
   const subject = p?.subject ?? null;
   const provenance = p?.provenance ?? null;
+  const contradictionFlagged = p?.contradiction_flagged === 1 ? 1 : 0;
   const stmts = [
     ctx.env.DB.prepare(
-      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, now),
+      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, contradiction_flagged, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, contradictionFlagged, now),
   ];
   if (supersedes) {
     stmts.push(
