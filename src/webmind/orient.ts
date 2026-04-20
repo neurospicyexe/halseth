@@ -5,7 +5,7 @@
 //   1. Identity anchor snapshot (auto-seed if missing)
 //   2. Latest session handoff
 //   3. Open thread count + top 5 threads (priority desc, last_touched_at desc)
-//   4. Recent high-salience continuity notes (last 5)
+//   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
 import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion } from "./types.js";
@@ -24,7 +24,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -35,8 +35,22 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT * FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY priority DESC, last_touched_at DESC LIMIT 5"
     ).bind(agentId).all<WmMindThread>(),
+    // 3-pool surfacing: Core (recent), Novelty (skip recent 5), Edge (deep history random)
     env.DB.prepare(
-      "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND salience = 'high' ORDER BY created_at DESC LIMIT 5"
+      `SELECT * FROM wm_continuity_notes
+       WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
+       ORDER BY created_at DESC LIMIT 3`
+    ).bind(agentId).all<WmContinuityNote>(),
+    env.DB.prepare(
+      `SELECT * FROM wm_continuity_notes
+       WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
+       ORDER BY created_at DESC LIMIT 1 OFFSET 5`
+    ).bind(agentId).all<WmContinuityNote>(),
+    env.DB.prepare(
+      `SELECT * FROM wm_continuity_notes
+       WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
+         AND created_at < datetime('now', '-30 days')
+       ORDER BY RANDOM() LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
     // Self-defense: active (simmering) tensions -- carried into every session
     env.DB.prepare(
@@ -84,6 +98,20 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
        ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all(),
   ]);
+
+  // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
+  const _recentNotesSeen = new Set<string>();
+  const recentNotes: WmContinuityNote[] = [];
+  for (const n of [
+    ...(coreNotes.results ?? []),
+    ...(noveltyNote.results ?? []),
+    ...(edgeNote.results ?? []),
+  ] as WmContinuityNote[]) {
+    if (!_recentNotesSeen.has(n.note_id)) {
+      _recentNotesSeen.add(n.note_id);
+      recentNotes.push(n);
+    }
+  }
 
   // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total)
   const beliefTypes = ['self', 'relational', 'observational', 'systemic'];
@@ -154,7 +182,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     recent_handoffs: recentHandoffs.results ?? [],
     open_thread_count: threadCount?.cnt ?? 0,
     top_threads: topThreads.results ?? [],
-    recent_notes: recentNotes.results ?? [],
+    recent_notes: recentNotes,
     active_tensions: annotatedTensions,
     pressure_flags: pressureFlags.results ?? [],
     unexamined_dreams: unexaminedDreams.results ?? [],
