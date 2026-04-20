@@ -89,6 +89,7 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
     // Write TURN to wm_continuity_notes (high salience, excluded from 3-pool by orient)
     let turnNoteId: string | null = null;
     if (priorPhases.TURN) {
+      // defensive: loop always runs TURN, but guard against future refactors
       turnNoteId = crypto.randomUUID();
       const now = new Date().toISOString();
       await env.DB.prepare(
@@ -101,6 +102,7 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
     // Write RESIDUE to companion_open_loops (weight 0.6 -- carried but not urgent)
     let residueLoopId: string | null = null;
     if (priorPhases.RESIDUE) {
+      // defensive: loop always runs RESIDUE, but guard against future refactors
       residueLoopId = crypto.randomUUID();
       await env.DB.prepare(
         'INSERT INTO companion_open_loops (id, companion_id, loop_text, weight, opened_at) VALUES (?, ?, ?, 0.6, ?)'
