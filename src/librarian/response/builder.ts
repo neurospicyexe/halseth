@@ -47,6 +47,17 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     }
   }
 
+  // 1b-pre. SOMA arc -- trajectory (oldest → newest), rendered before current snapshot
+  if (wm.soma_arc && wm.soma_arc.length > 0) {
+    const arcLines = [...wm.soma_arc]
+      .reverse() // orient returns newest-first; reverse to show trajectory oldest→newest
+      .map(n => {
+        const time = n.created_at.slice(11, 16); // HH:MM from ISO string
+        return `  ${n.content} (${time}Z)`;
+      });
+    parts.push(`[SOMA arc]\n${arcLines.join('\n')}`);
+  }
+
   // 1b. Limbic state -- synthesized emotional/cognitive state from synthesis loop
   // Fallback: synthesis loop hasn't run yet (fresh deploy or first session)
   if (!wm.limbic_state) {
