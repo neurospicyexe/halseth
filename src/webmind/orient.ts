@@ -24,7 +24,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, recentNotes, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -77,6 +77,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT id, companion_id, toward, state_text, weight, state_type, noted_at FROM companion_relational_state WHERE companion_id = ? AND state_type = 'witness' AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 5"
     ).bind(agentId).all<WmRelationalState>(),
+    // SOMA arc: last 3 soma_arc continuity notes -- SOMA trajectory across sessions
+    env.DB.prepare(
+      `SELECT note_id, content, created_at FROM wm_continuity_notes
+       WHERE agent_id = ? AND note_type = 'soma_arc' AND archived = 0
+       ORDER BY created_at DESC LIMIT 3`
+    ).bind(agentId).all(),
   ]);
 
   // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total)
@@ -161,5 +167,6 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     raziel_witness_entries: razielWitnessEntries.results ?? [],
     active_conclusions,
     flagged_beliefs,
+    soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
   };
 }
