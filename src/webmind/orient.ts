@@ -35,7 +35,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT * FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY priority DESC, last_touched_at DESC LIMIT 5"
     ).bind(agentId).all<WmMindThread>(),
-    // 3-pool surfacing: Core (recent), Novelty (skip recent 5), Edge (deep history random)
+    // 3-pool surfacing: Core (rows 0-2), Novelty (row 5, skipping rows 3-4 intentionally), Edge (deep history random)
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
        WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
@@ -100,15 +100,15 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   ]);
 
   // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
-  const _recentNotesSeen = new Set<string>();
+  const recentNotesSeen = new Set<string>();
   const recentNotes: WmContinuityNote[] = [];
   for (const n of [
     ...(coreNotes.results ?? []),
     ...(noveltyNote.results ?? []),
     ...(edgeNote.results ?? []),
-  ] as WmContinuityNote[]) {
-    if (!_recentNotesSeen.has(n.note_id)) {
-      _recentNotesSeen.add(n.note_id);
+  ]) {
+    if (!recentNotesSeen.has(n.note_id)) {
+      recentNotesSeen.add(n.note_id);
       recentNotes.push(n);
     }
   }
