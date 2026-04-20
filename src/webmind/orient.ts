@@ -46,12 +46,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
        WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
        ORDER BY created_at DESC LIMIT 1 OFFSET 5`
     ).bind(agentId).all<WmContinuityNote>(),
+    // Note: Novelty returns empty when fewer than 6 qualifying rows exist (new/sparse agents fall back to Core-only)
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
        WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
          AND created_at < datetime('now', '-30 days')
        ORDER BY RANDOM() LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
+    // Note: ORDER BY RANDOM() is acceptable at current per-companion scale (~hundreds of rows); at ~5k+ rows, consider keyset sampling
     // Self-defense: active (simmering) tensions -- carried into every session
     env.DB.prepare(
       "SELECT id, tension_text, status, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC"
