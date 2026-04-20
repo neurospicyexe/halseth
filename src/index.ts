@@ -31,7 +31,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive } from "./handlers/webmind.js";
+import { getMindOrient, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindSpiralRun, getMindSpiralRuns } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -155,6 +155,8 @@ const router = new Router()
   .on("POST", "/mind/loop/:id/close",   (request, env, params) => postMindLoopClose(request, env, params ?? {}))
   .on("POST", "/mind/relational",       (request, env) => postMindRelational(request, env))
   .on("GET",  "/mind/relational/:agent_id", (request, env, params) => getMindRelational(request, env, params ?? {}))
+  .on("POST", "/mind/spiral/run",           (request, env)         => postMindSpiralRun(request, env))
+  .on("GET",  "/mind/spiral/:companion_id", (request, env, params) => getMindSpiralRuns(request, env, params ?? {}))
   .on("POST", "/mind/note/:id/sit",         (request, env, params) => postNoteSit(request, env, params ?? {}))
   .on("POST", "/mind/note/:id/metabolize",  (request, env, params) => postNoteMetabolize(request, env, params ?? {}))
   .on("GET",  "/mind/sitting/:agent_id",    (request, env, params) => getSittingNotes(request, env, params ?? {}))

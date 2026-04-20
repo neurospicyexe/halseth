@@ -15,7 +15,8 @@ import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
 import { writeLimbicState, getCurrentLimbicState } from "../webmind/limbic.js";
-import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput, WmThreadStatus } from "../webmind/types.js";
+import { queueAndRunSpiral } from '../webmind/spiral.js';
+import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput, WmThreadStatus, WmSpiralInput } from "../webmind/types.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -685,4 +686,67 @@ export async function patchMindThreadStatus(
     console.error("[mind/thread/status] error", { thread_key: threadKey, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
+}
+
+const VALID_SPIRAL_SEED_TYPES = new Set(['tension', 'open_loop', 'belief_contradiction', 'free_text']);
+
+// POST /mind/spiral/run
+export async function postMindSpiralRun(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const body = await request.json() as Record<string, unknown>;
+
+  if (typeof body.companion_id !== 'string' || !isValidAgentId(body.companion_id)) {
+    return json({ error: 'invalid companion_id' }, 400);
+  }
+  if (typeof body.seed_text !== 'string' || !body.seed_text.trim()) {
+    return json({ error: 'seed_text required' }, 400);
+  }
+  if (exceedsLimit(body.seed_text)) {
+    return json({ error: 'seed_text too long (max 8000 chars)' }, 400);
+  }
+
+  const seed_type = typeof body.seed_type === 'string' && VALID_SPIRAL_SEED_TYPES.has(body.seed_type)
+    ? body.seed_type as WmSpiralInput['seed_type']
+    : 'free_text';
+
+  const input: WmSpiralInput = {
+    companion_id: body.companion_id,
+    seed_text: (body.seed_text as string).trim(),
+    seed_type,
+    seed_ref_id: typeof body.seed_ref_id === 'string' ? body.seed_ref_id : undefined,
+  };
+
+  try {
+    const run = await queueAndRunSpiral(env, input);
+    return json(run, 201);
+  } catch (err) {
+    console.error('[mind/spiral/run] error', String(err));
+    return json({ error: 'spiral run failed', detail: String(err) }, 500);
+  }
+}
+
+// GET /mind/spiral/:companion_id
+export async function getMindSpiralRuns(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { companion_id } = params;
+  if (!companion_id || !isValidAgentId(companion_id)) {
+    return json({ error: 'invalid companion_id' }, 400);
+  }
+
+  const url = new URL(request.url);
+  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '10', 10), 50);
+
+  const rows = await env.DB.prepare(
+    'SELECT * FROM companion_spiral_runs WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?'
+  ).bind(companion_id, limit).all();
+
+  return json({ runs: rows.results });
 }
