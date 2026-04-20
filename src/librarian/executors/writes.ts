@@ -291,6 +291,10 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   // Worldview fields: companions write `type` in context; DB column is `belief_type`
   const confidence = (p?.confidence !== undefined && p.confidence >= 0 && p.confidence <= 1) ? p.confidence : 0.7;
   const beliefType = p?.type ?? "self";
+  const VALID_BELIEF_TYPES = ['self', 'observational', 'relational', 'systemic'];
+  if (!VALID_BELIEF_TYPES.includes(beliefType)) {
+    return { ack: false, error: `belief_type must be one of: ${VALID_BELIEF_TYPES.join(', ')}` };
+  }
   const subject = p?.subject ?? null;
   const provenance = p?.provenance ?? null;
   const stmts = [
@@ -341,7 +345,7 @@ export async function execAutonomyClaim(ctx: ExecutorContext): Promise<ExecutorR
 
 export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const rows = await ctx.env.DB.prepare(
-    "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10"
+    "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10"
   ).bind(ctx.req.companion_id).all();
   return { data: rows.results ?? [], meta: { operation: "conclusions_read" } };
 }
