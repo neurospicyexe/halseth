@@ -293,8 +293,8 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
       if (ctx.req.companion_id === 'drevan') {
         // Drevan uses heat/reach/weight TEXT columns (migration 0022)
         const drevanState = await ctx.env.DB.prepare(
-          `SELECT heat, reach, weight, emotional_register FROM companion_state WHERE companion_id = 'drevan'`
-        ).first<{ heat: string | null; reach: string | null; weight: string | null; emotional_register: string | null }>();
+          `SELECT heat, reach, weight, emotional_register FROM companion_state WHERE companion_id = ?`
+        ).bind(ctx.req.companion_id).first<{ heat: string | null; reach: string | null; weight: string | null; emotional_register: string | null }>();
         if (drevanState) {
           f1 = parseFloat(drevanState.heat ?? '0').toFixed(2);
           f2 = parseFloat(drevanState.reach ?? '0').toFixed(2);
@@ -330,8 +330,8 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
          VALUES (?, ?, NULL, 'soma_arc', ?, 'high', ?, 'soma_update', NULL, ?)`
       ).bind(noteId, ctx.req.companion_id, content, ctx.req.companion_id, now).run();
     }
-  } catch {
-    // Non-blocking: arc write failure never breaks the primary SOMA update
+  } catch (err) {
+    console.warn('[soma_arc] arc write failed (non-blocking):', err);
   }
 
   return { ack: true, updated: ctx.req.companion_id };

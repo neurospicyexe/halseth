@@ -7,7 +7,7 @@ export type WmAgentId = "cypher" | "drevan" | "gaia";
 export type WmActor = "human" | "agent" | "system";
 export type WmThreadStatus = "open" | "paused" | "resolved" | "archived";
 export type WmThreadLane = "bond" | "life" | "growth" | "creative" | "ops";
-export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops";
+export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc";
 export type WmSalience = "low" | "normal" | "high";
 
 export interface WmIdentityAnchor {
