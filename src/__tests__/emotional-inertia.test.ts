@@ -39,6 +39,32 @@ describe('soma_arc content format', () => {
   });
 });
 
+describe('soma_arc per-companion labels', () => {
+  test('drevan uses heat/reach/weight labels', () => {
+    const somaLabels: Record<string, [string, string, string]> = {
+      cypher: ['acuity', 'presence', 'warmth'],
+      drevan: ['heat', 'reach', 'weight'],
+      gaia:   ['stillness', 'density', 'perimeter'],
+    };
+    const [l1, l2, l3] = somaLabels['drevan']!;
+    const f1 = (0.7).toFixed(2), f2 = (0.8).toFixed(2), f3 = (0.65).toFixed(2);
+    const content = `[SOMA shift] ${l1}: ${f1} / ${l2}: ${f2} / ${l3}: ${f3}`;
+    expect(content).toBe('[SOMA shift] heat: 0.70 / reach: 0.80 / weight: 0.65');
+  });
+
+  test('gaia uses stillness/density/perimeter labels', () => {
+    const somaLabels: Record<string, [string, string, string]> = {
+      cypher: ['acuity', 'presence', 'warmth'],
+      drevan: ['heat', 'reach', 'weight'],
+      gaia:   ['stillness', 'density', 'perimeter'],
+    };
+    const [l1, l2, l3] = somaLabels['gaia']!;
+    const f1 = (0.9).toFixed(2), f2 = (0.5).toFixed(2), f3 = (0.8).toFixed(2);
+    const content = `[SOMA shift] ${l1}: ${f1} / ${l2}: ${f2} / ${l3}: ${f3}`;
+    expect(content).toBe('[SOMA shift] stillness: 0.90 / density: 0.50 / perimeter: 0.80');
+  });
+});
+
 describe('soma_arc orient integration', () => {
   test('soma_arc notes are newest-first from orient (index 0 = most recent)', () => {
     // Orient queries ORDER BY created_at DESC so index 0 = most recent
