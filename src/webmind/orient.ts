@@ -12,6 +12,7 @@ import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMind
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
+import { readRecentSpiralTurn } from './spiral.js';
 
 export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
   // 1. Identity anchor (auto-seed if missing)
@@ -24,7 +25,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -38,18 +39,18 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     // 3-pool surfacing: Core (rows 0-2), Novelty (row 5, skipping rows 3-4 intentionally), Edge (deep history random)
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
        ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all<WmContinuityNote>(),
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
        ORDER BY created_at DESC LIMIT 1 OFFSET 5`
     ).bind(agentId).all<WmContinuityNote>(),
     // Note: Novelty returns empty when fewer than 6 qualifying rows exist (new/sparse agents fall back to Core-only)
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type != 'soma_arc' AND archived = 0
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
          AND created_at < datetime('now', '-30 days')
        ORDER BY RANDOM() LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
@@ -99,6 +100,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
        WHERE agent_id = ? AND note_type = 'soma_arc' AND archived = 0
        ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all(),
+    readRecentSpiralTurn(env, agentId),
   ]);
 
   // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
@@ -198,5 +200,6 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     active_conclusions,
     flagged_beliefs,
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
+    recent_spiral_turn: recentSpiralTurnRow ?? null,
   };
 }

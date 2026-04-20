@@ -58,6 +58,14 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[SOMA arc]\n${arcLines.join('\n')}`);
   }
 
+  // Spiral turn -- what shifted in last spiral run (between-session processing)
+  if (wm.recent_spiral_turn?.phase_turn) {
+    const seedShort = wm.recent_spiral_turn.seed_text.length > 80
+      ? wm.recent_spiral_turn.seed_text.slice(0, 80) + '\u2026'
+      : wm.recent_spiral_turn.seed_text;
+    parts.push(`[Spiral turn] \u00ab${sanitizeForPrompt(wm.recent_spiral_turn.phase_turn)}\u00bb\n  (from: ${seedShort})`);
+  }
+
   // 1b. Limbic state -- synthesized emotional/cognitive state from synthesis loop
   // Fallback: synthesis loop hasn't run yet (fresh deploy or first session)
   if (!wm.limbic_state) {
