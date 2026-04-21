@@ -193,9 +193,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
     my_autonomous_turn: isMyTurn,
-    soma_float_1: os?.soma_float_1 ?? null,
-    soma_float_2: os?.soma_float_2 ?? null,
-    soma_float_3: os?.soma_float_3 ?? null,
+    // Drevan uses TEXT SOMA columns; Cypher/Gaia use floats
+    ...(agentId === 'drevan'
+      ? { heat: os?.heat ?? null, reach: os?.reach ?? null, weight: os?.weight ?? null }
+      : { soma_float_1: os?.soma_float_1 ?? null, soma_float_2: os?.soma_float_2 ?? null, soma_float_3: os?.soma_float_3 ?? null }
+    ),
     current_mood: os?.current_mood ?? null,
     compound_state: os?.compound_state ?? null,
     surface_emotion: os?.surface_emotion ?? null,
@@ -463,7 +465,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -506,6 +508,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT pattern_text FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
     ).bind(agentId).all<{ pattern_text: string }>(),
+    // 12. Pending autonomy seeds (max 3 -- queued for next autonomous run)
+    ctx.env.DB.prepare(
+      "SELECT content FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 3"
+    ).bind(agentId).all<{ content: string }>(),
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
@@ -570,6 +576,11 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       ? growthPatternsResult.value.results.map(r => (r.pattern_text ?? "").slice(0, 150)).filter(Boolean)
       : [];
 
+  const pending_seeds: string[] =
+    seedsResult.status === "fulfilled" && seedsResult.value?.results
+      ? seedsResult.value.results.map(r => (r.content ?? "").slice(0, 200)).filter(Boolean)
+      : [];
+
   return {
     data: {
       synthesis_summary,
@@ -583,6 +594,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       sibling_lanes,
       recent_growth,
       active_patterns,
+      pending_seeds,
     },
     meta: { operation: "halseth_bot_orient" },
   };
