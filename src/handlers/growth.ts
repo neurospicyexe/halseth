@@ -93,6 +93,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 }
 
 // GET /mind/growth/journal/:companion_id
+// ?limit=N (max 100), ?unaccepted=1 (only autonomous + unreviewed)
 export async function getGrowthJournal(
   request: Request,
   env: Env,
@@ -106,12 +107,45 @@ export async function getGrowthJournal(
 
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10), 100);
+  const unacceptedOnly = url.searchParams.get("unaccepted") === "1";
 
-  const rows = await env.DB.prepare(
-    "SELECT * FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?"
-  ).bind(companion_id, limit).all();
+  const sql = unacceptedOnly
+    ? "SELECT * FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND accepted_at IS NULL ORDER BY created_at DESC LIMIT ?"
+    : "SELECT * FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?";
 
+  const rows = await env.DB.prepare(sql).bind(companion_id, limit).all();
   return json({ journal: rows.results });
+}
+
+// PATCH /mind/growth/journal/:id/accept
+export async function acceptJournalEntry(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id required" }, 400);
+
+  const body = await request.json() as Record<string, unknown>;
+  if (!validateCompanion(body.companion_id)) return json({ error: "invalid companion_id" }, 400);
+
+  const result = await env.DB.prepare(
+    "UPDATE growth_journal SET accepted_at = datetime('now') WHERE id = ? AND companion_id = ? AND accepted_at IS NULL"
+  ).bind(id, body.companion_id).run();
+
+  if (result.meta.changes === 0) {
+    // Either not found, wrong companion, or already accepted
+    const row = await env.DB.prepare(
+      "SELECT accepted_at FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(id, body.companion_id).first<{ accepted_at: string | null }>();
+    if (!row) return json({ error: "entry not found" }, 404);
+    return json({ ok: true, already_accepted: true, accepted_at: row.accepted_at });
+  }
+
+  return json({ ok: true, already_accepted: false });
 }
 
 // ---------------------------------------------------------------------------

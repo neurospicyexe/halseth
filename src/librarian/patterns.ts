@@ -51,7 +51,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "ready_prompt",
   },
   get_state: {
-    triggers: ["my state", "current state", "how am i", "what's my state", "where am i"],
+    triggers: ["current state", "how am i", "what's my state", "where am i", "show my state", "check my state"],
     tools: ["halseth_session_load"],
     pre_fetch: ["plural_get_current_front"],
     response_key: "ready_prompt",
@@ -321,14 +321,42 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   dream_seed_read: {
-    triggers: ["dream seeds", "check seeds", "any seeds", "pending seeds", "what seeds", "read dream seeds"],
+    triggers: ["dream seeds", "check seeds", "read dream seeds"],
     tools: ["halseth_dream_seed_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  autonomy_seeds_read: {
+    triggers: [
+      "pending seeds", "queued seeds", "my seeds", "what seeds", "any seeds",
+      "my autonomy seeds", "my autonomy claims", "list autonomy claims",
+      "exploration queue", "what's queued", "seed queue",
+    ],
+    tools: ["halseth_autonomy_seeds_read"],
     response_key: "summary",
     raw: true,
   },
   claim_dream_seed: {
     triggers: ["claim seed", "claim dream seed", "mark seed claimed", "seed claimed"],
     tools: ["halseth_claim_dream_seed"],
+    response_key: "witness",
+  },
+  journal_review: {
+    triggers: [
+      "review my journal", "unaccepted journal", "journal entries to accept",
+      "review growth journal", "autonomous journal entries", "journal review",
+      "what have i written autonomously", "my unreviewed entries",
+    ],
+    tools: ["halseth_journal_review"],
+    response_key: "summary",
+    raw: true,
+  },
+  journal_accept: {
+    triggers: [
+      "accept journal entry", "accept this entry", "mark journal accepted",
+      "own this entry", "accept growth entry", "journal accepted",
+    ],
+    tools: ["halseth_journal_accept"],
     response_key: "witness",
   },
 
@@ -387,7 +415,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
 
   // ── SOMA state write (Claude.ai sessions → companion_state) ──
   state_update: {
-    triggers: ["update my state", "set my state", "state update", "set acuity", "set warmth", "set stillness", "set presence", "set density", "set perimeter", "set mood", "update soma", "soma update"],
+    triggers: ["update my state", "set my state", "state update", "set acuity", "set warmth", "set stillness", "set presence", "set density", "set perimeter", "set mood", "update soma", "soma update", "set heat", "set reach", "set weight"],
     tools: ["halseth_state_update"],
     response_key: "witness",
   },

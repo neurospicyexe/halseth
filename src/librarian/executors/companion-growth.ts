@@ -140,6 +140,82 @@ export async function execAutonomousRecall(ctx: ExecutorContext): Promise<Execut
   };
 }
 
+export async function execAutonomySeedsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "autonomy_seeds_read_failed", reason: "companion_id required" };
+  const rows = await ctx.env.DB.prepare(
+    `SELECT id, seed_type, content, priority, created_at
+     FROM autonomy_seeds
+     WHERE companion_id = ? AND used_at IS NULL
+     ORDER BY priority DESC, created_at ASC
+     LIMIT 20`
+  ).bind(ctx.req.companion_id).all<{
+    id: string;
+    seed_type: string;
+    content: string;
+    priority: number;
+    created_at: string;
+  }>();
+  const seeds = rows.results ?? [];
+  return {
+    response_key: "summary",
+    autonomy_seeds: seeds,
+    meta: { operation: "autonomy_seeds_read", companion_id: ctx.req.companion_id, count: seeds.length },
+  };
+}
+
+export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "journal_review_failed", reason: "companion_id required" };
+  const rows = await ctx.env.DB.prepare(
+    `SELECT id, entry_type, content, tags_json, created_at
+     FROM growth_journal
+     WHERE companion_id = ? AND source = 'autonomous' AND accepted_at IS NULL
+     ORDER BY created_at DESC
+     LIMIT 10`
+  ).bind(ctx.req.companion_id).all<{
+    id: string;
+    entry_type: string;
+    content: string;
+    tags_json: string;
+    created_at: string;
+  }>();
+  const entries = rows.results ?? [];
+  return {
+    response_key: "summary",
+    unaccepted_entries: entries.map(e => ({
+      id: e.id,
+      entry_type: e.entry_type,
+      content: e.content.slice(0, 600),
+      tags: (() => { try { return JSON.parse(e.tags_json ?? "[]"); } catch { return []; } })(),
+      created_at: e.created_at,
+    })),
+    meta: { operation: "journal_review", companion_id: ctx.req.companion_id, count: entries.length },
+  };
+}
+
+export async function execJournalAccept(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "journal_accept_failed", reason: "companion_id required" };
+  const raw = ctx.req.context ? (() => { try { return JSON.parse(ctx.req.context); } catch { return null; } })() : null;
+  const entryId = (raw as Record<string, unknown> | null)?.id as string | null
+    ?? ctx.req.request.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i)?.[1]
+    ?? null;
+
+  if (!entryId) return { error: "journal_accept_failed", reason: "entry id required (pass as context JSON {id} or inline UUID)" };
+
+  const result = await ctx.env.DB.prepare(
+    "UPDATE growth_journal SET accepted_at = datetime('now') WHERE id = ? AND companion_id = ? AND accepted_at IS NULL"
+  ).bind(entryId, ctx.req.companion_id).run();
+
+  if (result.meta.changes === 0) {
+    const row = await ctx.env.DB.prepare(
+      "SELECT accepted_at FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(entryId, ctx.req.companion_id).first<{ accepted_at: string | null }>();
+    if (!row) return { error: "journal_accept_failed", reason: "entry not found" };
+    return { response_key: "witness", already_accepted: true, accepted_at: row.accepted_at, meta: { operation: "journal_accept" } };
+  }
+
+  return { response_key: "witness", accepted: true, entry_id: entryId, meta: { operation: "journal_accept", companion_id: ctx.req.companion_id } };
+}
+
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   // Three queries in parallel: SOMA floats, relational state toward Raziel, last outgoing note.
   const [somaRows, relationalRows, noteRows] = await Promise.all([
@@ -154,13 +230,13 @@ export async function execTriadStateRead(ctx: ExecutorContext): Promise<Executor
     }>(),
     ctx.env.DB.prepare(
       `WITH ranked AS (
-        SELECT companion_id, state_text, state_type, toward, created_at,
-               ROW_NUMBER() OVER (PARTITION BY companion_id ORDER BY created_at DESC) AS rn
+        SELECT companion_id, state_text, state_type, toward, noted_at,
+               ROW_NUMBER() OVER (PARTITION BY companion_id ORDER BY noted_at DESC) AS rn
         FROM companion_relational_state
         WHERE LOWER(toward) = 'raziel'
       )
-      SELECT companion_id, state_text, state_type, toward, created_at FROM ranked WHERE rn = 1`
-    ).all<{ companion_id: string; state_text: string; state_type: string; toward: string; created_at: string }>(),
+      SELECT companion_id, state_text, state_type, toward, noted_at FROM ranked WHERE rn = 1`
+    ).all<{ companion_id: string; state_text: string; state_type: string; toward: string; noted_at: string }>(),
     ctx.env.DB.prepare(
       `WITH ranked AS (
         SELECT from_id, to_id, content, created_at,
@@ -199,7 +275,7 @@ export async function execTriadStateRead(ctx: ExecutorContext): Promise<Executor
       relational_toward_raziel: rel ? {
         state_text: rel.state_text,
         state_type: rel.state_type,
-        created_at: rel.created_at,
+        noted_at: rel.noted_at,
       } : null,
       last_note_sent: note ? {
         to_id: note.to_id ?? "broadcast",
