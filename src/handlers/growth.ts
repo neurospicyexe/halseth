@@ -63,7 +63,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
   if (typeof body.content !== "string" || !body.content.trim()) return json({ error: "content required" }, 400);
   if (body.content.toString().length > MAX_TEXT) return json({ error: `content too long (max ${MAX_TEXT})` }, 400);
 
-  const valid_types = new Set(["learning", "insight", "connection", "question"]);
+  const valid_types = new Set(["learning", "insight", "connection", "question", "signal_audit"]);
   const entry_type = typeof body.entry_type === "string" && valid_types.has(body.entry_type)
     ? body.entry_type
     : "learning";
