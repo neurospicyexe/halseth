@@ -25,7 +25,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -62,6 +62,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     // Self-defense: unconfirmed pressure drift flags -- surface for self-correction
     env.DB.prepare(
       "SELECT drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
+    ).bind(agentId).all<WmBasinHistoryRow>(),
+    // Growth tracking: recently confirmed growth records -- surface alongside pressure flags
+    env.DB.prepare(
+      "SELECT drift_score, drift_type, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND caleth_confirmed = 1 ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<WmBasinHistoryRow>(),
     // Dreams: unexamined things carried since last session -- surface until examined
     env.DB.prepare(
@@ -189,6 +193,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     recent_notes: recentNotes,
     active_tensions: annotatedTensions,
     pressure_flags: pressureFlags.results ?? [],
+    growth_confirmed: growthConfirmed.results ?? [],
     unexamined_dreams: unexaminedDreams.results ?? [],
     relational_snapshot: relationalSnapshot,
     recent_letters: recentLetters.results ?? [],
