@@ -66,8 +66,9 @@ import {
 // ── Companion growth executors ───────────────────────────────────────────────
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
-  execAutonomousRecall, execHeldMark, execHeldRead, execTensionEdit, execTensionStatus,
-  execPressureDriftLog, execConfirmGrowthDrift,
+  execAutonomousRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
+  execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift,
+  execJournalReview, execJournalAccept,
 } from "./executors/companion-growth.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -189,6 +190,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   conclusion_add: execConclusionAdd,
   conclusions_read: execConclusionsRead,
   autonomous_recall: execAutonomousRecall,
+  halseth_autonomy_seeds_read: execAutonomySeedsRead,
+  halseth_journal_review: execJournalReview,
+  halseth_journal_accept: execJournalAccept,
   held_mark: execHeldMark,
   held_read: execHeldRead,
 
