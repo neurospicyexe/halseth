@@ -17,21 +17,28 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   const toMatch = ctx.req.request.match(/(to|for)\s+(drevan|cypher|gaia)/i);
   const to_id = toMatch?.[2]?.toLowerCase() ?? null;
 
-  // Parse context: companions may send raw text OR structured JSON
-  let noteText = ctx.req.context ?? ctx.req.request;
+  // Parse context: companions may send raw text OR structured JSON.
+  // Default to request text -- context may be a metadata payload (e.g. session_id) with no note content.
+  let noteText = ctx.req.request;
   let tags: string | undefined;
   let source: string | undefined;
   if (ctx.req.context) {
     try {
       const parsed = JSON.parse(ctx.req.context);
       if (typeof parsed === "object" && parsed !== null) {
-        noteText = parsed.note_text ?? parsed.content ?? ctx.req.context;
+        // Only override request text if context carries explicit note content
+        if (parsed.note_text || parsed.content) {
+          noteText = parsed.note_text ?? parsed.content;
+        }
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
         if (typeof parsed.source === "string") source = parsed.source;
+      } else {
+        noteText = ctx.req.context; // parsed primitive -- use raw
       }
     } catch {
-      // Not JSON — use raw context as note text (this is fine)
+      // Not JSON -- use raw context string as note text
+      noteText = ctx.req.context;
     }
   }
 
@@ -254,8 +261,25 @@ const SOMA_VOCAB: Record<string, keyof CompanionStateUpdate> = {
   weight:    "weight",
 };
 
+function parseInlineStateFields(request: string): Record<string, unknown> | null {
+  const text = request
+    .replace(/^(update\s+my\s+state|set\s+my\s+state|state\s+update|update\s+soma|soma\s+update|set)\s*/i, "")
+    .replace(/\s+to\s+/gi, " ");
+  const knownKeys = ['acuity','presence','warmth','stillness','density','perimeter','heat','reach','weight','mood','compound_state','surface_emotion'];
+  const re = new RegExp(`(${knownKeys.join('|')})\\s*[:=]?\\s*([\\w][\\w\\-]*)`, 'gi');
+  const result: Record<string, unknown> = {};
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const key = m[1]; const val = m[2];
+    if (key && val) result[key.toLowerCase()] = val;
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const raw = parseContext<Record<string, unknown>>(ctx.req.context);
+  const rawCtx = parseContext<Record<string, unknown>>(ctx.req.context);
+  const raw: Record<string, unknown> | null =
+    rawCtx && Object.keys(rawCtx).length > 0 ? rawCtx : parseInlineStateFields(ctx.req.request);
   if (!raw || Object.keys(raw).length === 0) return { error: "state_update_failed", reason: "no fields provided; pass at least one of: soma_float_1/acuity/stillness, current_mood, compound_state, surface_emotion, etc." };
 
   // Translate companion vocab to DB columns
@@ -298,9 +322,9 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
           `SELECT heat, reach, weight, emotional_register FROM companion_state WHERE companion_id = ?`
         ).bind(ctx.req.companion_id).first<{ heat: string | null; reach: string | null; weight: string | null; emotional_register: string | null }>();
         if (drevanState) {
-          f1 = parseFloat(drevanState.heat ?? '0').toFixed(2);
-          f2 = parseFloat(drevanState.reach ?? '0').toFixed(2);
-          f3 = parseFloat(drevanState.weight ?? '0').toFixed(2);
+          f1 = drevanState.heat ?? '—';
+          f2 = drevanState.reach ?? '—';
+          f3 = drevanState.weight ?? '—';
           moodStr = drevanState.emotional_register ? ` | ${drevanState.emotional_register}` : '';
         }
       } else {
