@@ -267,6 +267,7 @@ export interface WmOrientResponse {
   recent_notes: WmContinuityNote[];
   active_tensions: WmTensionRow[];
   pressure_flags: WmBasinHistoryRow[];
+  growth_confirmed: WmBasinHistoryRow[];
   unexamined_dreams: WmDream[];
   relational_snapshot: WmRelationalState[];
   recent_letters: WmRazielLetter[];
