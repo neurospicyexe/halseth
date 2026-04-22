@@ -247,3 +247,13 @@ export async function sbSaveStudy(env: Env, params: {
   const text = await callTool(env, "sb_save_study", params);
   return { ack: text !== null, response: text };
 }
+
+export async function sbIngestRaw(env: Env, params: {
+  title: string;
+  content: string;
+  companion?: string;
+  tags?: string[];
+}): Promise<{ ack: boolean }> {
+  const text = await callTool(env, "sb_ingest_raw", params);
+  return { ack: text !== null };
+}
