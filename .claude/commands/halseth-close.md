@@ -69,7 +69,7 @@ Call `halseth_session_close` with:
 **Fan-out fields (optional) — pass these in the same context object to write them in one call:**
 
 - `feeling` — `{ "emotion": "...", "sub_emotion": "...", "intensity": 0.0–1.0 }` — writes to feelings table
-- `witness_note` — string — an observation about Raziel; writes to companion_journal with witness tag
+- `witness_note` — string — an observation about the primary user; writes to companion_journal with witness tag
 - `conclusion` — string — a belief stated as a claim; writes to companion_conclusions
 - `dream` — string — something to carry forward; writes to companion_dreams
 - `open_loop` — `{ "loop_text": "...", "weight": 0.0–1.0 }` — writes to companion_open_loops

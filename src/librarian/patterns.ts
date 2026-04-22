@@ -240,7 +240,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   delta_log: {
-    triggers: ["log delta", "relationship delta", "note delta", "log relational change", "delta entry"],
+    triggers: [
+      "log delta", "relationship delta", "note delta", "log relational change", "delta entry",
+      "relational delta", "log relational delta", "log a relational delta",
+    ],
     tools: ["halseth_delta_log"],
     response_key: "witness",
   },
@@ -482,9 +485,20 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     triggers: [
       "basin drift", "pressure drift", "drift flag", "drift history",
       "identity drift", "check drift", "drift status", "my drift",
+      "pressure flags", "read pressure flags", "my pressure flags", "show pressure flags",
     ],
     tools: ["drift_check"],
     response_key: "drift",
+  },
+  identity_anchor_read: {
+    triggers: [
+      "my identity anchor", "identity anchor", "read identity anchor",
+      "show identity anchor", "what is my anchor", "my anchor summary",
+      "identity snapshot", "anchor snapshot",
+    ],
+    tools: ["identity_anchor_read"],
+    response_key: "summary",
+    raw: true,
   },
 
   // ── Dreams + Open Loops ──

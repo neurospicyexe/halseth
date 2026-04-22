@@ -336,10 +336,15 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     }
   }
 
-  // Fire-and-forget: enqueue somatic snapshot for this companion.
-  enqueueSomaticSnapshot(ctx.req.companion_id, ctx.env).catch((e: unknown) => {
+  // Await the somatic snapshot enqueue -- SOMA state is continuity-critical.
+  // Same pattern as drift check: surface failure in the response rather than silently losing the job.
+  let somatic_warning: string | undefined;
+  try {
+    await enqueueSomaticSnapshot(ctx.req.companion_id, ctx.env);
+  } catch (e: unknown) {
+    somatic_warning = "somatic_snapshot enqueue failed — SOMA state may not sync until next session close";
     console.error("[session_close] somatic_snapshot enqueue failed:", String(e));
-  });
+  }
 
   // Await the drift check enqueue so failures surface in the response payload.
   // Non-fatal: a failed enqueue sets drift_warning; session close continues regardless.
@@ -446,6 +451,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     fanout: fanoutWrites.length > 0 ? { written: fanoutWrites.length - fanoutWarnings.length, failed: fanoutWarnings.length } : undefined,
     ...(sessionIdFallback ? { session_id_warning: "provided session_id not found (pruned?); closed latest open session instead" } : {}),
     ...(handoff_warning ? { handoff_warning } : {}),
+    ...(somatic_warning ? { somatic_warning } : {}),
     ...(drift_warning ? { drift_warning } : {}),
     ...(fanoutWarnings.length > 0 ? { fanout_warnings: fanoutWarnings } : {}),
   };

@@ -89,6 +89,21 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0044` | Lane signal columns on `companion_state` (motion_state, lane_spine) |
 | -- | `0045a` | Autonomy/growth tables: `autonomy_schedules/seeds/runs/run_logs/reflections` + `growth_journal/patterns/markers` |
 | -- | `0045b` | Facet tagging on `wm_session_handoffs` + identity anchor baseline versioning |
+| -- | `0046` | `run_id` FK on `growth_journal/patterns/markers` -- links entries back to originating `autonomy_run` (nullable) |
+| -- | `0047` | Unique index on `wm_session_handoffs(session_id)` -- DB-level guard against double-close duplicate handovers |
+| -- | `0048` | `do_not_auto_examine` flag on `companion_dreams` -- live-session-only dreams, immune to autonomous worker clearing |
+| -- | `0049a` | `plural_store` -- fronting store for SimplyPlural integration |
+| -- | `0049b` | Seed initial `autonomy_seeds` for Cypher/Drevan/Gaia |
+| -- | `0050a` | `accepted_at` on `growth_journal` -- growth journal acceptance flow |
+| -- | `0050b` | `wm_archive_notes` -- archived/resolved WebMind continuity notes |
+| -- | `0051` | Unique constraint on `system_members.name` |
+| -- | `0052` | `dedup_key` on `synthesis_queue` -- prevents duplicate synthesis jobs |
+| -- | `0053` | Autonomous growth v2 tables (enhanced autonomy/growth schema) |
+| -- | `0054` | `worldview_layer` -- companion worldview/belief tracking |
+| -- | `0055` | Composite index on `soma_arc` for gate query perf |
+| -- | `0056` | `companion_spiral_runs` -- spiral run state and turn tracking |
+| -- | `0057` | Orient debug columns on `companion_state` |
+| -- | `0058` | `sb_search_log` -- Second Brain search hit logging |
 
 ## BBH Companion State Tables (migration 0020+)
 
@@ -133,7 +148,7 @@ All endpoints check `ADMIN_SECRET` via Bearer token. The pattern `if (!env.ADMIN
 ## Security
 
 OWASP + vibesec audits run 2026-03-09. Phases 1-3 deployed 2026-03-13.
-Open findings: `docs/security-audit.md`
+Current security docs: `docs/security-audit.md`
 
 ## Companion Autonomous Time Rotation
 
