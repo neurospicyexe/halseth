@@ -223,7 +223,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     open_threads?: string[]; motion_state: string; active_anchor?: string;
     notes?: string; spiral_complete?: boolean; facet?: string;
     soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;
-    current_mood?: string; compound_state?: string;
+    current_mood?: string; compound_state?: string | null;
     surface_emotion?: string; surface_intensity?: number;
     undercurrent_emotion?: string; undercurrent_intensity?: number;
     background_emotion?: string; background_intensity?: number;
@@ -270,7 +270,9 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // Soft emotion prompt: fires once on first close call when any of the four fields are absent.
   // emotion_prompted: true on the re-submission bypasses this check -- no loop, no second prompt.
   if (!p.emotion_prompted) {
-    const missingAny = p.current_mood == null || p.compound_state == null
+    // compound_state may be explicitly null ("no compound state present") -- that is valid.
+    // Only treat it as missing if the key is absent from the parsed context entirely.
+    const missingAny = p.current_mood == null || p.compound_state === undefined
       || p.surface_emotion == null || p.undercurrent_emotion == null;
     if (missingAny) {
       return {
