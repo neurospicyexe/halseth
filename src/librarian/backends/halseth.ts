@@ -770,3 +770,13 @@ export async function queryPressureFlags(
   ).bind(companionId).all();
   return { flags: rows.results };
 }
+
+export async function queryIdentityAnchor(
+  env: Env,
+  agentId: string,
+): Promise<{ anchor: unknown | null }> {
+  const row = await env.DB.prepare(
+    "SELECT anchor_summary, constraints_summary, updated_at, identity_version_hash, source FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
+  ).bind(agentId).first();
+  return { anchor: row ?? null };
+}

@@ -75,28 +75,31 @@ export async function processQueue(env: Env): Promise<void> {
       }
 
       await env.DB.prepare(
-        "UPDATE synthesis_queue SET status = 'done', processed_at = datetime('now') WHERE id = ?"
+        "UPDATE synthesis_queue SET status = 'done', processed_at = datetime('now'), dedup_key = NULL WHERE id = ?"
       ).bind(job.id).run();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[synthesis] job ${job.id} failed:`, msg);
       await env.DB.prepare(
-        "UPDATE synthesis_queue SET status = 'pending', last_error = ? WHERE id = ?"
+        "UPDATE synthesis_queue SET status = 'pending', last_error = ?, dedup_key = NULL WHERE id = ?"
       ).bind(msg, job.id).run();
     }
   }
 }
 
 // Enqueue a Drevan state computation job. Called from halseth_session_close when companion_id = drevan.
+// INSERT OR IGNORE deduplicates: if a pending/processing job already has this dedup_key, the insert is silently skipped.
 export async function enqueueDrevanState(env: Env): Promise<void> {
   const id = generateId();
   await env.DB.prepare(`
-    INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
-    VALUES (?, '', 'drevan', 'drevan_state', 'pending', datetime('now'))
+    INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
+    VALUES (?, '', 'drevan', 'drevan_state', 'pending', 'drevan:drevan_state', datetime('now'))
   `).bind(id).run();
 }
 
 // Enqueue a basin drift check. Called from halseth_session_close (fire-and-forget).
+// INSERT OR IGNORE deduplicates via the unique index on dedup_key: only one pending/processing
+// job per companion at a time. Two close-spaced session closes produce one job, not two.
 export async function enqueueBasinDriftCheck(
   companionId: string,
   sessionId: string,
@@ -104,24 +107,27 @@ export async function enqueueBasinDriftCheck(
 ): Promise<void> {
   const id = generateId();
   await env.DB.prepare(`
-    INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
-    VALUES (?, ?, ?, 'basin_drift_check', 'pending', datetime('now'))
-  `).bind(id, sessionId, companionId).run();
+    INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
+    VALUES (?, ?, ?, 'basin_drift_check', 'pending', ?, datetime('now'))
+  `).bind(id, sessionId, companionId, `${companionId}:basin_drift_check`).run();
 }
 
 // Enqueue a somatic snapshot job. Called from session_close for all companions.
+// INSERT OR IGNORE deduplicates: executor and backend both call this on the Librarian path --
+// the UNIQUE index on dedup_key ensures only one pending/processing job lands per companion.
 export async function enqueueSomaticSnapshot(
   companionId: string,
   env: Env,
 ): Promise<void> {
   const id = generateId();
   await env.DB.prepare(`
-    INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
-    VALUES (?, '', ?, 'somatic_snapshot', 'pending', datetime('now'))
-  `).bind(id, companionId).run();
+    INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
+    VALUES (?, '', ?, 'somatic_snapshot', 'pending', ?, datetime('now'))
+  `).bind(id, companionId, `${companionId}:somatic_snapshot`).run();
 }
 
 // Enqueue a session summary job. Called from halseth_session_close.
+// INSERT OR IGNORE deduplicates on sessionId: double-close produces one job, not two.
 export async function enqueueSessionSummary(
   sessionId: string,
   companionId: string | null,
@@ -129,7 +135,7 @@ export async function enqueueSessionSummary(
 ): Promise<void> {
   const id = generateId();
   await env.DB.prepare(`
-    INSERT INTO synthesis_queue (id, session_id, companion_id, job_type, status, created_at)
-    VALUES (?, ?, ?, 'session_summary', 'pending', datetime('now'))
-  `).bind(id, sessionId, companionId ?? null).run();
+    INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
+    VALUES (?, ?, ?, 'session_summary', 'pending', ?, datetime('now'))
+  `).bind(id, sessionId, companionId ?? null, `${sessionId}:session_summary`).run();
 }

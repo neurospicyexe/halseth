@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { queryTensions, queryLatestBasinHistory, queryPressureFlags, tensionEdit, tensionStatus } from "../backends/halseth.js";
+import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus } from "../backends/halseth.js";
 
 const COMPANIONS = ["drevan", "cypher", "gaia"] as const;
 
@@ -319,6 +319,16 @@ export async function execConfirmGrowthDrift(ctx: ExecutorContext): Promise<Exec
   }
 
   return { ack: true, id: p.id, confirmed: true, baseline_shift_at: now, ...(baseline_warning ? { baseline_warning } : {}) };
+}
+
+export async function execIdentityAnchorRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "identity_anchor_read_failed", reason: "companion_id required" };
+  const result = await queryIdentityAnchor(ctx.env, ctx.req.companion_id);
+  return {
+    response_key: "summary",
+    identity_anchor: result.anchor,
+    meta: { operation: "identity_anchor_read", companion_id: ctx.req.companion_id },
+  };
 }
 
 export async function execPressureDriftLog(ctx: ExecutorContext): Promise<ExecutorResult> {

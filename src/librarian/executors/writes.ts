@@ -18,29 +18,36 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   const to_id = toMatch?.[2]?.toLowerCase() ?? null;
 
   // Parse context: companions may send raw text OR structured JSON.
-  // Default to request text -- context may be a metadata payload (e.g. session_id) with no note content.
-  let noteText = ctx.req.request;
+  // noteText starts null -- falls back to request string only when no context is provided at all.
+  // A metadata-only JSON object (no note_text/content) is rejected to prevent silent junk writes.
+  let noteText: string | null = null;
   let tags: string | undefined;
   let source: string | undefined;
   if (ctx.req.context) {
     try {
       const parsed = JSON.parse(ctx.req.context);
       if (typeof parsed === "object" && parsed !== null) {
-        // Only override request text if context carries explicit note content
         if (parsed.note_text || parsed.content) {
           noteText = parsed.note_text ?? parsed.content;
+        } else if (Object.keys(parsed).length > 0) {
+          // Non-empty JSON object with no text field -- metadata payload, not note content.
+          // Return an error rather than writing the request string as junk note content.
+          return { error: "companion_note_add_failed", reason: `context JSON has no note_text or content field; found only: ${Object.keys(parsed).join(", ")}` };
         }
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
         if (typeof parsed.source === "string") source = parsed.source;
       } else {
-        noteText = ctx.req.context; // parsed primitive -- use raw
+        noteText = ctx.req.context; // parsed primitive -- use raw string
       }
     } catch {
       // Not JSON -- use raw context string as note text
       noteText = ctx.req.context;
     }
   }
+
+  // Fall back to request string only when no context was provided
+  if (noteText === null) noteText = ctx.req.request;
 
   if (to_id) {
     // Addressed to another companion — inter_companion_notes
@@ -82,9 +89,10 @@ export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ agent: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
-  if (!p || !p.agent || !p.delta_text || !p.valence) return { response_key: "witness", witness: "delta_log requires { agent, delta_text, valence } in context" };
-  const r = await deltaLog(ctx.env, p);
+  const p = parseContext<{ agent?: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
+  if (!p || !p.delta_text || !p.valence) return { response_key: "witness", witness: "delta_log requires { delta_text, valence } in context" };
+  const agent = p.agent ?? ctx.req.companion_id;
+  const r = await deltaLog(ctx.env, { ...p, agent });
   return { ack: true, id: r.id };
 }
 

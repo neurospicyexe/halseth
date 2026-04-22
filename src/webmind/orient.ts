@@ -158,11 +158,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   const flagged_beliefs: WmConclusion[] = flaggedResult.results ?? [];
 
   // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
-  // Fire-and-forget: a failure here doesn't block the orient response.
+  // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.
+  // Unawaited D1 operations may be silently discarded after response return.
   const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
   if (unreadIds.length > 0) {
     const placeholders = unreadIds.map(() => "?").join(", ");
-    env.DB.prepare(
+    await env.DB.prepare(
       `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`
     ).bind(new Date().toISOString(), ...unreadIds).run().catch((e: unknown) => {
       console.error("[orient] auto-ack failed:", String(e));
