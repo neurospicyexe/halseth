@@ -251,8 +251,10 @@ export async function getIngestCompanionDreams(
 }
 
 // GET /ingest/open-loops?since=<ISO8601>&limit=<n>
+// GET /ingest/open-loops?closed_since=<ISO8601>&limit=<n>
 // Returns all loops (open and closed) for full history in Second Brain.
-// opened_at is used as the canonical timestamp for HWM tracking.
+// `since` filters by opened_at (creation HWM). `closed_since` filters by closed_at
+// (closure update HWM) -- mutually exclusive; closed_since takes precedence.
 export async function getIngestOpenLoops(
   request: Request,
   env: Env,
@@ -260,24 +262,35 @@ export async function getIngestOpenLoops(
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  const url   = new URL(request.url);
-  const since = url.searchParams.get("since") ?? undefined;
-  const limit = clampLimit(url.searchParams.get("limit"));
+  const url         = new URL(request.url);
+  const since       = url.searchParams.get("since")       ?? undefined;
+  const closedSince = url.searchParams.get("closed_since") ?? undefined;
+  const limit       = clampLimit(url.searchParams.get("limit"));
 
   if (since !== undefined && isNaN(Date.parse(since))) {
     return json({ error: "invalid since parameter" }, 400);
   }
+  if (closedSince !== undefined && isNaN(Date.parse(closedSince))) {
+    return json({ error: "invalid closed_since parameter" }, 400);
+  }
 
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
+  let orderCol = "opened_at";
 
-  if (since !== undefined) {
+  if (closedSince !== undefined) {
+    // Update sweep: only closed loops, ordered by closure time so HWM advances correctly.
+    conditions.push("closed_at IS NOT NULL");
+    conditions.push("closed_at > ?");
+    bindings.push(closedSince);
+    orderCol = "closed_at";
+  } else if (since !== undefined) {
     conditions.push("opened_at > ?");
     bindings.push(since);
   }
 
   const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const orderDir = since !== undefined ? "ASC" : "DESC";
+  const orderDir = (since !== undefined || closedSince !== undefined) ? "ASC" : "DESC";
   bindings.push(limit);
 
   try {
@@ -285,7 +298,7 @@ export async function getIngestOpenLoops(
       SELECT id, companion_id, loop_text, weight, opened_at, closed_at
       FROM companion_open_loops
       ${where}
-      ORDER BY opened_at ${orderDir}
+      ORDER BY ${orderCol} ${orderDir}
       LIMIT ?
     `).bind(...bindings).all();
 
