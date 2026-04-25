@@ -21,16 +21,16 @@ That's it. Everything runs on Cloudflare's free plan.
 
 ---
 
-## Full setup guide
+## Setup
 
-See **[SETUP.md](./SETUP.md)** for step-by-step instructions with plain-language explanations.
+**Not sure where to start?** See **[INSTALL.md](./INSTALL.md)** for a beginner-friendly guide — every step explained, no assumed knowledge.
 
 ---
 
 ## Quick setup (if you know what you're doing)
 
 ```bash
-git clone https://github.com/your-username/halseth
+git clone https://github.com/neurospicyexe/halseth
 cd halseth
 npm install
 wrangler login
@@ -52,9 +52,9 @@ Then bootstrap via POST `/admin/bootstrap` and connect via MCP at `/mcp`.
 
 | Project | What it does |
 |---------|-------------|
-| [Hearth](https://github.com/your-username/hearth) | Visual dashboard — sessions, moods, tasks, routines |
-| [nullsafe-plural-v2](https://github.com/your-username/nullsafe-plural-v2) | SimplyPlural integration for fronting/plurality tracking |
-| [nullsafe-second-brain](https://github.com/your-username/nullsafe-second-brain) | Companion memory synced to Obsidian with semantic search |
+| [Hearth](https://github.com/neurospicyexe/hearth) | Visual dashboard — sessions, moods, tasks, routines |
+| [nullsafe-plural-v2](https://github.com/neurospicyexe/nullsafe-plural-v2) | SimplyPlural integration for fronting/plurality tracking |
+| [nullsafe-second-brain](https://github.com/neurospicyexe/nullsafe-second-brain) | Companion memory synced to Obsidian with semantic search |
 
 ---
 

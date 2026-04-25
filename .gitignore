@@ -23,6 +23,7 @@ dist/
 # Local-only scripts
 scripts/personal/
 scripts/.env
+scripts/*.log
 
 # Personal operational docs -- contain VPS IPs, SSH config, credentials
 docs/how-to.md
