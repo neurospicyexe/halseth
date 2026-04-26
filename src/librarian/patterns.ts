@@ -140,8 +140,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   sb_save_document: {
-    // For structured or longer content (research write-up, session doc, study material)
-    triggers: ["save document", "vault document", "write to vault", "document to vault", "save to second brain", "structured document"],
+    // For structured or longer content (research write-up, session doc, study material, long reflections)
+    triggers: ["save document", "vault document", "write to vault", "document to vault", "save to second brain", "structured document", "write something long", "long reflection", "dump my thoughts", "long thought"],
     tools: ["sb_save_document"],
     response_key: "witness",
   },

@@ -221,35 +221,54 @@ export async function seedRoutingVectors(request: Request, env: Env): Promise<Re
     return new Response("Unauthorized", { status: 401 });
   }
 
-  let seeded = 0;
-  let errors = 0;
-  const seededKeys: string[] = [];
+  // Clean up orphaned vectors from renamed pattern keys (best-effort, non-fatal)
+  const ORPHAN_KEYS = [
+    "drevan_thread_add", "drevan_thread_close", "drevan_thread_veto",
+    "drevan_anticipation_set", "conclusion_supersede", "get_state",
+  ];
+  const orphanIds = ORPHAN_KEYS.flatMap(k => Array.from({ length: 20 }, (_, i) => `routing:${k}:${i}`));
+  try { await env.VECTORIZE.deleteByIds(orphanIds); } catch { /* non-fatal */ }
 
+  // Flatten all triggers into a single list with stable IDs
+  type TriggerItem = { id: string; text: string; patternKey: string };
+  const items: TriggerItem[] = [];
   for (const [patternKey, entry] of Object.entries(FAST_PATH_PATTERNS)) {
-    for (let i = 0; i < entry.triggers.length; i++) {
-      const trigger = entry.triggers[i];
-      if (!trigger) continue;
-      try {
-        const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
-          text: [trigger],
-        }) as { data: number[][] };
-        const vector = embedding.data[0];
-        if (!vector) continue;
-        await env.VECTORIZE.upsert([{
-          id: `routing:${patternKey}:${i}`,
-          values: vector,
-          metadata: { table: "routing", rowId: patternKey, companionId: "system" },
-        }]);
-        seeded++;
-      } catch (err) {
-        console.error("[seedRoutingVectors] failed", { patternKey, trigger, err: String(err) });
-        errors++;
-      }
-    }
-    if (!seededKeys.includes(patternKey)) seededKeys.push(patternKey);
+    entry.triggers.forEach((trigger, i) => {
+      if (trigger) items.push({ id: `routing:${patternKey}:${i}`, text: trigger, patternKey });
+    });
   }
 
-  return new Response(JSON.stringify({ seeded, errors, patterns: seededKeys.length, pattern_keys: seededKeys }), {
+  // Batch embed: bge-base supports multi-text input, avoids per-trigger rate-limit exhaustion
+  const BATCH = 50;
+  let seeded = 0;
+  let errors = 0;
+
+  for (let start = 0; start < items.length; start += BATCH) {
+    const chunk = items.slice(start, start + BATCH);
+    try {
+      const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+        text: chunk.map(c => c.text),
+      }) as { data: number[][] };
+      const vectors = chunk
+        .map((c, idx) => {
+          const v = embedding.data[idx];
+          if (!v) return null;
+          return { id: c.id, values: v, metadata: { table: "routing", rowId: c.patternKey, companionId: "system" } };
+        })
+        .filter((v): v is NonNullable<typeof v> => v !== null);
+      if (vectors.length > 0) {
+        await env.VECTORIZE.upsert(vectors);
+        seeded += vectors.length;
+      }
+      errors += chunk.length - vectors.length;
+    } catch (err) {
+      console.error("[seedRoutingVectors] batch failed", { start, err: String(err) });
+      errors += chunk.length;
+    }
+  }
+
+  const patternKeys = [...new Set(items.map(i => i.patternKey))];
+  return new Response(JSON.stringify({ seeded, errors, patterns: patternKeys.length, pattern_keys: patternKeys }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

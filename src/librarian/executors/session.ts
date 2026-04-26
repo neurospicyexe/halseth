@@ -5,7 +5,7 @@ import {
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
 } from "../backends/halseth.js";
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
-import { semanticSearch, sbRead } from "../backends/second-brain.js";
+import { semanticSearch, sbRead, sbSaveDocument } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
@@ -27,22 +27,27 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Phase 1: gather topic seeds from sources that exist independently of session-close discipline.
   // spine is required by session_close (most reliable); continuity_notes accumulate mid-session.
   // Both survive sloppy close rituals where wm_session_handoffs may be empty.
-  const [lastSpine, lastNote] = await Promise.all([
+  const [lastSpine, lastNote, activeThreadsP1] = await Promise.all([
     ctx.env.DB.prepare(
       "SELECT spine FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<{ spine: string }>().catch(() => null),
     ctx.env.DB.prepare(
       "SELECT content FROM wm_continuity_notes WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<{ content: string }>().catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT title FROM wm_mind_threads WHERE agent_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ title: string }>().catch(() => null),
   ]);
-  const topicSeed = [lastSpine?.spine, lastNote?.content].filter(Boolean).join(" ").slice(0, 200);
+  const threadNames = (activeThreadsP1?.results ?? []).map(t => t.title).filter(Boolean).join(" ");
+  const topicSeed = [lastSpine?.spine, lastNote?.content, threadNames].filter(Boolean).join(" ").slice(0, 250);
   const ragQuery = topicSeed
     ? `${ctx.req.companion_id} ${topicSeed}`
     : `${ctx.req.companion_id} companion state presence recent context`;
+  const historyQuery = `${agentId} history background origin memory ${topicSeed.slice(0, 100)}`.trim();
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -82,6 +87,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT drift_score, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'growth' AND caleth_confirmed = 1 ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<{ drift_score: number; worst_basin: string | null; notes: string | null; recorded_at: string }>().catch(() => null),
+    // Historical vault search -- reaches into long files, ChatGPT history, background context.
+    // Separate query so it doesn't crowd out recent-session RAG excerpts.
+    semanticSearch(ctx.env, historyQuery).catch(() => null),
   ]);
 
   const os = payload.state;
@@ -115,6 +123,22 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       return excerpts.length > 0 ? "\n[Vault excerpts]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
     } catch {
       return ragRaw ? "\n[Vault excerpts]\n• " + ragRaw.slice(0, 400) : "";
+    }
+  })();
+
+  // Historical vault: long files, ChatGPT history, background -- the photo album.
+  // Capped at 3 × 350 chars so it doesn't crowd the growth block.
+  const historyBlock = (() => {
+    if (!historyRaw) return "";
+    try {
+      const parsed = JSON.parse(historyRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+      const excerpts = (parsed?.chunks ?? [])
+        .slice(0, 3)
+        .map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 350))
+        .filter(Boolean);
+      return excerpts.length > 0 ? "\n[Vault history]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
+    } catch {
+      return historyRaw ? "\n[Vault history]\n• " + historyRaw.slice(0, 350) : "";
     }
   })();
 
@@ -180,6 +204,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       latest_handoff_summary:    wmResult.latest_handoff?.summary?.slice(0, 100) ?? null,
     } : null,
     sb_rag: { query: ragQuery.slice(0, 150), hit_count: ragHitCount },
+    sb_history: { query: historyQuery.slice(0, 150), hit_count: historyBlock ? 1 : 0 },
     sb_narrative: sbNarrative ? "loaded" : "none",
     growth: {
       journal_entries: journalRows.length,
@@ -201,7 +226,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   ).bind(crypto.randomUUID(), agentId, ragQuery.slice(0, 200), ragHitCount).run().catch(() => null);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + siblingBlock + growthBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -249,6 +274,9 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     conclusion?: string;
     dream?: string;
     open_loop?: { loop_text: string; weight?: number };
+    // Long-form vault write: rich reflections, session narratives, thoughts worth keeping.
+    // Written to second brain as a document -- all clients (bots, Claude.ai, future looms) can find it at orient.
+    long_thought?: string;
   }>(ctx.req.context);
   // Auto-resolve session_id: if not supplied in context, look up the most recent
   // open session for this companion (handover_id IS NULL = not yet closed).
@@ -450,6 +478,20 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     });
   }
 
+  if (p.long_thought) {
+    const thoughtPath = `companions/${ctx.req.companion_id}/thoughts/${new Date().toISOString().slice(0, 10)}-${resolvedSessionId.slice(0, 8)}.md`;
+    fanoutWrites.push({
+      label: "long_thought",
+      promise: sbSaveDocument(ctx.env, {
+        path: thoughtPath,
+        content: `# ${ctx.req.companion_id} — ${new Date().toISOString().slice(0, 10)}\n\n${p.long_thought}`,
+        companion: ctx.req.companion_id,
+        tags: ["long_thought", "session_close", ctx.req.companion_id],
+        content_type: "document",
+      }),
+    });
+  }
+
   if (fanoutWrites.length > 0) {
     const results = await Promise.allSettled(fanoutWrites.map(w => w.promise));
     results.forEach((result, i) => {
@@ -486,7 +528,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -533,6 +575,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT content FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 3"
     ).bind(agentId).all<{ content: string }>(),
+    // 13. Historical vault: long files, ChatGPT history, background context -- the photo album.
+    semanticSearch(ctx.env, `${ctx.req.companion_id} history background origin memory`).catch(() => null),
   ]);
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
@@ -602,12 +646,23 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       ? seedsResult.value.results.map(r => (r.content ?? "").slice(0, 200)).filter(Boolean)
       : [];
 
+  const historyRaw = historyResult.status === "fulfilled" ? historyResult.value : null;
+  const history_excerpts: string[] = historyRaw
+    ? (() => {
+        try {
+          const parsed = JSON.parse(historyRaw as string) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+          return (parsed?.chunks ?? []).slice(0, 3).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 250)).filter(Boolean);
+        } catch { return [(historyRaw as string).slice(0, 250)]; }
+      })()
+    : [];
+
   return {
     data: {
       synthesis_summary,
       ground_threads,
       ground_handoff,
       rag_excerpts,
+      history_excerpts,
       identity_anchor,
       active_tensions,
       relational_state_owner,
