@@ -282,6 +282,34 @@ export class LibrarianRouter {
   }
 
   private async classify(request: string): Promise<string | null> {
+    // Tier 2a: edge-native Vectorize routing -- zero external API calls.
+    // Returns pattern key directly when embedding similarity exceeds threshold.
+    // Falls through to DeepSeek only when confidence is low.
+    if (this.env.AI && this.env.VECTORIZE) {
+      try {
+        const emb = await this.env.AI.run("@cf/baai/bge-base-en-v1.5", {
+          text: [request],
+        }) as { data: number[][] };
+        const vector = emb.data[0];
+        if (vector) {
+          const results = await this.env.VECTORIZE.query(vector, { topK: 10, returnMetadata: "all" });
+          const top = (results.matches ?? []).find(
+            m => (m.metadata as Record<string, unknown> | undefined)?.table === "routing"
+          );
+          if (top && top.score > 0.82) {
+            const key = (top.metadata as Record<string, unknown>)?.rowId as string | undefined;
+            if (key) {
+              console.log(`[librarian] vectorize route: key="${key}" score=${top.score.toFixed(3)}`);
+              return key;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`[librarian] vectorize route error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // Tier 2b: DeepSeek LLM classifier (fallback when Vectorize score is below threshold)
     if (!this.env.DEEPSEEK_API_KEY) return "__offline__";
 
     try {
@@ -362,15 +390,33 @@ export class LibrarianRouter {
     }
   }
 
-  private async getFrontState(companionId: CompanionId): Promise<{ frontState: string | null; pluralAvailable: boolean }> {
+  private async getFrontState(_companionId: CompanionId): Promise<{ frontState: string | null; pluralAvailable: boolean }> {
+    const KV_KEY = "plural:current_front";
     try {
       const result: PluralResult = await getCurrentFront(this.env);
-      if (result.status === "ok") return { frontState: result.front.name, pluralAvailable: true };
-      if (result.status === "no_front") return { frontState: null, pluralAvailable: true };
-      return { frontState: null, pluralAvailable: false };
+      if (result.status === "ok" || result.status === "no_front") {
+        // Write-through: keep KV warm so a future service-binding failure degrades gracefully.
+        const name = result.status === "ok" ? result.front.name : null;
+        void this.env.LIBRARIAN_KV.put(KV_KEY, JSON.stringify({ name, updated_at: new Date().toISOString() }), { expirationTtl: 600 })
+          .catch(e => console.warn("[getFrontState] KV cache write failed:", String(e)));
+        return { frontState: name, pluralAvailable: true };
+      }
+      // status === "unavailable" -- fall through to cache
     } catch {
-      return { frontState: null, pluralAvailable: false };
+      // Service binding threw -- fall through to cache
     }
+    // Plural service unreachable -- serve last known front from KV cache
+    try {
+      const cached = await this.env.LIBRARIAN_KV.get(KV_KEY);
+      if (cached) {
+        const data = JSON.parse(cached) as { name: string | null };
+        console.warn("[getFrontState] plural unavailable; serving from KV cache");
+        return { frontState: data.name, pluralAvailable: false };
+      }
+    } catch {
+      // KV also failed
+    }
+    return { frontState: null, pluralAvailable: false };
   }
 
   private async execute(req: import("./executors/types.js").LibrarianRequest, entry: PatternEntry): Promise<Record<string, unknown>> {

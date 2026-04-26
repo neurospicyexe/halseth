@@ -2,6 +2,7 @@ import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { embedAndStoreAsync } from "../mcp/embed.js";
 import { safeEqual } from "../lib/auth.js";
+import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
 
 interface CompanionSeed {
   id: string;
@@ -202,6 +203,53 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
   }
 
   return new Response(JSON.stringify({ backfilled: results }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * POST /admin/seed-routing-vectors
+ * Seeds FAST_PATH_PATTERNS trigger phrases into Vectorize with table="routing" metadata.
+ * Idempotent: uses deterministic IDs so re-running updates existing vectors without duplication.
+ * Run once after deploy, then again whenever new fast-path patterns are added.
+ */
+export async function seedRoutingVectors(request: Request, env: Env): Promise<Response> {
+  if (!env.ADMIN_SECRET) return new Response("Service not configured: ADMIN_SECRET required", { status: 503 });
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!safeEqual(auth, `Bearer ${env.ADMIN_SECRET}`)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  let seeded = 0;
+  let errors = 0;
+  const seededKeys: string[] = [];
+
+  for (const [patternKey, entry] of Object.entries(FAST_PATH_PATTERNS)) {
+    for (let i = 0; i < entry.triggers.length; i++) {
+      const trigger = entry.triggers[i];
+      if (!trigger) continue;
+      try {
+        const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+          text: [trigger],
+        }) as { data: number[][] };
+        const vector = embedding.data[0];
+        if (!vector) continue;
+        await env.VECTORIZE.upsert([{
+          id: `routing:${patternKey}:${i}`,
+          values: vector,
+          metadata: { table: "routing", rowId: patternKey, companionId: "system" },
+        }]);
+        seeded++;
+      } catch (err) {
+        console.error("[seedRoutingVectors] failed", { patternKey, trigger, err: String(err) });
+        errors++;
+      }
+    }
+    if (!seededKeys.includes(patternKey)) seededKeys.push(patternKey);
+  }
+
+  return new Response(JSON.stringify({ seeded, errors, patterns: seededKeys.length, pattern_keys: seededKeys }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

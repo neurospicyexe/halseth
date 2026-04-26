@@ -3,7 +3,7 @@ import { Router } from "./router";
 import { listCompanions, createCompanion, getCompanion } from "./handlers/companions";
 import { listMemories, createMemory, getMemory } from "./handlers/memory";
 import { listDeltas, appendDelta } from "./handlers/relational";
-import { bootstrapConfig, backfillEmbeddings } from "./handlers/admin";
+import { bootstrapConfig, backfillEmbeddings, seedRoutingVectors } from "./handlers/admin";
 import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
@@ -104,7 +104,8 @@ const router = new Router()
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
     return (await checkRateLimit(env.RATE_LIMITER, `bootstrap:${ip}`)) ?? bootstrapConfig(request, env);
   })
-  .on("POST", "/admin/backfill-embeddings",  (request, env) => backfillEmbeddings(request, env))
+  .on("POST", "/admin/backfill-embeddings",   (request, env) => backfillEmbeddings(request, env))
+  .on("POST", "/admin/seed-routing-vectors",  (request, env) => seedRoutingVectors(request, env))
 
   // Presence (dashboard feed)
   .on("GET", "/presence", (request, env) => getPresence(request, env))
