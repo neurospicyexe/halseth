@@ -226,6 +226,16 @@ export class LibrarianRouter {
     // Tier 2: Workers AI classifier
     const patternKey = await this.classify(req.request);
 
+    // Classifier offline (missing key, timeout, API error) -- surface as system error,
+    // not a comprehension failure. Companions need to distinguish these.
+    if (patternKey === "__offline__") {
+      return {
+        response_key: "system_error",
+        error: "cognitive_routing_offline",
+        message: "Cognitive routing layer is currently unreachable. This is a system outage, not a comprehension failure.",
+      };
+    }
+
     // Tier 3: fast-path check on classifier result (classifier now sees all keys including fast-path)
     if (patternKey && patternKey !== "unknown") {
       const fastEntry = FAST_PATH_PATTERNS[patternKey];
@@ -271,7 +281,7 @@ export class LibrarianRouter {
   }
 
   private async classify(request: string): Promise<string | null> {
-    if (!this.env.DEEPSEEK_API_KEY) return null;
+    if (!this.env.DEEPSEEK_API_KEY) return "__offline__";
 
     try {
       // Pattern index is stored in a single KV entry ("_index") as a comma-separated
@@ -334,7 +344,7 @@ export class LibrarianRouter {
 
       if (!res.ok) {
         console.warn(`[librarian] classify failed: status=${res.status} request="${request.slice(0, 80)}"`);
-        return null;
+        return "__offline__";
       }
 
       const json = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -347,7 +357,7 @@ export class LibrarianRouter {
       return result;
     } catch (e) {
       console.warn(`[librarian] classify error: ${e instanceof Error ? e.message : String(e)}`);
-      return null;
+      return "__offline__";
     }
   }
 
@@ -389,7 +399,10 @@ export class LibrarianRouter {
     }
 
     if (Object.keys(accumulated).length > 0) {
-      if (unhandled.length > 0) console.warn(`[librarian] unhandled tools skipped: ${unhandled.join(", ")}`);
+      if (unhandled.length > 0) {
+        console.warn(`[librarian] unhandled tools skipped: ${unhandled.join(", ")}`);
+        accumulated["tool_errors"] = unhandled;
+      }
       return accumulated;
     }
 
