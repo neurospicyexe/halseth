@@ -273,6 +273,12 @@ export class LibrarianRouter {
       const entry = FAST_PATH_PATTERNS["wm_handoff_write"];
       if (entry) return entry;
     }
+    // "Spine:" at start-of-request marks a companion session-close payload.
+    // Anchored here (not as a bare trigger) to prevent mid-sentence "spine:" from misfiring.
+    if (/^spine:\s/i.test(trimmed)) {
+      const entry = FAST_PATH_PATTERNS["session_close"];
+      if (entry) return entry;
+    }
     for (const entry of Object.values(FAST_PATH_PATTERNS)) {
       if (entry.triggers.some(t => triggerMatches(trimmed, t))) {
         return entry;
@@ -385,7 +391,7 @@ export class LibrarianRouter {
       } else {
         console.log(`[librarian] classify: key="${result}"`);
       }
-      return result;
+      return result ?? "__offline__";
     } catch (e) {
       console.warn(`[librarian] classify error: ${e instanceof Error ? e.message : String(e)}`);
       return "__offline__";
