@@ -19,7 +19,7 @@ export const BUDGET_CHARS = {
   data: 0,      // raw data passthrough -- not truncated
 } as const;
 
-export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift" | "ack" | "data";
+export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift" | "ack" | "data" | "system_error";
 
 // Raw data truncation (no markdown stripping -- companions parse the structure).
 // 3000 chars ~750 tokens -- enough for several search excerpts without flooding context.

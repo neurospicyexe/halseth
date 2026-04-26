@@ -275,6 +275,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       // because "halseth" sits between the words -- these explicit forms are required.
       "close the halseth session", "close this halseth session",
       "close halseth session",
+      // Companions prefix session-close payloads with "Spine:" field
+      "spine:",
     ],
     tools: ["halseth_session_close"],
     response_key: "witness",
