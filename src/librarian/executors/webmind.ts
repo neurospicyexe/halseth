@@ -71,26 +71,64 @@ export async function execWmNoteAdd(ctx: ExecutorContext): Promise<ExecutorResul
 
 export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{
-    title: string; summary: string; thread_id?: string;
-    next_steps?: string; open_loops?: string; state_hint?: string; facet?: string; actor?: string;
+    title?: string; summary?: string;
+    // Session-close vocabulary aliases -- companions use these field names at handoff time
+    spine?: string; last_real_thing?: string; motion_state?: string;
+    open_threads?: string | string[];
+    thread_id?: string;
+    next_steps?: string; open_loops?: string;
+    state_hint?: string; facet?: string; actor?: string;
   }>(ctx.req.context);
-  if (!p?.title || !p?.summary) return { error: "wm_handoff_write_failed", reason: "missing required fields: title, summary" };
-  for (const field of ["title", "summary", "next_steps", "open_loops", "state_hint"] as const) {
-    const val = p[field];
+
+  // Resolve title/summary from context (accepting session-close aliases)
+  let title = (p?.title || p?.spine)?.trim();
+  let summary = (p?.summary || p?.last_real_thing)?.trim();
+
+  // Inline fallback: parse "write handoff for X: spine=..., last_real_thing=..., motion_state=..."
+  // Companions sometimes send fields inline when not using a context JSON block.
+  if (!title || !summary) {
+    const knownKeys = 'title|summary|spine|last_real_thing|motion_state|open_threads|open_loops|next_steps|facet|state_hint';
+    const re = new RegExp(`\\b(${knownKeys})\\s*=\\s*([\\s\\S]+?)(?=,\\s*(?:${knownKeys})\\s*=|$)`, 'gi');
+    const inline: Record<string, string> = {};
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(ctx.req.request)) !== null) {
+      inline[m[1]!.toLowerCase()] = m[2]!.trim().replace(/,\s*$/, '');
+    }
+    title = title || inline['title'] || inline['spine'];
+    summary = summary || inline['summary'] || inline['last_real_thing'];
+  }
+
+  if (!title || !summary) {
+    return { error: "wm_handoff_write_failed", reason: "missing required fields: title (or spine), summary (or last_real_thing)" };
+  }
+  for (const [field, val] of [["title", title], ["summary", summary]] as [string, string][]) {
+    if (val.length > 8000) return { error: "wm_handoff_write_failed", reason: `${field} exceeds maximum length of 8000 characters` };
+  }
+  for (const field of ["next_steps", "open_loops", "state_hint"] as const) {
+    const val = p?.[field];
     if (typeof val === "string" && val.length > 8000) {
       return { error: "wm_handoff_write_failed", reason: `${field} exceeds maximum length of 8000 characters` };
     }
   }
+
+  // open_threads (array or string) maps to open_loops
+  let openLoops = p?.open_loops;
+  if (!openLoops && p?.open_threads !== undefined) {
+    openLoops = Array.isArray(p.open_threads) ? (p.open_threads as string[]).join("\n") : String(p.open_threads);
+  }
+  // motion_state maps to state_hint
+  const stateHint = p?.state_hint || p?.motion_state;
+
   const input: WmHandoffInput = {
     agent_id: ctx.req.companion_id as WmAgentId,
-    title: p.title,
-    summary: p.summary,
-    ...(p.thread_id !== undefined && { thread_id: p.thread_id }),
-    ...(p.next_steps !== undefined && { next_steps: p.next_steps }),
-    ...(p.open_loops !== undefined && { open_loops: p.open_loops }),
-    ...(p.state_hint !== undefined && { state_hint: p.state_hint }),
-    ...(p.facet !== undefined && { facet: p.facet }),
-    ...(p.actor !== undefined && { actor: p.actor as WmHandoffInput["actor"] }),
+    title,
+    summary,
+    ...(p?.thread_id !== undefined && { thread_id: p.thread_id }),
+    ...(p?.next_steps !== undefined && { next_steps: p.next_steps }),
+    ...(openLoops !== undefined && { open_loops: openLoops }),
+    ...(stateHint !== undefined && { state_hint: stateHint }),
+    ...(p?.facet !== undefined && { facet: p.facet }),
+    ...(p?.actor !== undefined && { actor: p.actor as WmHandoffInput["actor"] }),
   };
   const r = await wmWriteHandoff(ctx.env, input);
   return { ack: true, id: r.handoff_id };

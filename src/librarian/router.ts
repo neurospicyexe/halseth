@@ -253,6 +253,15 @@ export class LibrarianRouter {
       const entry = FAST_PATH_PATTERNS["companion_note_add"];
       if (entry) return entry;
     }
+    // Handoff requests must be anchored at the start of the request to prevent two misfires:
+    // (1) inline handoff content containing phrases like "relational delta" triggering delta_log
+    //     (delta_log appears at iteration position ~34, wm_handoff_write at ~66)
+    // (2) "for cypher"/"for gaia" in "write session handoff for cypher" matching companion_note_add
+    //     (companion_note_add at ~53 beats wm_handoff_write at ~66 in insertion order)
+    if (/^(?:write\s+(?:session\s+)?handoff|session\s+handoff|log\s+handoff|handoff\s+(?:write|add)|wm[\s_]handoff(?:_write)?|continuity\s+handoff|mind\s+handoff|webmind\s+handoff)\b/i.test(trimmed)) {
+      const entry = FAST_PATH_PATTERNS["wm_handoff_write"];
+      if (entry) return entry;
+    }
     for (const entry of Object.values(FAST_PATH_PATTERNS)) {
       if (entry.triggers.some(t => triggerMatches(trimmed, t))) {
         return entry;

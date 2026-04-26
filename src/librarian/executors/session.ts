@@ -494,8 +494,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).bind(agentId).all<{ tension_text: string }>(),
     // 6. Relational state toward Raziel (latest)
     ctx.env.DB.prepare(
-      "SELECT state_text FROM companion_relational_state WHERE companion_id = ? AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 1"
-    ).bind(agentId).all<{ state_text: string }>(),
+      "SELECT state_text FROM companion_relational_state WHERE companion_id = ? AND LOWER(toward) = LOWER(?) ORDER BY noted_at DESC LIMIT 1"
+    ).bind(agentId, ctx.env.SYSTEM_OWNER).all<{ state_text: string }>(),
     // 7. Unread incoming companion notes (max 3, exclude own notes)
     ctx.env.DB.prepare(
       "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
