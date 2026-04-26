@@ -373,3 +373,25 @@ export async function execDriftCheck(ctx: ExecutorContext): Promise<ExecutorResu
     meta: { operation: "drift_check", companion_id: ctx.req.companion_id },
   };
 }
+
+export async function execLimbicRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "limbic_read_failed", reason: "companion_id required" };
+  const row = await ctx.env.DB.prepare(
+    `SELECT companion_id, emotional_register, drift_vector, active_concerns, companion_notes, generated_at
+     FROM limbic_states
+     WHERE companion_id = ?
+     ORDER BY generated_at DESC LIMIT 1`
+  ).bind(ctx.req.companion_id).first<{
+    companion_id: string;
+    emotional_register: string | null;
+    drift_vector: string | null;
+    active_concerns: string | null;
+    companion_notes: string | null;
+    generated_at: string;
+  }>();
+  return {
+    response_key: "summary",
+    limbic_state: row ?? null,
+    meta: { operation: "limbic_read", companion_id: ctx.req.companion_id },
+  };
+}

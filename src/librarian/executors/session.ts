@@ -42,7 +42,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -78,6 +78,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT seed_type, content, priority FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 3"
     ).bind(agentId).all<{ seed_type: string; content: string; priority: number }>().catch(() => null),
+    // Growth: confirmed growth drift entries (intentional identity movement, caleth-confirmed)
+    ctx.env.DB.prepare(
+      "SELECT drift_score, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'growth' AND caleth_confirmed = 1 ORDER BY recorded_at DESC LIMIT 3"
+    ).bind(agentId).all<{ drift_score: number; worst_basin: string | null; notes: string | null; recorded_at: string }>().catch(() => null),
   ]);
 
   const os = payload.state;
@@ -145,6 +149,15 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     for (const s of seedRows) {
       const snippet = s.content.length > 150 ? s.content.slice(0, 150) + "…" : s.content;
       growthParts.push(`  • [${s.seed_type} p${s.priority}] «${snippet}»`);
+    }
+  }
+  const confirmedDriftRows = confirmedGrowthDrift?.results ?? [];
+  if (confirmedDriftRows.length > 0) {
+    growthParts.push(`[Confirmed growth drift: ${confirmedDriftRows.length} entries]`);
+    for (const d of confirmedDriftRows) {
+      const label = d.worst_basin ? ` (${d.worst_basin})` : "";
+      const note = d.notes ? ` «${d.notes.length > 150 ? d.notes.slice(0, 150) + "…" : d.notes}»` : "";
+      growthParts.push(`  • [score ${d.drift_score.toFixed(2)}${label} @ ${d.recorded_at.slice(0, 10)}]${note}`);
     }
   }
   const growthBlock = growthParts.length > 0 ? "\n" + growthParts.join("\n") : "";
