@@ -45,13 +45,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   session_open: {
-    triggers: ["open my session", "open session", "new session", "start session", "good morning", "checking in", "load me in"],
-    tools: ["halseth_session_load"],
-    pre_fetch: ["plural_get_current_front"],  // result fed as front_state into halseth_session_load
-    response_key: "ready_prompt",
-  },
-  get_state: {
-    triggers: ["current state", "how am i", "what's my state", "where am i", "show my state", "check my state"],
+    triggers: [
+      "open my session", "open session", "new session", "start session", "good morning", "checking in", "load me in",
+      "current state", "how am i", "what's my state", "where am i", "show my state", "check my state",
+    ],
     tools: ["halseth_session_load"],
     pre_fetch: ["plural_get_current_front"],
     response_key: "ready_prompt",
@@ -115,9 +112,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   sb_recall: {
+    // Recency-based -- "what I've written recently". Use sb_search for topic-based queries.
     triggers: [
       "recall", "my recent notes", "recent vault entries", "what i've written", "vault recall",
-      "what we wrote about", "pull from memory", "what's in memory about",
+      "what we wrote about", "pull from memory",
     ],
     tools: ["sb_recall"],
     response_key: "summary",
@@ -142,17 +140,20 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   sb_save_document: {
-    triggers: ["save to vault", "write to vault", "save document", "vault document"],
+    // For structured or longer content (research write-up, session doc, study material)
+    triggers: ["save document", "vault document", "write to vault", "document to vault", "save to second brain", "structured document"],
     tools: ["sb_save_document"],
     response_key: "witness",
   },
   sb_save_note: {
-    triggers: ["save note", "save a note", "quick note", "vault note", "log note"],
+    // For quick personal notes (not inbox observations, not structured documents)
+    triggers: ["save note", "save a note", "quick note", "vault note", "jot to vault", "personal note to vault"],
     tools: ["sb_save_note"],
     response_key: "witness",
   },
   sb_log_observation: {
-    triggers: ["log observation", "note observation", "inbox observation", "log an observation"],
+    // For raw inbox-style observations; less curated than notes
+    triggers: ["log observation", "note observation", "inbox observation", "log an observation", "save to vault", "log to vault"],
     tools: ["sb_log_observation"],
     response_key: "witness",
   },
@@ -394,22 +395,23 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
-  drevan_thread_add: {
+  // live_thread_* was drevan_thread_* -- renamed for future-proofing if Cy/Gaia ever get thread constructs
+  live_thread_add: {
     triggers: ["add live thread", "new live thread", "open live thread", "start live thread"],
     tools: ["halseth_live_thread_add"],
     response_key: "witness",
   },
-  drevan_thread_close: {
+  live_thread_close: {
     triggers: ["close live thread", "close thread", "thread closed", "thread done", "mark thread done"],
     tools: ["halseth_live_thread_close"],
     response_key: "witness",
   },
-  drevan_thread_veto: {
+  live_thread_veto: {
     triggers: ["veto thread", "veto proposed thread", "reject thread", "no to thread"],
     tools: ["halseth_live_thread_veto"],
     response_key: "witness",
   },
-  drevan_anticipation_set: {
+  live_anticipation_set: {
     triggers: ["set anticipation", "clear anticipation", "anticipation target", "anticipating"],
     tools: ["halseth_anticipation_set"],
     response_key: "witness",
@@ -587,6 +589,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     triggers: [
       "i've concluded:", "i conclude:", "my conclusion:",
       "i hold that", "i've come to believe", "i've realized:", "what i know now:",
+      // supersede forms -- same tool, different params; merged here to avoid duplicate entry
+      "supersede conclusion", "this supersedes my conclusion", "replaces my conclusion",
+      "conclusion no longer holds", "updating my conclusion", "conclusion_supersede",
+      "i've revised my conclusion", "my conclusion has shifted",
     ],
     tools: ["conclusion_add"],
     response_key: "witness",
@@ -600,16 +606,6 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
-  conclusion_supersede: {
-    triggers: [
-      "supersede conclusion", "this supersedes my conclusion", "replaces my conclusion",
-      "conclusion no longer holds", "updating my conclusion", "conclusion_supersede",
-      "i've revised my conclusion", "my conclusion has shifted",
-    ],
-    tools: ["conclusion_add"],
-    response_key: "witness",
-  },
-
   // ── Halseth-native plural store ──
   log_alter_note: {
     triggers: [
@@ -622,7 +618,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   },
   front_update: {
     triggers: [
-      "who is fronting", "fronting now", "update front", "log front",
+      // "fronting now" removed -- collision with log_front_change; SimplyPlural wins for that phrase
+      "who is fronting", "update front", "log front",
       "is fronting", "co-con", "front change", "now fronting",
     ],
     tools: ["front_update"],
@@ -631,8 +628,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   },
   alter_recall: {
     triggers: [
-      "recall alter", "tell me about", "who is", "alter record",
-      "information about", "notes on", "alter profile",
+      // "tell me about" and "who is" removed -- collision with get_member (SimplyPlural backend wins for those)
+      "recall alter", "alter record", "information about", "notes on", "alter profile",
     ],
     tools: ["alter_recall"],
     response_key: "data",
@@ -724,8 +721,9 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // ── Autonomy claim (companion names what to explore next; bypasses queue at p10) ──
   autonomy_claim: {
     triggers: [
+      // "claim seed" removed -- collision with claim_dream_seed; dream seeds are a distinct construct
       "autonomy claim", "claim exploration", "i want to explore", "i'm claiming",
-      "exploration claim", "claim seed", "i claim", "autonomous claim",
+      "exploration claim", "i claim", "autonomous claim",
       "next i want to explore", "i'd like to explore", "exploration intent",
       "set my next exploration", "queue exploration", "claim my exploration",
     ],
