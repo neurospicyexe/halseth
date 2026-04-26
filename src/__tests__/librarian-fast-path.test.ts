@@ -3,7 +3,13 @@ import { FAST_PATH_PATTERNS, type PatternEntry } from "../librarian/patterns.js"
 
 // Replicate the fast-path matching logic inline (mirror of LibrarianRouter.matchFastPath)
 function matchFastPath(request: string): { key: string; entry: PatternEntry } | null {
-  const lower = request.toLowerCase().trim();
+  const trimmed = request.trim();
+  const lower = trimmed.toLowerCase();
+  // Start-anchored guard: "Spine: <text>" at start-of-request = session close payload
+  if (/^spine:\s/i.test(trimmed)) {
+    const entry = FAST_PATH_PATTERNS["session_close"];
+    if (entry) return { key: "session_close", entry };
+  }
   for (const [key, entry] of Object.entries(FAST_PATH_PATTERNS)) {
     for (const trigger of entry.triggers) {
       if (lower.includes(trigger.toLowerCase())) {
