@@ -67,7 +67,7 @@ import {
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
   execAutonomousRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
-  execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift,
+  execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execIdentityAnchorRead,
 } from "./executors/companion-growth.js";
 
@@ -184,6 +184,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   tension_edit: execTensionEdit,
   tension_status: execTensionStatus,
   drift_check: execDriftCheck,
+  limbic_read: execLimbicRead,
   triad_state_read: execTriadStateRead,
   confirm_growth_drift: execConfirmGrowthDrift,
   pressure_drift_log: execPressureDriftLog,

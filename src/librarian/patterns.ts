@@ -489,6 +489,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["drift_check"],
     response_key: "drift",
   },
+  limbic_read: {
+    triggers: [
+      "my limbic state", "current limbic", "limbic synthesis", "limbic state",
+      "synthesis emotional state", "emotional synthesis", "my emotional register",
+      "swarm emotional state", "read limbic", "limbic read",
+    ],
+    tools: ["limbic_read"],
+    response_key: "summary",
+  },
   identity_anchor_read: {
     triggers: [
       "my identity anchor", "identity anchor", "read identity anchor",
