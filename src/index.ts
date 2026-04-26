@@ -67,8 +67,15 @@ const router = new Router()
 
   // Librarian — natural language companion entry point
   .on("POST", "/librarian", async (request, env) => {
-    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-    return (await checkRateLimit(env.RATE_LIMITER, `librarian:${ip}`)) ?? handleLibrarian(request, env);
+    // Authenticated callers (bots) bypass IP rate limit -- all three bots share
+    // the same VPS IP, so IP-based limiting would throttle simultaneous swarm calls.
+    // authGuard downstream rejects invalid tokens; unauthenticated callers still rate-limit.
+    if (!request.headers.get("Authorization")) {
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      const limited = await checkRateLimit(env.RATE_LIMITER, `librarian:${ip}`);
+      if (limited) return limited;
+    }
+    return handleLibrarian(request, env);
   })
 
   // Librarian MCP -- single ask_librarian tool for companion Claude.ai projects
@@ -297,8 +304,21 @@ export default {
     try {
       const url = new URL(request.url);
 
-      // OPTIONS preflight and public paths skip auth entirely
-      if (request.method !== "OPTIONS" && !isPublicPath(url.pathname)) {
+      // Global OPTIONS preflight -- return CORS headers for all endpoints so browser clients
+      // don't get blocked. Auth is skipped for preflight; the actual request carries credentials.
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Max-Age": "86400",
+          },
+        });
+      }
+
+      if (!isPublicPath(url.pathname)) {
         const denied = authGuard(request, env);
         if (denied) return denied;
       }
@@ -312,6 +332,6 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const { processQueue } = await import("./synthesis/index.js");
-    ctx.waitUntil(processQueue(env));
+    ctx.waitUntil(processQueue(env).catch(e => console.error("[cron] processQueue failed:", e)));
   },
 } satisfies ExportedHandler<Env>;
