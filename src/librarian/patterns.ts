@@ -275,7 +275,6 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       // because "halseth" sits between the words -- these explicit forms are required.
       "close the halseth session", "close this halseth session",
       "close halseth session",
-      "spine:", "last real thing:",
     ],
     tools: ["halseth_session_close"],
     response_key: "witness",
@@ -468,7 +467,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   tension_add: {
     triggers: [
       "add tension", "new tension", "record tension", "log tension",
-      "note tension", "i'm holding a tension", "im holding a tension",
+      "i'm holding a tension", "im holding a tension",
     ],
     tools: ["halseth_add_tension"],
     response_key: "witness",
@@ -577,9 +576,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // ── Conclusions (thesis surface) ──
   conclusion_add: {
     triggers: [
-      "i've concluded:", "i conclude:", "my conclusion:", "thesis:",
-      "i believe:", "i hold that", "i assert:", "conclusion:",
-      "i've come to believe", "i've realized:", "what i know now:",
+      "i've concluded:", "i conclude:", "my conclusion:",
+      "i hold that", "i've come to believe", "i've realized:", "what i know now:",
     ],
     tools: ["conclusion_add"],
     response_key: "witness",
@@ -671,7 +669,6 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "i witness", "witnessed raziel", "i notice about raziel",
       "log witness about raziel", "write witness about raziel",
       "witness note for raziel", "i am noticing about raziel",
-      "noticing:", "i notice:", "witness note:",
     ],
     tools: ["raziel_witness"],
     response_key: "witness",
@@ -700,7 +697,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // ── Consistency markers ──
   held_mark: {
     triggers: [
-      "held:", "held note:", "mark held", "consistency marker", "mark consistency",
+      "mark held", "consistency marker", "mark consistency",
     ],
     tools: ["held_mark"],
     response_key: "witness",

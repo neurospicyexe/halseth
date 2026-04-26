@@ -1,11 +1,12 @@
 import { Env } from "../types.js";
+import { safeEqual } from "../lib/auth.js";
 
 // ── Auth helper ──────────────────────────────────────────────────────────────
 
 function checkBridgeAuth(request: Request, env: Env): boolean {
   if (!env.BRIDGE_SECRET) return false; // no secret configured — deny; bridge requires explicit opt-in
   const auth = request.headers.get("Authorization") ?? "";
-  return auth === `Bearer ${env.BRIDGE_SECRET}`;
+  return safeEqual(auth, `Bearer ${env.BRIDGE_SECRET}`);
 }
 
 // ── GET /bridge/shared ────────────────────────────────────────────────────────

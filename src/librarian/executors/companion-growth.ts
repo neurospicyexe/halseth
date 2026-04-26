@@ -233,10 +233,10 @@ export async function execTriadStateRead(ctx: ExecutorContext): Promise<Executor
         SELECT companion_id, state_text, state_type, toward, noted_at,
                ROW_NUMBER() OVER (PARTITION BY companion_id ORDER BY noted_at DESC) AS rn
         FROM companion_relational_state
-        WHERE LOWER(toward) = 'raziel'
+        WHERE LOWER(toward) = LOWER(?)
       )
       SELECT companion_id, state_text, state_type, toward, noted_at FROM ranked WHERE rn = 1`
-    ).all<{ companion_id: string; state_text: string; state_type: string; toward: string; noted_at: string }>(),
+    ).bind(ctx.env.SYSTEM_OWNER).all<{ companion_id: string; state_text: string; state_type: string; toward: string; noted_at: string }>(),
     ctx.env.DB.prepare(
       `WITH ranked AS (
         SELECT from_id, to_id, content, created_at,

@@ -96,8 +96,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(agentId, agentId).all<WmRecentDelta>(),
     // Witness corpus: raw (not ROW_NUMBER collapsed) witness observations about Raziel by this companion
     env.DB.prepare(
-      "SELECT id, companion_id, toward, state_text, weight, state_type, noted_at FROM companion_relational_state WHERE companion_id = ? AND state_type = 'witness' AND toward = 'raziel' ORDER BY noted_at DESC LIMIT 5"
-    ).bind(agentId).all<WmRelationalState>(),
+      "SELECT id, companion_id, toward, state_text, weight, state_type, noted_at FROM companion_relational_state WHERE companion_id = ? AND state_type = 'witness' AND LOWER(toward) = LOWER(?) ORDER BY noted_at DESC LIMIT 5"
+    ).bind(agentId, env.SYSTEM_OWNER).all<WmRelationalState>(),
     // SOMA arc: last 3 soma_arc continuity notes -- SOMA trajectory across sessions
     env.DB.prepare(
       `SELECT note_id, content, created_at FROM wm_continuity_notes

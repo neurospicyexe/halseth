@@ -183,9 +183,29 @@ export async function execAuditLog(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execWitnessLog(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ session_id: string; witness_type: string; content: string; seal_phrase?: string }>(ctx.req.context);
-  if (!p || !p.session_id || !p.witness_type || !p.content) return { response_key: "witness", witness: "witness_log requires { session_id, witness_type, content } in context" };
-  const r = await witnessLog(ctx.env, p);
+  const p = parseContext<{
+    session_id?: string;
+    witness_type?: string; content?: string;
+    entry?: string;        // Brain alias for content
+    channel?: string;      // Brain alias for witness_type
+    seal_phrase?: string;
+  }>(ctx.req.context);
+  if (!p) return { response_key: "witness", witness: "witness_log requires context" };
+
+  const content = (p.content ?? p.entry)?.trim();
+  const witness_type = (p.witness_type ?? p.channel ?? "observation").trim();
+  if (!content) return { response_key: "witness", witness: "witness_log requires { content } (or { entry }) in context" };
+
+  let session_id = p.session_id;
+  if (!session_id) {
+    const sess = await ctx.env.DB.prepare(
+      "SELECT id FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).bind(ctx.req.companion_id).first<{ id: string }>();
+    session_id = sess?.id;
+  }
+  if (!session_id) return { response_key: "witness", witness: "witness_log: no session_id provided and no session found for companion" };
+
+  const r = await witnessLog(ctx.env, { session_id, witness_type, content, seal_phrase: p.seal_phrase });
   return { ack: true, id: r.id };
 }
 
