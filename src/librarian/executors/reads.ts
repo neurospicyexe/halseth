@@ -12,6 +12,13 @@ export async function execFeelingsRead(ctx: ExecutorContext): Promise<ExecutorRe
 }
 
 export async function execJournalRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (ctx.req.companion_id) {
+    // Companions reading their own growth journal -- human_journal is Raziel's personal store
+    const rows = await ctx.env.DB.prepare(
+      "SELECT id, entry_type, content, tags_json, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
+    ).bind(ctx.req.companion_id).all();
+    return { data: rows.results ?? [], meta: { operation: "halseth_journal_read", companion_id: ctx.req.companion_id } };
+  }
   return { data: await journalRead(ctx.env), meta: { operation: "halseth_journal_read" } };
 }
 
