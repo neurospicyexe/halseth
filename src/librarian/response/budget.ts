@@ -15,8 +15,9 @@ export const BUDGET_CHARS = {
   witness: 40,
   tensions: 0,  // raw data passthrough -- not truncated
   drift: 0,     // raw data passthrough -- not truncated
-  ack: 0,       // short acknowledgement -- not truncated
-  data: 0,      // raw data passthrough -- not truncated
+  ack: 0,          // short acknowledgement -- not truncated
+  data: 0,         // raw data passthrough -- not truncated
+  system_error: 0, // error payload -- not truncated
 } as const;
 
 export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift" | "ack" | "data" | "system_error";
