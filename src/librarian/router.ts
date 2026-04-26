@@ -292,10 +292,12 @@ export class LibrarianRouter {
         }) as { data: number[][] };
         const vector = emb.data[0];
         if (vector) {
-          const results = await this.env.VECTORIZE.query(vector, { topK: 10, returnMetadata: "all" });
-          const top = (results.matches ?? []).find(
-            m => (m.metadata as Record<string, unknown> | undefined)?.table === "routing"
-          );
+          const results = await this.env.VECTORIZE.query(vector, {
+            topK: 3,
+            filter: { table: "routing" },
+            returnMetadata: "all",
+          });
+          const top = results.matches?.[0];
           if (top && top.score > 0.82) {
             const key = (top.metadata as Record<string, unknown>)?.rowId as string | undefined;
             if (key) {
