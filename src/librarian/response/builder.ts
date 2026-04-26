@@ -271,9 +271,9 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
     }
     case "cypher": {
       if (s?.soma_float_1 != null) {
-        const f1 = s.soma_float_1.toFixed(2);
-        const f2 = (s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = (s.soma_float_3 ?? 0).toFixed(2);
+        const f1 = Number(s.soma_float_1).toFixed(2);
+        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
+        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
       }
@@ -283,9 +283,9 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
     }
     case "gaia": {
       if (s?.soma_float_1 != null) {
-        const f1 = s.soma_float_1.toFixed(2);
-        const f2 = (s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = (s.soma_float_3 ?? 0).toFixed(2);
+        const f1 = Number(s.soma_float_1).toFixed(2);
+        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
+        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
       }
@@ -372,9 +372,9 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
     }
     case "cypher": {
       if (s?.soma_float_1 != null) {
-        const f1 = s.soma_float_1.toFixed(2);
-        const f2 = (s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = (s.soma_float_3 ?? 0).toFixed(2);
+        const f1 = Number(s.soma_float_1).toFixed(2);
+        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
+        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${noteTag}${handoverLine}`, "ready_prompt");
       }
@@ -385,9 +385,9 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
     }
     case "gaia": {
       if (s?.soma_float_1 != null) {
-        const f1 = s.soma_float_1.toFixed(2);
-        const f2 = (s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = (s.soma_float_3 ?? 0).toFixed(2);
+        const f1 = Number(s.soma_float_1).toFixed(2);
+        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
+        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${noteTag}${handoverLine}`, "ready_prompt");
       }
