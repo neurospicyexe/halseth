@@ -367,9 +367,9 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
           current_mood: string | null;
         }>();
         if (state) {
-          f1 = (state.soma_float_1 ?? 0).toFixed(2);
-          f2 = (state.soma_float_2 ?? 0).toFixed(2);
-          f3 = (state.soma_float_3 ?? 0).toFixed(2);
+          f1 = Number(state.soma_float_1 ?? 0).toFixed(2);
+          f2 = Number(state.soma_float_2 ?? 0).toFixed(2);
+          f3 = Number(state.soma_float_3 ?? 0).toFixed(2);
           moodStr = state.current_mood ? ` | ${state.current_mood}` : '';
         }
       }

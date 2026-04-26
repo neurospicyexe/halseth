@@ -164,7 +164,13 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
     ).bind(input.prior_handover_id));
   }
-  if (stmts.length > 0) await env.DB.batch(stmts);
+  if (stmts.length > 0) {
+    await env.DB.batch(stmts);
+    if (!skipInsert) {
+      const check = await env.DB.prepare("SELECT id FROM sessions WHERE id = ?").bind(sessionId).first<{ id: string }>();
+      if (!check) throw new Error(`session INSERT did not persist (companion: ${input.companion_id ?? "none"}, id: ${sessionId})`);
+    }
+  }
 
   const [state, somaticRaw, lastHandover, houseRow, signalAuditRow, currentFronters] = await Promise.all([
     env.DB.prepare("SELECT * FROM companion_state WHERE companion_id = ?")
@@ -317,7 +323,13 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     );
   }
 
-  if (sessionStatements.length > 0) await env.DB.batch(sessionStatements);
+  if (sessionStatements.length > 0) {
+    await env.DB.batch(sessionStatements);
+    if (!skipInsert) {
+      const check = await env.DB.prepare("SELECT id FROM sessions WHERE id = ?").bind(sessionId).first<{ id: string }>();
+      if (!check) throw new Error(`session INSERT did not persist (companion: ${input.companion_id ?? "none"}, id: ${sessionId})`);
+    }
+  }
 
   // 2. Read most recent handover packet
   const handover = await env.DB.prepare(
