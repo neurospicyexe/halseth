@@ -59,11 +59,35 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execSbFileChunks(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ filename: string; limit?: number }>(ctx.req.context);
-  // Extract filename from context JSON, or scan the request for a *.md filename
-  const filename = p?.filename ?? (ctx.req.request.match(/[\w\-().]+\.md/i)?.[0]?.trim() ?? "");
+  const p = parseContext<{ filename: string; limit?: number; offset?: number }>(ctx.req.context);
+  // Extract filename from context JSON, or scan the request for a *.md filename.
+  // Pattern allows spaces and parens for names like "Gaia - RitualEngine ... St.md".
+  const filename = p?.filename ?? (ctx.req.request.match(/[\w\-(). ]+\.md/i)?.[0]?.trim() ?? "");
   if (!filename) return { response_key: "witness", witness: "sb_file_chunks requires a filename (e.g. 'Calethian2.md')" };
-  const result = await sbFileChunks(ctx.env, filename, p?.limit);
+
+  // Parse pagination from natural language when context didn't include it.
+  // Supports: "chunks 3 to 7", "chunks 3-7", "chunks 3 through 7", "starting at chunk 5", "page 2".
+  let offset = p?.offset;
+  let limit = p?.limit;
+  if (offset === undefined || limit === undefined) {
+    const req = ctx.req.request;
+    const range = req.match(/chunks?\s+(\d+)\s*(?:to|through|-)\s*(\d+)/i);
+    const startAt = req.match(/(?:starting\s+at\s+chunk|from\s+chunk|chunks?\s+from)\s+(\d+)/i);
+    const pageMatch = req.match(/page\s+(\d+)/i);
+    if (range && offset === undefined) {
+      offset = parseInt(range[1]!, 10);
+      if (limit === undefined) limit = parseInt(range[2]!, 10) - offset + 1;
+    } else if (startAt && offset === undefined) {
+      offset = parseInt(startAt[1]!, 10);
+    } else if (pageMatch) {
+      const pageNum = parseInt(pageMatch[1]!, 10);
+      const pageSize = limit ?? 3;
+      offset = (pageNum - 1) * pageSize;
+      limit = pageSize;
+    }
+  }
+
+  const result = await sbFileChunks(ctx.env, filename, limit, offset);
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No chunks found.", meta: { operation: "sb_file_chunks" } };
 }
 

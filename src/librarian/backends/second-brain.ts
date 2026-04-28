@@ -235,8 +235,11 @@ export async function sbSynthesizeSession(env: Env, session_id: string): Promise
   return { ack: text !== null };
 }
 
-export async function sbFileChunks(env: Env, filename: string, limit?: number): Promise<string | null> {
-  return callTool(env, "sb_file_chunks", limit ? { filename, limit } : { filename });
+export async function sbFileChunks(env: Env, filename: string, limit?: number, offset?: number): Promise<string | null> {
+  const args: Record<string, unknown> = { filename };
+  if (limit !== undefined) args.limit = limit;
+  if (offset !== undefined) args.offset = offset;
+  return callTool(env, "sb_file_chunks", args);
 }
 
 export async function sbSaveStudy(env: Env, params: {
