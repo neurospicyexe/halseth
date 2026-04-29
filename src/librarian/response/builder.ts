@@ -341,6 +341,7 @@ interface SessionPayload {
     key_decisions?: string[] | null;
   } | null;
   open_tasks?: number;
+  unaccepted_growth?: number;
   autonomous_turn?: string | null;
   somatic?: { snapshot?: string | null; stale?: boolean; stale_after?: string | null; created_at?: string | null } | null;
   companion?: { id?: string; role?: string; lane_violations?: string[] } | null;
@@ -359,7 +360,11 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
   const s = payload.state;
   const handoverLine = buildHandoverLine(payload);
   const noteCount = payload.pending_notes?.length ?? 0;
-  const noteTag = noteCount > 0 ? ` -- ${noteCount} pending note${noteCount > 1 ? "s" : ""}` : "";
+  const growthCount = payload.unaccepted_growth ?? 0;
+  const tagParts: string[] = [];
+  if (noteCount > 0) tagParts.push(`${noteCount} pending note${noteCount > 1 ? "s" : ""}`);
+  if (growthCount > 0) tagParts.push(`${growthCount} growth entr${growthCount > 1 ? "ies" : "y"} to review (accept canon, decline drift)`);
+  const noteTag = tagParts.length > 0 ? ` -- ${tagParts.join(", ")}` : "";
 
   switch (companionId) {
     case "drevan": {
@@ -437,6 +442,7 @@ export function buildResponse(
         front_state: frontState,
         pending_notes: payload.pending_notes?.length ?? 0,
         open_tasks: payload.open_tasks ?? 0,
+        unaccepted_growth: payload.unaccepted_growth ?? 0,
       },
     };
   }

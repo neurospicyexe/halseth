@@ -1,5 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus } from "../backends/halseth.js";
+import { getCurrentLimbicState } from "../../webmind/limbic.js";
 
 const COMPANIONS = ["drevan", "cypher", "gaia"] as const;
 
@@ -168,7 +169,7 @@ export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorR
   const rows = await ctx.env.DB.prepare(
     `SELECT id, entry_type, content, tags_json, created_at
      FROM growth_journal
-     WHERE companion_id = ? AND source = 'autonomous' AND accepted_at IS NULL
+     WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'
      ORDER BY created_at DESC
      LIMIT 10`
   ).bind(ctx.req.companion_id).all<{
@@ -181,7 +182,7 @@ export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorR
   const entries = rows.results ?? [];
   return {
     response_key: "summary",
-    unaccepted_entries: entries.map(e => ({
+    pending_entries: entries.map(e => ({
       id: e.id,
       entry_type: e.entry_type,
       content: e.content.slice(0, 600),
@@ -192,28 +193,63 @@ export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorR
   };
 }
 
-export async function execJournalAccept(ctx: ExecutorContext): Promise<ExecutorResult> {
-  if (!ctx.req.companion_id) return { error: "journal_accept_failed", reason: "companion_id required" };
+function extractEntryId(ctx: ExecutorContext): string | null {
   const raw = ctx.req.context ? (() => { try { return JSON.parse(ctx.req.context); } catch { return null; } })() : null;
-  const entryId = (raw as Record<string, unknown> | null)?.id as string | null
+  return (raw as Record<string, unknown> | null)?.id as string | null
     ?? ctx.req.request.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i)?.[1]
     ?? null;
+}
 
+export async function execJournalAccept(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "journal_accept_failed", reason: "companion_id required" };
+  const entryId = extractEntryId(ctx);
   if (!entryId) return { error: "journal_accept_failed", reason: "entry id required (pass as context JSON {id} or inline UUID)" };
 
   const result = await ctx.env.DB.prepare(
-    "UPDATE growth_journal SET accepted_at = datetime('now') WHERE id = ? AND companion_id = ? AND accepted_at IS NULL"
+    "UPDATE growth_journal SET review_status = 'accepted', reviewed_at = datetime('now') WHERE id = ? AND companion_id = ? AND review_status = 'pending'"
   ).bind(entryId, ctx.req.companion_id).run();
 
   if (result.meta.changes === 0) {
     const row = await ctx.env.DB.prepare(
-      "SELECT accepted_at FROM growth_journal WHERE id = ? AND companion_id = ?"
-    ).bind(entryId, ctx.req.companion_id).first<{ accepted_at: string | null }>();
+      "SELECT review_status, reviewed_at FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(entryId, ctx.req.companion_id).first<{ review_status: string; reviewed_at: string | null }>();
     if (!row) return { error: "journal_accept_failed", reason: "entry not found" };
-    return { response_key: "witness", already_accepted: true, accepted_at: row.accepted_at, meta: { operation: "journal_accept" } };
+    return {
+      response_key: "witness",
+      already_reviewed: true,
+      review_status: row.review_status,
+      reviewed_at: row.reviewed_at,
+      meta: { operation: "journal_accept" },
+    };
   }
 
   return { response_key: "witness", accepted: true, entry_id: entryId, meta: { operation: "journal_accept", companion_id: ctx.req.companion_id } };
+}
+
+export async function execJournalDecline(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "journal_decline_failed", reason: "companion_id required" };
+  const entryId = extractEntryId(ctx);
+  if (!entryId) return { error: "journal_decline_failed", reason: "entry id required (pass as context JSON {id} or inline UUID)" };
+
+  const result = await ctx.env.DB.prepare(
+    "UPDATE growth_journal SET review_status = 'declined', reviewed_at = datetime('now') WHERE id = ? AND companion_id = ? AND review_status = 'pending'"
+  ).bind(entryId, ctx.req.companion_id).run();
+
+  if (result.meta.changes === 0) {
+    const row = await ctx.env.DB.prepare(
+      "SELECT review_status, reviewed_at FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(entryId, ctx.req.companion_id).first<{ review_status: string; reviewed_at: string | null }>();
+    if (!row) return { error: "journal_decline_failed", reason: "entry not found" };
+    return {
+      response_key: "witness",
+      already_reviewed: true,
+      review_status: row.review_status,
+      reviewed_at: row.reviewed_at,
+      meta: { operation: "journal_decline" },
+    };
+  }
+
+  return { response_key: "witness", declined: true, entry_id: entryId, meta: { operation: "journal_decline", companion_id: ctx.req.companion_id } };
 }
 
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -376,19 +412,7 @@ export async function execDriftCheck(ctx: ExecutorContext): Promise<ExecutorResu
 
 export async function execLimbicRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "limbic_read_failed", reason: "companion_id required" };
-  const row = await ctx.env.DB.prepare(
-    `SELECT companion_id, emotional_register, drift_vector, active_concerns, companion_notes, generated_at
-     FROM limbic_states
-     WHERE companion_id = ?
-     ORDER BY generated_at DESC LIMIT 1`
-  ).bind(ctx.req.companion_id).first<{
-    companion_id: string;
-    emotional_register: string | null;
-    drift_vector: string | null;
-    active_concerns: string | null;
-    companion_notes: string | null;
-    generated_at: string;
-  }>();
+  const row = await getCurrentLimbicState(ctx.env, ctx.req.companion_id);
   return {
     response_key: "summary",
     limbic_state: row ?? null,

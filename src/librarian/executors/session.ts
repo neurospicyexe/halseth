@@ -11,12 +11,22 @@ import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const payload = await sessionLoad(ctx.env, {
-    companion_id: ctx.req.companion_id,
-    front_state: ctx.frontState ?? "unknown",
-    session_type: ctx.req.session_type ?? "work",
-  });
-  const withFront = { ...payload, front_state: ctx.frontState, plural_available: ctx.pluralAvailable };
+  const [payload, pendingGrowthRow] = await Promise.all([
+    sessionLoad(ctx.env, {
+      companion_id: ctx.req.companion_id,
+      front_state: ctx.frontState ?? "unknown",
+      session_type: ctx.req.session_type ?? "work",
+    }),
+    ctx.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
+    ).bind(ctx.req.companion_id).first<{ n: number }>().catch(() => null),
+  ]);
+  const withFront = {
+    ...payload,
+    front_state: ctx.frontState,
+    plural_available: ctx.pluralAvailable,
+    unaccepted_growth: pendingGrowthRow?.n ?? 0,
+  };
   return buildResponse(ctx.req.companion_id, ctx.entry.response_key as ResponseKey, withFront);
 }
 
@@ -47,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -90,7 +100,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     // Historical vault search -- reaches into long files, ChatGPT history, background context.
     // Separate query so it doesn't crowd out recent-session RAG excerpts.
     semanticSearch(ctx.env, historyQuery).catch(() => null),
+    // Unaccepted growth count: how many autonomous entries are awaiting companion review.
+    ctx.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
+    ).bind(agentId).first<{ n: number }>().catch(() => null),
   ]);
+  const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
 
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
@@ -240,7 +255,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     compound_state: os?.compound_state ?? null,
     surface_emotion: os?.surface_emotion ?? null,
     undercurrent_emotion: os?.undercurrent_emotion ?? null,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable },
+    unaccepted_growth: unacceptedGrowth,
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth },
     continuity: wmResult,
   };
 }
@@ -528,7 +544,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -577,7 +593,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).bind(agentId).all<{ content: string }>(),
     // 13. Historical vault: long files, ChatGPT history, background context -- the photo album.
     semanticSearch(ctx.env, `${ctx.req.companion_id} history background origin memory`).catch(() => null),
+    // 14. Unaccepted growth count: autonomous entries awaiting review.
+    ctx.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
+    ).bind(agentId).first<{ n: number }>(),
   ]);
+  const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
+    ? (pendingGrowthResult.value as { n: number }).n
+    : 0;
 
   const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
     ? String((synthResult.value as { content?: string }).content ?? "").replace(/^---[\s\S]*?---\n+/, "")
@@ -671,7 +694,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       recent_growth,
       active_patterns,
       pending_seeds,
+      unaccepted_growth: unacceptedGrowthCount,
     },
-    meta: { operation: "halseth_bot_orient" },
+    meta: { operation: "halseth_bot_orient", unaccepted_growth: unacceptedGrowthCount },
   };
 }

@@ -68,7 +68,7 @@ import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
   execAutonomousRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
-  execJournalReview, execJournalAccept, execIdentityAnchorRead,
+  execJournalReview, execJournalAccept, execJournalDecline, execIdentityAnchorRead,
 } from "./executors/companion-growth.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -194,6 +194,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_autonomy_seeds_read: execAutonomySeedsRead,
   halseth_journal_review: execJournalReview,
   halseth_journal_accept: execJournalAccept,
+  halseth_journal_decline: execJournalDecline,
   held_mark: execHeldMark,
   held_read: execHeldRead,
   identity_anchor_read: execIdentityAnchorRead,
