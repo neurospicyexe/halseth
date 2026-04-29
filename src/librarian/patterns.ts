@@ -362,6 +362,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["halseth_journal_accept"],
     response_key: "witness",
   },
+  journal_decline: {
+    triggers: [
+      "decline journal entry", "decline this entry", "reject this entry",
+      "decline growth entry", "not canon", "journal declined",
+      "do not own this entry",
+    ],
+    tools: ["halseth_journal_decline"],
+    response_key: "witness",
+  },
 
   // ── Companion notes ──
   companion_notes_read: {

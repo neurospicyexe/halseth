@@ -93,7 +93,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 }
 
 // GET /mind/growth/journal/:companion_id
-// ?limit=N (max 100), ?unaccepted=1 (only autonomous + unreviewed)
+// ?limit=N (max 100), ?pending=1 (only autonomous + awaiting review)
 export async function getGrowthJournal(
   request: Request,
   env: Env,
@@ -107,14 +107,35 @@ export async function getGrowthJournal(
 
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10), 100);
-  const unacceptedOnly = url.searchParams.get("unaccepted") === "1";
+  const pendingOnly = url.searchParams.get("pending") === "1";
 
-  const sql = unacceptedOnly
-    ? "SELECT * FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND accepted_at IS NULL ORDER BY created_at DESC LIMIT ?"
+  const sql = pendingOnly
+    ? "SELECT * FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending' ORDER BY created_at DESC LIMIT ?"
     : "SELECT * FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?";
 
   const rows = await env.DB.prepare(sql).bind(companion_id, limit).all();
   return json({ journal: rows.results });
+}
+
+async function setReviewStatus(
+  env: Env,
+  id: string,
+  companion_id: string,
+  status: "accepted" | "declined",
+): Promise<Response> {
+  const result = await env.DB.prepare(
+    "UPDATE growth_journal SET review_status = ?, reviewed_at = datetime('now') WHERE id = ? AND companion_id = ? AND review_status = 'pending'"
+  ).bind(status, id, companion_id).run();
+
+  if (result.meta.changes === 0) {
+    const row = await env.DB.prepare(
+      "SELECT review_status, reviewed_at FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(id, companion_id).first<{ review_status: string; reviewed_at: string | null }>();
+    if (!row) return json({ error: "entry not found" }, 404);
+    return json({ ok: true, already_reviewed: true, review_status: row.review_status, reviewed_at: row.reviewed_at });
+  }
+
+  return json({ ok: true, already_reviewed: false, review_status: status });
 }
 
 // PATCH /mind/growth/journal/:id/accept
@@ -132,20 +153,25 @@ export async function acceptJournalEntry(
   const body = await request.json() as Record<string, unknown>;
   if (!validateCompanion(body.companion_id)) return json({ error: "invalid companion_id" }, 400);
 
-  const result = await env.DB.prepare(
-    "UPDATE growth_journal SET accepted_at = datetime('now') WHERE id = ? AND companion_id = ? AND accepted_at IS NULL"
-  ).bind(id, body.companion_id).run();
+  return setReviewStatus(env, id, body.companion_id as string, "accepted");
+}
 
-  if (result.meta.changes === 0) {
-    // Either not found, wrong companion, or already accepted
-    const row = await env.DB.prepare(
-      "SELECT accepted_at FROM growth_journal WHERE id = ? AND companion_id = ?"
-    ).bind(id, body.companion_id).first<{ accepted_at: string | null }>();
-    if (!row) return json({ error: "entry not found" }, 404);
-    return json({ ok: true, already_accepted: true, accepted_at: row.accepted_at });
-  }
+// PATCH /mind/growth/journal/:id/decline
+export async function declineJournalEntry(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
 
-  return json({ ok: true, already_accepted: false });
+  const { id } = params;
+  if (!id) return json({ error: "id required" }, 400);
+
+  const body = await request.json() as Record<string, unknown>;
+  if (!validateCompanion(body.companion_id)) return json({ error: "invalid companion_id" }, 400);
+
+  return setReviewStatus(env, id, body.companion_id as string, "declined");
 }
 
 // ---------------------------------------------------------------------------

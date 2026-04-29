@@ -48,7 +48,7 @@ import {
   getAutonomyThreads,
 } from "./handlers/autonomy.js";
 import {
-  postGrowthJournal, getGrowthJournal, acceptJournalEntry,
+  postGrowthJournal, getGrowthJournal, acceptJournalEntry, declineJournalEntry,
   postGrowthPattern, getGrowthPatterns,
   postGrowthMarker, getGrowthMarkers,
 } from "./handlers/growth.js";
@@ -193,6 +193,7 @@ const router = new Router()
   .on("POST", "/mind/growth/journal",                            (request, env)         => postGrowthJournal(request, env))
   .on("GET",  "/mind/growth/journal/:companion_id",              (request, env, params) => getGrowthJournal(request, env, params ?? {}))
   .on("PATCH", "/mind/growth/journal/:id/accept",               (request, env, params) => acceptJournalEntry(request, env, params ?? {}))
+  .on("PATCH", "/mind/growth/journal/:id/decline",              (request, env, params) => declineJournalEntry(request, env, params ?? {}))
   .on("POST", "/mind/growth/patterns",                           (request, env)         => postGrowthPattern(request, env))
   .on("GET",  "/mind/growth/patterns/:companion_id",             (request, env, params) => getGrowthPatterns(request, env, params ?? {}))
   .on("POST", "/mind/growth/markers",                            (request, env)         => postGrowthMarker(request, env))
