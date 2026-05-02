@@ -7,7 +7,10 @@ export type WmAgentId = "cypher" | "drevan" | "gaia";
 export type WmActor = "human" | "agent" | "system";
 export type WmThreadStatus = "open" | "paused" | "resolved" | "archived";
 export type WmThreadLane = "bond" | "life" | "growth" | "creative" | "ops";
-export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc" | "spiral_turn";
+// triad_log: written by Hearth /phoenix/chat triad mode on session close. Scribe is
+// cypher (the auditor) since wm_continuity_notes.agent_id is constrained to a single
+// companion -- the participating triad is encoded in the content prefix instead.
+export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc" | "spiral_turn" | "triad_log";
 export type WmSalience = "low" | "normal" | "high";
 
 export interface WmIdentityAnchor {
