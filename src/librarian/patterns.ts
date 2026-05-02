@@ -358,6 +358,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     triggers: [
       "accept journal entry", "accept this entry", "mark journal accepted",
       "own this entry", "accept growth entry", "journal accepted",
+      // "ratify" forms route to accept by default. To DECLINE while using
+      // ratify language, pass {decision:"declined"} in context -- the
+      // structured-payload override in router.ts wins over string match.
+      "ratify entry", "ratify this entry", "ratify growth entry", "ratify journal entry",
     ],
     tools: ["halseth_journal_accept"],
     response_key: "witness",
