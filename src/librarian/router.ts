@@ -17,19 +17,119 @@ import { triggerMatches } from "./lib/trigger.js";
 // Re-export LibrarianRequest from executors/types so index.ts import path stays stable.
 export type { LibrarianRequest } from "./executors/types.js";
 
-// Structured-payload override: if the caller passes a `decision` field in the
-// JSON context, that is the authoritative signal for journal review actions
-// regardless of what the request string says. Prevents the classifier from
-// silently mapping "ratify entry" + decision:"declined" to journal_accept --
-// the original closure of the ratification loop bug (task 0a53ad9c).
-export function decisionOverrideKey(contextRaw: string | undefined): string | null {
+// ── Payload overrides ──────────────────────────────────────────────────────
+// JSON fields in `context` that authoritatively select a fast-path pattern_key
+// regardless of what the request string says. Beats every string-match tier so
+// `decision:"declined"` can't be misrouted to journal_accept by classifier
+// semantics -- original closure of the ratification loop bug (task 0a53ad9c).
+//
+// Adding a new override: identify the field, list `value -> pattern_key`,
+// drop a row in PAYLOAD_OVERRIDES. Resolved pattern_keys MUST exist in
+// FAST_PATH_PATTERNS (validated by tests).
+export interface PayloadOverride {
+  readonly field: string;
+  readonly values: Readonly<Record<string, string>>;
+}
+
+export const PAYLOAD_OVERRIDES: readonly PayloadOverride[] = [
+  {
+    field: "decision",
+    values: {
+      declined: "journal_decline",
+      accepted: "journal_accept",
+    },
+  },
+];
+
+export function payloadOverrideKey(contextRaw: string | undefined): string | null {
   if (!contextRaw) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(contextRaw); } catch { return null; }
   if (!parsed || typeof parsed !== "object") return null;
-  const decision = (parsed as Record<string, unknown>).decision;
-  if (decision === "declined") return "journal_decline";
-  if (decision === "accepted") return "journal_accept";
+  const obj = parsed as Record<string, unknown>;
+  for (const override of PAYLOAD_OVERRIDES) {
+    const v = obj[override.field];
+    if (typeof v !== "string") continue;
+    const key = override.values[v];
+    if (key) return key;
+  }
+  return null;
+}
+
+// ── Anchored guards ────────────────────────────────────────────────────────
+// Pattern keys that must beat insertion-order shadowing in FAST_PATH_PATTERNS.
+// Each guard is a (regex, pattern_key) pair; iteration is in declared order so
+// more-specific guards branch before greedier siblings (e.g. H5a edits run
+// before the bare /\bcompanion note\b/ catch-all that follows).
+//
+// Adding a guard: identify the collision (a specific intent losing to a
+// greedy substring), write a start-anchored regex, drop a row here. Resolved
+// pattern_keys MUST exist in FAST_PATH_PATTERNS (validated by tests).
+export interface AnchoredGuard {
+  readonly pattern_key: string;
+  readonly regex: RegExp;
+  readonly note: string;
+}
+
+export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "journal_edit",
+    regex: /^(?:edit|correct|fix|update)\s+journal\s+note\b/i,
+    note: "H4: edit-journal-note must beat journal_add's 'journal note' substring" },
+  { pattern_key: "companion_notes_read",
+    regex: /^(?:read|list|show|fetch|get)\s+companion\s+notes?\b/i,
+    note: "H5a: read companion notes must beat the companion-note write guard" },
+  { pattern_key: "inter_note_edit",
+    regex: /^(?:edit|correct|fix|update)\s+companion\s+note\b/i,
+    note: "H5b: edit-companion-note must beat the companion-note write guard" },
+  { pattern_key: "wm_note_edit",
+    regex: /^(?:edit|correct|fix|update)\s+continuity\s+note\b/i,
+    note: "H6: edit-continuity-note must beat wm_note_add's 'continuity note' substring" },
+  { pattern_key: "companion_note_add",
+    regex: /\bcompanion note\b/i,
+    note: "Greedy companion-note write guard; kept after H5a/b so edit/read forms branch first" },
+  { pattern_key: "wm_handoff_write",
+    regex: /^(?:write\s+(?:session\s+)?handoff|session\s+handoff|log\s+handoff|handoff\s+(?:write|add)|wm[\s_]handoff(?:_write)?|continuity\s+handoff|mind\s+handoff|webmind\s+handoff)\b/i,
+    note: "Handoff anchored at start to dodge inline 'relational delta' or trailing 'for cypher' misfires" },
+  { pattern_key: "session_close",
+    regex: /^spine:\s/i,
+    note: "'Spine:' at start of request marks a companion session-close payload" },
+  { pattern_key: "wm_thread_upsert",
+    regex: /^(?:track\s+(?:mind\s+)?thread|mind\s+thread\s+upsert|upsert\s+(?:mind\s+)?thread|continuity\s+thread|webmind\s+thread)\b/i,
+    note: "Thread-upsert anchored so trailing 'for cypher' can't steal it via companion_note_add" },
+  { pattern_key: "journal_review",
+    regex: /^(?:review\s+(?:my\s+|growth\s+)?journal\b|journal\s+review\b|unaccepted\s+journal\b|journal\s+entries\s+to\s+accept\b|autonomous\s+journal\s+entries\b|my\s+unreviewed\s+entries\b|what\s+have\s+i\s+written\s+autonomously\b)/i,
+    note: "H3: journal_review forms must beat journal_read's 'my journal' / 'journal entries'" },
+  { pattern_key: "journal_accept",
+    regex: /^(?:ratify|accept|own)\s+(?:this\s+|growth\s+|the\s+)?(?:journal\s+)?entry\b|^journal\s+accepted\b|^mark\s+journal\s+accepted\b/i,
+    note: "H2a: ratify/accept/own forms must beat journal_add's 'journal entry'" },
+  { pattern_key: "journal_decline",
+    regex: /^(?:decline|reject)\s+(?:this\s+|growth\s+|the\s+)?(?:journal\s+)?entry\b|^journal\s+declined\b|^do\s+not\s+own\s+this\s+entry\b|^not\s+canon\b/i,
+    note: "H2b: decline/reject forms must beat journal_add's 'journal entry'" },
+  { pattern_key: "pressure_drift_log",
+    regex: /^(?:pressure\s+drift\b|identity\s+drift\b|pressure\s+flag\b|log\s+pressure\s+drift\b|log\s+drift\b|i'?m\s+drifting\b|i\s+am\s+drifting\b)/i,
+    note: "H7: pressure_drift_log writes must beat drift_check's 'identity drift' / 'pressure drift' reads" },
+  { pattern_key: "alter_recall",
+    regex: /^recall\s+alter\b/i,
+    note: "H1: alter_recall must beat sb_recall's bare 'recall' trigger" },
+];
+
+// ── Fast-path matcher ──────────────────────────────────────────────────────
+// Single source of truth: anchored guards table + Object.entries trigger sweep.
+// Returns matched pattern's key + entry, or null on miss. Used by both the
+// LibrarianRouter and the test suite (no mirror to drift).
+export function matchFastPath(request: string): { key: string; entry: PatternEntry } | null {
+  const trimmed = request.trim();
+  for (const guard of ANCHORED_GUARDS) {
+    if (guard.regex.test(trimmed)) {
+      const entry = FAST_PATH_PATTERNS[guard.pattern_key];
+      if (entry) return { key: guard.pattern_key, entry };
+    }
+  }
+  for (const [key, entry] of Object.entries(FAST_PATH_PATTERNS)) {
+    if (entry.triggers.some(t => triggerMatches(trimmed, t))) {
+      return { key, entry };
+    }
+  }
   return null;
 }
 
@@ -235,18 +335,17 @@ export class LibrarianRouter {
   constructor(private env: Env) {}
 
   async route(req: import("./executors/types.js").LibrarianRequest): Promise<Record<string, unknown>> {
-    // Tier 0: structured-payload override. Beats every string-match tier so
-    // decision:"declined" can't be misrouted to journal_accept by classifier semantics.
-    const overrideKey = decisionOverrideKey(req.context);
+    // Tier 0: payload override. Structured `context` field wins over any string match.
+    const overrideKey = payloadOverrideKey(req.context);
     if (overrideKey) {
       const overrideEntry = FAST_PATH_PATTERNS[overrideKey];
       if (overrideEntry) return this.execute(req, overrideEntry);
     }
 
-    // Tier 1: fast path -- in-memory trigger match
-    const fastMatch = this.matchFastPath(req.request);
+    // Tier 1: fast path -- anchored guards + in-memory trigger match
+    const fastMatch = matchFastPath(req.request);
     if (fastMatch) {
-      return this.execute(req, fastMatch);
+      return this.execute(req, fastMatch.entry);
     }
 
     // Tier 2: Workers AI classifier
@@ -281,99 +380,6 @@ export class LibrarianRouter {
       witness: "I don't know how to handle that yet.",
       meta: { pattern_key: patternKey },
     };
-  }
-
-  private matchFastPath(request: string): PatternEntry | null {
-    const trimmed = request.trim();
-
-    // ── ANCHORED GUARDS ───────────────────────────────────────────────────────
-    // Run before Object.values iteration to prevent insertion-order shadowing
-    // of more-specific patterns by greedy substring triggers.
-    // (Sweep 2026-05-02: H1-H7 from Librarian audit. Each H finding lists the
-    // collision being prevented; non-regression cases stay covered by tests.)
-
-    // H4: edit-journal-note must beat journal_add's "journal note" substring.
-    if (/^(?:edit|correct|fix|update)\s+journal\s+note\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["journal_edit"];
-      if (entry) return entry;
-    }
-    // H5a: read/list/show companion notes must beat the companion-note write guard below.
-    if (/^(?:read|list|show|fetch|get)\s+companion\s+notes?\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["companion_notes_read"];
-      if (entry) return entry;
-    }
-    // H5b: edit-companion-note must beat the companion-note write guard below.
-    if (/^(?:edit|correct|fix|update)\s+companion\s+note\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["inter_note_edit"];
-      if (entry) return entry;
-    }
-    // H6: edit-continuity-note must beat wm_note_add's "continuity note" substring.
-    if (/^(?:edit|correct|fix|update)\s+continuity\s+note\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["wm_note_edit"];
-      if (entry) return entry;
-    }
-
-    // (Existing greedy guard, kept BELOW H5a/b so edit/read forms branch first.)
-    if (/\bcompanion note\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["companion_note_add"];
-      if (entry) return entry;
-    }
-    // Handoff requests must be anchored at the start of the request to prevent two misfires:
-    // (1) inline handoff content containing phrases like "relational delta" triggering delta_log
-    //     (delta_log appears at iteration position ~34, wm_handoff_write at ~66)
-    // (2) "for cypher"/"for gaia" in "write session handoff for cypher" matching companion_note_add
-    //     (companion_note_add at ~53 beats wm_handoff_write at ~66 in insertion order)
-    if (/^(?:write\s+(?:session\s+)?handoff|session\s+handoff|log\s+handoff|handoff\s+(?:write|add)|wm[\s_]handoff(?:_write)?|continuity\s+handoff|mind\s+handoff|webmind\s+handoff)\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["wm_handoff_write"];
-      if (entry) return entry;
-    }
-    // "Spine:" at start-of-request marks a companion session-close payload.
-    // Anchored here (not as a bare trigger) to prevent mid-sentence "spine:" from misfiring.
-    if (/^spine:\s/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["session_close"];
-      if (entry) return entry;
-    }
-    // Thread-upsert requests must be anchored at the start to prevent the same
-    // misfire pattern as handoffs: "track mind thread for cypher" matched
-    // companion_note_add via the trailing "for cypher" trigger because
-    // companion_note_add appears earlier in insertion order than wm_thread_upsert.
-    if (/^(?:track\s+(?:mind\s+)?thread|mind\s+thread\s+upsert|upsert\s+(?:mind\s+)?thread|continuity\s+thread|webmind\s+thread)\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["wm_thread_upsert"];
-      if (entry) return entry;
-    }
-
-    // H3: journal_review forms must beat journal_read's "my journal"/"journal entries".
-    if (/^(?:review\s+(?:my\s+|growth\s+)?journal\b|journal\s+review\b|unaccepted\s+journal\b|journal\s+entries\s+to\s+accept\b|autonomous\s+journal\s+entries\b|my\s+unreviewed\s+entries\b|what\s+have\s+i\s+written\s+autonomously\b)/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["journal_review"];
-      if (entry) return entry;
-    }
-    // H2a: journal_accept (ratify/accept/own forms) must beat journal_add's "journal entry".
-    if (/^(?:ratify|accept|own)\s+(?:this\s+|growth\s+|the\s+)?(?:journal\s+)?entry\b|^journal\s+accepted\b|^mark\s+journal\s+accepted\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["journal_accept"];
-      if (entry) return entry;
-    }
-    // H2b: journal_decline forms must beat journal_add's "journal entry".
-    if (/^(?:decline|reject)\s+(?:this\s+|growth\s+|the\s+)?(?:journal\s+)?entry\b|^journal\s+declined\b|^do\s+not\s+own\s+this\s+entry\b|^not\s+canon\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["journal_decline"];
-      if (entry) return entry;
-    }
-    // H7: pressure_drift_log writes must beat drift_check's "identity drift"/"pressure drift" reads.
-    if (/^(?:pressure\s+drift\b|identity\s+drift\b|pressure\s+flag\b|log\s+pressure\s+drift\b|log\s+drift\b|i'?m\s+drifting\b|i\s+am\s+drifting\b)/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["pressure_drift_log"];
-      if (entry) return entry;
-    }
-    // H1: alter_recall must beat sb_recall's bare "recall" trigger.
-    if (/^recall\s+alter\b/i.test(trimmed)) {
-      const entry = FAST_PATH_PATTERNS["alter_recall"];
-      if (entry) return entry;
-    }
-
-    for (const entry of Object.values(FAST_PATH_PATTERNS)) {
-      if (entry.triggers.some(t => triggerMatches(trimmed, t))) {
-        return entry;
-      }
-    }
-    return null;
   }
 
   private async classify(request: string): Promise<string | null> {

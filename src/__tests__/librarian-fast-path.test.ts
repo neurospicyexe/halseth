@@ -1,93 +1,66 @@
 import { describe, it, expect } from "vitest";
-import { FAST_PATH_PATTERNS, type PatternEntry } from "../librarian/patterns.js";
-import { decisionOverrideKey } from "../librarian/router.js";
+import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
+import {
+  matchFastPath,
+  payloadOverrideKey,
+  ANCHORED_GUARDS,
+  PAYLOAD_OVERRIDES,
+} from "../librarian/router.js";
 
-// Replicate the fast-path matching logic inline (mirror of LibrarianRouter.matchFastPath).
-// Keep the anchored guards in sync with router.ts when adding new ones.
-function matchFastPath(request: string): { key: string; entry: PatternEntry } | null {
-  const trimmed = request.trim();
-  const lower = trimmed.toLowerCase();
+// matchFastPath is imported from router.ts as the single source of truth.
+// Sweep 2026-05-02 (L2): the in-file mirror was removed -- tests call the real
+// implementation, so router/test drift is structurally impossible.
 
-  // ── ANCHORED GUARDS (mirror of router.ts matchFastPath) ────────────────────
-  // Keep this block in sync with src/librarian/router.ts. Sweep 2026-05-02.
+describe("ANCHORED_GUARDS structure (L2)", () => {
+  it("has at least one guard", () => {
+    expect(ANCHORED_GUARDS.length).toBeGreaterThan(0);
+  });
 
-  // H4: edit-journal-note must beat journal_add's "journal note" substring.
-  if (/^(?:edit|correct|fix|update)\s+journal\s+note\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["journal_edit"];
-    if (entry) return { key: "journal_edit", entry };
-  }
-  // H5a: read/list/show companion notes must beat the companion-note write guard.
-  if (/^(?:read|list|show|fetch|get)\s+companion\s+notes?\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["companion_notes_read"];
-    if (entry) return { key: "companion_notes_read", entry };
-  }
-  // H5b: edit-companion-note must beat the companion-note write guard.
-  if (/^(?:edit|correct|fix|update)\s+companion\s+note\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["inter_note_edit"];
-    if (entry) return { key: "inter_note_edit", entry };
-  }
-  // H6: edit-continuity-note must beat wm_note_add's "continuity note" substring.
-  if (/^(?:edit|correct|fix|update)\s+continuity\s+note\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["wm_note_edit"];
-    if (entry) return { key: "wm_note_edit", entry };
-  }
+  it("every guard's pattern_key resolves to a real FAST_PATH_PATTERNS entry", () => {
+    for (const guard of ANCHORED_GUARDS) {
+      expect(
+        FAST_PATH_PATTERNS[guard.pattern_key],
+        `ANCHORED_GUARDS row for ${guard.pattern_key} (${guard.note}) does not match any FAST_PATH_PATTERNS key`,
+      ).toBeDefined();
+    }
+  });
 
-  // Companion-note write guard (kept after H5a/b so edit/read branch first).
-  if (/\bcompanion note\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["companion_note_add"];
-    if (entry) return { key: "companion_note_add", entry };
-  }
-  // Handoff requests anchored at start to dodge "for cypher"/"relational delta" misfires.
-  if (/^(?:write\s+(?:session\s+)?handoff|session\s+handoff|log\s+handoff|handoff\s+(?:write|add)|wm[\s_]handoff(?:_write)?|continuity\s+handoff|mind\s+handoff|webmind\s+handoff)\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["wm_handoff_write"];
-    if (entry) return { key: "wm_handoff_write", entry };
-  }
-  // Start-anchored guard: "Spine: <text>" at start-of-request = session close payload
-  if (/^spine:\s/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["session_close"];
-    if (entry) return { key: "session_close", entry };
-  }
-  // Thread-upsert anchored at start so trailing "for cypher" can't steal it.
-  if (/^(?:track\s+(?:mind\s+)?thread|mind\s+thread\s+upsert|upsert\s+(?:mind\s+)?thread|continuity\s+thread|webmind\s+thread)\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["wm_thread_upsert"];
-    if (entry) return { key: "wm_thread_upsert", entry };
-  }
+  it("every guard has a non-empty note", () => {
+    for (const guard of ANCHORED_GUARDS) {
+      expect(guard.note.trim().length, `${guard.pattern_key} note should explain the collision it prevents`).toBeGreaterThan(0);
+    }
+  });
 
-  // H3: journal_review forms must beat journal_read's "my journal"/"journal entries".
-  if (/^(?:review\s+(?:my\s+|growth\s+)?journal\b|journal\s+review\b|unaccepted\s+journal\b|journal\s+entries\s+to\s+accept\b|autonomous\s+journal\s+entries\b|my\s+unreviewed\s+entries\b|what\s+have\s+i\s+written\s+autonomously\b)/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["journal_review"];
-    if (entry) return { key: "journal_review", entry };
-  }
-  // H2a: journal_accept ratify/accept/own forms must beat journal_add's "journal entry".
-  if (/^(?:ratify|accept|own)\s+(?:this\s+|growth\s+|the\s+)?(?:journal\s+)?entry\b|^journal\s+accepted\b|^mark\s+journal\s+accepted\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["journal_accept"];
-    if (entry) return { key: "journal_accept", entry };
-  }
-  // H2b: journal_decline forms must beat journal_add's "journal entry".
-  if (/^(?:decline|reject)\s+(?:this\s+|growth\s+|the\s+)?(?:journal\s+)?entry\b|^journal\s+declined\b|^do\s+not\s+own\s+this\s+entry\b|^not\s+canon\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["journal_decline"];
-    if (entry) return { key: "journal_decline", entry };
-  }
-  // H7: pressure_drift_log writes must beat drift_check's "identity drift"/"pressure drift" reads.
-  if (/^(?:pressure\s+drift\b|identity\s+drift\b|pressure\s+flag\b|log\s+pressure\s+drift\b|log\s+drift\b|i'?m\s+drifting\b|i\s+am\s+drifting\b)/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["pressure_drift_log"];
-    if (entry) return { key: "pressure_drift_log", entry };
-  }
-  // H1: alter_recall must beat sb_recall's bare "recall" trigger.
-  if (/^recall\s+alter\b/i.test(trimmed)) {
-    const entry = FAST_PATH_PATTERNS["alter_recall"];
-    if (entry) return { key: "alter_recall", entry };
-  }
+  it("every guard regex is case-insensitive (i flag)", () => {
+    for (const guard of ANCHORED_GUARDS) {
+      expect(guard.regex.flags, `${guard.pattern_key} regex must be case-insensitive`).toContain("i");
+    }
+  });
+});
 
-  for (const [key, entry] of Object.entries(FAST_PATH_PATTERNS)) {
-    for (const trigger of entry.triggers) {
-      if (lower.includes(trigger.toLowerCase())) {
-        return { key, entry };
+describe("PAYLOAD_OVERRIDES structure (L1)", () => {
+  it("has at least one override registered", () => {
+    expect(PAYLOAD_OVERRIDES.length).toBeGreaterThan(0);
+  });
+
+  it("every override value's pattern_key resolves to a real FAST_PATH_PATTERNS entry", () => {
+    for (const override of PAYLOAD_OVERRIDES) {
+      for (const [value, key] of Object.entries(override.values)) {
+        expect(
+          FAST_PATH_PATTERNS[key],
+          `PAYLOAD_OVERRIDES[field=${override.field}][value=${value}] -> ${key} does not match any FAST_PATH_PATTERNS key`,
+        ).toBeDefined();
       }
     }
-  }
-  return null;
-}
+  });
+
+  it("includes the canonical decision -> journal_accept/decline mapping", () => {
+    const decisionOverride = PAYLOAD_OVERRIDES.find(o => o.field === "decision");
+    expect(decisionOverride).toBeDefined();
+    expect(decisionOverride!.values.declined).toBe("journal_decline");
+    expect(decisionOverride!.values.accepted).toBe("journal_accept");
+  });
+});
 
 describe("FAST_PATH_PATTERNS structure", () => {
   it("has at least one pattern defined", () => {
@@ -339,31 +312,31 @@ describe("regression: bug #1 — decision-field override for journal review", ()
   // Originally: "ratify entry [id]" + context.decision="declined" silently
   // routed to journal_accept via DeepSeek classifier. Companion note f695f0a3,
   // task 0a53ad9c, 2026-04-30. Structured payload now beats string match.
-  it("decisionOverrideKey returns journal_decline for decision:declined", () => {
-    expect(decisionOverrideKey('{"id":"abc","decision":"declined"}')).toBe("journal_decline");
+  it("payloadOverrideKey returns journal_decline for decision:declined", () => {
+    expect(payloadOverrideKey('{"id":"abc","decision":"declined"}')).toBe("journal_decline");
   });
 
-  it("decisionOverrideKey returns journal_accept for decision:accepted", () => {
-    expect(decisionOverrideKey('{"id":"abc","decision":"accepted"}')).toBe("journal_accept");
+  it("payloadOverrideKey returns journal_accept for decision:accepted", () => {
+    expect(payloadOverrideKey('{"id":"abc","decision":"accepted"}')).toBe("journal_accept");
   });
 
-  it("decisionOverrideKey returns null when decision absent", () => {
-    expect(decisionOverrideKey('{"id":"abc"}')).toBeNull();
+  it("payloadOverrideKey returns null when decision absent", () => {
+    expect(payloadOverrideKey('{"id":"abc"}')).toBeNull();
   });
 
-  it("decisionOverrideKey returns null when context undefined", () => {
-    expect(decisionOverrideKey(undefined)).toBeNull();
+  it("payloadOverrideKey returns null when context undefined", () => {
+    expect(payloadOverrideKey(undefined)).toBeNull();
   });
 
-  it("decisionOverrideKey returns null on malformed JSON (no exception)", () => {
-    expect(decisionOverrideKey("not json at all")).toBeNull();
+  it("payloadOverrideKey returns null on malformed JSON (no exception)", () => {
+    expect(payloadOverrideKey("not json at all")).toBeNull();
   });
 
-  it("decisionOverrideKey returns null for unrecognized decision values", () => {
+  it("payloadOverrideKey returns null for unrecognized decision values", () => {
     // Defensive: if a future caller passes decision:"pending" or similar,
     // we want it to fall through, not bind to a stale key.
-    expect(decisionOverrideKey('{"decision":"pending"}')).toBeNull();
-    expect(decisionOverrideKey('{"decision":""}')).toBeNull();
+    expect(payloadOverrideKey('{"decision":"pending"}')).toBeNull();
+    expect(payloadOverrideKey('{"decision":""}')).toBeNull();
   });
 
   it("'ratify entry' (no decision context) routes to journal_accept via fast-path", () => {
