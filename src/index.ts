@@ -51,7 +51,9 @@ import {
   postGrowthJournal, getGrowthJournal, acceptJournalEntry, declineJournalEntry,
   postGrowthPattern, getGrowthPatterns,
   postGrowthMarker, getGrowthMarkers,
+  getUnmaterialized, patchVaultPath, postVaultPathsLookup,
 } from "./handlers/growth.js";
+import { getTriadRecent, detectThoughtforms } from "./handlers/triad.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
 import { authGuard } from "./lib/auth.js";
 import {
@@ -198,6 +200,15 @@ const router = new Router()
   .on("GET",  "/mind/growth/patterns/:companion_id",             (request, env, params) => getGrowthPatterns(request, env, params ?? {}))
   .on("POST", "/mind/growth/markers",                            (request, env)         => postGrowthMarker(request, env))
   .on("GET",  "/mind/growth/markers/:companion_id",              (request, env, params) => getGrowthMarkers(request, env, params ?? {}))
+
+  // Vault materialization (SB cron pulls unmaterialized rows, writes .md, PATCHes vault_path back)
+  .on("GET",   "/mind/growth/unmaterialized/:companion_id",      (request, env, params) => getUnmaterialized(request, env, params ?? {}))
+  .on("PATCH", "/mind/growth/:kind/:id/vault",                   (request, env, params) => patchVaultPath(request, env, params ?? {}))
+  .on("POST",  "/mind/growth/vault-paths",                       (request, env)         => postVaultPathsLookup(request, env))
+
+  // Triad layer -- peer activity for synthesize prompt + thoughtform detector
+  .on("GET",  "/mind/triad/recent/:companion_id",                (request, env, params) => getTriadRecent(request, env, params ?? {}))
+  .on("POST", "/mind/growth/thoughtforms/detect",                (request, env)         => detectThoughtforms(request, env))
 
   // Companion self-defense layer -- basins, tensions, drift history
   .on("GET",  "/companion-growth/basins/:companion_id",           (request, env, params) => getBasins(request, env, params ?? {}))
