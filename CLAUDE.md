@@ -108,6 +108,8 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0058` | `sb_search_log` -- Second Brain search hit logging |
 | -- | `0059` | `edited_at` on `companion_conclusions` -- gap-fill from 0037; absence caused D1_ERROR in orient |
 | -- | `0060` | `confidence` (REAL, default 0.6) + `evidence_count` (INT, default 1) on `synthesis_summary` -- multi-pass corroboration scoring |
+| -- | `0061` | `growth_journal.review_status` enum (pending/accepted/declined) + `reviewed_at` -- ratification loop closure |
+| -- | `0062` | `prehended_ids` + `vault_path` on growth_journal/patterns/markers, `evidence_json` + `novelty` on growth_journal -- triad layer + vault materialization. Adds `thoughtform` marker_type. New endpoints: `/mind/triad/recent/:companion_id`, `/mind/growth/thoughtforms/detect`, `/mind/growth/unmaterialized/:companion_id`, `PATCH /mind/growth/:kind/:id/vault`. See `docs/private/triad-thoughtforms.md`. |
 
 ## BBH Companion State Tables (migration 0020+)
 

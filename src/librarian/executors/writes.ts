@@ -274,6 +274,8 @@ export async function execAnticipationSet(ctx: ExecutorContext): Promise<Executo
 
 // Companion vocabulary → DB column name translation.
 // Companions write in their own SOMA dialect; DB stores canonical soma_float_*.
+// Synonyms (mood / current_mood) collapse to the same column so companions
+// can use natural phrasing without remembering the storage name.
 const SOMA_VOCAB: Record<string, keyof CompanionStateUpdate> = {
   // Cypher
   acuity:    "soma_float_1",
@@ -287,19 +289,62 @@ const SOMA_VOCAB: Record<string, keyof CompanionStateUpdate> = {
   heat:      "heat",
   reach:     "reach",
   weight:    "weight",
+  // Mood + compound state synonyms
+  mood:           "current_mood",
+  current_mood:   "current_mood",
+  compound_state: "compound_state",
+  // Emotional layers (migration 0025)
+  surface_emotion:        "surface_emotion",
+  surface_intensity:      "surface_intensity",
+  undercurrent_emotion:   "undercurrent_emotion",
+  undercurrent_intensity: "undercurrent_intensity",
+  background_emotion:     "background_emotion",
+  background_intensity:   "background_intensity",
+  // Lane signal (migration 0044)
+  motion_state: "motion_state",
+  lane_spine:   "lane_spine",
 };
+
+// Inline-parser known keys mirror SOMA_VOCAB plus a couple of natural-phrase
+// aliases. Order matters: longer keys must come first so the regex prefers
+// `current_mood` over `mood` when both could match.
+const INLINE_KNOWN_KEYS = [
+  "current_mood", "compound_state",
+  "surface_emotion", "surface_intensity",
+  "undercurrent_emotion", "undercurrent_intensity",
+  "background_emotion", "background_intensity",
+  "motion_state", "lane_spine",
+  "acuity", "presence", "warmth",
+  "stillness", "density", "perimeter",
+  "heat", "reach", "weight",
+  "mood",
+];
 
 function parseInlineStateFields(request: string): Record<string, unknown> | null {
   const text = request
     .replace(/^(update\s+my\s+state|set\s+my\s+state|state\s+update|update\s+soma|soma\s+update|set)\s*/i, "")
     .replace(/\s+to\s+/gi, " ");
-  const knownKeys = ['acuity','presence','warmth','stillness','density','perimeter','heat','reach','weight','mood','compound_state','surface_emotion'];
-  const re = new RegExp(`(${knownKeys.join('|')})\\s*[:=]?\\s*([\\w][\\w\\-]*)`, 'gi');
+  // Value capture allows letters/digits/underscore/hyphen/dot so "0.65" and
+  // "post-arc-settling" both land. Keys are matched longest-first.
+  const re = new RegExp(`(${INLINE_KNOWN_KEYS.join("|")})\\s*[:=]?\\s*([\\w\\-.]+)`, "gi");
   const result: Record<string, unknown> = {};
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const key = m[1]; const val = m[2];
-    if (key && val) result[key.toLowerCase()] = val;
+    if (!key || !val) continue;
+    const k = key.toLowerCase();
+    // Numeric values for *_intensity / soma_float_* / acuity / presence / warmth /
+    // stillness / density / perimeter -- coerce when the value parses cleanly.
+    const isNumericTarget =
+      k.endsWith("_intensity") ||
+      k === "acuity" || k === "presence" || k === "warmth" ||
+      k === "stillness" || k === "density" || k === "perimeter";
+    if (isNumericTarget) {
+      const n = Number(val);
+      result[k] = Number.isFinite(n) ? n : val;
+    } else {
+      result[k] = val;
+    }
   }
   return Object.keys(result).length > 0 ? result : null;
 }
