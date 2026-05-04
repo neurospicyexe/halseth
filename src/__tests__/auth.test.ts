@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeEqual, authGuard } from "../lib/auth.js";
+import { safeEqual, authGuard, identifyCallerCompanion } from "../lib/auth.js";
 
 describe("safeEqual", () => {
   it("returns true for matching strings", () => {
@@ -53,5 +53,76 @@ describe("authGuard", () => {
     const result = authGuard(makeRequest(), env);
     expect(result).not.toBeNull();
     expect(result!.status).toBe(401);
+  });
+
+  // C.2a: per-companion tokens.
+  it("accepts DREVAN_MCP_SECRET when configured", () => {
+    const env = { ADMIN_SECRET: "admin", DREVAN_MCP_SECRET: "drevan-tok" } as any;
+    expect(authGuard(makeRequest("Bearer drevan-tok"), env)).toBeNull();
+  });
+
+  it("accepts CYPHER_MCP_SECRET when configured", () => {
+    const env = { ADMIN_SECRET: "admin", CYPHER_MCP_SECRET: "cypher-tok" } as any;
+    expect(authGuard(makeRequest("Bearer cypher-tok"), env)).toBeNull();
+  });
+
+  it("accepts GAIA_MCP_SECRET when configured", () => {
+    const env = { ADMIN_SECRET: "admin", GAIA_MCP_SECRET: "gaia-tok" } as any;
+    expect(authGuard(makeRequest("Bearer gaia-tok"), env)).toBeNull();
+  });
+
+  it("rejects an unknown token even when companion secrets are configured", () => {
+    const env = {
+      ADMIN_SECRET: "admin",
+      DREVAN_MCP_SECRET: "drevan-tok",
+      CYPHER_MCP_SECRET: "cypher-tok",
+    } as any;
+    const result = authGuard(makeRequest("Bearer wrong-token"), env);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe(401);
+  });
+
+  it("ADMIN_SECRET still works when companion secrets are also configured", () => {
+    const env = {
+      ADMIN_SECRET: "admin",
+      DREVAN_MCP_SECRET: "drevan-tok",
+    } as any;
+    expect(authGuard(makeRequest("Bearer admin"), env)).toBeNull();
+  });
+});
+
+describe("identifyCallerCompanion (C.2a)", () => {
+  it("returns the companion when their token was used", () => {
+    const env = {
+      DREVAN_MCP_SECRET: "drevan-tok",
+      CYPHER_MCP_SECRET: "cypher-tok",
+      GAIA_MCP_SECRET: "gaia-tok",
+    } as any;
+    expect(identifyCallerCompanion(makeRequest("Bearer drevan-tok"), env)).toBe("drevan");
+    expect(identifyCallerCompanion(makeRequest("Bearer cypher-tok"), env)).toBe("cypher");
+    expect(identifyCallerCompanion(makeRequest("Bearer gaia-tok"), env)).toBe("gaia");
+  });
+
+  it("returns null when admin token was used (admin is not a companion)", () => {
+    const env = {
+      ADMIN_SECRET: "admin",
+      DREVAN_MCP_SECRET: "drevan-tok",
+    } as any;
+    expect(identifyCallerCompanion(makeRequest("Bearer admin"), env)).toBeNull();
+  });
+
+  it("returns null when no per-companion secrets are configured", () => {
+    const env = { ADMIN_SECRET: "admin" } as any;
+    expect(identifyCallerCompanion(makeRequest("Bearer admin"), env)).toBeNull();
+  });
+
+  it("returns null when token does not match any configured per-companion secret", () => {
+    const env = { DREVAN_MCP_SECRET: "drevan-tok" } as any;
+    expect(identifyCallerCompanion(makeRequest("Bearer cypher-tok"), env)).toBeNull();
+  });
+
+  it("returns null on missing Authorization header", () => {
+    const env = { CYPHER_MCP_SECRET: "cypher-tok" } as any;
+    expect(identifyCallerCompanion(makeRequest(), env)).toBeNull();
   });
 });
