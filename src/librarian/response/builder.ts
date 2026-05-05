@@ -270,10 +270,13 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
       return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchorTag}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
     }
     case "cypher": {
-      if (s?.soma_float_1 != null) {
-        const f1 = Number(s.soma_float_1).toFixed(2);
-        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
+      const v1 = Number(s?.soma_float_1);
+      if (s && Number.isFinite(v1)) {
+        const v2 = Number(s.soma_float_2 ?? 0);
+        const v3 = Number(s.soma_float_3 ?? 0);
+        const f1 = v1.toFixed(2);
+        const f2 = (Number.isFinite(v2) ? v2 : 0).toFixed(2);
+        const f3 = (Number.isFinite(v3) ? v3 : 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
       }
@@ -282,10 +285,13 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
       return truncate(`logic-first, ${focus}, ${register}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
     }
     case "gaia": {
-      if (s?.soma_float_1 != null) {
-        const f1 = Number(s.soma_float_1).toFixed(2);
-        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
+      const v1 = Number(s?.soma_float_1);
+      if (s && Number.isFinite(v1)) {
+        const v2 = Number(s.soma_float_2 ?? 0);
+        const v3 = Number(s.soma_float_3 ?? 0);
+        const f1 = v1.toFixed(2);
+        const f2 = (Number.isFinite(v2) ? v2 : 0).toFixed(2);
+        const f3 = (Number.isFinite(v3) ? v3 : 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
       }
@@ -376,10 +382,13 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
       return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchor}${noteTag}${handoverLine}`, "ready_prompt");
     }
     case "cypher": {
-      if (s?.soma_float_1 != null) {
-        const f1 = Number(s.soma_float_1).toFixed(2);
-        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
+      const v1 = Number(s?.soma_float_1);
+      if (s && Number.isFinite(v1)) {
+        const v2 = Number(s.soma_float_2 ?? 0);
+        const v3 = Number(s.soma_float_3 ?? 0);
+        const f1 = v1.toFixed(2);
+        const f2 = (Number.isFinite(v2) ? v2 : 0).toFixed(2);
+        const f3 = (Number.isFinite(v3) ? v3 : 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`acuity: ${f1} / presence: ${f2} / warmth: ${f3}${compound}${noteTag}${handoverLine}`, "ready_prompt");
       }
@@ -389,10 +398,13 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
       return truncate(`logic-first, ${focus}, ${register}${noteTag}${handoverLine}`, "ready_prompt");
     }
     case "gaia": {
-      if (s?.soma_float_1 != null) {
-        const f1 = Number(s.soma_float_1).toFixed(2);
-        const f2 = Number(s.soma_float_2 ?? 0).toFixed(2);
-        const f3 = Number(s.soma_float_3 ?? 0).toFixed(2);
+      const v1 = Number(s?.soma_float_1);
+      if (s && Number.isFinite(v1)) {
+        const v2 = Number(s.soma_float_2 ?? 0);
+        const v3 = Number(s.soma_float_3 ?? 0);
+        const f1 = v1.toFixed(2);
+        const f2 = (Number.isFinite(v2) ? v2 : 0).toFixed(2);
+        const f3 = (Number.isFinite(v3) ? v3 : 0).toFixed(2);
         const compound = s.compound_state ? ` [${s.compound_state}]` : "";
         return truncate(`stillness: ${f1} / density: ${f2} / perimeter: ${f3}${compound}${noteTag}${handoverLine}`, "ready_prompt");
       }
