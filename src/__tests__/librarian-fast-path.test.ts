@@ -517,6 +517,65 @@ describe("regression: librarian sweep 2026-05-02 — anchored guards H1-H7", () 
     expect(result).not.toBeNull();
     expect(result!.key).toBe("drift_check");
   });
+
+  // ── H8: companion_note_add 'for cypher/drevan/gaia' shadowed state_update writes ───
+  it("H8: 'update soma for drevan' routes to state_update (not companion_note_add)", () => {
+    const result = matchFastPath("update soma for drevan");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+  it("H8: 'update my state' routes to state_update", () => {
+    const result = matchFastPath("update my state");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+  it("H8: 'set heat for drevan' routes to state_update", () => {
+    const result = matchFastPath("set heat for drevan");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+  it("H8: 'update acuity for cypher' routes to state_update", () => {
+    const result = matchFastPath("update acuity for cypher");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+  it("H8: 'update stillness for gaia' routes to state_update", () => {
+    const result = matchFastPath("update stillness for gaia");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+  it("H8 non-regression: 'companion note for cypher' still routes to companion_note_add", () => {
+    const result = matchFastPath("companion note for cypher: caught a tone wobble");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("companion_note_add");
+  });
+
+  // ── H9: drift_check substring 'pressure drift'/'drift history' shadowed conclusion writes ───
+  it("H9: \"i've concluded: pressure drift on boundary basin is righteous, not RSD\" routes to conclusion_add", () => {
+    const result = matchFastPath("i've concluded: pressure drift on boundary basin is righteous, not RSD");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("conclusion_add");
+  });
+  it("H9: 'my conclusion: drift history reads as system failure not unworthiness' routes to conclusion_add", () => {
+    const result = matchFastPath("my conclusion: drift history reads as system failure not unworthiness");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("conclusion_add");
+  });
+  it("H9: 'i hold that pressure drift is the early signal' routes to conclusion_add", () => {
+    const result = matchFastPath("i hold that pressure drift is the early signal");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("conclusion_add");
+  });
+  it("H9 non-regression: 'pressure drift: subtle wobble' still routes to pressure_drift_log", () => {
+    const result = matchFastPath("pressure drift: subtle wobble");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("pressure_drift_log");
+  });
+  it("H9 non-regression: 'check drift' still routes to drift_check", () => {
+    const result = matchFastPath("check drift");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("drift_check");
+  });
 });
 
 describe("fast-path non-matches", () => {

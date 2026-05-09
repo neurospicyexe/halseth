@@ -89,9 +89,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT reflection_text, created_at FROM autonomy_reflections WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<{ reflection_text: string; created_at: string }>().catch(() => null),
-    // Growth: top available seeds (unused, priority desc) -- so companions know what's queued
+    // Growth: top available seeds (unused, newest within priority) -- so companions see fresh material.
+    // Worker (handlers/autonomy.ts) keeps FIFO to drain the backlog; orient surfacing prefers variety.
     ctx.env.DB.prepare(
-      "SELECT seed_type, content, priority FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 3"
+      "SELECT seed_type, content, priority FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at DESC LIMIT 3"
     ).bind(agentId).all<{ seed_type: string; content: string; priority: number }>().catch(() => null),
     // Growth: confirmed growth drift entries (intentional identity movement, caleth-confirmed)
     ctx.env.DB.prepare(
@@ -587,9 +588,9 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT pattern_text FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
     ).bind(agentId).all<{ pattern_text: string }>(),
-    // 12. Pending autonomy seeds (max 3 -- queued for next autonomous run)
+    // 12. Pending autonomy seeds (max 3 -- newest within priority for variety; worker drains FIFO).
     ctx.env.DB.prepare(
-      "SELECT content FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT 3"
+      "SELECT content FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at DESC LIMIT 3"
     ).bind(agentId).all<{ content: string }>(),
     // 13. Historical vault: long files, ChatGPT history, background context -- the photo album.
     semanticSearch(ctx.env, `${ctx.req.companion_id} history background origin memory`).catch(() => null),
