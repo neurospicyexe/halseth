@@ -117,6 +117,9 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "alter_recall",
     regex: /^recall\s+alter\b/i,
     note: "H1: alter_recall must beat sb_recall's bare 'recall' trigger" },
+  { pattern_key: "set_model",
+    regex: /^set\s+model\s+\S+/i,
+    note: "Model set must be anchored to prevent 'get model' trigger stealing it via substring" },
 ];
 
 // ── Fast-path matcher ──────────────────────────────────────────────────────
@@ -164,7 +167,7 @@ import {
   execLiveThreadAdd, execLiveThreadClose, execLiveThreadVeto, execAnticipationSet,
   execStateUpdate, execConclusionAdd, execConclusionsRead,
   execJournalEdit, execInterNoteEdit, execAutonomyClaim,
-  execSpiralRun,
+  execSpiralRun, execGetModel, execSetModel,
 } from "./executors/writes.js";
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
@@ -262,6 +265,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_anticipation_set: execAnticipationSet,
   halseth_state_update: execStateUpdate,
   halseth_spiral_run: execSpiralRun,
+  get_model: execGetModel,
+  set_model: execSetModel,
 
   // Second Brain / memory
   sb_search: execSbSearch,

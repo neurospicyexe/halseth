@@ -658,6 +658,24 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: false,
   },
 
+  // ── Companion model settings ──
+  get_model: {
+    triggers: [
+      "get my model", "get active model", "get model", "what model am i using",
+      "which model", "my active model", "show my model", "current model",
+    ],
+    tools: ["get_model"],
+    response_key: "summary",
+    raw: true,
+  },
+  set_model: {
+    triggers: [
+      "set model", "switch model", "change model", "use model",
+    ],
+    tools: ["set_model"],
+    response_key: "witness",
+  },
+
   // ── Signal audit ──
   signal_audit_read: {
     triggers: [

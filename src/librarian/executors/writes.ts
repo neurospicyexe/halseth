@@ -520,6 +520,25 @@ export async function execConclusionsRead(ctx: ExecutorContext): Promise<Executo
   return { data: rows.results ?? [], meta: { operation: "conclusions_read" } };
 }
 
+export async function execGetModel(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const row = await ctx.env.DB.prepare(
+    "SELECT value FROM companion_settings WHERE companion_id = ? AND key = 'active_model'",
+  ).bind(ctx.req.companion_id).first<{ value: string }>();
+  return { data: { active_model: row?.value ?? null }, meta: { operation: "get_model" } };
+}
+
+export async function execSetModel(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const match = ctx.req.request.match(/^set\s+model\s+(\S+)/i);
+  const modelKey = match?.[1] ?? "";
+  if (!modelKey) return { error: "set_model_failed", reason: "No model key provided" };
+  await ctx.env.DB.prepare(
+    `INSERT INTO companion_settings (companion_id, key, value, updated_at)
+     VALUES (?, 'active_model', ?, datetime('now'))
+     ON CONFLICT (companion_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(ctx.req.companion_id, modelKey).run();
+  return { ack: true, active_model: modelKey };
+}
+
 export async function execSpiralRun(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ seed_text?: string; seed_type?: string; seed_ref_id?: string }>(ctx.req.context);
 
