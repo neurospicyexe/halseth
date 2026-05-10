@@ -60,6 +60,7 @@ import {
   getPluralMembers, postPluralMember, getPluralMemberByName,
   postPluralNote, getPluralFront, postPluralFront,
 } from "./handlers/plural-store.js";
+import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -286,6 +287,10 @@ const router = new Router()
   .on("POST", "/plural/notes",          (request, env) => postPluralNote(request, env))
   .on("GET",  "/plural/front",          (request, env) => getPluralFront(request, env))
   .on("POST", "/plural/front",          (request, env) => postPluralFront(request, env))
+
+  // Companion settings -- per-companion key/value store (model selection, etc.)
+  .on("GET",  "/companion/settings/:companion_id", (request, env, params) => handleGetCompanionSettings((params ?? {}).companion_id ?? "", env))
+  .on("POST", "/companion/settings/:companion_id", async (request, env, params) => handlePostCompanionSettings((params ?? {}).companion_id ?? "", await request.json(), env))
 
   // Legacy HTTP API (companion-scoped routes)
   .on("GET",  "/companions",                               listCompanions)
