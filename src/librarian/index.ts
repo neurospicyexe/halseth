@@ -94,10 +94,21 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     );
   }
 
+  // Normalize context: accept either a JSON string or a plain object.
+  // Plain objects arise when HTTP callers serialize the outer body without
+  // pre-stringifying the context field -- dropping them silently causes the
+  // payload-override tier (decision:"declined" → journal_decline) to miss.
+  let contextNormalized: string | undefined;
+  if (typeof b.context === "string") {
+    contextNormalized = b.context;
+  } else if (b.context !== null && typeof b.context === "object") {
+    contextNormalized = JSON.stringify(b.context);
+  }
+
   const req: LibrarianRequest = {
     companion_id: b.companion_id as LibrarianRequest["companion_id"],
     request: b.request,
-    context: typeof b.context === "string" ? b.context : undefined,
+    context: contextNormalized,
     session_type: (b.session_type as LibrarianRequest["session_type"]) ?? "work",
   };
 
