@@ -9,7 +9,7 @@ import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread } from "../webmind/threads.js";
-import { addNote, getEligibleNotesForCompression, archiveNotes, type CompressibleNote } from "../webmind/notes.js";
+import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, type CompressibleNote } from "../webmind/notes.js";
 import { semanticSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
@@ -718,6 +718,31 @@ export async function postMindNotesArchive(
     return json(result);
   } catch (err) {
     console.error("[mind/notes/archive] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/notes/recent
+// Cross-companion feed: returns recent wm_continuity_notes from all agents.
+// Used by heartbeat crон and autonomous worker synthesize to ground generation in real speech.
+export async function getMindNotesRecent(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const parsedHours = parseInt(url.searchParams.get("since_hours") ?? "24", 10);
+  const sinceHours = isNaN(parsedHours) ? 24 : parsedHours;
+  const parsedLimit = parseInt(url.searchParams.get("limit") ?? "30", 10);
+  const limit = isNaN(parsedLimit) ? 30 : parsedLimit;
+
+  try {
+    const notes = await readRecentNotes(env, { sinceHours, limit });
+    return json({ notes });
+  } catch (err) {
+    console.error("[mind/notes/recent] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

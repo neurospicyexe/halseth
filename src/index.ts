@@ -31,7 +31,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindSpiralRun, getMindSpiralRuns } from "./handlers/webmind.js";
+import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -157,6 +157,7 @@ const router = new Router()
   .on("GET",  "/mind/sb-search-log/:agent_id",       (request, env, params) => getMindSbSearchLog(request, env, params ?? {}))
   .on("GET",  "/mind/notes/compress-eligible", (request, env) => getMindCompressEligible(request, env))
   .on("POST", "/mind/notes/archive",           (request, env) => postMindNotesArchive(request, env))
+  .on("GET",  "/mind/notes/recent",            (request, env) => getMindNotesRecent(request, env))
   .on("POST", "/mind/limbic",           (request, env) => postMindLimbic(request, env))
   .on("GET",  "/mind/limbic/current",   (request, env) => getMindLimbicCurrent(request, env))
   .on("POST", "/mind/dream",            (request, env) => postMindDream(request, env))
