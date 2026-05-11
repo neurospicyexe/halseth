@@ -73,6 +73,37 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
 }
 
 // ---------------------------------------------------------------------------
+// Recent notes read (cross-companion feed for heartbeat + autonomous worker)
+// ---------------------------------------------------------------------------
+
+export interface RecentNote {
+  note_id: string;
+  agent_id: string;
+  content: string;
+  salience: string;
+  source: string | null;
+  created_at: string;
+}
+
+export async function readRecentNotes(
+  env: Env,
+  opts: { sinceHours?: number; limit?: number } = {},
+): Promise<RecentNote[]> {
+  const sinceHours = Math.min(opts.sinceHours ?? 24, 168);
+  const limit = Math.min(opts.limit ?? 30, 100);
+  const cutoff = new Date(Date.now() - sinceHours * 3600_000).toISOString();
+
+  const rows = await env.DB.prepare(
+    `SELECT note_id, agent_id, content, salience, source, created_at
+     FROM wm_continuity_notes
+     WHERE archived = 0 AND created_at > ?
+     ORDER BY created_at DESC LIMIT ?`,
+  ).bind(cutoff, limit).all<RecentNote>();
+
+  return rows.results ?? [];
+}
+
+// ---------------------------------------------------------------------------
 // Memory compression
 // ---------------------------------------------------------------------------
 
