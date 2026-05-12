@@ -100,3 +100,17 @@ export async function execPatternRecall(ctx: ExecutorContext): Promise<ExecutorR
   ).bind(ctx.req.companion_id).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string }>();
   return { data: rows.results ?? [], meta: { operation: "pattern_recall" } };
 }
+
+export async function execJournalSearch(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const termMatch = ctx.req.request.match(/search (?:my )?(?:journal|notes) for (.+)/i)
+    ?? ctx.req.request.match(/(?:find|look up|search)[:\s]+(.+)/i);
+  const term = (termMatch?.[1] ?? ctx.req.context ?? "").trim();
+  if (!term) return { error: "journal_search_failed", reason: "no search term found in request" };
+  const rows = await ctx.env.DB.prepare(
+    `SELECT id, agent, note_text, tags, created_at, source
+     FROM companion_journal
+     WHERE agent = ? AND note_text LIKE ?
+     ORDER BY created_at DESC LIMIT 15`
+  ).bind(ctx.req.companion_id, `%${term}%`).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string; source: string | null }>();
+  return { data: { entries: rows.results ?? [], term, count: rows.results?.length ?? 0 }, meta: { operation: "halseth_journal_search" } };
+}

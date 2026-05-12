@@ -383,6 +383,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+  journal_search: {
+    triggers: [
+      "search journal for", "search my journal for", "search notes for", "search my notes for",
+      "find in journal", "find in my journal", "look up journal", "journal search",
+      "find discord message", "search discord", "find swarm message", "search swarm",
+    ],
+    tools: ["halseth_journal_search"],
+    response_key: "summary",
+    raw: true,
+  },
   companion_note_add: {
     triggers: [
       "add companion note", "companion note", "note to companion", "log companion note",
