@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
@@ -25,7 +25,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -105,6 +105,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
        ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all(),
     readRecentSpiralTurn(env, agentId),
+    env.DB.prepare(
+      "SELECT id, recorded_at, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
+    ).first<WmBiometricSnapshot>(),
+    env.DB.prepare(
+      "SELECT current_room, spoon_count, love_meter, companion_mood, companion_activity, updated_at FROM house_state LIMIT 1"
+    ).first<WmHouseState>(),
   ]);
 
   // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
@@ -207,5 +213,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     flagged_beliefs,
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
     recent_spiral_turn: recentSpiralTurnRow ?? null,
+    latest_biometrics: latestBiometrics ?? null,
+    house_state: houseStateRow ?? null,
   };
 }
