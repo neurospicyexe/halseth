@@ -331,7 +331,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     // compound_state may be explicitly null ("no compound state present") -- that is valid.
     // Only treat it as missing if the key is absent from the parsed context entirely.
     const missingAny = p.current_mood == null || p.compound_state === undefined
-      || p.surface_emotion == null || p.undercurrent_emotion == null;
+      || p.surface_emotion == null || p.undercurrent_emotion === undefined;
     if (missingAny) {
       return {
         status: "needs_emotion_fields",
