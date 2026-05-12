@@ -289,6 +289,30 @@ export interface WmOrientResponse {
     created_at: string;
   }[];
   recent_spiral_turn?: WmRecentSpiralTurn | null;
+  latest_biometrics?: WmBiometricSnapshot | null;
+  house_state?: WmHouseState | null;
+}
+
+export interface WmBiometricSnapshot {
+  id: string;
+  recorded_at: string;
+  hrv_resting: number | null;
+  resting_hr: number | null;
+  sleep_hours: number | null;
+  sleep_quality: string | null;
+  stress_score: number | null;
+  steps: number | null;
+  active_energy: number | null;
+  notes: string | null;
+}
+
+export interface WmHouseState {
+  current_room: string | null;
+  spoon_count: number | null;
+  love_meter: number | null;
+  companion_mood: string | null;
+  companion_activity: string | null;
+  updated_at: string;
 }
 
 // Notes written between companions (inter_companion_notes table)
