@@ -10,6 +10,7 @@ import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, type CompressibleNote } from "../webmind/notes.js";
+import { listActions, addAction, patchAction, deleteAction, isValidActionType, type MetronomeActionInput, type MetronomeActionPatch } from "../webmind/metronome.js";
 import { semanticSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
@@ -737,9 +738,10 @@ export async function getMindNotesRecent(
   const sinceHours = isNaN(parsedHours) ? 24 : parsedHours;
   const parsedLimit = parseInt(url.searchParams.get("limit") ?? "30", 10);
   const limit = isNaN(parsedLimit) ? 30 : parsedLimit;
+  const source = url.searchParams.get("source") ?? undefined;
 
   try {
-    const notes = await readRecentNotes(env, { sinceHours, limit });
+    const notes = await readRecentNotes(env, { sinceHours, limit, source });
     return json({ notes });
   } catch (err) {
     console.error("[mind/notes/recent] error", { error: String(err) });
@@ -829,6 +831,133 @@ export async function postMindSpiralRun(request: Request, env: Env): Promise<Res
   } catch (err) {
     console.error('[mind/spiral/run] error', String(err));
     return json({ error: 'spiral run failed', detail: String(err) }, 500);
+  }
+}
+
+// GET /mind/metronome/actions/:companion_id
+export async function getMindMetronomeActions(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { companion_id } = params;
+  if (!companion_id || !isValidAgentId(companion_id)) {
+    return json({ error: `Invalid companion_id: must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  const url = new URL(request.url);
+  const onlyEnabled = url.searchParams.get("enabled") === "true";
+
+  try {
+    const actions = await listActions(env, companion_id, onlyEnabled);
+    return json({ actions });
+  } catch (err) {
+    console.error("[mind/metronome/actions] GET error", { companion_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/metronome/actions
+export async function postMindMetronomeAction(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: MetronomeActionInput;
+  try {
+    body = await request.json() as MetronomeActionInput;
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.companion_id || !isValidAgentId(body.companion_id)) {
+    return json({ error: "companion_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!body.name || typeof body.name !== "string") {
+    return json({ error: "name is required" }, 400);
+  }
+  if (!body.action_type || !isValidActionType(body.action_type)) {
+    return json({ error: `action_type must be one of: post_heartbeat, write_inter_companion, write_journal, write_feeling, check_in_on_raziel, nothing` }, 400);
+  }
+  if (body.prompt && typeof body.prompt === "string" && body.prompt.length > MAX_TEXT_LENGTH) {
+    return json({ error: `prompt exceeds maximum length of ${MAX_TEXT_LENGTH} characters` }, 400);
+  }
+
+  try {
+    const action = await addAction(env, body);
+    return json(action, 201);
+  } catch (err) {
+    console.error("[mind/metronome/actions] POST error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// PATCH /mind/metronome/actions/:id
+export async function patchMindMetronomeAction(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id is required" }, 400);
+
+  let body: MetronomeActionPatch & { companion_id?: string };
+  try {
+    body = await request.json() as MetronomeActionPatch & { companion_id?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.companion_id || !isValidAgentId(body.companion_id)) {
+    return json({ error: "companion_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (body.action_type !== undefined && !isValidActionType(body.action_type)) {
+    return json({ error: `action_type must be one of: post_heartbeat, write_inter_companion, write_journal, write_feeling, check_in_on_raziel, nothing` }, 400);
+  }
+
+  try {
+    const updated = await patchAction(env, id, body.companion_id, body);
+    if (!updated) return json({ error: "Action not found" }, 404);
+    return json(updated);
+  } catch (err) {
+    console.error("[mind/metronome/actions] PATCH error", { id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// DELETE /mind/metronome/actions/:id
+export async function deleteMindMetronomeAction(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id is required" }, 400);
+
+  const url = new URL(request.url);
+  const companion_id = url.searchParams.get("companion_id");
+  if (!companion_id || !isValidAgentId(companion_id)) {
+    return json({ error: "companion_id query param required" }, 400);
+  }
+
+  try {
+    const deleted = await deleteAction(env, id, companion_id);
+    if (!deleted) return json({ error: "Action not found" }, 404);
+    return json({ ok: true });
+  } catch (err) {
+    console.error("[mind/metronome/actions] DELETE error", { id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
   }
 }
 

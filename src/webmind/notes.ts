@@ -87,18 +87,26 @@ export interface RecentNote {
 
 export async function readRecentNotes(
   env: Env,
-  opts: { sinceHours?: number; limit?: number } = {},
+  opts: { sinceHours?: number; limit?: number; source?: string } = {},
 ): Promise<RecentNote[]> {
   const sinceHours = Math.min(opts.sinceHours ?? 24, 168);
   const limit = Math.min(opts.limit ?? 30, 100);
   const cutoff = new Date(Date.now() - sinceHours * 3600_000).toISOString();
 
+  const conditions = ["archived = 0", "created_at > ?"];
+  const bindings: unknown[] = [cutoff];
+  if (opts.source) {
+    conditions.push("source = ?");
+    bindings.push(opts.source);
+  }
+  bindings.push(limit);
+
   const rows = await env.DB.prepare(
     `SELECT note_id, agent_id, content, salience, source, created_at
      FROM wm_continuity_notes
-     WHERE archived = 0 AND created_at > ?
+     WHERE ${conditions.join(" AND ")}
      ORDER BY created_at DESC LIMIT ?`,
-  ).bind(cutoff, limit).all<RecentNote>();
+  ).bind(...bindings).all<RecentNote>();
 
   return rows.results ?? [];
 }
