@@ -112,10 +112,11 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   sb_recall: {
-    // Recency-based -- "what I've written recently". Use sb_search for topic-based queries.
+    // Vault-specific recency pull -- explicitly vault language only.
+    // Do NOT add bare "recall" or "my recent notes" here -- those route to recent_recall (D1).
     triggers: [
-      "recall", "my recent notes", "recent vault entries", "what i've written", "vault recall",
-      "what we wrote about", "pull from memory",
+      "recent vault entries", "vault recall", "what we wrote about", "pull from memory",
+      "recall from vault", "recent from vault", "what's in vault recently",
     ],
     tools: ["sb_recall"],
     response_key: "summary",
@@ -174,7 +175,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
   journal_read: {
-    triggers: ["my journal", "journal entries", "read journal", "recent entries", "what did i write"],
+    // Narrow journal-only read. Generic "what did i write" / "recent entries" live in recent_recall (multi-source).
+    triggers: ["my journal", "journal entries", "read journal"],
     tools: ["halseth_journal_read"],
     response_key: "summary",
     raw: true,
@@ -772,15 +774,23 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
-  // ── Autonomous corpus ──
-  autonomous_recall: {
+  // ── Recent recall (multi-source D1 pull) ──
+  recent_recall: {
+    // Broad D1-direct recall across all companion write surfaces: journal, feelings, dreams,
+    // growth_journal, wm_continuity_notes. Includes session AND autonomous time writes.
+    // "recall" bare word lives here, not in sb_recall, because D1 is always fresher than vault.
+    // Use for: "what did I write recently", "recall my notes", "what was I carrying"
+    // Use sb_search for: topic-based semantic search against the vault.
     triggers: [
+      "recall", "my recent notes", "what i've written", "what i wrote",
+      "what did i write", "recent notes", "recent entries", "recent session notes", "session recall",
       "autonomous recall", "what i wrote autonomously", "autonomous corpus",
       "autonomous notes", "autonomous feelings", "autonomous dreams",
       "what did i explore", "what was i carrying autonomously",
       "recall autonomous", "autonomous time recall", "my autonomous writes",
+      "recall my notes", "what i wrote recently", "what i did today",
     ],
-    tools: ["autonomous_recall"],
+    tools: ["recent_recall"],
     response_key: "summary",
     raw: true,
   },

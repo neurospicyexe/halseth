@@ -116,7 +116,7 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "H7: pressure_drift_log writes must beat drift_check's 'identity drift' / 'pressure drift' reads" },
   { pattern_key: "alter_recall",
     regex: /^recall\s+alter\b/i,
-    note: "H1: alter_recall must beat sb_recall's bare 'recall' trigger" },
+    note: "H1: alter_recall must beat recent_recall's bare 'recall' trigger" },
   { pattern_key: "set_model",
     regex: /^set\s+model\s+\S+/i,
     note: "Model set must be anchored to prevent 'get model' trigger stealing it via substring" },
@@ -191,7 +191,7 @@ import {
 // ── Companion growth executors ───────────────────────────────────────────────
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
-  execAutonomousRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
+  execRecentRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execJournalDecline, execIdentityAnchorRead,
 } from "./executors/companion-growth.js";
@@ -318,7 +318,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   pressure_drift_log: execPressureDriftLog,
   conclusion_add: execConclusionAdd,
   conclusions_read: execConclusionsRead,
-  autonomous_recall: execAutonomousRecall,
+  recent_recall: execRecentRecall,
   halseth_autonomy_seeds_read: execAutonomySeedsRead,
   halseth_journal_review: execJournalReview,
   halseth_journal_accept: execJournalAccept,
