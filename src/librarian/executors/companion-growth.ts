@@ -95,28 +95,29 @@ export async function execHeldRead(ctx: ExecutorContext): Promise<ExecutorResult
   };
 }
 
-export async function execAutonomousRecall(ctx: ExecutorContext): Promise<ExecutorResult> {
-  if (!ctx.req.companion_id) return { error: "autonomous_recall_failed", reason: "companion_id required" };
+export async function execRecentRecall(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "recent_recall_failed", reason: "companion_id required" };
   const id = ctx.req.companion_id;
 
   const [notes, feelings, dreams, growthEntries, explorations] = await Promise.all([
+    // No source filter -- includes Claude.ai session writes (source='session') and autonomous worker writes (source='autonomous').
     ctx.env.DB.prepare(
-      "SELECT id, note_text, tags, created_at FROM companion_journal WHERE agent = ? AND source = 'autonomous' ORDER BY created_at DESC LIMIT 20"
-    ).bind(id).all<{ id: string; note_text: string; tags: string | null; created_at: string }>(),
+      "SELECT id, note_text, tags, source, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 20"
+    ).bind(id).all<{ id: string; note_text: string; tags: string | null; source: string | null; created_at: string }>(),
+    // No source filter -- feelings from any session.
     ctx.env.DB.prepare(
-      "SELECT id, emotion, sub_emotion, intensity, created_at FROM feelings WHERE companion_id = ? AND source = 'autonomous' ORDER BY created_at DESC LIMIT 20"
-    ).bind(id).all<{ id: string; emotion: string; sub_emotion: string | null; intensity: number; created_at: string }>(),
+      "SELECT id, emotion, sub_emotion, intensity, source, created_at FROM feelings WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
+    ).bind(id).all<{ id: string; emotion: string; sub_emotion: string | null; intensity: number; source: string | null; created_at: string }>(),
     ctx.env.DB.prepare(
-      "SELECT id, dream_text, examined, created_at FROM companion_dreams WHERE companion_id = ? AND source = 'autonomous' ORDER BY created_at DESC LIMIT 10"
-    ).bind(id).all<{ id: string; dream_text: string; examined: number; created_at: string }>(),
-    // Growth journal: conclusions/insights written at the end of each autonomous run
+      "SELECT id, dream_text, examined, source, created_at FROM companion_dreams WHERE companion_id = ? ORDER BY created_at DESC LIMIT 10"
+    ).bind(id).all<{ id: string; dream_text: string; examined: number; source: string | null; created_at: string }>(),
     ctx.env.DB.prepare(
-      "SELECT id, entry_type, content, tags_json, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
-    ).bind(id).all<{ id: string; entry_type: string; content: string; tags_json: string; created_at: string }>(),
-    // Continuity notes tagged autonomous_exploration: seed + first ~700 chars of what was explored (provenance)
+      "SELECT id, entry_type, content, tags_json, source, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
+    ).bind(id).all<{ id: string; entry_type: string; content: string; tags_json: string; source: string | null; created_at: string }>(),
+    // Include all recent continuity notes (autonomous_exploration + any session-tagged notes).
     ctx.env.DB.prepare(
-      "SELECT note_id, content, created_at FROM wm_continuity_notes WHERE agent_id = ? AND source = 'autonomous_exploration' ORDER BY created_at DESC LIMIT 5"
-    ).bind(id).all<{ note_id: string; content: string; created_at: string }>(),
+      "SELECT note_id, content, source, created_at FROM wm_continuity_notes WHERE agent_id = ? ORDER BY created_at DESC LIMIT 10"
+    ).bind(id).all<{ note_id: string; content: string; source: string | null; created_at: string }>(),
   ]);
 
   return {

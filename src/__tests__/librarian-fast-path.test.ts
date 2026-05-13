@@ -360,8 +360,13 @@ describe("regression: librarian sweep 2026-05-02 — anchored guards H1-H7", () 
     expect(result).not.toBeNull();
     expect(result!.key).toBe("alter_recall");
   });
-  it("H1 non-regression: bare 'recall' still routes to sb_recall", () => {
+  it("H1 non-regression: bare 'recall' routes to recent_recall (D1-direct; sb_recall is vault-explicit only)", () => {
     const result = matchFastPath("recall");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("recent_recall");
+  });
+  it("H1 non-regression: vault-explicit 'vault recall' still routes to sb_recall", () => {
+    const result = matchFastPath("vault recall");
     expect(result).not.toBeNull();
     expect(result!.key).toBe("sb_recall");
   });
