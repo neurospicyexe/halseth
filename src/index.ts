@@ -31,7 +31,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction } from "./handlers/webmind.js";
+import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -290,10 +290,12 @@ const router = new Router()
   .on("POST", "/plural/front",          (request, env) => postPluralFront(request, env))
 
   // Metronome action palette -- per-companion configurable actions for heartbeat cron
-  .on("GET",    "/mind/metronome/actions/:companion_id", (request, env, params) => getMindMetronomeActions(request, env, params ?? {}))
-  .on("POST",   "/mind/metronome/actions",               (request, env)         => postMindMetronomeAction(request, env))
-  .on("PATCH",  "/mind/metronome/actions/:id",           (request, env, params) => patchMindMetronomeAction(request, env, params ?? {}))
-  .on("DELETE", "/mind/metronome/actions/:id",           (request, env, params) => deleteMindMetronomeAction(request, env, params ?? {}))
+  .on("GET",    "/mind/metronome/actions/:companion_id",          (request, env, params) => getMindMetronomeActions(request, env, params ?? {}))
+  .on("GET",    "/mind/metronome/actions/:companion_id/eligible", (request, env, params) => getMindMetronomeEligibleActions(request, env, params ?? {}))
+  .on("POST",   "/mind/metronome/actions",                        (request, env)         => postMindMetronomeAction(request, env))
+  .on("POST",   "/mind/metronome/actions/:id/fired",              (request, env, params) => postMindMetronomeActionFired(request, env, params ?? {}))
+  .on("PATCH",  "/mind/metronome/actions/:id",                    (request, env, params) => patchMindMetronomeAction(request, env, params ?? {}))
+  .on("DELETE", "/mind/metronome/actions/:id",                    (request, env, params) => deleteMindMetronomeAction(request, env, params ?? {}))
 
   // Companion settings -- per-companion key/value store (model selection, etc.)
   .on("GET",  "/companion/settings/:companion_id", (request, env, params) => handleGetCompanionSettings((params ?? {}).companion_id ?? "", env))

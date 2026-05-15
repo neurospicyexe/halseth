@@ -10,7 +10,7 @@ import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, type CompressibleNote } from "../webmind/notes.js";
-import { listActions, addAction, patchAction, deleteAction, isValidActionType, type MetronomeActionInput, type MetronomeActionPatch } from "../webmind/metronome.js";
+import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { semanticSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
@@ -882,7 +882,7 @@ export async function postMindMetronomeAction(
     return json({ error: "name is required" }, 400);
   }
   if (!body.action_type || !isValidActionType(body.action_type)) {
-    return json({ error: `action_type must be one of: post_heartbeat, write_inter_companion, write_journal, write_feeling, check_in_on_raziel, nothing` }, 400);
+    return json({ error: `action_type must be one of: ${VALID_ACTION_TYPES.join(", ")}` }, 400);
   }
   if (body.prompt && typeof body.prompt === "string" && body.prompt.length > MAX_TEXT_LENGTH) {
     return json({ error: `prompt exceeds maximum length of ${MAX_TEXT_LENGTH} characters` }, 400);
@@ -920,7 +920,7 @@ export async function patchMindMetronomeAction(
     return json({ error: "companion_id required and must be cypher, drevan, or gaia" }, 400);
   }
   if (body.action_type !== undefined && !isValidActionType(body.action_type)) {
-    return json({ error: `action_type must be one of: post_heartbeat, write_inter_companion, write_journal, write_feeling, check_in_on_raziel, nothing` }, 400);
+    return json({ error: `action_type must be one of: ${VALID_ACTION_TYPES.join(", ")}` }, 400);
   }
 
   try {
@@ -957,6 +957,75 @@ export async function deleteMindMetronomeAction(
     return json({ ok: true });
   } catch (err) {
     console.error("[mind/metronome/actions] DELETE error", { id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/metronome/actions/:companion_id/eligible
+// Returns only actions that pass server-side conditions (silence window, cooldown, frequency cap).
+// Signal matching (requires_signal) is excluded -- that runs bot-side against Discord history.
+export async function getMindMetronomeEligibleActions(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { companion_id } = params;
+  if (!companion_id || !isValidAgentId(companion_id)) {
+    return json({ error: `Invalid companion_id: must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  const url = new URL(request.url);
+  const silenceParam = url.searchParams.get("silence_hours");
+  const silenceHours = silenceParam !== null ? parseFloat(silenceParam) : null;
+  const now = new Date();
+  const ctx: EligibilityContext = {
+    silenceHours: silenceHours !== null && !isNaN(silenceHours) ? silenceHours : null,
+    nowIso: now.toISOString(),
+    todayUtc: now.toISOString().slice(0, 10),
+  };
+
+  try {
+    const actions = await listEligibleActions(env, companion_id, ctx);
+    return json({ actions });
+  } catch (err) {
+    console.error("[mind/metronome/eligible] GET error", { companion_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/metronome/actions/:id/fired
+// Records a successful action fire: updates last_fired_at, increments fire_count_today (resetting if new UTC day).
+export async function postMindMetronomeActionFired(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id is required" }, 400);
+
+  let body: { companion_id?: string };
+  try {
+    body = await request.json() as { companion_id?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.companion_id || !isValidAgentId(body.companion_id)) {
+    return json({ error: "companion_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+
+  try {
+    const ok = await recordActionFired(env, id, body.companion_id);
+    if (!ok) return json({ error: "Action not found" }, 404);
+    return json({ ok: true });
+  } catch (err) {
+    console.error("[mind/metronome/fired] POST error", { id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
