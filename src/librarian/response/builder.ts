@@ -30,6 +30,12 @@ function sanitizeForPrompt(content: string): string {
 export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
   const parts: string[] = [];
 
+  // Temporal grounding -- first thing companions read, before identity or state.
+  // Prevents time mismatches when Raziel states a date/time in conversation.
+  if (wm.current_datetime_cst) {
+    parts.push(`[Now: ${wm.current_datetime_cst} CST]`);
+  }
+
   // Restoration preamble -- frame this as the companion's own state resuming,
   // not a context briefing handed to them from outside.
   const handoffDate = wm.latest_handoff?.created_at?.slice(0, 10) ?? null;
