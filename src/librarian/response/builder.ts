@@ -437,8 +437,20 @@ export function buildResponse(
     const frontTag = frontState && frontState !== "unknown" ? ` | front: ${frontState}` : "";
     const continuityData = (payload as unknown as Record<string, unknown>).continuity as WmOrientResponse | null ?? null;
     const continuityBlock = continuityData ? "\n" + buildContinuityBlock(continuityData, companionId) : "";
+    // When no full continuity block is available (fast-path session load),
+    // inject [Now: CST] directly so companions always know the current time.
+    const datetimeBlock = !continuityData ? (() => {
+      try {
+        const cst = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Chicago',
+          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+          hour: 'numeric', minute: '2-digit', hour12: true,
+        }).format(new Date());
+        return `\n[Now: ${cst} CST]`;
+      } catch { return ""; }
+    })() : "";
     return {
-      ready_prompt: basePrompt + frontTag + continuityBlock,
+      ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
       session_id: payload.session_id,
       response_key: "ready_prompt",
       autonomous_turn: autonomousTurn,
