@@ -15,6 +15,19 @@ import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 
 export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
+  const _now = new Date();
+  const currentDatetimeIso = _now.toISOString();
+  const currentDatetimeCst = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(_now);
+
   // 1. Identity anchor (auto-seed if missing)
   let anchor = await env.DB.prepare(
     "SELECT * FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
@@ -215,5 +228,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     recent_spiral_turn: recentSpiralTurnRow ?? null,
     latest_biometrics: latestBiometrics ?? null,
     house_state: houseStateRow ?? null,
+    current_datetime_iso: currentDatetimeIso,
+    current_datetime_cst: currentDatetimeCst,
   };
 }
