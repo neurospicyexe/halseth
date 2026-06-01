@@ -188,6 +188,9 @@ export async function archiveNotes(
     ).bind(...noteIds),
   ];
 
+  // D1 batch() is NOT a transaction -- partial failure can leave the archive row
+  // inserted but source notes still unarchived (orphaned entry, safe to retry:
+  // the INSERT will 409 on the UUID PK and the UPDATE is idempotent).
   await env.DB.batch(stmts);
   return { archived: notes.length, skipped: "none" };
 }

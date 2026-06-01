@@ -84,7 +84,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
   },
   get_member: {
-    triggers: ["tell me about", "get member", "member info", "describe member", "who is "],
+    triggers: ["get member", "member info", "describe member"],
     tools: ["plural_get_member"],
     response_key: "summary",  // ignored -- raw: true
     raw: true,
