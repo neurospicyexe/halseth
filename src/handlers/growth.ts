@@ -518,9 +518,12 @@ export async function getUnmaterialized(
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 200);
 
-  const [journal, patterns, markers] = await Promise.all([
+  const [journal, patterns, markers, orphaned] = await Promise.all([
+    // Only ACCEPTED journal entries materialize to the vault. Pending entries are
+    // not canon yet; declined entries never become canon. Ratification gates the
+    // vault, not just the orient surface.
     env.DB.prepare(
-      "SELECT id, entry_type, content, tags_json, source, created_at, prehended_ids, evidence_json, novelty FROM growth_journal WHERE companion_id = ? AND vault_path IS NULL ORDER BY created_at DESC LIMIT ?",
+      "SELECT id, entry_type, content, tags_json, source, created_at, prehended_ids, evidence_json, novelty FROM growth_journal WHERE companion_id = ? AND vault_path IS NULL AND review_status = 'accepted' ORDER BY created_at DESC LIMIT ?",
     ).bind(companion_id, limit).all(),
     env.DB.prepare(
       "SELECT id, pattern_text, evidence_json, strength, prehended_ids, created_at, updated_at FROM growth_patterns WHERE companion_id = ? AND vault_path IS NULL ORDER BY updated_at DESC LIMIT ?",
@@ -528,12 +531,20 @@ export async function getUnmaterialized(
     env.DB.prepare(
       "SELECT id, marker_type, description, related_pattern_id, prehended_ids, created_at FROM growth_markers WHERE companion_id = ? AND vault_path IS NULL ORDER BY created_at DESC LIMIT ?",
     ).bind(companion_id, limit).all(),
+    // Orphaned: journal rows that WERE materialized but are no longer canon
+    // (pending or declined yet still carry a vault_path -- e.g. materialized
+    // before ratification, or before this gate existed). The materializer deletes
+    // these files and clears vault_path so the vault holds only ratified growth.
+    env.DB.prepare(
+      "SELECT id, vault_path FROM growth_journal WHERE companion_id = ? AND vault_path IS NOT NULL AND review_status != 'accepted' ORDER BY created_at DESC LIMIT ?",
+    ).bind(companion_id, limit).all(),
   ]);
 
   return json({
     journal:  journal.results  ?? [],
     patterns: patterns.results ?? [],
     markers:  markers.results  ?? [],
+    orphaned: orphaned.results ?? [],
   });
 }
 
@@ -598,6 +609,17 @@ export async function patchVaultPath(
   if (!id) return json({ error: "id required" }, 400);
 
   const body = await request.json() as Record<string, unknown>;
+
+  // Explicit null clears vault_path (un-materialization, after the materializer
+  // deletes the .md file). Distinguished from a missing field, which is rejected.
+  if (body.vault_path === null) {
+    const cleared = await env.DB.prepare(
+      `UPDATE ${table} SET vault_path = NULL WHERE id = ?`,
+    ).bind(id).run();
+    if (cleared.meta.changes === 0) return json({ error: "row not found" }, 404);
+    return json({ ok: true, vault_path: null });
+  }
+
   const vault_path = optStr(body.vault_path, 512);
   if (!vault_path) return json({ error: "vault_path required" }, 400);
   // Hard guard: must be inside Companions/ to prevent path-traversal of any kind
