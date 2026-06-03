@@ -168,10 +168,14 @@ describe("postGrowthMarker dedupe + thoughtform", () => {
 });
 
 describe("getUnmaterialized", () => {
-  it("returns three groups (journal, patterns, markers) only including rows with NULL vault_path", async () => {
+  it("materializes only ACCEPTED journal, and surfaces orphaned (non-accepted but materialized) rows", async () => {
     let queriesSeen: string[] = [];
     const env = makeEnv((sql: string) => {
       queriesSeen.push(sql);
+      // Orphaned query: journal rows with a vault_path that are NOT accepted.
+      if (sql.includes("FROM growth_journal") && sql.includes("IS NOT NULL")) {
+        return makeStmt([{ id: "orph1", vault_path: "Companions/cypher/growth/journal/x.md" }]);
+      }
       if (sql.includes("FROM growth_journal"))   return makeStmt([{ id: "j1" }]);
       if (sql.includes("FROM growth_patterns"))  return makeStmt([{ id: "p1" }]);
       if (sql.includes("FROM growth_markers"))   return makeStmt([{ id: "m1" }]);
@@ -188,8 +192,13 @@ describe("getUnmaterialized", () => {
     expect(body.journal).toEqual([{ id: "j1" }]);
     expect(body.patterns).toEqual([{ id: "p1" }]);
     expect(body.markers).toEqual([{ id: "m1" }]);
-    // All three queries must filter on vault_path IS NULL.
-    expect(queriesSeen.every(q => q.includes("vault_path IS NULL"))).toBe(true);
+    expect(body.orphaned).toEqual([{ id: "orph1", vault_path: "Companions/cypher/growth/journal/x.md" }]);
+    // The journal-materialize query gates on accepted; the three materialize
+    // queries filter vault_path IS NULL; the orphaned query filters IS NOT NULL.
+    const journalMaterialize = queriesSeen.find(q => q.includes("FROM growth_journal") && q.includes("vault_path IS NULL"));
+    expect(journalMaterialize).toContain("review_status = 'accepted'");
+    const orphanedQ = queriesSeen.find(q => q.includes("FROM growth_journal") && q.includes("IS NOT NULL"));
+    expect(orphanedQ).toContain("review_status != 'accepted'");
   });
 });
 
@@ -245,5 +254,25 @@ describe("patchVaultPath", () => {
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.vault_path).toBe("Companions/drevan/growth/patterns/x.md");
+  });
+
+  it("clears vault_path to NULL when body.vault_path is null (un-materialization)", async () => {
+    let updateSql = "";
+    const env = makeEnv((sql: string) => {
+      if (sql.startsWith("UPDATE growth_journal")) {
+        updateSql = sql;
+        return { bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) };
+      }
+      return makeStmt([]);
+    });
+    const res = await patchVaultPath(
+      authedJson("https://test.local/x", "PATCH", { vault_path: null }),
+      env,
+      { kind: "journal", id: "abc" },
+    );
+    const body = await res.json() as any;
+    expect(res.status).toBe(200);
+    expect(body.vault_path).toBe(null);
+    expect(updateSql).toContain("vault_path = NULL");
   });
 });
