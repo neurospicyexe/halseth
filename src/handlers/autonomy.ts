@@ -34,8 +34,8 @@ export async function postAutonomyRun(request: Request, env: Env): Promise<Respo
   if (!validateCompanion(body.companion_id)) return json({ error: "invalid companion_id" }, 400);
   if (typeof body.run_type !== "string" || !body.run_type.trim()) return json({ error: "run_type required" }, 400);
 
-  const valid_types = new Set(["exploration", "reflection", "synthesis", "continuation"]);
-  if (!valid_types.has(body.run_type as string)) return json({ error: "run_type must be exploration, reflection, synthesis, or continuation" }, 400);
+  const valid_types = new Set(["exploration", "reflection", "synthesis", "continuation", "signal_audit"]);
+  if (!valid_types.has(body.run_type as string)) return json({ error: "run_type must be exploration, reflection, synthesis, continuation, or signal_audit" }, 400);
 
   const thread_id = typeof body.thread_id === "string" && body.thread_id.trim() ? body.thread_id.trim() : null;
   const thread_position = typeof body.thread_position === "number" ? Math.max(1, body.thread_position) : null;
