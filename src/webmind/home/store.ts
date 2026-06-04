@@ -99,6 +99,13 @@ export async function promoteToCanon(
   return journalId;
 }
 
+/** Prune home_events older than `days` (rolling window; events are ephemeral). */
+export async function pruneOldEvents(env: Env, days = 14): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM home_events WHERE created_at < datetime('now', ?)`,
+  ).bind(`-${days} days`).run();
+}
+
 export async function setConfig(env: Env, id: CompanionId, key: string, value: string): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO companion_settings (companion_id, key, value, updated_at)

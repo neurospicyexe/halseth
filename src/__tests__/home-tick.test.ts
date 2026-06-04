@@ -83,6 +83,31 @@ describe("runHomeTick", () => {
     const res = await runHomeTick(env, { only: ["cypher"], rng: () => 0.5, now: new Date("2026-06-03T12:00:00Z") });
     expect(res.cypher).toBeUndefined(); // skipped, nothing written
   });
+
+  it("prunes old home_events with a rolling window each run", async () => {
+    const seenSql: string[] = [];
+    let pruneBind: unknown[] = [];
+    const env = { ADMIN_SECRET: "t", DB: { prepare: (sql: string) => {
+      seenSql.push(sql);
+      const stmt: any = {
+        bind: (...args: unknown[]) => { if (sql.includes("DELETE FROM home_events")) pruneBind = args; return stmt; },
+        all: async () => ({ results: sql.includes("FROM home_rooms")
+          ? [{ key: "office", name: "Office", sym: "", register: "audit", primary_lane: "cypher", gradient: "" }] : [] }),
+        first: async () => {
+          if (sql.includes("FROM home_presence")) return { companion_id: "cypher", current_room: "office", activity: "x", basin_distance: 0 };
+          if (sql.includes("FROM companion_basin_history")) return { drift_score: 0.02, drift_type: "stable" };
+          if (sql.includes("FROM companion_settings")) return { value: "none" };
+          return null;
+        },
+        run: async () => ({ meta: { changes: 1 } }),
+      };
+      return stmt;
+    } } } as any;
+
+    await runHomeTick(env, { only: ["cypher"], rng: () => 0.99, now: new Date("2026-06-03T12:00:00Z") });
+    expect(seenSql.some(s => s.includes("DELETE FROM home_events"))).toBe(true);
+    expect(pruneBind).toEqual(["-14 days"]);
+  });
 });
 
 function makeKeyedEnv(settings: Record<string, string>, rooms: Row[], presence: Row[], basin: Row[]) {
