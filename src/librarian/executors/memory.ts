@@ -1,6 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import {
-  semanticSearch, filteredRecall, recentPatterns,
+  dualVectorSearch, filteredRecall, recentPatterns,
   sbRead, sbList, sbSaveDocument, sbLogObservation, sbSynthesizeSession, sbSaveStudy,
   sbFileChunks,
 } from "../backends/second-brain.js";
@@ -53,8 +53,11 @@ function stripEmbeddings(raw: string): string {
 }
 
 export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const query = parseContext<{ query: string }>(ctx.req.context)?.query ?? ctx.req.request;
-  const result = await semanticSearch(ctx.env, query);
+  const c = parseContext<{ query?: string; recent_context?: string }>(ctx.req.context);
+  const query = c?.query ?? ctx.req.request;
+  // Opt-in continuity: callers (claude.ai, future looms) may pass recent turns
+  // to widen recall via dual-vector retrieval. Absent -> single-vector.
+  const result = await dualVectorSearch(ctx.env, query, c?.recent_context);
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
 }
 

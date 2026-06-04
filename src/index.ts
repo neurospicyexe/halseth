@@ -108,6 +108,8 @@ const router = new Router()
     return (await checkRateLimit(env.RATE_LIMITER, `bootstrap:${ip}`)) ?? bootstrapConfig(request, env);
   })
   .on("POST", "/admin/backfill-embeddings",   (request, env) => backfillEmbeddings(request, env))
+  // Idempotent full rebuild (deterministic upsert from D1 truth). Alias of backfill.
+  .on("POST", "/admin/rebuild-embeddings",    (request, env) => backfillEmbeddings(request, env))
   .on("POST", "/admin/seed-routing-vectors",  (request, env) => seedRoutingVectors(request, env))
 
   // Presence (dashboard feed)

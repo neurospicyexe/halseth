@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
-import { embedAndStore } from "../embed.js";
+import { embedAndStore, EMBEDDING_MODEL } from "../embed.js";
 
 export function registerMemoryTools(server: McpServer, env: Env): void {
 
@@ -239,7 +239,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       before:       z.string().optional().describe("ISO datetime — only entries before this date."),
     },
     async (input) => {
-      const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+      const embedding = await env.AI.run(EMBEDDING_MODEL, {
         text: [input.query],
       }) as { data: number[][] };
 

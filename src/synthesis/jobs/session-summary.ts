@@ -8,6 +8,7 @@ import { Env } from "../../types.js";
 import { complete } from "../deepseek.js";
 import { sbSaveDocument, sbIngestRaw } from "../../librarian/backends/second-brain.js";
 import { generateId } from "../../db/queries.js";
+import { extractDomains, SUPPORTED_MEMORY_DOMAINS } from "../domains.js";
 
 const SYSTEM_PROMPT = `You are a synthesis clerk. Your job is to write a structured session summary from raw session data.
 You do not interpret or editorialize. You assemble clearly and concisely.
@@ -112,6 +113,11 @@ Write a session summary with these exact sections:
 ## Work Done
 ## Open Threads
 ## Close State
+## Domains
+
+For the ## Domains section, output a comma-separated subset of ONLY these tags
+(omit any that do not apply, do not invent new ones):
+${SUPPORTED_MEMORY_DOMAINS.join(", ")}
 
 Keep it under 600 words. End with: source: synthesis-worker`;
 
@@ -139,6 +145,9 @@ Keep it under 600 words. End with: source: synthesis-worker`;
   const emotionalArc = extractSection(generated, "Emotional Arc");
   const closeState   = extractSection(generated, "Close State");
   const openThreadsSection = extractSection(generated, "Open Threads");
+
+  // Controlled-vocabulary domain tags (validated; out-of-vocab dropped).
+  const domains = extractDomains(generated);
 
   // compact narrative: close state first (most relevant at boot), then arc
   const compactNarrative = [closeState, emotionalArc]
@@ -174,7 +183,7 @@ companion_id: ${session.companion_id ?? "unknown"}
   const sbResult = await sbSaveDocument(env, {
     content: fullContent,
     path: sbPath,
-    tags: ["session-summary", "synthesis-worker", session.companion_id ?? "unknown"],
+    tags: ["session-summary", "synthesis-worker", session.companion_id ?? "unknown", ...domains],
     content_type: "document",
   });
 
@@ -191,8 +200,8 @@ companion_id: ${session.companion_id ?? "unknown"}
     INSERT INTO synthesis_summary
       (id, summary_type, companion_id, subject, narrative, emotional_register,
        key_decisions, open_threads, drevan_state, full_ref, stale_after,
-       confidence, evidence_count, created_at)
-    VALUES (?, 'session', ?, ?, ?, ?, '[]', ?, NULL, ?, NULL, 0.6, ?, datetime('now'))
+       confidence, evidence_count, domains, created_at)
+    VALUES (?, 'session', ?, ?, ?, ?, '[]', ?, NULL, ?, NULL, 0.6, ?, ?, datetime('now'))
   `).bind(
     summaryId,
     session.companion_id ?? null,
@@ -202,6 +211,7 @@ companion_id: ${session.companion_id ?? "unknown"}
     JSON.stringify(parsedThreads),
     sbResult.ack ? sbPath : null,
     evidenceCount,
+    JSON.stringify(domains),
   ).run();
 
   // ── 8. Raw transcript ingest (qualifying sessions) ────────────────────────
