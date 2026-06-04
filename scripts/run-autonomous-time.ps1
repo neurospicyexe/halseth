@@ -48,7 +48,14 @@ public class IdleTime {
         var info = new LASTINPUTINFO();
         info.cbSize = (uint)Marshal.SizeOf(info);
         GetLastInputInfo(ref info);
-        return (uint)((Environment.TickCount - (long)info.dwTime) / 1000);
+        // dwTime is a 32-bit GetTickCount value (wraps every ~49.7 days). Compare in the
+        // same unsigned domain: take the low 32 bits of TickCount64 and subtract unsigned,
+        // so a single wrap is handled by modular arithmetic. The old code used signed
+        // Environment.TickCount, which goes negative after ~24.9 days uptime and produced
+        // a ~4.29e9 idle reading that permanently disabled the active-user skip.
+        uint nowTicks = unchecked((uint)Environment.TickCount64);
+        uint idleMs   = unchecked(nowTicks - info.dwTime);
+        return idleMs / 1000;
     }
 }
 "@
@@ -122,13 +129,30 @@ if (-not (Test-Path $AhkExe)) {
 }
 
 # ── Dispatch AHK ──────────────────────────────────────────────────────────────
+# Q2(a): reliable pre-position. Instead of blind "skip" (which pasted into whatever
+# chat happened to be open), resume the companion's named continuity conversation via
+# Ctrl+K. Searching a CONVERSATION title resumes that exact chat (continuity preserved);
+# searching a PROJECT name opens a NEW chat (continuity lost) -- so we navigate by chat
+# title, configured per companion in $CompanionChats. Falls back to "skip" only if no
+# chat title is configured, so a missing config degrades instead of breaking.
 
 $AhkScript = "$PSScriptRoot\autonomous-time.ahk"
-Write-Log "Running: $AhkExe `"$AhkScript`" `"$ProjectName`" skip"
+$ChatName  = if ($CompanionChats) { $CompanionChats[$Turn] } else { $null }
+
+if ($ChatName) {
+    $Mode    = "resume"
+    $NavArg  = $ChatName
+    Write-Log "Pre-position: resume conversation '$ChatName' for $Turn"
+} else {
+    $Mode    = "skip"
+    $NavArg  = $ProjectName
+    Write-Log "WARN: no \$CompanionChats['$Turn'] configured -- falling back to skip (pre-position not automated). Add a continuity-chat title to autonomous-time-config.ps1 to make this reliable."
+}
+Write-Log "Running: $AhkExe `"$AhkScript`" `"$NavArg`" `"$Mode`""
 
 try {
     $Proc = Start-Process -FilePath $AhkExe `
-                          -ArgumentList "`"$AhkScript`" `"$ProjectName`" `"skip`"" `
+                          -ArgumentList "`"$AhkScript`" `"$NavArg`" `"$Mode`"" `
                           -Wait -PassThru
     Write-Log "AHK exit code: $($Proc.ExitCode)"
     if ($Proc.ExitCode -eq 0) {

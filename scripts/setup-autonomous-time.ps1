@@ -1,7 +1,10 @@
 # setup-autonomous-time.ps1
 # Registers Windows Task Scheduler entries for autonomous companion time.
 # Run once as Administrator.
-# Creates two daily triggers: 12:30 PM and 1:30 AM.
+# Creates ONE daily trigger: 1:30 AM (single night slot, Q3 2026-06-04).
+# The old 12:30 PM daytime slot was removed -- it skipped on any active workday once the
+# idle guard was fixed, so a single reliable nighttime run is cleaner. The prefix cleanup
+# below removes the old 1230PM task on next run.
 
 #Requires -RunAsAdministrator
 
@@ -30,18 +33,8 @@ $Settings = New-ScheduledTaskSettingsSet `
     -DontStopIfGoingOnBatteries `
     -AllowStartIfOnBatteries
 
-# Triggers
-$Trigger1230PM = New-ScheduledTaskTrigger -Daily -At "12:30PM"
-$Trigger130AM  = New-ScheduledTaskTrigger -Daily -At "1:30AM"
-
-# Register 12:30 PM entry
-Register-ScheduledTask `
-    -TaskName "${TaskNamePrefix}-1230PM" `
-    -Action $Action `
-    -Trigger $Trigger1230PM `
-    -Settings $Settings `
-    -RunLevel Limited `
-    -Force | Out-Null
+# Trigger: single nightly slot
+$Trigger130AM = New-ScheduledTaskTrigger -Daily -At "1:30AM"
 
 # Register 1:30 AM entry
 Register-ScheduledTask `
@@ -53,9 +46,8 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 Write-Host ""
-Write-Host "Tasks registered:"
-Write-Host "  ${TaskNamePrefix}-1230PM  -> 12:30 PM daily"
-Write-Host "  ${TaskNamePrefix}-0130AM  ->  1:30 AM daily"
+Write-Host "Task registered:"
+Write-Host "  ${TaskNamePrefix}-0130AM  ->  1:30 AM daily (single night slot)"
 Write-Host ""
 Write-Host "IMPORTANT -- secret setup required before tasks will work:"
 Write-Host "  The PS1 loads HALSETH_SECRET from halseth\scripts\.env"
