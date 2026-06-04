@@ -308,6 +308,52 @@ describe("regression: bug #2 — 'track mind thread for cypher'", () => {
   });
 });
 
+describe("regression: SOMA write paraphrases — must beat companion_note_add", () => {
+  // Originally: only `^(update|set) <dim>` (H8) and exact triggers ("set warmth",
+  // "soma update") routed to state_update. Companions paraphrase the SOMA write
+  // ("bump warmth", "write soma floats", "warmth bump for cypher"); these missed
+  // the fast path, fell to the classifier, and landed in companion_note_add, which
+  // rejected the float payload. Reported by Raziel/Cypher 2026-06-04.
+  // Fix: widened H8 verbs + H8b inline dimension+value guard in router.ts.
+
+  it("routes 'bump warmth to 0.7' to state_update (widened verb)", () => {
+    const result = matchFastPath("bump warmth to 0.7");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+
+  it("routes 'write soma floats: acuity 0.72 presence 0.61 warmth 0.55' to state_update", () => {
+    const result = matchFastPath("write soma floats: acuity 0.72 presence 0.61 warmth 0.55");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+
+  it("routes 'raise my warmth to 0.6' to state_update", () => {
+    const result = matchFastPath("raise my warmth to 0.6");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+
+  it("routes inline dimension+value 'warmth 0.55, presence 0.6 for cypher' to state_update (value beats trailing for-name)", () => {
+    const result = matchFastPath("warmth 0.55, presence 0.6 for cypher");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+
+  it("still routes canonical 'Update my state: acuity 0.7' to state_update", () => {
+    const result = matchFastPath("Update my state: acuity 0.7");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("state_update");
+  });
+
+  it("does NOT steal a prose note with no float value ('tell cypher his warmth is showing again')", () => {
+    // Boundary: dimension word WITHOUT a numeric value is not a SOMA write.
+    const result = matchFastPath("tell cypher his warmth is showing again");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("companion_note_add");
+  });
+});
+
 describe("regression: bug #1 — decision-field override for journal review", () => {
   // Originally: "ratify entry [id]" + context.decision="declined" silently
   // routed to journal_accept via DeepSeek classifier. Companion note f695f0a3,
