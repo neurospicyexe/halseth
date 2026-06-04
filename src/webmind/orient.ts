@@ -8,11 +8,22 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, HomeEvent, CompanionId } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
+import { takeUnsurfacedEvents } from "./home/store.js";
+
+/** "While you were away" block. Null-safe: orient must never break on home error. */
+export async function buildHomeBlock(env: Env, agentId: WmAgentId): Promise<HomeEvent[]> {
+  try {
+    return await takeUnsurfacedEvents(env, agentId as CompanionId, 5);
+  } catch (err) {
+    console.error("home block failed", err);
+    return [];
+  }
+}
 
 export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
   const _now = new Date();
@@ -203,6 +214,9 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     return staleDays > 3 ? { ...t, possibly_resolved: true } : t;
   });
 
+  // "While you were away" — recent home events (null-safe; never breaks orient)
+  const homeRecent = await buildHomeBlock(env, agentId);
+
   return {
     identity_anchor: anchor,
     limbic_state: limbicState,
@@ -228,6 +242,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     recent_spiral_turn: recentSpiralTurnRow ?? null,
     latest_biometrics: latestBiometrics ?? null,
     house_state: houseStateRow ?? null,
+    home_recent: homeRecent,
     current_datetime_iso: currentDatetimeIso,
     current_datetime_cst: currentDatetimeCst,
   };
