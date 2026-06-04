@@ -291,6 +291,8 @@ export interface WmOrientResponse {
   recent_spiral_turn?: WmRecentSpiralTurn | null;
   latest_biometrics?: WmBiometricSnapshot | null;
   house_state?: WmHouseState | null;
+  /** "While you were away" — recent home events, surfaced once. */
+  home_recent?: HomeEvent[];
   current_datetime_iso: string;
   current_datetime_cst: string;
 }

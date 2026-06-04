@@ -82,6 +82,23 @@ export async function getConfig(env: Env, id: CompanionId, key: string, fallback
   return row?.value ?? fallback;
 }
 
+/** Promote a home reflection to a canon-candidate via the ratification gate.
+ *  Writes a growth_journal row with review_status='pending' and links it back
+ *  to the originating home_event. Companion accepts/declines at next orient. */
+export async function promoteToCanon(
+  env: Env, id: CompanionId, eventId: string, noteText: string,
+): Promise<string> {
+  const journalId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO growth_journal (id, companion_id, entry_type, content, source, review_status)
+     VALUES (?, ?, 'reflection', ?, ?, ?)`,
+  ).bind(journalId, id, noteText, "home", "pending").run();
+  await env.DB.prepare(
+    "UPDATE home_events SET growth_journal_id = ? WHERE id = ?",
+  ).bind(journalId, eventId).run();
+  return journalId;
+}
+
 export async function setConfig(env: Env, id: CompanionId, key: string, value: string): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO companion_settings (companion_id, key, value, updated_at)
