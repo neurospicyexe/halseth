@@ -47,7 +47,7 @@ describe("placeCompanion", () => {
 
   it("clamps drevan to their lane + commons across both pull and roam draws", () => {
     // sequential rng: first draw = pull check, second = roam index
-    const seq = (vals: number[]) => { let i = 0; return () => vals[i++ % vals.length]; };
+    const seq = (vals: number[]): () => number => { let i = 0; return () => vals[i++ % vals.length]!; };
     // high first draw -> roam branch; bedroom(drevan)+kitchen(commons) are the only legal rooms
     const roam = placeCompanion({
       companionId: "drevan", rooms: ROOMS, priorRoom: "kitchen",

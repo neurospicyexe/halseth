@@ -18,7 +18,7 @@ function homePull(driftType: PlacementInput["driftType"], driftScore: number): n
 }
 
 function activityFor(room: HomeRoom, driftType: PlacementInput["driftType"]): string {
-  const reg = room.register.split("/")[0].trim();
+  const reg = (room.register.split("/")[0] ?? room.register).trim();
   if (driftType === "pressure") return `holding ${reg}, close to home`;
   if (driftType === "growth")   return `working the edge of ${reg}`;
   return `at ease with ${reg}`;
