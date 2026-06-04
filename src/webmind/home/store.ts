@@ -81,3 +81,11 @@ export async function getConfig(env: Env, id: CompanionId, key: string, fallback
   ).bind(id, key).first<{ value: string }>();
   return row?.value ?? fallback;
 }
+
+export async function setConfig(env: Env, id: CompanionId, key: string, value: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO companion_settings (companion_id, key, value, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(companion_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).bind(id, key, value).run();
+}
