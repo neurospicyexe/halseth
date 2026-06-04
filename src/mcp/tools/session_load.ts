@@ -395,11 +395,12 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   if (pendingNotes.length > 0) {
     // Phase 2: fire-and-forget Service Binding call to State Synthesis Worker if snapshot is null or stale
 
-    // D1 has no array binding -- IDs are crypto.randomUUID() values so string interpolation is injection-safe
-    const ids = pendingNotes.map(n => `'${n.id}'`).join(", ");
+    // Parameterized IN-list: one placeholder per id, routed through the driver's
+    // escaping (covenant: all SQL uses .bind(), no string interpolation of values).
+    const placeholders = pendingNotes.map(() => "?").join(", ");
     await env.DB.prepare(
-      `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${ids})`
-    ).bind(now).run();
+      `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders})`
+    ).bind(now, ...pendingNotes.map(n => n.id)).run();
   }
 
   return {
