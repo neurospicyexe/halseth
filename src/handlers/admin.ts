@@ -1,6 +1,6 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
-import { embedAndStoreAsync } from "../mcp/embed.js";
+import { embedAndStoreAsync, EMBEDDING_MODEL } from "../mcp/embed.js";
 import { safeEqual } from "../lib/auth.js";
 import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
 
@@ -246,7 +246,7 @@ export async function seedRoutingVectors(request: Request, env: Env): Promise<Re
   for (let start = 0; start < items.length; start += BATCH) {
     const chunk = items.slice(start, start + BATCH);
     try {
-      const embedding = await env.AI.run("@cf/baai/bge-base-en-v1.5", {
+      const embedding = await env.AI.run(EMBEDDING_MODEL, {
         text: chunk.map(c => c.text),
       }) as { data: number[][] };
       const vectors = chunk
