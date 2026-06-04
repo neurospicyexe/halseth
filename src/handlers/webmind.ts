@@ -11,7 +11,7 @@ import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, type CompressibleNote } from "../webmind/notes.js";
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
-import { semanticSearch } from "../librarian/backends/second-brain.js";
+import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
@@ -541,9 +541,12 @@ export async function getMindSearch(
   if (query.length > 500) return json({ error: "query must be 500 characters or fewer" }, 400);
 
   const agentId = url.searchParams.get("agent_id")?.trim() ?? null;
+  // Opt-in continuity: recent prior turns widen recall via dual-vector retrieval.
+  // Absent -> single-vector, identical to prior behaviour.
+  const recentContext = url.searchParams.get("recent_context");
 
   try {
-    const result = await semanticSearch(env, query);
+    const result = await dualVectorSearch(env, query, recentContext);
 
     if (agentId && isValidAgentId(agentId)) {
       const hitCount = (() => {
