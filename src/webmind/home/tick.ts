@@ -29,6 +29,18 @@ export async function runHomeTick(
 
   for (const id of targets) {
     try {
+      // --- cadence gate: skip if last tick for this companion was too recent ---
+      const cadenceRaw = Number(await getConfig(env, id, "home_tick_cadence_min", "30"));
+      const cadenceMin = Number.isFinite(cadenceRaw) ? cadenceRaw : 30;
+      const lastTickRaw = await getConfig(env, id, "home_last_tick_at", "");
+      if (lastTickRaw) {
+        const sinceMin = (now.getTime() - new Date(lastTickRaw).getTime()) / 60000;
+        if (sinceMin < cadenceMin) {
+          continue; // not yet time for this companion
+        }
+      }
+      await setConfig(env, id, "home_last_tick_at", now.toISOString());
+
       const prior = await getPresence(env, id);
       const basin = await latestBasin(env, id);
 

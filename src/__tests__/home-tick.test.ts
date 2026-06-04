@@ -69,6 +69,20 @@ describe("runHomeTick", () => {
     await runHomeTick(envSkip, { only: ["cypher"], rng: () => 0.0, textureProvider: { generate: fired2 }, now: new Date("2026-06-03T12:00:00Z") });
     expect(fired2).not.toHaveBeenCalled();
   });
+
+  it("skips a companion whose last tick was within the cadence window", async () => {
+    const rooms = [
+      { key: "office", name: "Office", sym: "", register: "audit", primary_lane: "cypher", gradient: "" },
+    ];
+    const presence = [{ companion_id: "cypher", current_room: "office", activity: "x", basin_distance: 0, updated_at: "2026-06-03T11:55:00Z" }];
+    const basin = [{ drift_score: 0.02, drift_type: "stable" }];
+    const env = makeKeyedEnv(
+      { home_tick_cadence_min: "30", home_last_tick_at: "2026-06-03T11:55:00Z", home_texture_model: "none" },
+      rooms, presence, basin,
+    );
+    const res = await runHomeTick(env, { only: ["cypher"], rng: () => 0.5, now: new Date("2026-06-03T12:00:00Z") });
+    expect(res.cypher).toBeUndefined(); // skipped, nothing written
+  });
 });
 
 function makeKeyedEnv(settings: Record<string, string>, rooms: Row[], presence: Row[], basin: Row[]) {
