@@ -61,6 +61,8 @@ import {
   postPluralNote, getPluralFront, postPluralFront,
 } from "./handlers/plural-store.js";
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
+import { getHomePresence, getHomeEvents, postHomeTick } from "./handlers/home.js";
+import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
   // MCP tool interface — primary AI companion entry point
@@ -297,6 +299,11 @@ const router = new Router()
   .on("PATCH",  "/mind/metronome/actions/:id",                    (request, env, params) => patchMindMetronomeAction(request, env, params ?? {}))
   .on("DELETE", "/mind/metronome/actions/:id",                    (request, env, params) => deleteMindMetronomeAction(request, env, params ?? {}))
 
+  // The Home -- inhabited place-graph (presence + events + on-demand tick)
+  .on("GET",  "/home/presence", (request, env) => getHomePresence(request, env))
+  .on("GET",  "/home/events",   (request, env) => getHomeEvents(request, env))
+  .on("POST", "/home/tick",     (request, env) => postHomeTick(request, env))
+
   // Companion settings -- per-companion key/value store (model selection, etc.)
   .on("GET",  "/companion/settings/:companion_id", (request, env, params) => handleGetCompanionSettings((params ?? {}).companion_id ?? "", env))
   .on("POST", "/companion/settings/:companion_id", async (request, env, params) => handlePostCompanionSettings((params ?? {}).companion_id ?? "", await request.json(), env))
@@ -360,5 +367,14 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const { processQueue } = await import("./synthesis/index.js");
     ctx.waitUntil(processQueue(env).catch(e => console.error("[cron] processQueue failed:", e)));
+
+    // The Home placement tick rides the existing cron. Guarded so a failure
+    // here never breaks the synthesis queue or any other scheduled work.
+    ctx.waitUntil(
+      (async () => {
+        try { await runHomeTick(env); }
+        catch (err) { console.error("home tick failed", err); }
+      })(),
+    );
   },
 } satisfies ExportedHandler<Env>;
