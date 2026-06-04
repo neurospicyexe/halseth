@@ -192,6 +192,71 @@ export async function semanticSearch(env: Env, query: string, mood?: string | nu
   return callTool(env, "sb_search", { query: augmented });
 }
 
+// ── Dual-vector retrieval (continuity-aware) ────────────────────────────────
+// Pattern adapted from cadence-lite: one query disambiguated by the immediate
+// conversation. Runs two vector searches in parallel -- the bare query
+// (precision) plus the query fused with recent conversation context (recall) --
+// then merges + dedupes the chunk sets, primary-first.
+//
+// Continuity is OPT-IN: when no recentContext is supplied this collapses to a
+// single semanticSearch -- identical behaviour, zero regression. Mood
+// augmentation is preserved on both legs. The capability lives here so every
+// surface (/mind/search, ask_librarian sb_search, future looms) inherits it by
+// passing recent turns; surfaces that pass nothing are unaffected.
+
+const CONTINUITY_CONTEXT_CHAR_LIMIT = 300;
+
+export function chunkKey(chunk: Record<string, unknown>): string {
+  return String(
+    chunk.vault_path ?? chunk.path ?? chunk.id ?? chunk.source ?? JSON.stringify(chunk.chunk_text ?? chunk.content ?? chunk),
+  );
+}
+
+// Merge two sb_search JSON payloads ({ chunks: [...] }), primary chunks first,
+// deduped by stable key. If either is not the expected shape, fall back to the
+// primary payload unchanged so we never lose the precision results.
+export function mergeChunkResults(primaryRaw: string, continuityRaw: string): string {
+  try {
+    const primary = JSON.parse(primaryRaw) as { chunks?: Array<Record<string, unknown>> };
+    const continuity = JSON.parse(continuityRaw) as { chunks?: Array<Record<string, unknown>> };
+    if (!Array.isArray(primary?.chunks) || !Array.isArray(continuity?.chunks)) {
+      return primaryRaw;
+    }
+    const seen = new Set<string>();
+    const merged: Array<Record<string, unknown>> = [];
+    for (const chunk of [...primary.chunks, ...continuity.chunks]) {
+      const key = chunkKey(chunk);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(chunk);
+    }
+    return JSON.stringify({ ...primary, chunks: merged });
+  } catch {
+    return primaryRaw;
+  }
+}
+
+export async function dualVectorSearch(
+  env: Env,
+  query: string,
+  recentContext?: string | null,
+  mood?: string | null,
+): Promise<string | null> {
+  const trimmed = (recentContext ?? "").trim().slice(-CONTINUITY_CONTEXT_CHAR_LIMIT).trimStart();
+  if (!trimmed) {
+    // No continuity context -> single-vector, identical to prior behaviour.
+    return semanticSearch(env, query, mood);
+  }
+  const continuityQuery = `${query}\n\nRecent conversation context:\n${trimmed}`;
+  const [primaryRaw, continuityRaw] = await Promise.all([
+    semanticSearch(env, query, mood),
+    semanticSearch(env, continuityQuery, mood),
+  ]);
+  if (!primaryRaw) return continuityRaw;
+  if (!continuityRaw) return primaryRaw;
+  return mergeChunkResults(primaryRaw, continuityRaw);
+}
+
 export async function filteredRecall(env: Env, args: {
   companion?: string | null;
   content_type?: string;

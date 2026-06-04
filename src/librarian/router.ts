@@ -9,6 +9,7 @@
 // Adding a new pattern: add to KV (no redeploy). Update classifier prompt if needed.
 
 import { Env } from "../types.js";
+import { EMBEDDING_MODEL } from "../mcp/embed.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import { getCurrentFront, type PluralResult } from "./backends/plural.js";
 import type { ExecutorContext, ExecutorFn } from "./executors/types.js";
@@ -400,7 +401,7 @@ export class LibrarianRouter {
     // Falls through to DeepSeek only when confidence is low.
     if (this.env.AI && this.env.VECTORIZE) {
       try {
-        const emb = await this.env.AI.run("@cf/baai/bge-base-en-v1.5", {
+        const emb = await this.env.AI.run(EMBEDDING_MODEL, {
           text: [request],
         }) as { data: number[][] };
         const vector = emb.data[0];
