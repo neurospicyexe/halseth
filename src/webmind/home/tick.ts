@@ -5,7 +5,7 @@ import { getRooms } from "./rooms.js";
 import { placeCompanion } from "./placement.js";
 import {
   allCompanions, getPresence, upsertPresence, appendEvent,
-  latestBasin, getConfig, setConfig,
+  latestBasin, getConfig, setConfig, pruneOldEvents,
 } from "./store.js";
 import {
   shouldFireTexture, recycleTextureProvider, TextureProvider,
@@ -76,6 +76,14 @@ export async function runHomeTick(
     } catch (err) {
       console.error(`home tick failed for ${id}`, err);
     }
+  }
+
+  // Rolling-window prune: home_events are ephemeral (spec). Guarded so a prune
+  // failure never breaks the tick.
+  try {
+    await pruneOldEvents(env);
+  } catch (err) {
+    console.error("home event prune failed", err);
   }
 
   return out;
