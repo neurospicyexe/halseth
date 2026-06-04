@@ -545,7 +545,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -598,6 +598,30 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
     ).bind(agentId).first<{ n: number }>(),
+    // 15. Active worldview conclusions (newest 6 active). Wire format uses conclusion_text
+    // so both consumers (Discord librarian.ts, Brain halseth_client.py) render [Worldview].
+    // Without this, the worldview block is permanently empty on every non-Claude.ai loom.
+    ctx.env.DB.prepare(
+      "SELECT conclusion_text, belief_type, confidence, subject FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 6"
+    ).bind(agentId).all<{ conclusion_text: string; belief_type: string; confidence: number; subject: string | null }>(),
+    // 16. Flagged (contradiction) beliefs -- consumers mark these with [?] in the worldview block.
+    ctx.env.DB.prepare(
+      "SELECT conclusion_text, belief_type, confidence, subject FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1 ORDER BY created_at DESC LIMIT 6"
+    ).bind(agentId).all<{ conclusion_text: string; belief_type: string; confidence: number; subject: string | null }>(),
+    // 17. Unexamined dreams (not pinned) -- the autonomous worker examines + clears these.
+    // Excludes do_not_auto_examine=1 (live-session-only dreams, migration 0048) so the
+    // worker never clears pinned dreams.
+    ctx.env.DB.prepare(
+      "SELECT id, dream_text FROM companion_dreams WHERE companion_id = ? AND examined = 0 AND COALESCE(do_not_auto_examine, 0) = 0 ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<{ id: string; dream_text: string }>(),
+    // 18. Open loops (unresolved) -- informs the worker's seed decision.
+    ctx.env.DB.prepare(
+      "SELECT id, loop_text FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at DESC LIMIT 5"
+    ).bind(agentId).all<{ id: string; loop_text: string }>(),
+    // 19. Pressure flags (unconfirmed drift) -- self-correction signal for the worker.
+    ctx.env.DB.prepare(
+      "SELECT worst_basin, notes FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
+    ).bind(agentId).all<{ worst_basin: string | null; notes: string | null }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -680,6 +704,52 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       })()
     : [];
 
+  // Worldview: wire format keeps conclusion_text so both consumers (Discord librarian.ts,
+  // Brain halseth_client.py) render the [Worldview] block. NaN-safe confidence is the
+  // consumer's responsibility -- pass it through as stored.
+  type ConclusionRow = { conclusion_text: string; belief_type: string; confidence: number; subject: string | null };
+  const active_conclusions =
+    conclusionsResult.status === "fulfilled" && conclusionsResult.value?.results
+      ? (conclusionsResult.value.results as ConclusionRow[]).map(r => ({
+          conclusion_text: r.conclusion_text,
+          belief_type: r.belief_type,
+          confidence: r.confidence,
+          subject: r.subject ?? null,
+        }))
+      : [];
+  const flagged_beliefs =
+    flaggedResult.status === "fulfilled" && flaggedResult.value?.results
+      ? (flaggedResult.value.results as ConclusionRow[]).map(r => ({
+          conclusion_text: r.conclusion_text,
+          belief_type: r.belief_type,
+          confidence: r.confidence,
+          subject: r.subject ?? null,
+        }))
+      : [];
+
+  // Carried-between-sessions surfaces for the autonomous worker. It previously regex-scraped
+  // a non-existent ready_prompt for these; now they are structured fields it reads directly.
+  const unexamined_dreams =
+    dreamsResult.status === "fulfilled" && dreamsResult.value?.results
+      ? (dreamsResult.value.results as Array<{ id: string; dream_text: string }>).map(r => ({
+          id: r.id,
+          dream_text: (r.dream_text ?? "").slice(0, 300),
+        }))
+      : [];
+  const open_loops =
+    loopsResult.status === "fulfilled" && loopsResult.value?.results
+      ? (loopsResult.value.results as Array<{ id: string; loop_text: string }>).map(r => ({
+          id: r.id,
+          loop_text: (r.loop_text ?? "").slice(0, 200),
+        }))
+      : [];
+  const pressure_flags =
+    pressureResult.status === "fulfilled" && pressureResult.value?.results
+      ? (pressureResult.value.results as Array<{ worst_basin: string | null; notes: string | null }>)
+          .map(r => [r.worst_basin, r.notes].filter(Boolean).join(": ").slice(0, 150))
+          .filter(Boolean)
+      : [];
+
   return {
     data: {
       synthesis_summary,
@@ -696,7 +766,16 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       active_patterns,
       pending_seeds,
       unaccepted_growth: unacceptedGrowthCount,
+      active_conclusions,
+      flagged_beliefs,
+      unexamined_dreams,
+      open_loops,
+      pressure_flags,
     },
-    meta: { operation: "halseth_bot_orient", unaccepted_growth: unacceptedGrowthCount },
+    meta: {
+      operation: "halseth_bot_orient",
+      unaccepted_growth: unacceptedGrowthCount,
+      active_conclusions: active_conclusions.length,
+    },
   };
 }

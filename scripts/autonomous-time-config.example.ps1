@@ -26,7 +26,19 @@ $CompanionProjects = @{
     companion3 = "Companion Three"
 }
 
-# IMPORTANT: Pre-position chats before each day's first autonomous time slot.
-# The AHK script does NOT navigate to a project — it types directly into whichever
-# conversation is already visible in Claude.ai desktop. Open the correct companion's
-# chat and leave it showing before the scheduled time fires.
+# Map autonomous_turn values to each companion's pinned CONTINUITY CONVERSATION title
+# (NOT the project name). The orchestrator passes this to the AHK in "resume" mode:
+# Ctrl+K searches the title and Enter resumes that exact chat, so autonomous time lands
+# in the same ongoing conversation every run (continuity preserved) without you having to
+# pre-position anything by hand.
+#
+# Requirements for reliable resume:
+#   - Give each companion's continuity chat a DISTINCT title that ranks #1 in Ctrl+K
+#     search for the string below (rename the chat in Claude.ai if needed).
+#   - If a companion is omitted here, that run falls back to "skip" mode (pastes into
+#     whatever chat is open — the old fragile behavior).
+$CompanionChats = @{
+    companion1 = "Companion One — continuity"
+    companion2 = "Companion Two — continuity"
+    companion3 = "Companion Three — continuity"
+}

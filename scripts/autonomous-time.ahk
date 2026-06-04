@@ -61,43 +61,52 @@ Sleep 800
 ; Ctrl+K opens Claude.ai desktop's project/conversation switcher (search panel).
 ; Type the project name, wait for search results, press Enter to navigate.
 ;
-; NOTE: Navigating to a PROJECT (not a conversation) opens a new chat instead of
-; resuming the existing one. If you pre-position each companion's conversation
-; before autonomous time runs, pass "skip" as the second argument to bypass
-; navigation entirely and click directly into the already-open chat.
+; Three modes (second argument):
+;   "resume" (preferred) — A_Args[1] is a CONVERSATION title. Ctrl+K searches it and
+;             Enter RESUMES that exact chat, preserving in-chat continuity. This is the
+;             reliable pre-position (Q2a): it does not depend on the right chat being
+;             left open manually.
+;   "skip"  — no navigation; paste into whatever chat is already open (legacy; fragile,
+;             depends on manual pre-positioning).
+;   (none)  — A_Args[1] is a PROJECT name. Ctrl+K + Enter opens a NEW chat in that
+;             project (loses in-chat continuity). Last resort.
 ;
 ; Usage:
-;   AutoHotkey64.exe autonomous-time.ahk "ProjectName"         ; navigate via Ctrl+K
-;   AutoHotkey64.exe autonomous-time.ahk "ProjectName" "skip"  ; skip navigation
+;   AutoHotkey64.exe autonomous-time.ahk "Continuity chat title" "resume"
+;   AutoHotkey64.exe autonomous-time.ahk "ProjectName" "skip"
+;   AutoHotkey64.exe autonomous-time.ahk "ProjectName"
 
-SkipNav := (A_Args.Length >= 2 and A_Args[2] = "skip")
+Mode    := (A_Args.Length >= 2) ? A_Args[2] : "navigate"
+SkipNav := (Mode = "skip")
 
 ; Save clipboard before we clobber it
 OldClip := A_Clipboard
 A_Clipboard := ""
 
 if SkipNav {
-    Log("Skipping Ctrl+K navigation (skip flag set) — using pre-positioned chat for: " ProjectName)
+    Log("Skipping Ctrl+K navigation (skip mode) — using pre-positioned chat for: " ProjectName)
 } else {
-    Log("Opening project switcher (Ctrl+K)")
+    NavLabel := (Mode = "resume") ? "conversation (resume)" : "project (new chat)"
+    Log("Opening switcher (Ctrl+K) to " NavLabel ": " ProjectName)
     SendInput "^k"
     Sleep 700
 
-    ; Type project name via clipboard (more reliable than SendInput for special chars)
+    ; Type search target via clipboard (more reliable than SendInput for special chars).
+    ; In resume mode this is the conversation title; the top result resumes that chat.
     A_Clipboard := ProjectName
     ClipWait 2
     if A_Clipboard != ProjectName {
-        Log("ERROR: Clipboard write failed for project name")
+        Log("ERROR: Clipboard write failed for search target")
         A_Clipboard := OldClip
         ExitApp 1
     }
     SendInput "^v"
-    Sleep 900   ; wait for search results to populate
+    Sleep 1100   ; wait for search results to populate (resume needs the conversation hit ranked first)
 
     SendInput "{Enter}"
-    Sleep 1800  ; wait for project to fully load
+    Sleep 1800  ; wait for chat to fully load
 
-    Log("Navigated to project: " ProjectName)
+    Log("Navigated to " NavLabel ": " ProjectName)
 }
 
 ; ── Focus chat input ──────────────────────────────────────────────────────────

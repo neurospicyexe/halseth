@@ -41,8 +41,10 @@ export async function postAutonomyRun(request: Request, env: Env): Promise<Respo
   const thread_position = typeof body.thread_position === "number" ? Math.max(1, body.thread_position) : null;
 
   const id = crypto.randomUUID();
+  // started_at stamped at creation so run duration is derivable (was NULL on all rows --
+  // autonomous-time audit 2026-06-01). created_at carries the DB default; started_at did not.
   await env.DB.prepare(
-    "INSERT INTO autonomy_runs (id, companion_id, run_type, status, thread_id, thread_position) VALUES (?, ?, ?, 'running', ?, ?)"
+    "INSERT INTO autonomy_runs (id, companion_id, run_type, status, thread_id, thread_position, started_at) VALUES (?, ?, ?, 'running', ?, ?, datetime('now'))"
   ).bind(id, body.companion_id, body.run_type, thread_id, thread_position).run();
 
   return json({ id, message: "ok" }, 201);
