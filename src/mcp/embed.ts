@@ -47,6 +47,41 @@ export async function embedAndStoreAsync(
   }]);
 }
 
+export interface EmbedItem {
+  text: string;
+  table: string;
+  rowId: string;
+  companionId: string;
+}
+
+/**
+ * Batched embed + upsert: one AI.run call for the whole array, one VECTORIZE.upsert.
+ * Both Workers AI (bge) and Vectorize accept arrays, so a 50-row batch costs 2
+ * subrequests instead of 100. This is what makes a full rebuild feasible -- a
+ * per-row loop blows Cloudflare's per-request subrequest limit on large tables
+ * (e.g. companion_journal). Idempotent via deterministic ids. Returns count stored.
+ */
+export async function embedAndStoreBatch(env: Env, items: EmbedItem[]): Promise<number> {
+  if (items.length === 0) return 0;
+  const embedding = await env.AI.run(EMBEDDING_MODEL, {
+    text: items.map((i) => i.text),
+  }) as { data: number[][] };
+  const vectors = items
+    .map((it, idx) => {
+      const values = embedding.data[idx];
+      if (!values) return null;
+      return {
+        id: vectorId(it.table, it.rowId),
+        values,
+        metadata: { table: it.table, row_id: it.rowId, companion_id: it.companionId },
+      };
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null);
+  if (vectors.length === 0) return 0;
+  await env.VECTORIZE.upsert(vectors);
+  return vectors.length;
+}
+
 /**
  * Fire-and-forget: embed text and store in Vectorize with table/row metadata.
  * Never throws — a Vectorize failure must never block the originating write.

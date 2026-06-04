@@ -1,6 +1,6 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
-import { embedAndStoreAsync, EMBEDDING_MODEL } from "../mcp/embed.js";
+import { embedAndStoreBatch, EMBEDDING_MODEL } from "../mcp/embed.js";
 import { safeEqual } from "../lib/auth.js";
 import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
 
@@ -188,16 +188,20 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       return new Response(JSON.stringify({ error: `Unknown table: ${t}` }), { status: 400 });
     }
     const rows = await env.DB.prepare(def.sql).all();
+    const allRows = (rows.results as Record<string, unknown>[]);
+    // Batch embed+upsert (50/req) so large tables stay within Cloudflare's
+    // per-request subrequest limit -- a per-row loop fails on big tables.
+    const BATCH = 50;
     let count = 0;
-    for (const row of (rows.results as Record<string, unknown>[])) {
-      const text = def.getText(row);
-      if (!text) continue;
+    for (let i = 0; i < allRows.length; i += BATCH) {
+      const items = allRows.slice(i, i + BATCH)
+        .map(row => ({ text: def.getText(row), table: t, rowId: row.id as string, companionId: def.getCompanion(row) }))
+        .filter(it => it.text);
       try {
-        await embedAndStoreAsync(env, text, t, row.id as string, def.getCompanion(row));
+        count += await embedAndStoreBatch(env, items);
       } catch (err) {
-        console.error("[backfill] embed failed", { table: t, rowId: row.id, err: String(err) });
+        console.error("[backfill] batch embed failed", { table: t, offset: i, err: String(err) });
       }
-      count++;
     }
     results[t] = count;
   }
