@@ -291,6 +291,8 @@ export interface WmOrientResponse {
   recent_spiral_turn?: WmRecentSpiralTurn | null;
   latest_biometrics?: WmBiometricSnapshot | null;
   house_state?: WmHouseState | null;
+  /** "While you were away" — recent home events, surfaced once. */
+  home_recent?: HomeEvent[];
   current_datetime_iso: string;
   current_datetime_cst: string;
 }
@@ -410,4 +412,47 @@ export interface WmRecentSpiralTurn {
   seed_text: string;
   phase_turn: string;
   completed_at: string;
+}
+
+// --- The Home substrate ---
+export type CompanionId = "cypher" | "drevan" | "gaia";
+
+export interface HomeRoom {
+  key: string;
+  name: string;
+  sym: string;
+  register: string;
+  primary_lane: CompanionId | null;
+  gradient: string;
+}
+
+export interface HomePresence {
+  companion_id: CompanionId;
+  current_room: string;
+  activity: string;
+  micro_mood: string | null;
+  with_companion: string | null;
+  basin_distance: number;
+  updated_at: string;
+}
+
+export type HomeEventType = "move" | "encounter" | "activity" | "reflection";
+
+export interface HomeEvent {
+  id: string;
+  companion_id: CompanionId;
+  event_type: HomeEventType;
+  room: string;
+  with_companion: string | null;
+  text: string;
+  surfaced_at: string | null;
+  growth_journal_id: string | null;
+  created_at: string;
+}
+
+export interface Placement {
+  room: string;
+  activity: string;
+  moved: boolean;          // true if room differs from prior room
+  basin_distance: number;
 }
