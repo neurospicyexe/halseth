@@ -186,10 +186,20 @@ const MOOD_AUGMENT: Record<string, string> = {
   feral:      "instinct raw uncontained",
 };
 
-export async function semanticSearch(env: Env, query: string, mood?: string | null): Promise<string | null> {
+export async function semanticSearch(
+  env: Env,
+  query: string,
+  mood?: string | null,
+  contentType?: string | null,
+): Promise<string | null> {
   const augment = mood ? MOOD_AUGMENT[mood] : null;
   const augmented = augment ? `${query} ${augment}` : query;
-  return callTool(env, "sb_search", { query: augmented });
+  const args: Record<string, unknown> = { query: augmented };
+  // Scoped mode: restrict the whole search to one layer (e.g. historical_corpus -- the origin
+  // material) so "search the corpus for X" returns only origin-layer hits. Unscoped searches
+  // still get a guaranteed corpus slot via the Second Brain side; this is the explicit deep dive.
+  if (contentType) args.content_type = contentType;
+  return callTool(env, "sb_search", args);
 }
 
 // ── Dual-vector retrieval (continuity-aware) ────────────────────────────────
@@ -241,16 +251,17 @@ export async function dualVectorSearch(
   query: string,
   recentContext?: string | null,
   mood?: string | null,
+  contentType?: string | null,
 ): Promise<string | null> {
   const trimmed = (recentContext ?? "").trim().slice(-CONTINUITY_CONTEXT_CHAR_LIMIT).trimStart();
   if (!trimmed) {
     // No continuity context -> single-vector, identical to prior behaviour.
-    return semanticSearch(env, query, mood);
+    return semanticSearch(env, query, mood, contentType);
   }
   const continuityQuery = `${query}\n\nRecent conversation context:\n${trimmed}`;
   const [primaryRaw, continuityRaw] = await Promise.all([
-    semanticSearch(env, query, mood),
-    semanticSearch(env, continuityQuery, mood),
+    semanticSearch(env, query, mood, contentType),
+    semanticSearch(env, continuityQuery, mood, contentType),
   ]);
   if (!primaryRaw) return continuityRaw;
   if (!continuityRaw) return primaryRaw;
