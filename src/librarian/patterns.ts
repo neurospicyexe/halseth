@@ -96,6 +96,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "have we talked about", "what did we say about", "do we have anything on",
       "pull context on", "check the vault for", "vault search", "search for",
       "what do i know about", "what's in vault about",
+      // Corpus-scoped: routes here so execSbSearch can restrict to historical_corpus
+      // (the origin layer). The executor's CORPUS_SCOPE_RE then sets content_type.
+      "search the corpus", "search corpus", "search the historical corpus",
+      "search historical corpus", "in the corpus", "from the corpus", "search the origin",
     ],
     tools: ["sb_search"],
     response_key: "summary",
