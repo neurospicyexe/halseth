@@ -52,12 +52,18 @@ function stripEmbeddings(raw: string): string {
   return raw;
 }
 
+// Corpus-scoped intent: "search the corpus", "in the historical corpus", "the origin
+// conversations", etc. When matched (or content_type passed explicitly in context), the whole
+// search is restricted to the historical_corpus origin layer instead of the all-layers default.
+const CORPUS_SCOPE_RE = /\b(?:historical[ _-]?corpus|the corpus|origin (?:layer|conversations?|corpus))\b/i;
+
 export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const c = parseContext<{ query?: string; recent_context?: string }>(ctx.req.context);
+  const c = parseContext<{ query?: string; recent_context?: string; content_type?: string }>(ctx.req.context);
   const query = c?.query ?? ctx.req.request;
+  const contentType = c?.content_type ?? (CORPUS_SCOPE_RE.test(ctx.req.request) ? "historical_corpus" : null);
   // Opt-in continuity: callers (claude.ai, future looms) may pass recent turns
   // to widen recall via dual-vector retrieval. Absent -> single-vector.
-  const result = await dualVectorSearch(ctx.env, query, c?.recent_context);
+  const result = await dualVectorSearch(ctx.env, query, c?.recent_context, null, contentType);
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
 }
 
