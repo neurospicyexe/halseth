@@ -695,6 +695,16 @@ export interface CompanionStateUpdate {
   weight?: string | null;
 }
 
+// Numeric SOMA columns. These must never receive NaN/Infinity or a non-numeric
+// string -- a single non-finite write here is what surfaces as "acuity: NaN" in
+// the soma_arc continuity note (and orient). soma.ts already finite-guards before
+// calling; the Librarian context-JSON path did not, so the guard lives here at the
+// shared chokepoint so ALL callers (HTTP, inline parser, context JSON) are covered.
+const NUMERIC_STATE_COLUMNS: Set<string> = new Set([
+  "soma_float_1", "soma_float_2", "soma_float_3",
+  "surface_intensity", "undercurrent_intensity", "background_intensity",
+]);
+
 const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
   "soma_float_1", "soma_float_2", "soma_float_3",
   "current_mood", "compound_state",
@@ -715,9 +725,24 @@ export async function updateCompanionState(
   const bindings: unknown[] = [];
 
   for (const col of ALLOWED_STATE_COLUMNS) {
-    if (fields[col] !== undefined) {
+    if (fields[col] === undefined) continue;
+    const v = fields[col];
+    if (NUMERIC_STATE_COLUMNS.has(col)) {
+      // Explicit null clears the column; anything non-finite (NaN, Infinity,
+      // non-numeric string) is dropped so it can never clobber a good value or
+      // land as "NaN" in the column. `??` alone would let NaN through.
+      if (v === null) {
+        assignments.push(`${col} = ?`);
+        bindings.push(null);
+        continue;
+      }
+      const n = Number(v);
+      if (!Number.isFinite(n)) continue;
       assignments.push(`${col} = ?`);
-      bindings.push(fields[col] ?? null);
+      bindings.push(n);
+    } else {
+      assignments.push(`${col} = ?`);
+      bindings.push(v ?? null);
     }
   }
 

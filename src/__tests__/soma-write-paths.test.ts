@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { patchSomaState } from "../handlers/soma.js";
+import { updateCompanionState } from "../librarian/backends/halseth.js";
 
 interface CapturedCall { sql: string; binds: unknown[] }
 
@@ -212,5 +213,72 @@ describe("patchSomaState (HTTP) -- all canonical SOMA fields land in DB", () => 
     const moodBind = updateCall!.binds.find(b => typeof b === "string" && b.startsWith("y"));
     expect((lanedSpineBind as string).length).toBe(150);
     expect((moodBind as string).length).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. updateCompanionState chokepoint -- non-finite SOMA floats never persist
+//
+// The "acuity: NaN / presence: NaN" soma_arc notes came from a non-finite
+// numeric reaching the column. soma.ts finite-guards before calling, but the
+// Librarian context-JSON path passed values straight through, and the old
+// `fields[col] ?? null` let NaN survive (`??` only catches null/undefined).
+// The guard now lives in the shared helper so every caller is covered.
+// ---------------------------------------------------------------------------
+
+describe("updateCompanionState -- non-finite numeric SOMA floats are dropped, not written", () => {
+  it("drops NaN soma floats so they can never land as 'NaN' in the column", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const r = await updateCompanionState(env, "cypher", {
+      soma_float_1: NaN,
+      soma_float_2: Infinity,
+      soma_float_3: 0.62, // the one good value survives
+    });
+    expect(r.ok).toBe(true);
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE"));
+    expect(updateCall).toBeDefined();
+    // Only the finite float is in the UPDATE; NaN/Infinity columns are absent.
+    expect(updateCall!.sql).toContain("soma_float_3 = ?");
+    expect(updateCall!.sql).not.toContain("soma_float_1 = ?");
+    expect(updateCall!.sql).not.toContain("soma_float_2 = ?");
+    expect(updateCall!.binds).toContain(0.62);
+    // No NaN ever reaches a binding.
+    expect(updateCall!.binds.some(b => typeof b === "number" && Number.isNaN(b))).toBe(false);
+  });
+
+  it("coerces non-numeric strings on numeric columns to a dropped field", async () => {
+    const { env, calls } = makeRecordingEnv();
+    // The inline parser keeps the raw string when a numeric target won't parse;
+    // the chokepoint must still refuse to write it to a numeric column.
+    const r = await updateCompanionState(env, "cypher", {
+      soma_float_1: "post-arc-settling" as unknown as number,
+      current_mood: "pattern-lit",
+    });
+    expect(r.ok).toBe(true);
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE"));
+    expect(updateCall!.sql).not.toContain("soma_float_1 = ?");
+    expect(updateCall!.sql).toContain("current_mood = ?");
+    expect(updateCall!.binds).toContain("pattern-lit");
+  });
+
+  it("explicit null still clears a numeric column (distinct from a dropped non-finite)", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const r = await updateCompanionState(env, "cypher", {
+      soma_float_1: null,
+    });
+    expect(r.ok).toBe(true);
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE"));
+    expect(updateCall!.sql).toContain("soma_float_1 = ?");
+    expect(updateCall!.binds).toContain(null);
+  });
+
+  it("returns ok:false when every numeric field was non-finite and nothing else was passed", async () => {
+    const { env } = makeRecordingEnv();
+    const r = await updateCompanionState(env, "cypher", {
+      soma_float_1: NaN,
+      soma_float_2: NaN,
+    });
+    // No valid assignments -> no-op write, surfaced as ok:false to the caller.
+    expect(r.ok).toBe(false);
   });
 });
