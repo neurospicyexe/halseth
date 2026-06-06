@@ -4,7 +4,7 @@ import {
   sbRead, sbList, sbSaveDocument, sbLogObservation, sbSynthesizeSession, sbSaveStudy,
   sbFileChunks,
 } from "../backends/second-brain.js";
-import { truncateRaw } from "../response/budget.js";
+import { truncateRaw, RAW_DATA_CHARS } from "../response/budget.js";
 
 // Validate vault paths: allow alphanumeric, slash, hyphen, underscore, dot, space.
 // Block path traversal (.. segments) and absolute paths.
@@ -57,6 +57,30 @@ function stripEmbeddings(raw: string): string {
 // search is restricted to the historical_corpus origin layer instead of the all-layers default.
 const CORPUS_SCOPE_RE = /\b(?:historical[ _-]?corpus|the corpus|origin (?:layer|conversations?|corpus))\b/i;
 
+// Fit sb_search results into the raw-data char budget by dropping WHOLE chunks (never slicing
+// mid-object -- truncateRaw's blunt char-slice yields invalid JSON), and guarantee the origin-layer
+// chunks survive. sb_search appends its guaranteed historical_corpus slot (pool 4) LAST, so a naive
+// tail truncation drops exactly the corpus chunk the search went out of its way to include. We
+// re-order to [top relevance hit, ...guaranteed corpus, ...the rest] so the origin layer lands
+// inside the budget, then keep whole chunks until the budget is hit.
+export function trimSearchChunks(raw: string): string {
+  let parsed: { chunks?: Array<Record<string, unknown>> } & Record<string, unknown>;
+  try { parsed = JSON.parse(raw); } catch { return truncateRaw(raw); }
+  if (!Array.isArray(parsed.chunks) || parsed.chunks.length === 0) return truncateRaw(raw);
+
+  const guaranteed = parsed.chunks.filter(c => c.pool === 4);
+  const [topHit, ...restTail] = parsed.chunks.filter(c => c.pool !== 4);
+  const ordered = topHit ? [topHit, ...guaranteed, ...restTail] : guaranteed;
+
+  const kept: Array<Record<string, unknown>> = [];
+  for (const chunk of ordered) {
+    const candidate = JSON.stringify({ ...parsed, chunks: [...kept, chunk] });
+    if (candidate.length > RAW_DATA_CHARS && kept.length > 0) break;
+    kept.push(chunk);
+  }
+  return JSON.stringify({ ...parsed, chunks: kept });
+}
+
 export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult> {
   const c = parseContext<{ query?: string; recent_context?: string; content_type?: string }>(ctx.req.context);
   const query = c?.query ?? ctx.req.request;
@@ -64,7 +88,7 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
   // Opt-in continuity: callers (claude.ai, future looms) may pass recent turns
   // to widen recall via dual-vector retrieval. Absent -> single-vector.
   const result = await dualVectorSearch(ctx.env, query, c?.recent_context, null, contentType);
-  return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
+  return { data: result ? trimSearchChunks(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
 }
 
 export async function execSbFileChunks(ctx: ExecutorContext): Promise<ExecutorResult> {
