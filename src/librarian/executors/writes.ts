@@ -412,9 +412,14 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
           current_mood: string | null;
         }>();
         if (state) {
-          f1 = Number(state.soma_float_1 ?? 0).toFixed(2);
-          f2 = Number(state.soma_float_2 ?? 0).toFixed(2);
-          f3 = Number(state.soma_float_3 ?? 0).toFixed(2);
+          // Finite-guard: a null or non-finite stored value renders as '—', never
+          // "NaN". Mirrors Drevan's '—' fallback above. The write path now blocks
+          // NaN at the source, but legacy rows may still hold it.
+          const fmtFloat = (v: number | null): string =>
+            typeof v === 'number' && Number.isFinite(v) ? v.toFixed(2) : '—';
+          f1 = fmtFloat(state.soma_float_1);
+          f2 = fmtFloat(state.soma_float_2);
+          f3 = fmtFloat(state.soma_float_3);
           moodStr = state.current_mood ? ` | ${state.current_mood}` : '';
         }
       }
