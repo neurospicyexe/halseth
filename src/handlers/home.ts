@@ -14,7 +14,7 @@ import type { Env } from "../types.js";
 import type { CompanionId } from "../webmind/types.js";
 import { authGuard } from "../lib/auth.js";
 import { getRooms } from "../webmind/home/rooms.js";
-import { recentEvents } from "../webmind/home/store.js";
+import { recentEvents, upsertPresence } from "../webmind/home/store.js";
 import { runHomeTick } from "../webmind/home/tick.js";
 
 function json(data: unknown, status = 200): Response {
@@ -61,4 +61,36 @@ export async function postHomeTick(request: Request, env: Env): Promise<Response
 
   const result = await runHomeTick(env);
   return json({ ran: true, result });
+}
+
+// PATCH /home/presence
+// Allows the autonomous worker to write its current room at pipeline start.
+// Body: { companion_id, current_room, activity? }
+export async function patchHomePresence(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: Record<string, unknown>;
+  try { body = await request.json() as Record<string, unknown>; }
+  catch { return json({ error: "invalid JSON" }, 400); }
+
+  const companionId = body["companion_id"];
+  const currentRoom = body["current_room"];
+  const activity = body["activity"];
+
+  if (typeof companionId !== "string" || !VALID_COMPANIONS.has(companionId)) {
+    return json({ error: "invalid companion_id" }, 400);
+  }
+  if (typeof currentRoom !== "string" || !currentRoom.trim()) {
+    return json({ error: "current_room required" }, 400);
+  }
+
+  const activityText = (typeof activity === "string" && activity.trim()) ? activity.trim() : "present";
+
+  try {
+    await upsertPresence(env, companionId as CompanionId, currentRoom.trim(), activityText, 0);
+    return json({ ok: true });
+  } catch {
+    return json({ error: "invalid room or write failed" }, 400);
+  }
 }
