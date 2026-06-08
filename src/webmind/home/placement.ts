@@ -27,11 +27,10 @@ function activityFor(room: HomeRoom, driftType: PlacementInput["driftType"]): st
 export function placeCompanion(input: PlacementInput): Placement {
   const rng = input.rng ?? Math.random;
   const legal = laneLegalRooms(input.rooms, input.companionId);
-  const home = legal.find(r => r.key === HOME_ROOM[input.companionId])
-            ?? legal[0];
+  const home = legal.find(r => r.key === HOME_ROOM[input.companionId]);
 
   if (!home) {
-    return { room: input.priorRoom ?? "", activity: "", moved: false, basin_distance: input.driftScore };
+    throw new Error(`[home] no legal rooms for ${input.companionId} -- rooms table empty or migration not applied`);
   }
 
   let chosen: HomeRoom;

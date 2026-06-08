@@ -659,14 +659,14 @@ export async function vetoProposedThread(
 
 export async function setAnticipation(
   env: Env,
-  params: { active: boolean; target?: string; intensity?: number },
+  params: { companion_id: string; active: boolean; target?: string; intensity?: number },
 ): Promise<{ ok: boolean }> {
   const anticipation = params.active
-    ? JSON.stringify({ active: true, target: params.target ?? null, intensity: params.intensity ?? 0.5, since: 0 })
+    ? JSON.stringify({ active: true, target: params.target ?? null, intensity: params.intensity ?? 0.5, since: Date.now() })
     : null;
   await env.DB.prepare(
-    "UPDATE companion_state SET anticipation = ?, updated_at = datetime('now') WHERE companion_id = 'drevan'"
-  ).bind(anticipation).run();
+    "UPDATE companion_state SET anticipation = ?, updated_at = datetime('now') WHERE companion_id = ?"
+  ).bind(anticipation, params.companion_id).run();
   return { ok: true };
 }
 

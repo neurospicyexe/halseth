@@ -293,7 +293,12 @@ export async function execLiveThreadVeto(ctx: ExecutorContext): Promise<Executor
 export async function execAnticipationSet(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ active: boolean; target?: string; intensity?: number }>(ctx.req.context);
   if (p === null || typeof p.active !== "boolean") return { response_key: "witness", witness: "anticipation_set requires { active: boolean, target?, intensity? } in context" };
-  const r = await setAnticipation(ctx.env, p);
+  const r = await setAnticipation(ctx.env, {
+    companion_id: ctx.req.companion_id,
+    active: p.active,
+    target: p.target,
+    intensity: p.intensity,
+  });
   return { ack: r.ok };
 }
 
