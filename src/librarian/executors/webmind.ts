@@ -88,11 +88,13 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
   // Companions sometimes send fields inline when not using a context JSON block.
   if (!title || !summary) {
     const knownKeys = 'title|summary|spine|last_real_thing|motion_state|open_threads|open_loops|next_steps|facet|state_hint';
-    const re = new RegExp(`\\b(${knownKeys})\\s*=\\s*([\\s\\S]+?)(?=,\\s*(?:${knownKeys})\\s*=|$)`, 'gi');
+    // Lookahead: stop at punctuation+space+key, or just space+key, or end of string.
+    // Handles both ", key=" and ". key=" and "; key=" separators that companions use.
+    const re = new RegExp(`\\b(${knownKeys})\\s*=\\s*([\\s\\S]+?)(?=[.,;]?\\s+(?:${knownKeys})\\s*=|$)`, 'gi');
     const inline: Record<string, string> = {};
     let m: RegExpExecArray | null;
     while ((m = re.exec(ctx.req.request)) !== null) {
-      inline[m[1]!.toLowerCase()] = m[2]!.trim().replace(/,\s*$/, '');
+      inline[m[1]!.toLowerCase()] = m[2]!.trim().replace(/[.,;]\s*$/, '');
     }
     title = title || inline['title'] || inline['spine'];
     summary = summary || inline['summary'] || inline['last_real_thing'];

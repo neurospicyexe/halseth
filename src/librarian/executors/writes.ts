@@ -90,9 +90,34 @@ export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult
 
 export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ agent?: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
-  if (!p || !p.delta_text || !p.valence) return { response_key: "witness", witness: "delta_log requires { delta_text, valence } in context" };
-  const agent = p.agent ?? ctx.req.companion_id;
-  const r = await deltaLog(ctx.env, { ...p, agent });
+
+  // Structured context wins; fall back to inline parsing from the request string.
+  let deltaText = p?.delta_text?.trim();
+  let valence = p?.valence?.trim();
+
+  if (!deltaText) {
+    deltaText = ctx.req.request
+      .replace(/^(?:log\s+(?:a\s+)?relational\s+delta|relational\s+delta|delta\s+log|log\s+delta)\s*(?:for\s+\w+\s*)?\s*:\s*/i, "")
+      .trim();
+  }
+
+  if (deltaText && !valence) {
+    // Try inline valence=X or valence: X
+    const vm = deltaText.match(/\bvalence\s*[=:]\s*(\w+)/i);
+    if (vm) {
+      valence = vm[1]!.toLowerCase();
+      deltaText = deltaText.replace(/[,.]?\s*\bvalence\s*[=:]\s*\w+\s*/i, "").trim();
+    } else {
+      // Infer from sentiment; default positive for relational-delta entries
+      const isNeg = /\b(?:rupture|breach|broken|strained|distant|harder|worse|lost|eroded|cracked)\b/i.test(deltaText);
+      const isPos = /\b(?:steadier|trusted|load.bearing|closer|stronger|solid|held|clearer|growth|warmer|mutual|giving|open|good)\b/i.test(deltaText);
+      valence = isNeg && !isPos ? "negative" : isPos && !isNeg ? "positive" : "mixed";
+    }
+  }
+
+  if (!deltaText || !valence) return { response_key: "witness", witness: "delta_log requires { delta_text, valence } in context" };
+  const agent = p?.agent ?? ctx.req.companion_id;
+  const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: p?.session_id });
   return { ack: true, id: r.id };
 }
 
