@@ -61,7 +61,7 @@ import {
   postPluralNote, getPluralFront, postPluralFront,
 } from "./handlers/plural-store.js";
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
-import { getHomePresence, getHomeEvents, postHomeTick } from "./handlers/home.js";
+import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
@@ -302,9 +302,10 @@ const router = new Router()
   .on("DELETE", "/mind/metronome/actions/:id",                    (request, env, params) => deleteMindMetronomeAction(request, env, params ?? {}))
 
   // The Home -- inhabited place-graph (presence + events + on-demand tick)
-  .on("GET",  "/home/presence", (request, env) => getHomePresence(request, env))
-  .on("GET",  "/home/events",   (request, env) => getHomeEvents(request, env))
-  .on("POST", "/home/tick",     (request, env) => postHomeTick(request, env))
+  .on("GET",   "/home/presence", (request, env) => getHomePresence(request, env))
+  .on("PATCH", "/home/presence", (request, env) => patchHomePresence(request, env))
+  .on("GET",   "/home/events",   (request, env) => getHomeEvents(request, env))
+  .on("POST",  "/home/tick",     (request, env) => postHomeTick(request, env))
 
   // Companion settings -- per-companion key/value store (model selection, etc.)
   .on("GET",  "/companion/settings/:companion_id", (request, env, params) => handleGetCompanionSettings((params ?? {}).companion_id ?? "", env))
