@@ -33,6 +33,8 @@ export const COMPANION_TOKEN_KEYS = {
 
 export type AuthIdentity = "drevan" | "cypher" | "gaia";
 
+export const VALID_COMPANIONS: ReadonlySet<string> = new Set(Object.keys(COMPANION_TOKEN_KEYS));
+
 /**
  * Returns the companion identity that issued this request, OR null if the
  * caller authenticated with an admin-tier token (ADMIN_SECRET / MCP_AUTH_SECRET)

@@ -7,7 +7,7 @@ function makeStmt(results: Row[]) {
   const stmt: any = { bind: () => stmt, all: async () => ({ results }), first: async () => results[0] ?? null, run: async () => ({ meta: { changes: 1 } }) };
   return stmt;
 }
-function env(impl: (sql: string) => any) { return { DB: { prepare: impl } } as any; }
+function env(impl: (sql: string) => any) { return { DB: { prepare: impl, batch: async (stmts: any[]) => stmts.map(() => ({ meta: { changes: 1 } })) } } as any; }
 
 describe("buildHomeBlock", () => {
   it("returns unsurfaced events and never throws on DB error", async () => {

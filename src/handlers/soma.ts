@@ -1,8 +1,6 @@
 import { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, VALID_COMPANIONS } from "../lib/auth.js";
 import { updateCompanionState, type CompanionStateUpdate } from "../librarian/backends/halseth.js";
-
-const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 
 // Numeric SOMA fields are clamped to [0, 1] before bind. TEXT fields are
 // trimmed and capped at 100 chars (lane_spine excepted -- 150). The lists

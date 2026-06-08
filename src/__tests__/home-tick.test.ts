@@ -22,10 +22,10 @@ describe("runHomeTick", () => {
     const env = envWith((sql) => {
       if (sql.includes("FROM home_rooms")) {
         return makeStmt([
-          { key: "office", name: "Office", sym: "", register: "audit", primary_lane: "cypher", gradient: "" },
+          { key: "study", name: "Study", sym: "", register: "focus", primary_lane: "cypher", gradient: "" },
         ]);
       }
-      if (sql.includes("FROM home_presence")) return makeStmt([{ companion_id: "cypher", current_room: "office", activity: "x", basin_distance: 0 }]);
+      if (sql.includes("FROM home_presence")) return makeStmt([{ companion_id: "cypher", current_room: "study", activity: "x", basin_distance: 0 }]);
       if (sql.includes("FROM companion_basin_history")) return makeStmt([{ drift_score: 0.02, drift_type: "stable" }]);
       if (sql.includes("FROM companion_settings")) return makeStmt([{ value: "none" }]);
       return makeStmt([]); // INSERT/UPDATE
@@ -39,17 +39,16 @@ describe("runHomeTick", () => {
     });
 
     expect(textureSpy).not.toHaveBeenCalled();
-    expect(res.cypher!.room).toBe("office");
+    expect(res.cypher!.room).toBe("study");
   });
 
   it("fires texture on a move when enabled and interval elapsed, and suppresses within interval", async () => {
     const rooms = [
-      { key: "office", name: "Office", sym: "", register: "audit", primary_lane: "cypher", gradient: "" },
-      { key: "studio", name: "Studio", sym: "", register: "build", primary_lane: "cypher", gradient: "" },
-      { key: "kitchen", name: "Kitchen", sym: "", register: "nourish", primary_lane: null, gradient: "" },
+      { key: "study",   name: "Study",   sym: "", register: "focus",   primary_lane: "cypher", gradient: "" },
+      { key: "hallway", name: "Hallway", sym: "", register: "transit", primary_lane: null,     gradient: "" },
     ];
-    const presence = [{ companion_id: "cypher", current_room: "kitchen", activity: "x", basin_distance: 0, updated_at: "2026-06-03T11:59:00Z" }];
-    const basin = [{ drift_score: 0.9, drift_type: "pressure" }]; // pressure -> high home pull -> moves to office
+    const presence = [{ companion_id: "cypher", current_room: "hallway", activity: "x", basin_distance: 0, updated_at: "2026-06-03T11:59:00Z" }];
+    const basin = [{ drift_score: 0.9, drift_type: "pressure" }]; // pressure -> high home pull -> moves to study
 
     // interval elapsed (last texture long ago) -> fires
     const fired = vi.fn(async () => "lush line");

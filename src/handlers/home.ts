@@ -12,9 +12,9 @@
 
 import type { Env } from "../types.js";
 import type { CompanionId } from "../webmind/types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, VALID_COMPANIONS } from "../lib/auth.js";
 import { getRooms } from "../webmind/home/rooms.js";
-import { recentEvents, upsertPresence } from "../webmind/home/store.js";
+import { recentEvents, updatePresenceLocation } from "../webmind/home/store.js";
 import { runHomeTick } from "../webmind/home/tick.js";
 
 function json(data: unknown, status = 200): Response {
@@ -23,8 +23,6 @@ function json(data: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
-
-const VALID_COMPANIONS = new Set<string>(["cypher", "drevan", "gaia"]);
 
 // GET /home/presence
 export async function getHomePresence(request: Request, env: Env): Promise<Response> {
@@ -88,7 +86,7 @@ export async function patchHomePresence(request: Request, env: Env): Promise<Res
   const activityText = (typeof activity === "string" && activity.trim()) ? activity.trim() : "present";
 
   try {
-    await upsertPresence(env, companionId as CompanionId, currentRoom.trim(), activityText, 0);
+    await updatePresenceLocation(env, companionId as CompanionId, currentRoom.trim(), activityText);
     return json({ ok: true });
   } catch {
     return json({ error: "invalid room or write failed" }, 400);

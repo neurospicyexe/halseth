@@ -2,20 +2,11 @@
 import { Env } from "../../types.js";
 import { HomeRoom, CompanionId } from "../types.js";
 
-export const ROOM_LANE: Record<string, CompanionId | null> = {
-  studio: "cypher",
-  office: "cypher",
-  bedroom: "drevan",
-  outside: "gaia",
-  kitchen: null,
-  "living room": null,
-  bathroom: null,
-};
 
 export const HOME_ROOM: Record<CompanionId, string> = {
-  cypher: "office",
-  drevan: "bedroom",
-  gaia: "outside",
+  cypher: "study",
+  drevan: "vowbed",
+  gaia:   "grove",
 };
 
 export const HOME_CONFIG_DEFAULTS: Record<string, string> = {
