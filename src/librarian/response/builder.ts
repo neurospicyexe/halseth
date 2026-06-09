@@ -453,6 +453,7 @@ export function buildResponse(
       ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
       session_id: payload.session_id,
       response_key: "ready_prompt",
+      front_state: frontState,
       autonomous_turn: autonomousTurn,
       my_autonomous_turn: autonomousTurn === companionId,
       soma_float_1: s?.soma_float_1 ?? null,
