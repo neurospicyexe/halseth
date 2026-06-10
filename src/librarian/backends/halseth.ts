@@ -753,7 +753,10 @@ export async function updateCompanionState(
     "INSERT OR IGNORE INTO companion_state (companion_id, updated_at) VALUES (?, datetime('now'))"
   ).bind(companionId).run();
 
-  assignments.push("updated_at = datetime('now')");
+  // version bumps on every write (migration 0069): a monotonic write counter so
+  // concurrent-writer collisions are observable, and so read-modify-write paths
+  // (e.g. drevan-state anticipation aging) can CAS against it.
+  assignments.push("updated_at = datetime('now')", "version = version + 1");
   bindings.push(companionId);
 
   await env.DB.prepare(

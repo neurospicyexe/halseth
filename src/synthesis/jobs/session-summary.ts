@@ -214,6 +214,21 @@ companion_id: ${session.companion_id ?? "unknown"}
     JSON.stringify(domains),
   ).run();
 
+  // Write-time cap (capacity debt, 2026-06-09): synthesis_summary was the one uncapped
+  // accumulator. Keep the newest 300 rows for this companion scope (per-companion and
+  // the NULL cross-companion scope cap independently). Deleting an old row only drops
+  // the compact extract -- the full narrative lives in Second Brain via full_ref, and
+  // orient/sessionLoad only ever read the newest rows. Non-fatal: cap failure never
+  // breaks the summary write itself.
+  await env.DB.prepare(`
+    DELETE FROM synthesis_summary
+    WHERE companion_id IS ? AND id NOT IN (
+      SELECT id FROM synthesis_summary
+      WHERE companion_id IS ? ORDER BY created_at DESC LIMIT 300
+    )
+  `).bind(session.companion_id ?? null, session.companion_id ?? null).run()
+    .catch(e => console.warn("[synthesis:session-summary] cap delete failed:", e));
+
   // ── 8. Raw transcript ingest (qualifying sessions) ────────────────────────
   // Stores verbatim deltas + notes so Second Brain search can return what was
   // actually said, not just what synthesis compressed it into.
