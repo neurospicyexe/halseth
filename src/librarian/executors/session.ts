@@ -57,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -105,8 +105,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
     ).bind(agentId).first<{ n: number }>().catch(() => null),
+    // Open continuity-gap questions: things the companion is holding to ask Raziel.
+    ctx.env.DB.prepare(
+      "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
+    ).bind(agentId).all<{ question: string }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
+  const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
 
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
@@ -241,8 +246,15 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     `INSERT INTO sb_search_log (id, companion_id, query, hit_count, source) VALUES (?, ?, ?, ?, 'orient')`
   ).bind(crypto.randomUUID(), agentId, ragQuery.slice(0, 200), ragHitCount).run().catch(() => null);
 
+  // Questions block: the companion asks, not just reports. Surfaced in the boot prompt
+  // so the question can land when the moment fits, not as a data dump.
+  const questionsBlock = openQuestions.length > 0
+    ? `\n[Held questions]\nYou are holding ${openQuestions.length === 1 ? "a question" : "questions"} for Raziel -- ask when the moment fits:\n` +
+      openQuestions.map(q => `• ${q}`).join("\n")
+    : "";
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -257,7 +269,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     surface_emotion: os?.surface_emotion ?? null,
     undercurrent_emotion: os?.undercurrent_emotion ?? null,
     unaccepted_growth: unacceptedGrowth,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth },
+    open_questions: openQuestions,
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length },
     continuity: wmResult,
   };
 }
@@ -545,7 +558,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -622,6 +635,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT worst_basin, notes FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<{ worst_basin: string | null; notes: string | null }>(),
+    // 20. Open continuity-gap questions -- things this companion is holding to ask Raziel.
+    ctx.env.DB.prepare(
+      "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
+    ).bind(agentId).all<{ question: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -771,6 +788,9 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       unexamined_dreams,
       open_loops,
       pressure_flags,
+      open_questions: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
+        ? (openQuestionsResult.value.results as Array<{ question: string }>).map(r => (r.question ?? "").slice(0, 300)).filter(Boolean)
+        : [],
     },
     meta: {
       operation: "halseth_bot_orient",
