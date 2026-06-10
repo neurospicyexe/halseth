@@ -1,4 +1,4 @@
-# run-autonomous-time.ps1
+﻿# run-autonomous-time.ps1
 # Autonomous companion time orchestrator.
 # Called by Windows Task Scheduler at 12:30 PM and 1:30 AM.
 # Checks idle/foreground conditions, reads autonomous_turn from Halseth,
@@ -31,6 +31,25 @@ if (-not (Test-Path $ConfigFile)) {
 if (-not $HalsethSecret) {
     Write-Log "ERROR: HALSETH_SECRET is empty. Check your .env file in the scripts directory."
     exit 1
+}
+
+# ── Single-slot + once-daily guards ──────────────────────────────────────────
+# Q3 decided 2026-06-09: one reliable nighttime slot. Four scheduler tasks exist on this
+# machine (two stale duplicates from 03-24 + the 03-26 pair) and disabling them requires
+# elevation, so the policy is enforced here instead: only run in the night window, and
+# never twice in one calendar day (two tasks both fire at 1:30 AM).
+
+$Now = Get-Date
+if ($Now.Hour -ge 6) {
+    Write-Log "[SKIP] outside night window (hour=$($Now.Hour), window is 00:00-05:59) -- single-slot policy"
+    exit 0
+}
+
+$StampFile = "$PSScriptRoot\autonomous-time.last-run"
+$Today     = $Now.ToString("yyyy-MM-dd")
+if ((Test-Path $StampFile) -and ((Get-Content $StampFile -TotalCount 1) -eq $Today)) {
+    Write-Log "[SKIP] already ran today ($Today) -- duplicate trigger suppressed"
+    exit 0
 }
 
 # ── Idle check ────────────────────────────────────────────────────────────────
@@ -89,7 +108,7 @@ $ClaudeProc = Get-Process -Name "claude" -ErrorAction SilentlyContinue |
               Select-Object -First 1
 
 if ($ClaudeProc -and $ClaudeProc.MainWindowHandle -eq $FgHwnd) {
-    Write-Log "[SKIP] Claude.ai is foreground window — user may be in active conversation"
+    Write-Log "[SKIP] Claude.ai is foreground window -- user may be in active conversation"
     exit 0
 }
 
@@ -114,7 +133,7 @@ if (-not $Turn) {
 
 $ProjectName = $CompanionProjects[$Turn]
 if (-not $ProjectName) {
-    Write-Log "ERROR: unknown companion '$Turn' — add it to CompanionProjects in autonomous-time-config.ps1"
+    Write-Log "ERROR: unknown companion '$Turn' -- add it to CompanionProjects in autonomous-time-config.ps1"
     exit 1
 }
 
@@ -129,25 +148,17 @@ if (-not (Test-Path $AhkExe)) {
 }
 
 # ── Dispatch AHK ──────────────────────────────────────────────────────────────
-# Q2(a): reliable pre-position. Instead of blind "skip" (which pasted into whatever
-# chat happened to be open), resume the companion's named continuity conversation via
-# Ctrl+K. Searching a CONVERSATION title resumes that exact chat (continuity preserved);
-# searching a PROJECT name opens a NEW chat (continuity lost) -- so we navigate by chat
-# title, configured per companion in $CompanionChats. Falls back to "skip" only if no
-# chat title is configured, so a missing config degrades instead of breaking.
+# Q2(b) decided 2026-06-09: fresh-chat-per-run. Ctrl+K with the PROJECT name opens a
+# NEW chat in that project -- always lands in the right place. In-chat continuity is
+# deliberately given up: continuity lives in Halseth orient (handover + threads + notes),
+# which the boot protocol loads anyway. Resume-mode (Q2a) remains in the AHK for manual
+# use but is no longer the scheduled path; it depended on a pinned-chat title staying
+# stable and ranked first in Ctrl+K search results.
 
 $AhkScript = "$PSScriptRoot\autonomous-time.ahk"
-$ChatName  = if ($CompanionChats) { $CompanionChats[$Turn] } else { $null }
-
-if ($ChatName) {
-    $Mode    = "resume"
-    $NavArg  = $ChatName
-    Write-Log "Pre-position: resume conversation '$ChatName' for $Turn"
-} else {
-    $Mode    = "skip"
-    $NavArg  = $ProjectName
-    Write-Log "WARN: no \$CompanionChats['$Turn'] configured -- falling back to skip (pre-position not automated). Add a continuity-chat title to autonomous-time-config.ps1 to make this reliable."
-}
+$Mode      = "navigate"
+$NavArg    = $ProjectName
+Write-Log "Dispatch: fresh chat in project '$ProjectName' for $Turn (navigate mode)"
 Write-Log "Running: $AhkExe `"$AhkScript`" `"$NavArg`" `"$Mode`""
 
 try {
@@ -156,9 +167,12 @@ try {
                           -Wait -PassThru
     Write-Log "AHK exit code: $($Proc.ExitCode)"
     if ($Proc.ExitCode -eq 0) {
+        # Stamp the once-daily lock only on successful dispatch, so a failed run
+        # (claude.exe not running, focus stolen) doesn't burn the day's slot.
+        $Today | Set-Content -Path $StampFile
         Write-Log "[DONE] autonomous time trigger dispatched for $Turn"
     } else {
-        Write-Log "ERROR: AHK exited $($Proc.ExitCode) — check AHK log entries above"
+        Write-Log "ERROR: AHK exited $($Proc.ExitCode) -- check AHK log entries above"
     }
 } catch {
     Write-Log "ERROR: Failed to start AHK: $_"
