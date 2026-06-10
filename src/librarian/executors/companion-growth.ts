@@ -253,6 +253,64 @@ export async function execJournalDecline(ctx: ExecutorContext): Promise<Executor
   return { response_key: "witness", declined: true, entry_id: entryId, meta: { operation: "journal_decline", companion_id: ctx.req.companion_id } };
 }
 
+// ── Foraging pool (migration 0068) ──
+// Finds use 32-hex ids (randomblob default / dashless UUID), unlike journal's dashed UUIDs.
+function extractForageId(ctx: ExecutorContext): string | null {
+  const raw = ctx.req.context ? (() => { try { return JSON.parse(ctx.req.context); } catch { return null; } })() : null;
+  return (raw as Record<string, unknown> | null)?.id as string | null
+    ?? ctx.req.request.match(/\b([0-9a-f]{32})\b/i)?.[1]
+    ?? ctx.req.request.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i)?.[1]
+    ?? null;
+}
+
+export async function execForageRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "forage_read_failed", reason: "companion_id required" };
+  const rows = await ctx.env.DB.prepare(
+    "SELECT id, domain, title, source_url, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 5"
+  ).bind(ctx.req.companion_id).all<{
+    id: string; domain: string; title: string; source_url: string | null; summary: string; gathered_at: string;
+  }>();
+  const finds = rows.results ?? [];
+  return {
+    response_key: "summary",
+    finds: finds.map(f => ({
+      id: f.id,
+      domain: f.domain,
+      title: f.title,
+      source_url: f.source_url,
+      summary: f.summary.slice(0, 500),
+      gathered_at: f.gathered_at,
+    })),
+    meta: { operation: "forage_read", companion_id: ctx.req.companion_id, count: finds.length },
+  };
+}
+
+export async function execForageConsume(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "forage_consume_failed", reason: "companion_id required" };
+  const findId = extractForageId(ctx);
+  if (!findId) return { error: "forage_consume_failed", reason: "find id required (pass as context JSON {id} or inline hex id)" };
+
+  const result = await ctx.env.DB.prepare(
+    "UPDATE forage_finds SET consumed_at = datetime('now'), consumed_by = ? WHERE id = ? AND consumed_at IS NULL"
+  ).bind(ctx.req.companion_id, findId).run();
+
+  if (result.meta.changes === 0) {
+    const row = await ctx.env.DB.prepare(
+      "SELECT consumed_at, consumed_by FROM forage_finds WHERE id = ?"
+    ).bind(findId).first<{ consumed_at: string | null; consumed_by: string | null }>();
+    if (!row) return { error: "forage_consume_failed", reason: "find not found" };
+    return {
+      response_key: "witness",
+      already_consumed: true,
+      consumed_at: row.consumed_at,
+      consumed_by: row.consumed_by,
+      meta: { operation: "forage_consume" },
+    };
+  }
+
+  return { response_key: "witness", consumed: true, find_id: findId, meta: { operation: "forage_consume", companion_id: ctx.req.companion_id } };
+}
+
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   // Three queries in parallel: SOMA floats, relational state toward Raziel, last outgoing note.
   const [somaRows, relationalRows, noteRows] = await Promise.all([

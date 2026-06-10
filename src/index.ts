@@ -64,6 +64,7 @@ import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handl
 import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
+import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
@@ -197,6 +198,11 @@ const router = new Router()
   .on("PATCH", "/mind/questions/:id",              (request, env, params) => patchQuestion(request, env, params ?? {}))
   .on("GET",   "/mind/growth/valence/:companion_id", (request, env, params) => getGrowthValence(request, env, params ?? {}))
   .on("GET",   "/mind/soma/:companion_id",         (request, env, params) => getSomaFloats(request, env, params ?? {}))
+
+  // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
+  .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))
+  .on("GET",   "/mind/forage/:companion_id",       (request, env, params) => getForageFinds(request, env, params ?? {}))
+  .on("PATCH", "/mind/forage/:id/consume",         (request, env, params) => consumeForageFind(request, env, params ?? {}))
 
   // Autonomous worker -- execution tracking
   .on("POST",  "/mind/autonomy/runs",                            (request, env)         => postAutonomyRun(request, env))
