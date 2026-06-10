@@ -61,6 +61,8 @@ import {
   postPluralNote, getPluralFront, postPluralFront,
 } from "./handlers/plural-store.js";
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
+import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
+import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
@@ -183,6 +185,18 @@ const router = new Router()
   .on("POST", "/companion-conclusions",                     (request, env)         => postConclusion(request, env))
   .on("GET",  "/companion-conclusions/:agent_id",           (request, env, params) => getConclusions(request, env, params ?? {}))
   .on("POST", "/companion-conclusions/:id/supersede",       (request, env, params) => supersedeConclusionById(request, env, params ?? {}))
+
+  // Identity Kernel -- versioned canonical identity, pulled by every substrate at boot
+  .on("GET",  "/identity/kernel/:companion_id",        (request, env, params) => getKernel(request, env, params ?? {}))
+  .on("GET",  "/identity/kernel/:companion_id/bundle", (request, env, params) => getKernelBundle(request, env, params ?? {}))
+  .on("POST", "/identity/kernel",                      (request, env)         => postKernel(request, env))
+
+  // Companion questions + valence + soma read -- mutuality surface for the autonomy loop
+  .on("POST",  "/mind/questions",                  (request, env)         => postQuestion(request, env))
+  .on("GET",   "/mind/questions/:companion_id",    (request, env, params) => getQuestions(request, env, params ?? {}))
+  .on("PATCH", "/mind/questions/:id",              (request, env, params) => patchQuestion(request, env, params ?? {}))
+  .on("GET",   "/mind/growth/valence/:companion_id", (request, env, params) => getGrowthValence(request, env, params ?? {}))
+  .on("GET",   "/mind/soma/:companion_id",         (request, env, params) => getSomaFloats(request, env, params ?? {}))
 
   // Autonomous worker -- execution tracking
   .on("POST",  "/mind/autonomy/runs",                            (request, env)         => postAutonomyRun(request, env))
