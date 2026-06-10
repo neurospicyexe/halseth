@@ -19,12 +19,12 @@ if (-not $halsethUrl -or -not $adminSecret) {
 }
 $halsethUrl = $halsethUrl.TrimEnd('/')
 
-$filesRoot = "C:\dev\CrashDev\NULLSAFE\2026_Current_Files"
+$filesRoot = "C:\dev\CrashDev\NULLSAFE\2026_Current_Files\Must have files"
 
 $companionFiles = @{
     cypher = "CYPHER_IDENTITY_v2.md"
     drevan = "DREVAN_IDENTITY_v2.md"
-    gaia   = "GAIA_IDENTITY_v2.md"
+    gaia   = "GAIA_IDENTITY_v3.md"
 }
 
 # Shared doctrine bundle: triad-wide truths every substrate must carry.
