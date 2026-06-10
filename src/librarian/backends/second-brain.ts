@@ -195,6 +195,9 @@ export async function semanticSearch(
   const augment = mood ? MOOD_AUGMENT[mood] : null;
   const augmented = augment ? `${query} ${augment}` : query;
   const args: Record<string, unknown> = { query: augmented };
+  // Structured resonance: the store boosts chunks whose valence-at-encoding matches the
+  // current mood (additive, never gates recall). Distinct from the keyword augmentation above.
+  if (mood) args.mood = mood;
   // Scoped mode: restrict the whole search to one layer (e.g. historical_corpus -- the origin
   // material) so "search the corpus for X" returns only origin-layer hits. Unscoped searches
   // still get a guaranteed corpus slot via the Second Brain side; this is the explicit deep dive.
