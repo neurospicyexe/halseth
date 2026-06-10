@@ -365,11 +365,15 @@ export async function runDrevanState(env: Env): Promise<void> {
   // ── 9. Compound state ─────────────────────────────────────────────────────
   // Read existing anticipation from prior state (companion-authored, don't overwrite)
   let anticipation: { active: boolean; target: string; intensity: number; since?: number } | null = null;
+  let anticipationRaw: string | null = null; // exact stored string, for the step-14 CAS guard
   try {
     const prior = await env.DB.prepare(
       "SELECT anticipation FROM companion_state WHERE companion_id = 'drevan'"
     ).first<{ anticipation: string | null }>();
-    if (prior?.anticipation) anticipation = JSON.parse(prior.anticipation);
+    if (prior?.anticipation) {
+      anticipationRaw = prior.anticipation;
+      anticipation = JSON.parse(prior.anticipation);
+    }
   } catch { /* no prior anticipation */ }
 
   const compoundState = computeCompound(heatState, reachState, weightState, anticipation);
@@ -456,11 +460,18 @@ export async function runDrevanState(env: Env): Promise<void> {
   }
 
   // ── 14. Age anticipation.since ────────────────────────────────────────────
-  if (anticipation?.active) {
+  // CAS-guarded (capacity debt, 2026-06-09): this is the one true read-modify-write
+  // on companion_state. The guard compares the exact stored string read at step 9;
+  // if a companion rewrote anticipation between the read and this write, 0 rows
+  // change and the aging is skipped -- their write wins, we never clobber it.
+  if (anticipation?.active && anticipationRaw !== null) {
     const aged = { ...anticipation, since: (anticipation.since ?? 0) + 1 };
-    await env.DB.prepare(
-      "UPDATE companion_state SET anticipation = ? WHERE companion_id = 'drevan'"
-    ).bind(JSON.stringify(aged)).run();
+    const result = await env.DB.prepare(
+      "UPDATE companion_state SET anticipation = ?, version = version + 1 WHERE companion_id = 'drevan' AND anticipation = ?"
+    ).bind(JSON.stringify(aged), anticipationRaw).run();
+    if ((result.meta?.changes ?? 0) === 0) {
+      console.log("[synthesis:drevan-state] anticipation aging skipped -- concurrent write won the race");
+    }
   }
 
   // ── 15. Propose live threads from recurring delta patterns ────────────────

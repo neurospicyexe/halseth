@@ -104,7 +104,7 @@ export function registerCompanionStateTools(server: McpServer, env: Env): void {
         await env.DB.prepare(
           "INSERT OR IGNORE INTO companion_state (companion_id, updated_at) VALUES (?, datetime('now'))"
         ).bind(companion_id).run();
-        const assignments = legacyFields.map(([col]) => `${col} = ?`).concat(["updated_at = datetime('now')"]);
+        const assignments = legacyFields.map(([col]) => `${col} = ?`).concat(["updated_at = datetime('now')", "version = version + 1"]);
         const bindings = legacyFields.map(([_, v]) => v).concat([companion_id]);
         await env.DB.prepare(
           `UPDATE companion_state SET ${assignments.join(", ")} WHERE companion_id = ?`,

@@ -35,10 +35,29 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Batch: INSERT then write-time cap. Cap runs after insert so the new row is included
-  // in the "keep" set. idx_wm_notes_agent(agent_id, created_at DESC) makes the subquery
-  // an index scan -- no full-table scan even as notes accumulate.
-  await env.DB.batch([
+  // Digest-then-delete (capacity debt, 2026-06-09): rows past the cap are written to
+  // wm_archive_notes as a truncation digest BEFORE the cap delete, so continuity content
+  // is compressed rather than silently lost. Overflow = existing rows beyond the newest 99
+  // (the about-to-insert note occupies slot 100), matching exactly what the cap DELETE
+  // removes after the insert lands. If a concurrent write shifts the boundary between this
+  // read and the batch, the worst case is a row digested twice or deleted one tick later --
+  // never deleted undigested-and-unkept.
+  const overflow = await env.DB.prepare(`
+    SELECT note_id, content, created_at FROM wm_continuity_notes
+    WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
+      SELECT note_id FROM wm_continuity_notes
+      WHERE agent_id = ? AND archived = 0 ORDER BY created_at DESC LIMIT 99
+    )
+    ORDER BY created_at ASC
+  `).bind(input.agent_id, input.agent_id)
+    .all<{ note_id: string; content: string; created_at: string }>()
+    .then(r => r.results ?? [])
+    .catch(() => []);
+
+  // Batch: INSERT, digest (if overflow), then write-time cap. Cap runs after insert so the
+  // new row is included in the "keep" set. idx_wm_notes_agent(agent_id, created_at DESC)
+  // makes the subquery an index scan -- no full-table scan even as notes accumulate.
+  const statements = [
     env.DB.prepare(`
       INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -49,14 +68,29 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
       input.actor ?? "agent", input.source ?? "system",
       input.correlation_id ?? null, now,
     ),
-    env.DB.prepare(`
-      DELETE FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
-        SELECT note_id FROM wm_continuity_notes
-        WHERE agent_id = ? AND archived = 0 ORDER BY created_at DESC LIMIT 100
-      )
-    `).bind(input.agent_id, input.agent_id),
-  ]);
+  ];
+  if (overflow.length > 0) {
+    const summary = overflow
+      .map(r => `[${r.created_at.slice(0, 10)}] ${r.content.slice(0, 200)}`)
+      .join("\n")
+      .slice(0, 8000);
+    statements.push(env.DB.prepare(`
+      INSERT INTO wm_archive_notes (id, agent_id, summary, note_ids, note_count, period_from, period_to)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      generateId(), input.agent_id, summary,
+      JSON.stringify(overflow.map(r => r.note_id)), overflow.length,
+      overflow[0]!.created_at, overflow[overflow.length - 1]!.created_at,
+    ));
+  }
+  statements.push(env.DB.prepare(`
+    DELETE FROM wm_continuity_notes
+    WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
+      SELECT note_id FROM wm_continuity_notes
+      WHERE agent_id = ? AND archived = 0 ORDER BY created_at DESC LIMIT 100
+    )
+  `).bind(input.agent_id, input.agent_id));
+  await env.DB.batch(statements);
 
   return {
     note_id: id,
