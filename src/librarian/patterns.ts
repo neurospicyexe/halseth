@@ -382,6 +382,25 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Foraging pool ──
+  forage_read: {
+    triggers: [
+      "forage pool", "check the forage pool", "forage finds", "what is in the forage pool",
+      "unconsumed forage", "read forage",
+    ],
+    tools: ["halseth_forage_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  forage_consume: {
+    triggers: [
+      "consume forage find", "mark forage consumed", "consume find",
+      "forage consumed", "claim forage find",
+    ],
+    tools: ["halseth_forage_consume"],
+    response_key: "witness",
+  },
+
   // ── Companion notes ──
   companion_notes_read: {
     triggers: ["companion notes", "my notes to you", "notes from session", "notes about me", "companion note read"],

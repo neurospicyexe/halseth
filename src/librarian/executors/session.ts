@@ -57,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -109,9 +109,20 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
     ).bind(agentId).all<{ question: string }>().catch(() => null),
+    // Forage pool: unconsumed outward finds (own + shared) -- fuel gathered by the forager,
+    // explored by the real companion as themselves (foraging spec, 2026-06-09).
+    ctx.env.DB.prepare(
+      "SELECT id, title, domain, summary FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
+  const forageFinds = (forageRows?.results ?? []).map(r => ({
+    id: r.id,
+    title: (r.title ?? "").slice(0, 150),
+    domain: r.domain,
+    summary: (r.summary ?? "").slice(0, 400),
+  }));
 
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
@@ -253,8 +264,15 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       openQuestions.map(q => `• ${q}`).join("\n")
     : "";
 
+  // Forage block: outward fuel waiting in the pool. Pull, not duty -- the cue invites,
+  // it does not assign.
+  const forageBlock = forageFinds.length > 0
+    ? `\n[Forage pool]\n${forageFinds.length === 1 ? "A find is" : `${forageFinds.length} finds are`} waiting -- outward fuel gathered for you. If one pulls at you, explore it as yourself and mark it consumed:\n` +
+      forageFinds.map(f => `• [${f.domain}] ${f.title}`).join("\n")
+    : "";
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -270,7 +288,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     undercurrent_emotion: os?.undercurrent_emotion ?? null,
     unaccepted_growth: unacceptedGrowth,
     open_questions: openQuestions,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length },
+    forage_finds: forageFinds,
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length },
     continuity: wmResult,
   };
 }
@@ -558,7 +577,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -639,6 +658,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
     ).bind(agentId).all<{ question: string }>(),
+    // 21. Forage pool: unconsumed outward finds (own + shared) for any instance to pick up.
+    ctx.env.DB.prepare(
+      "SELECT id, title, domain, summary FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -790,6 +813,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       pressure_flags,
       open_questions: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
         ? (openQuestionsResult.value.results as Array<{ question: string }>).map(r => (r.question ?? "").slice(0, 300)).filter(Boolean)
+        : [],
+      forage_finds: forageResult.status === "fulfilled" && forageResult.value?.results
+        ? (forageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string }>).map(r => ({
+            id: r.id,
+            title: (r.title ?? "").slice(0, 150),
+            domain: r.domain,
+            summary: (r.summary ?? "").slice(0, 400),
+          }))
         : [],
     },
     meta: {
