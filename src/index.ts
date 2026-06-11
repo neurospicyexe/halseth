@@ -64,6 +64,7 @@ import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handl
 import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
+import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
@@ -211,6 +212,11 @@ const router = new Router()
   .on("PATCH", "/mind/self-model/:id",             (request, env, params) => patchSelfModel(request, env, params ?? {}))
   .on("POST",  "/mind/voice-scores",               (request, env)         => postVoiceScore(request, env))
   .on("GET",   "/mind/voice-scores/:companion_id", (request, env, params) => getVoiceScores(request, env, params ?? {}))
+
+  // Unified Guardian (0073) -- meta-observer over the self-monitoring feeds
+  .on("POST",  "/mind/guardian/run",               (request, env)         => postGuardianRun(request, env))
+  .on("GET",   "/mind/guardian/flags",             (request, env)         => getGuardianFlags(request, env))
+  .on("PATCH", "/mind/guardian/flags/:id",         (request, env, params) => patchGuardianFlag(request, env, params ?? {}))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))

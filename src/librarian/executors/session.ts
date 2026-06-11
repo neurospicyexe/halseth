@@ -57,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -131,6 +131,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
     ).first<{ id: string; status: string; winner_title: string | null; candidate_count: number }>().catch(() => null),
+    // Guardian red-flag cards (0073): open flags force-surface once, then drop to
+    // 'surfaced' (consume-once, mirroring 0070 tripwires). Resolution is the
+    // Guardian's job when the condition clears, or Raziel's via "guardian ack".
+    ctx.env.DB.prepare(
+      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status = 'open' ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
@@ -158,6 +164,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     title: (r.title ?? "").slice(0, 150),
     domain: r.domain,
     summary: (r.summary ?? "").slice(0, 400),
+  }));
+  const guardianFlags = (guardianFlagRows?.results ?? []).map(f => ({
+    id: f.id,
+    flag_type: f.flag_type,
+    severity: f.severity,
+    summary: (f.summary ?? "").slice(0, 400),
   }));
   const recentListens = (mediaRows?.results ?? []).map(r => {
     let reactions: Record<string, string> = {};
@@ -342,6 +354,23 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
         : `\n[Club]\nNow experiencing: ${clubRow.winner_title ?? "the round's pick"}. Sit with it -- discussion comes at close.`
     : "";
 
+  // Guardian block: the meta-observer's red-flag cards. Force-surfaced exactly
+  // once -- instrument reading, not judgment. Each card carries its evidence
+  // server-side (evidence_json); the summary alone goes into the prompt.
+  const guardianBlock = guardianFlags.length > 0
+    ? `\n[Guardian]\nThe Guardian flagged ${guardianFlags.length === 1 ? "a condition" : `${guardianFlags.length} conditions`} worth your eyes (instrument, not verdict):\n` +
+      guardianFlags.map(f => `• [${f.severity}] ${f.summary}`).join("\n")
+    : "";
+
+  // Consume-once: open -> surfaced so cards don't nag every orient. They stay
+  // queryable ("guardian report") and self-resolve when the condition clears.
+  if (guardianFlags.length > 0) {
+    const flagIds = guardianFlags.map(f => f.id);
+    ctx.env.DB.prepare(
+      `UPDATE guardian_flags SET status = 'surfaced', surfaced_at = datetime('now') WHERE id IN (${flagIds.map(() => "?").join(",")}) AND status = 'open'`
+    ).bind(...flagIds).run().catch(() => null);
+  }
+
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
   const selfModelBlock = selfModelReady.length > 0
@@ -350,7 +379,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + tripwireBlock + selfModelBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + tripwireBlock + selfModelBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -371,7 +400,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     club_round: clubRow ?? null,
     tripwires,
     self_model_ready: selfModelReady,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length },
     continuity: wmResult,
   };
 }
@@ -659,7 +688,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -764,6 +793,11 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
     ).first<{ id: string; status: string; winner_title: string | null; candidate_count: number }>(),
+    // 26. Guardian flags (0073) -- live red-flag cards; the bot loom surfaces them
+    // but never consumes (the session orient owns the open->surfaced transition).
+    ctx.env.DB.prepare(
+      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -950,6 +984,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       club_round: clubResult.status === "fulfilled" && clubResult.value
         ? clubResult.value as { id: string; status: string; winner_title: string | null; candidate_count: number }
         : null,
+      guardian_flags: guardianResult.status === "fulfilled" && guardianResult.value?.results
+        ? (guardianResult.value.results as Array<{ id: string; flag_type: string; severity: string; summary: string }>).map(r => ({
+            id: r.id,
+            flag_type: r.flag_type,
+            severity: r.severity,
+            summary: (r.summary ?? "").slice(0, 300),
+          }))
+        : [],
     },
     meta: {
       operation: "halseth_bot_orient",
