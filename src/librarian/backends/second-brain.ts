@@ -205,6 +205,17 @@ export async function semanticSearch(
   return callTool(env, "sb_search", args);
 }
 
+// Metamemory feedback (0070): rate recalled chunks useful/useless. The store nudges
+// future ranking by Laplace-smoothed reliability (+/-0.05 max, never gates recall).
+export async function searchFeedback(
+  env: Env,
+  chunkIds: string[],
+  useful: boolean,
+): Promise<string | null> {
+  if (chunkIds.length === 0) return null;
+  return callTool(env, "sb_feedback", { chunk_ids: chunkIds.slice(0, 50), useful });
+}
+
 // ── Dual-vector retrieval (continuity-aware) ────────────────────────────────
 // Pattern adapted from cadence-lite: one query disambiguated by the immediate
 // conversation. Runs two vector searches in parallel -- the bare query
