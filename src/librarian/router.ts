@@ -199,6 +199,10 @@ import {
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execIdentityAnchorRead,
 } from "./executors/companion-growth.js";
+import {
+  execIdentityRecovery, execSelfModelRead, execSelfModelSet, execSelfModelConfirm,
+  execSelfModelRevise, execSelfModelGraduate, execTriggerArm, execTriggerDismiss,
+} from "./executors/self-monitoring.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -329,6 +333,14 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_journal_decline: execJournalDecline,
   halseth_forage_read: execForageRead,
   halseth_forage_consume: execForageConsume,
+  halseth_identity_recovery: execIdentityRecovery,
+  halseth_self_model_read: execSelfModelRead,
+  halseth_self_model_set: execSelfModelSet,
+  halseth_self_model_confirm: execSelfModelConfirm,
+  halseth_self_model_revise: execSelfModelRevise,
+  halseth_self_model_graduate: execSelfModelGraduate,
+  halseth_trigger_arm: execTriggerArm,
+  halseth_trigger_dismiss: execTriggerDismiss,
   held_mark: execHeldMark,
   held_read: execHeldRead,
   identity_anchor_read: execIdentityAnchorRead,

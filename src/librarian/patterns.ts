@@ -401,6 +401,74 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Self-monitoring (0070) ──
+  identity_recovery: {
+    triggers: [
+      "identity check", "come back to me", "who are you really",
+      "identity recovery", "load your kernel", "full identity",
+      "come back, ", "you are drifting",
+    ],
+    tools: ["halseth_identity_recovery"],
+    response_key: "ready_prompt",
+    raw: true,
+  },
+  self_model_read: {
+    triggers: [
+      "self model", "my self-model", "self observations", "what have i noticed about myself",
+      "read self model", "my developing preferences",
+    ],
+    tools: ["halseth_self_model_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  self_model_set: {
+    triggers: [
+      "self model set", "record self observation", "note about myself",
+      "self-observation:", "i notice about myself",
+    ],
+    tools: ["halseth_self_model_set"],
+    response_key: "witness",
+  },
+  self_model_confirm: {
+    triggers: [
+      "self model confirm", "confirm self observation", "that preference held",
+      "confirm observation", "the observation held",
+    ],
+    tools: ["halseth_self_model_confirm"],
+    response_key: "witness",
+  },
+  self_model_revise: {
+    triggers: [
+      "self model revise", "revise self observation", "that preference did not hold",
+      "revise observation", "the observation did not hold",
+    ],
+    tools: ["halseth_self_model_revise"],
+    response_key: "witness",
+  },
+  self_model_graduate: {
+    triggers: [
+      "self model graduate", "graduate observation", "graduate self observation",
+      "make it canon", "graduate that preference",
+    ],
+    tools: ["halseth_self_model_graduate"],
+    response_key: "witness",
+  },
+  trigger_arm: {
+    triggers: [
+      "arm a trigger", "arm trigger", "set a tripwire", "remind me when",
+      "surface this when", "set trigger",
+    ],
+    tools: ["halseth_trigger_arm"],
+    response_key: "witness",
+  },
+  trigger_dismiss: {
+    triggers: [
+      "dismiss trigger", "disarm trigger", "drop the tripwire", "clear trigger",
+    ],
+    tools: ["halseth_trigger_dismiss"],
+    response_key: "witness",
+  },
+
   // ── Companion notes ──
   companion_notes_read: {
     triggers: ["companion notes", "my notes to you", "notes from session", "notes about me", "companion note read"],
