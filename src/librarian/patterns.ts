@@ -412,6 +412,25 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Unified Guardian (0073) ──
+  guardian_status: {
+    triggers: [
+      "guardian report", "guardian flags", "guardian status", "system health",
+      "what is the guardian seeing", "guardian read",
+    ],
+    tools: ["halseth_guardian_status"],
+    response_key: "summary",
+    raw: true,
+  },
+  guardian_ack: {
+    triggers: [
+      "guardian ack", "acknowledge guardian flag", "resolve guardian flag",
+      "clear guardian flag", "guardian acknowledge", "guardian resolve",
+    ],
+    tools: ["halseth_guardian_ack"],
+    response_key: "witness",
+  },
+
   // ── The Club (0072) ──
   club_status: {
     triggers: [

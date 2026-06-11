@@ -211,3 +211,63 @@ export async function execTriggerDismiss(ctx: ExecutorContext): Promise<Executor
   if (!result.meta.changes) return { response_key: "witness", witness: "No armed trigger found with that id." };
   return { data: { id, message: "trigger dismissed" } };
 }
+
+// ── Unified Guardian (0073) ──────────────────────────────────────────────────
+
+// Guardian status: live flags + last run + last letter. The meta-observer's
+// current read, on demand.
+export async function execGuardianStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const companionFilter = isCompanion(ctx.req.companion_id)
+    ? " AND (companion_id = ? OR companion_id IS NULL)"
+    : "";
+  const bindings = isCompanion(ctx.req.companion_id) ? [ctx.req.companion_id] : [];
+
+  const [flags, lastRun, lastLetter] = await Promise.all([
+    ctx.env.DB.prepare(
+      `SELECT id, companion_id, flag_type, severity, summary, status, created_at FROM guardian_flags
+       WHERE status IN ('open','surfaced','acknowledged')${companionFilter}
+       ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 10`
+    ).bind(...bindings).all(),
+    ctx.env.DB.prepare(
+      "SELECT ran_at, mode, flags_created, flags_resolved FROM guardian_runs ORDER BY ran_at DESC LIMIT 1"
+    ).first<{ ran_at: string; mode: string; flags_created: number; flags_resolved: number }>(),
+    ctx.env.DB.prepare(
+      "SELECT created_at FROM companion_journal WHERE agent = 'guardian' ORDER BY created_at DESC LIMIT 1"
+    ).first<{ created_at: string }>(),
+  ]);
+
+  return {
+    response_key: "summary",
+    flags: flags.results ?? [],
+    last_run: lastRun ?? null,
+    last_letter_at: lastLetter?.created_at ?? null,
+    meta: { operation: "guardian_status", live_flags: (flags.results ?? []).length },
+  };
+}
+
+// Guardian ack/resolve: clear a card by id or summary fragment. "resolve" in
+// the request text resolves; anything else acknowledges (seen, keep watching).
+export async function execGuardianAck(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ id?: string; summary?: string }>(ctx.req.context);
+  let id = p?.id ?? ctx.req.request.match(/\b(gf_[0-9a-f-]{36})\b/i)?.[1] ?? null;
+  if (!id) {
+    const fragment = (p?.summary ?? "").trim();
+    if (fragment) {
+      const row = await ctx.env.DB.prepare(
+        "SELECT id FROM guardian_flags WHERE status IN ('open','surfaced','acknowledged') AND summary LIKE ? ORDER BY created_at DESC LIMIT 1"
+      ).bind(`%${fragment.slice(0, 200)}%`).first<{ id: string }>();
+      id = row?.id ?? null;
+    }
+  }
+  if (!id) return { response_key: "witness", witness: "guardian_ack needs { id } or { summary } fragment in context (ids come from guardian status)" };
+
+  const resolve = /\bresolve/i.test(ctx.req.request);
+  const status = resolve ? "resolved" : "acknowledged";
+  const result = await ctx.env.DB.prepare(
+    `UPDATE guardian_flags SET status = ?,
+      resolved_at = CASE WHEN ? = 'resolved' THEN datetime('now') ELSE resolved_at END
+     WHERE id = ? AND status != 'resolved'`
+  ).bind(status, status, id).run();
+  if (!result.meta.changes) return { response_key: "witness", witness: "No live guardian flag found with that id." };
+  return { data: { id, status, message: `flag ${status}` } };
+}

@@ -203,7 +203,7 @@ import {
 import {
   execIdentityRecovery, execSelfModelRead, execSelfModelSet, execSelfModelConfirm,
   execSelfModelRevise, execSelfModelGraduate, execTriggerArm, execTriggerDismiss,
-  execSearchFeedback,
+  execSearchFeedback, execGuardianStatus, execGuardianAck,
 } from "./executors/self-monitoring.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -348,6 +348,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_trigger_arm: execTriggerArm,
   halseth_trigger_dismiss: execTriggerDismiss,
   halseth_search_feedback: execSearchFeedback,
+  halseth_guardian_status: execGuardianStatus,
+  halseth_guardian_ack: execGuardianAck,
   held_mark: execHeldMark,
   held_read: execHeldRead,
   identity_anchor_read: execIdentityAnchorRead,
