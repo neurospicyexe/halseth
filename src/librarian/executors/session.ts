@@ -57,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -114,9 +114,37 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, title, domain, summary FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string }>().catch(() => null),
+    // Prospective triggers (0070): armed date/front cards evaluated below against now +
+    // current front. Surfacing does NOT consume -- a card stays armed until dismissed.
+    ctx.env.DB.prepare(
+      "SELECT id, trigger_text, condition_type, condition_value FROM companion_triggers WHERE companion_id = ? AND status = 'armed' AND (expires_at IS NULL OR expires_at >= datetime('now')) LIMIT 10"
+    ).bind(agentId).all<{ id: string; trigger_text: string; condition_type: string; condition_value: string }>().catch(() => null),
+    // Self-model observations ready to graduate (0070) -- human-gated proposal surface.
+    ctx.env.DB.prepare(
+      "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; observation: string; confidence: number }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
+  // Tripwire evaluation: date cards fire within +/-36h of their date; front cards fire
+  // when the current front matches. Keyword cards are bot-side only (no message here).
+  const nowMs = Date.now();
+  const frontLower = (ctx.frontState ?? "").toLowerCase();
+  const tripwires = (armedTriggerRows?.results ?? []).filter(t => {
+    if (t.condition_type === "date") {
+      const target = Date.parse(t.condition_value);
+      return Number.isFinite(target) && Math.abs(target - nowMs) <= 36 * 3600 * 1000;
+    }
+    if (t.condition_type === "front") {
+      return frontLower.length > 0 && frontLower.includes(t.condition_value.toLowerCase());
+    }
+    return false;
+  }).map(t => ({ id: t.id, trigger_text: (t.trigger_text ?? "").slice(0, 500) }));
+  const selfModelReady = (selfModelReadyRows?.results ?? []).map(r => ({
+    id: r.id,
+    observation: (r.observation ?? "").slice(0, 600),
+    confidence: r.confidence,
+  }));
   const forageFinds = (forageRows?.results ?? []).map(r => ({
     id: r.id,
     title: (r.title ?? "").slice(0, 150),
@@ -271,8 +299,22 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       forageFinds.map(f => `• [${f.domain}] ${f.title}`).join("\n")
     : "";
 
+  // Tripwire block: armed prospective cards whose condition just matched (date due,
+  // front match). Force-surfaced -- this is the one block that must not be ambient.
+  const tripwireBlock = tripwires.length > 0
+    ? `\n[Tripwire]\nYou asked to be reminded of ${tripwires.length === 1 ? "this" : "these"} when this moment came -- it has:\n` +
+      tripwires.map(t => `• ${t.trigger_text}`).join("\n")
+    : "";
+
+  // Self-model graduation block: observations the companion has confirmed enough times
+  // to propose as canon. Graduation only happens through this conversation, never auto.
+  const selfModelBlock = selfModelReady.length > 0
+    ? `\n[Self-model ready]\nYou have tested ${selfModelReady.length === 1 ? "an observation" : "observations"} about yourself enough to trust ${selfModelReady.length === 1 ? "it" : "them"}. Propose to Raziel when the moment fits -- it becomes canon only through conversation:\n` +
+      selfModelReady.map(s => `• "${s.observation}" (confidence ${s.confidence.toFixed(1)})`).join("\n")
+    : "";
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + tripwireBlock + selfModelBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -289,7 +331,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     unaccepted_growth: unacceptedGrowth,
     open_questions: openQuestions,
     forage_finds: forageFinds,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length },
+    tripwires,
+    self_model_ready: selfModelReady,
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, tripwires: tripwires.length, self_model_ready: selfModelReady.length },
     continuity: wmResult,
   };
 }
@@ -577,7 +621,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -592,9 +636,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT anchor_summary FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
     ).bind(agentId).first<{ anchor_summary: string }>(),
-    // 5. Active tensions (simmering only, max 3)
+    // 5. Active tensions (simmering only, max 3) -- charge-ordered: what keeps
+    // resurfacing outranks what has merely been sitting longest (0070).
     ctx.env.DB.prepare(
-      "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC LIMIT 3"
+      "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY charge DESC, first_noted_at ASC LIMIT 3"
     ).bind(agentId).all<{ tension_text: string }>(),
     // 6. Relational state toward Raziel (latest)
     ctx.env.DB.prepare(
@@ -662,6 +707,16 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT id, title, domain, summary FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string }>(),
+    // 22. Armed prospective triggers (0070) -- keyword ones matched bot-side per message,
+    // date ones checked by the bot at orient load. Expired rows lazily dismissed by GET path.
+    ctx.env.DB.prepare(
+      "SELECT id, trigger_text, condition_type, condition_value FROM companion_triggers WHERE companion_id = ? AND status = 'armed' AND (expires_at IS NULL OR expires_at >= datetime('now')) ORDER BY created_at ASC LIMIT 10"
+    ).bind(agentId).all<{ id: string; trigger_text: string; condition_type: string; condition_value: string }>(),
+    // 23. Self-model observations ready to graduate (0070) -- proposed to Raziel in
+    // conversation; graduation is human-gated, the bot only raises it.
+    ctx.env.DB.prepare(
+      "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; observation: string; confidence: number }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -820,6 +875,21 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             title: (r.title ?? "").slice(0, 150),
             domain: r.domain,
             summary: (r.summary ?? "").slice(0, 400),
+          }))
+        : [],
+      armed_triggers: triggersResult.status === "fulfilled" && triggersResult.value?.results
+        ? (triggersResult.value.results as Array<{ id: string; trigger_text: string; condition_type: string; condition_value: string }>).map(r => ({
+            id: r.id,
+            trigger_text: (r.trigger_text ?? "").slice(0, 500),
+            condition_type: r.condition_type,
+            condition_value: (r.condition_value ?? "").slice(0, 200),
+          }))
+        : [],
+      self_model_ready: selfModelReadyResult.status === "fulfilled" && selfModelReadyResult.value?.results
+        ? (selfModelReadyResult.value.results as Array<{ id: string; observation: string; confidence: number }>).map(r => ({
+            id: r.id,
+            observation: (r.observation ?? "").slice(0, 600),
+            confidence: r.confidence,
           }))
         : [],
     },

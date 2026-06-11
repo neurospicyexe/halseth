@@ -63,6 +63,7 @@ import {
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
 import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
+import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { runHomeTick } from "./webmind/home/tick.js";
@@ -198,6 +199,16 @@ const router = new Router()
   .on("PATCH", "/mind/questions/:id",              (request, env, params) => patchQuestion(request, env, params ?? {}))
   .on("GET",   "/mind/growth/valence/:companion_id", (request, env, params) => getGrowthValence(request, env, params ?? {}))
   .on("GET",   "/mind/soma/:companion_id",         (request, env, params) => getSomaFloats(request, env, params ?? {}))
+
+  // Self-monitoring wave (0070) -- triggers, self-model ladder, voice drift scores
+  .on("POST",  "/mind/triggers",                   (request, env)         => postTrigger(request, env))
+  .on("GET",   "/mind/triggers/:companion_id",     (request, env, params) => getTriggers(request, env, params ?? {}))
+  .on("PATCH", "/mind/triggers/:id",               (request, env, params) => patchTrigger(request, env, params ?? {}))
+  .on("POST",  "/mind/self-model",                 (request, env)         => postSelfModel(request, env))
+  .on("GET",   "/mind/self-model/:companion_id",   (request, env, params) => getSelfModel(request, env, params ?? {}))
+  .on("PATCH", "/mind/self-model/:id",             (request, env, params) => patchSelfModel(request, env, params ?? {}))
+  .on("POST",  "/mind/voice-scores",               (request, env)         => postVoiceScore(request, env))
+  .on("GET",   "/mind/voice-scores/:companion_id", (request, env, params) => getVoiceScores(request, env, params ?? {}))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))

@@ -187,7 +187,9 @@ export async function postTension(request: Request, env: Env): Promise<Response>
 }
 
 // PATCH /companion-growth/tensions/:id
-// Body: { status?, notes? }
+// Body: { status?, notes?, charge_delta? }
+// charge_delta: surfacing a tension raises its charge (CogCor mechanic, +0.5 per
+// surface by convention); charge is clamped 0-10 and drives dialectic priority.
 export async function patchTension(
   request: Request,
   env: Env,
@@ -206,11 +208,18 @@ export async function patchTension(
   if (b.status !== undefined && !validStatuses.includes(b.status as string)) {
     return json({ error: "status must be simmering|crystallized|released" }, 400);
   }
+  if (b.charge_delta !== undefined && (typeof b.charge_delta !== "number" || !Number.isFinite(b.charge_delta) || Math.abs(b.charge_delta) > 10)) {
+    return json({ error: "charge_delta must be a finite number within [-10, 10]" }, 400);
+  }
 
   const updates: string[] = ["last_surfaced_at = datetime('now')"];
   const bindings: unknown[] = [];
   if (b.status) { updates.push("status = ?"); bindings.push(b.status); }
   if (typeof b.notes === "string") { updates.push("notes = ?"); bindings.push(b.notes); }
+  if (typeof b.charge_delta === "number") {
+    updates.push("charge = MIN(10.0, MAX(0.0, charge + ?))");
+    bindings.push(b.charge_delta);
+  }
   bindings.push(id);
 
   const result = await env.DB.prepare(
