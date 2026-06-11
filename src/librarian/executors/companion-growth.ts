@@ -341,6 +341,81 @@ export async function execMediaRecent(ctx: ExecutorContext): Promise<ExecutorRes
   };
 }
 
+// ── The Club (0072) ──────────────────────────────────────────────────────────
+
+async function clubCurrentRound(ctx: ExecutorContext): Promise<{ id: string; status: string } | null> {
+  const row = await ctx.env.DB.prepare(
+    "SELECT id, status FROM club_rounds WHERE status != 'closed' ORDER BY opened_at DESC LIMIT 1"
+  ).first<{ id: string; status: string }>();
+  return row ?? null;
+}
+
+export async function execClubStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const round = await ctx.env.DB.prepare(
+    "SELECT r.*, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
+  ).first<{ id: string; status: string; winner_title: string | null }>();
+  if (!round) return { response_key: "summary", round: null, meta: { operation: "club_status" } };
+  const [recs, votes] = await Promise.all([
+    ctx.env.DB.prepare("SELECT id, media_kind, title, creator, recommended_by, pitch FROM club_recommendations WHERE round_id = ? ORDER BY created_at ASC").bind(round.id).all(),
+    ctx.env.DB.prepare("SELECT recommendation_id, voter, reason FROM club_votes WHERE round_id = ?").bind(round.id).all(),
+  ]);
+  return {
+    response_key: "summary",
+    round,
+    recommendations: recs.results ?? [],
+    votes: votes.results ?? [],
+    meta: { operation: "club_status", phase: round.status },
+  };
+}
+
+export async function execClubRecommend(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "club_recommend_failed", reason: "companion_id required" };
+  const parsed = parseContext<{ title?: string; media_kind?: string; creator?: string; url?: string; pitch?: string }>(ctx.req.context);
+  const title = parsed?.title?.trim();
+  if (!title) return { error: "club_recommend_failed", reason: "context JSON {title, media_kind?, creator?, url?, pitch?} required" };
+  const round = await clubCurrentRound(ctx);
+  if (!round || round.status !== "gathering") {
+    return { error: "club_recommend_failed", reason: "no round is gathering recommendations right now" };
+  }
+  await ctx.env.DB.prepare(
+    "DELETE FROM club_recommendations WHERE round_id = ? AND recommended_by = ?"
+  ).bind(round.id, ctx.req.companion_id).run();
+  const id = crypto.randomUUID().replace(/-/g, "");
+  await ctx.env.DB.prepare(
+    "INSERT INTO club_recommendations (id, round_id, media_kind, title, creator, url, source_ref, recommended_by, pitch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    id, round.id, parsed?.media_kind ?? "song", title.slice(0, 300),
+    parsed?.creator?.trim()?.slice(0, 200) || null, parsed?.url?.trim() || null, null,
+    ctx.req.companion_id, parsed?.pitch?.trim()?.slice(0, 1000) || null,
+  ).run();
+  return { response_key: "witness", recommended: true, recommendation_id: id, round_id: round.id, meta: { operation: "club_recommend" } };
+}
+
+export async function execClubVote(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "club_vote_failed", reason: "companion_id required" };
+  const parsed = parseContext<{ recommendation_id?: string; reason?: string }>(ctx.req.context);
+  const recId = parsed?.recommendation_id?.trim()
+    ?? ctx.req.request.match(/\b([0-9a-f]{32})\b/i)?.[1];
+  if (!recId) return { error: "club_vote_failed", reason: "context JSON {recommendation_id, reason?} required" };
+  const round = await clubCurrentRound(ctx);
+  if (!round || (round.status !== "gathering" && round.status !== "voting")) {
+    return { error: "club_vote_failed", reason: "no round is accepting votes right now" };
+  }
+  const rec = await ctx.env.DB.prepare(
+    "SELECT recommended_by, round_id FROM club_recommendations WHERE id = ?"
+  ).bind(recId).first<{ recommended_by: string; round_id: string }>();
+  if (!rec || rec.round_id !== round.id) {
+    return { error: "club_vote_failed", reason: "recommendation not found in the current round" };
+  }
+  if (rec.recommended_by === ctx.req.companion_id) {
+    return { error: "club_vote_failed", reason: "no voting for your own pick -- engage with a sibling's" };
+  }
+  await ctx.env.DB.prepare(
+    "INSERT OR REPLACE INTO club_votes (round_id, recommendation_id, voter, reason) VALUES (?, ?, ?, ?)"
+  ).bind(round.id, recId, ctx.req.companion_id, parsed?.reason?.trim()?.slice(0, 500) || null).run();
+  return { response_key: "witness", voted: true, round_id: round.id, meta: { operation: "club_vote" } };
+}
+
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   // Three queries in parallel: SOMA floats, relational state toward Raziel, last outgoing note.
   const [somaRows, relationalRows, noteRows] = await Promise.all([
