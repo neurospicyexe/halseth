@@ -67,6 +67,7 @@ import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, pa
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
+import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
@@ -220,6 +221,15 @@ const router = new Router()
   .on("POST",  "/mind/media",                      (request, env)         => postMediaExperience(request, env))
   .on("GET",   "/mind/media/recent",               (request, env)         => getRecentMedia(request, env))
   .on("PATCH", "/mind/media/:id/react",            (request, env, params) => reactToMedia(request, env, params ?? {}))
+
+  // The Club -- triad media rounds (migration 0072)
+  .on("GET",   "/mind/club/current",               (request, env)         => getClubCurrent(request, env))
+  .on("GET",   "/mind/club/rounds",                (request, env)         => getClubRounds(request, env))
+  .on("POST",  "/mind/club/round",                 (request, env)         => postClubRound(request, env))
+  .on("POST",  "/mind/club/recommend",             (request, env)         => postClubRecommend(request, env))
+  .on("POST",  "/mind/club/vote",                  (request, env)         => postClubVote(request, env))
+  .on("PATCH", "/mind/club/:id/status",            (request, env, params) => patchClubStatus(request, env, params ?? {}))
+  .on("POST",  "/mind/club/:id/discuss",           (request, env, params) => postClubDiscuss(request, env, params ?? {}))
 
   // Autonomous worker -- execution tracking
   .on("POST",  "/mind/autonomy/runs",                            (request, env)         => postAutonomyRun(request, env))

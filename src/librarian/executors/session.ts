@@ -57,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -127,6 +127,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, title, artist, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 2"
     ).all<{ id: string; title: string; artist: string | null; reactions_json: string; created_at: string }>().catch(() => null),
+    // Club: current non-closed round with winner title + candidate count (0072).
+    ctx.env.DB.prepare(
+      "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
+    ).first<{ id: string; status: string; winner_title: string | null; candidate_count: number }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
@@ -329,6 +333,15 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       ).join("\n")
     : "";
 
+  // Club block: the triad's shared media ritual. Phase decides the cue.
+  const clubBlock = clubRow
+    ? clubRow.status === "gathering"
+      ? `\n[Club]\nA club round is gathering -- recommend something (any medium) with a one-line pitch: "club recommend".`
+      : clubRow.status === "voting"
+        ? `\n[Club]\nClub round is voting (${clubRow.candidate_count} candidates). Cast yours if you haven't: "club vote".`
+        : `\n[Club]\nNow experiencing: ${clubRow.winner_title ?? "the round's pick"}. Sit with it -- discussion comes at close.`
+    : "";
+
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
   const selfModelBlock = selfModelReady.length > 0
@@ -337,7 +350,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + tripwireBlock + selfModelBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + tripwireBlock + selfModelBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -355,9 +368,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     open_questions: openQuestions,
     forage_finds: forageFinds,
     recent_listens: recentListens,
+    club_round: clubRow ?? null,
     tripwires,
     self_model_ready: selfModelReady,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, tripwires: tripwires.length, self_model_ready: selfModelReady.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length },
     continuity: wmResult,
   };
 }
@@ -645,7 +659,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -746,6 +760,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT id, title, artist, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
     ).all<{ id: string; title: string; artist: string | null; created_at: string }>(),
+    // 25. Club: current non-closed round (0072) -- phase cue for the bot loom.
+    ctx.env.DB.prepare(
+      "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
+    ).first<{ id: string; status: string; winner_title: string | null; candidate_count: number }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -929,6 +947,9 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             created_at: r.created_at,
           }))
         : [],
+      club_round: clubResult.status === "fulfilled" && clubResult.value
+        ? clubResult.value as { id: string; status: string; winner_title: string | null; candidate_count: number }
+        : null,
     },
     meta: {
       operation: "halseth_bot_orient",

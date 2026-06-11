@@ -412,6 +412,32 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── The Club (0072) ──
+  club_status: {
+    triggers: [
+      "club status", "current club round", "club round status",
+      "what is the club reading", "what is the club listening to", "club round",
+    ],
+    tools: ["halseth_club_status"],
+    response_key: "summary",
+    raw: true,
+  },
+  club_recommend: {
+    triggers: [
+      "club recommend", "recommend to the club", "club pitch",
+      "recommend for the club round",
+    ],
+    tools: ["halseth_club_recommend"],
+    response_key: "witness",
+  },
+  club_vote: {
+    triggers: [
+      "club vote", "vote in the club", "cast club vote", "vote for the club pick",
+    ],
+    tools: ["halseth_club_vote"],
+    response_key: "witness",
+  },
+
   // ── Self-monitoring (0070) ──
   identity_recovery: {
     triggers: [
