@@ -57,7 +57,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -123,6 +123,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; observation: string; confidence: number }>().catch(() => null),
+    // Recent listens: shared-experience layer (media_experiences, migration 0071).
+    ctx.env.DB.prepare(
+      "SELECT id, title, artist, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 2"
+    ).all<{ id: string; title: string; artist: string | null; reactions_json: string; created_at: string }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
@@ -151,6 +155,17 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     domain: r.domain,
     summary: (r.summary ?? "").slice(0, 400),
   }));
+  const recentListens = (mediaRows?.results ?? []).map(r => {
+    let reactions: Record<string, string> = {};
+    try { reactions = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>; } catch { /* malformed -> empty */ }
+    return {
+      id: r.id,
+      title: (r.title ?? "").slice(0, 150),
+      artist: r.artist ? r.artist.slice(0, 100) : null,
+      reacted: Object.keys(reactions),
+      created_at: r.created_at,
+    };
+  });
 
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
@@ -306,6 +321,14 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       tripwires.map(t => `• ${t.trigger_text}`).join("\n")
     : "";
 
+  // Recent listens block: music actually heard, not referenced. Surfacing it lets
+  // a session pick the thread back up ("that track Raziel shared").
+  const listensBlock = recentListens.length > 0
+    ? `\n[Recent listens]\n` + recentListens.map(l =>
+        `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""}${l.reacted.length > 0 ? ` (heard by ${l.reacted.join(", ")})` : ""}`
+      ).join("\n")
+    : "";
+
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
   const selfModelBlock = selfModelReady.length > 0
@@ -314,7 +337,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + tripwireBlock + selfModelBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + tripwireBlock + selfModelBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -331,9 +354,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     unaccepted_growth: unacceptedGrowth,
     open_questions: openQuestions,
     forage_finds: forageFinds,
+    recent_listens: recentListens,
     tripwires,
     self_model_ready: selfModelReady,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, tripwires: tripwires.length, self_model_ready: selfModelReady.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, tripwires: tripwires.length, self_model_ready: selfModelReady.length },
     continuity: wmResult,
   };
 }
@@ -621,7 +645,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -717,6 +741,11 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; observation: string; confidence: number }>(),
+    // 24. Recent listens (shared-experience layer, migration 0071) -- music actually
+    // heard together; shared table, no companion filter.
+    ctx.env.DB.prepare(
+      "SELECT id, title, artist, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
+    ).all<{ id: string; title: string; artist: string | null; created_at: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -890,6 +919,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             id: r.id,
             observation: (r.observation ?? "").slice(0, 600),
             confidence: r.confidence,
+          }))
+        : [],
+      recent_listens: mediaResult.status === "fulfilled" && mediaResult.value?.results
+        ? (mediaResult.value.results as Array<{ id: string; title: string; artist: string | null; created_at: string }>).map(r => ({
+            id: r.id,
+            title: (r.title ?? "").slice(0, 150),
+            artist: r.artist ? r.artist.slice(0, 100) : null,
+            created_at: r.created_at,
           }))
         : [],
     },
