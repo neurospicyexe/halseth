@@ -197,7 +197,7 @@ import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
   execRecentRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
-  execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execIdentityAnchorRead,
+  execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMediaRecent, execIdentityAnchorRead,
 } from "./executors/companion-growth.js";
 import {
   execIdentityRecovery, execSelfModelRead, execSelfModelSet, execSelfModelConfirm,
@@ -334,6 +334,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_journal_decline: execJournalDecline,
   halseth_forage_read: execForageRead,
   halseth_forage_consume: execForageConsume,
+  halseth_media_recent: execMediaRecent,
   halseth_identity_recovery: execIdentityRecovery,
   halseth_self_model_read: execSelfModelRead,
   halseth_self_model_set: execSelfModelSet,
