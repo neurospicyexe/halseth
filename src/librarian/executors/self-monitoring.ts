@@ -8,6 +8,7 @@
 //   - prospective triggers: arm / dismiss
 
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { searchFeedback } from "../backends/second-brain.js";
 
 const VALID_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 
@@ -175,6 +176,18 @@ export async function execTriggerArm(ctx: ExecutorContext): Promise<ExecutorResu
   ).bind(id, ctx.req.companion_id, triggerText, conditionType, conditionValue,
     p?.expires_at && !Number.isNaN(Date.parse(p.expires_at)) ? p.expires_at : null).run();
   return { data: { id, message: "trigger armed" } };
+}
+
+// Search feedback: rate recalled chunks useful/useless (metamemory loop).
+// Requires explicit chunk ids in context -- sb_search results carry them.
+export async function execSearchFeedback(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ chunk_ids?: string[]; useful?: boolean }>(ctx.req.context);
+  const ids = (p?.chunk_ids ?? []).filter(id => typeof id === "string" && id.length > 0);
+  if (ids.length === 0 || typeof p?.useful !== "boolean") {
+    return { response_key: "witness", witness: "search_feedback requires { chunk_ids: [...], useful: true|false } in context (ids come from sb_search results)" };
+  }
+  const result = await searchFeedback(ctx.env, ids, p.useful);
+  return { data: { result: result ?? "feedback sent", rated: ids.length, useful: p.useful } };
 }
 
 // Trigger dismiss: by id or text fragment.

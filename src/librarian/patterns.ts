@@ -468,6 +468,14 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["halseth_trigger_dismiss"],
     response_key: "witness",
   },
+  search_feedback: {
+    triggers: [
+      "search feedback", "that memory was useful", "that recall was wrong",
+      "rate those chunks", "mark search useful", "mark search useless",
+    ],
+    tools: ["halseth_search_feedback"],
+    response_key: "witness",
+  },
 
   // ── Companion notes ──
   companion_notes_read: {
