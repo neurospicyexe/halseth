@@ -311,6 +311,36 @@ export async function execForageConsume(ctx: ExecutorContext): Promise<ExecutorR
   return { response_key: "witness", consumed: true, find_id: findId, meta: { operation: "forage_consume", companion_id: ctx.req.companion_id } };
 }
 
+export async function execMediaRecent(ctx: ExecutorContext): Promise<ExecutorResult> {
+  // Shared table -- listens belong to the triad, not one companion.
+  const rows = await ctx.env.DB.prepare(
+    "SELECT id, title, artist, shared_by, front_state, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 5"
+  ).all<{
+    id: string; title: string; artist: string | null; shared_by: string;
+    front_state: string | null; requested_companion: string | null;
+    reactions_json: string; created_at: string;
+  }>();
+  const experiences = (rows.results ?? []).map(r => {
+    let reactions: Record<string, string> = {};
+    try { reactions = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>; } catch { /* malformed -> empty */ }
+    return {
+      id: r.id,
+      title: r.title,
+      artist: r.artist,
+      shared_by: r.shared_by,
+      front_state: r.front_state,
+      requested_companion: r.requested_companion,
+      reactions,
+      created_at: r.created_at,
+    };
+  });
+  return {
+    response_key: "summary",
+    experiences,
+    meta: { operation: "media_recent", count: experiences.length },
+  };
+}
+
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   // Three queries in parallel: SOMA floats, relational state toward Raziel, last outgoing note.
   const [somaRows, relationalRows, noteRows] = await Promise.all([

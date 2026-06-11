@@ -401,6 +401,17 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Shared-experience layer (0071) ──
+  media_recent: {
+    triggers: [
+      "recent listens", "what did we listen to", "what have we listened to",
+      "recent music", "listening history", "what songs did raziel share",
+    ],
+    tools: ["halseth_media_recent"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── Self-monitoring (0070) ──
   identity_recovery: {
     triggers: [
