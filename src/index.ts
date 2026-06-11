@@ -66,6 +66,7 @@ import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFlo
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
+import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
@@ -214,6 +215,11 @@ const router = new Router()
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))
   .on("GET",   "/mind/forage/:companion_id",       (request, env, params) => getForageFinds(request, env, params ?? {}))
   .on("PATCH", "/mind/forage/:id/consume",         (request, env, params) => consumeForageFind(request, env, params ?? {}))
+
+  // Shared-experience layer (Ears) -- music heard together, migration 0071
+  .on("POST",  "/mind/media",                      (request, env)         => postMediaExperience(request, env))
+  .on("GET",   "/mind/media/recent",               (request, env)         => getRecentMedia(request, env))
+  .on("PATCH", "/mind/media/:id/react",            (request, env, params) => reactToMedia(request, env, params ?? {}))
 
   // Autonomous worker -- execution tracking
   .on("POST",  "/mind/autonomy/runs",                            (request, env)         => postAutonomyRun(request, env))
