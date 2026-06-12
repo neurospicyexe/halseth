@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
+import { warmSql } from "../../webmind/heat.js";
 
 const COMPANION_IDENTITY = {
   cypher: {
@@ -356,6 +357,13 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const synthRaw = await env.DB.prepare(
     "SELECT * FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? ORDER BY created_at DESC LIMIT 1"
   ).bind(input.companion_id).first<SynthesisSummary>();
+
+  // Warm the loaded summary (0074): repeated loads keep it hot, which protects it
+  // from the heat-aware write-time cap. Non-fatal.
+  if (synthRaw?.id) {
+    await env.DB.prepare(warmSql("synthesis_summary", "id", 1)).bind(synthRaw.id).run()
+      .catch(e => console.warn("[session_load] synthesis warm failed (non-fatal):", e));
+  }
 
   let lastSessionSummary: {
     narrative: string | null;

@@ -5,6 +5,7 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
+import { effectiveHeatSql } from "./heat.js";
 
 export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuityNote> {
   // Write gate: if thread_key is set, return the existing note if one was written
@@ -35,18 +36,20 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Digest-then-delete (capacity debt, 2026-06-09): rows past the cap are written to
-  // wm_archive_notes as a truncation digest BEFORE the cap delete, so continuity content
-  // is compressed rather than silently lost. Overflow = existing rows beyond the newest 99
-  // (the about-to-insert note occupies slot 100), matching exactly what the cap DELETE
-  // removes after the insert lands. If a concurrent write shifts the boundary between this
-  // read and the batch, the worst case is a row digested twice or deleted one tick later --
-  // never deleted undigested-and-unkept.
+  // Digest-then-delete (capacity debt, 2026-06-09; heat-aware since 0074): rows past
+  // the cap are written to wm_archive_notes as a truncation digest BEFORE the cap
+  // delete, so continuity content is compressed rather than silently lost. The keep
+  // set is the 99 HOTTEST by effective heat (the about-to-insert note occupies slot
+  // 100 -- age 0 gives it the full coherence bonus, so it always survives its own
+  // cap). Overflow = the coldest, matching exactly what the cap DELETE removes after
+  // the insert lands (both use the same effective-heat ORDER BY). If a concurrent
+  // write shifts the boundary between this read and the batch, the worst case is a
+  // row digested twice or deleted one tick later -- never deleted undigested-and-unkept.
   const overflow = await env.DB.prepare(`
     SELECT note_id, content, created_at FROM wm_continuity_notes
     WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
       SELECT note_id FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 ORDER BY created_at DESC LIMIT 99
+      WHERE agent_id = ? AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 99
     )
     ORDER BY created_at ASC
   `).bind(input.agent_id, input.agent_id)
@@ -55,8 +58,8 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     .catch(() => []);
 
   // Batch: INSERT, digest (if overflow), then write-time cap. Cap runs after insert so the
-  // new row is included in the "keep" set. idx_wm_notes_agent(agent_id, created_at DESC)
-  // makes the subquery an index scan -- no full-table scan even as notes accumulate.
+  // new row is included in the "keep" set. The effective-heat ORDER BY sorts the ~100
+  // surviving rows in memory after the index narrows by agent -- fine at cap scale.
   const statements = [
     env.DB.prepare(`
       INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
@@ -87,7 +90,7 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     DELETE FROM wm_continuity_notes
     WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
       SELECT note_id FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 ORDER BY created_at DESC LIMIT 100
+      WHERE agent_id = ? AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
     )
   `).bind(input.agent_id, input.agent_id));
   await env.DB.batch(statements);
