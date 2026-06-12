@@ -24,6 +24,7 @@ dist/
 scripts/personal/
 scripts/.env
 scripts/*.log
+scripts/autonomous-time.last-run
 
 # Personal operational docs -- contain VPS IPs, SSH config, credentials
 docs/how-to.md
