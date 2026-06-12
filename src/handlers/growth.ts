@@ -163,7 +163,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
   if (typeof body.content !== "string" || !body.content.trim()) return json({ error: "content required" }, 400);
   if (body.content.toString().length > MAX_TEXT) return json({ error: `content too long (max ${MAX_TEXT})` }, 400);
 
-  const valid_types = new Set(["learning", "insight", "connection", "question", "signal_audit"]);
+  const valid_types = new Set(["learning", "insight", "connection", "question", "signal_audit", "reconsolidation"]);
   const entry_type = typeof body.entry_type === "string" && valid_types.has(body.entry_type)
     ? body.entry_type
     : "learning";
@@ -179,6 +179,20 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 
   await enforceCapOldest(env, "growth_journal", body.companion_id as string, JOURNAL_CAP);
 
+  // Reconsolidation (0074): a proposal may supersede settled canon. The target must
+  // exist, be accepted, and belong to the same companion -- validated at write time
+  // so a stale or hallucinated id fails loudly here, not silently downstream.
+  let supersedes_id: string | null = null;
+  if (typeof body.supersedes_id === "string" && body.supersedes_id.trim()) {
+    const target = await env.DB.prepare(
+      "SELECT id FROM growth_journal WHERE id = ? AND companion_id = ? AND review_status = 'accepted'"
+    ).bind(body.supersedes_id.trim(), body.companion_id).first<{ id: string }>();
+    if (!target) {
+      return json({ error: "supersedes_id must reference an accepted entry of the same companion" }, 400);
+    }
+    supersedes_id = target.id;
+  }
+
   const run_id = optStr(body.run_id, 64);
   const thread_id = optStr(body.thread_id, 128);
   const rawPrehended = safeJsonArray(body.prehended_ids).filter((x): x is string => typeof x === "string").slice(0, 32);
@@ -190,8 +204,8 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
   await env.DB.prepare(
     `INSERT INTO growth_journal
        (id, companion_id, entry_type, content, source, tags_json, run_id,
-        thread_id, prehended_ids, evidence_json, novelty)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        thread_id, prehended_ids, evidence_json, novelty, supersedes_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     id,
     body.companion_id,
@@ -204,6 +218,7 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
     prehended,
     evidence,
     novelty,
+    supersedes_id,
   ).run();
 
   return json({ id, message: "ok" }, 201);
@@ -225,10 +240,15 @@ export async function getGrowthJournal(
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10), 100);
   const pendingOnly = url.searchParams.get("pending") === "1";
+  const acceptedOnly = url.searchParams.get("status") === "accepted";
 
   const sql = pendingOnly
     ? "SELECT * FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending' ORDER BY created_at DESC LIMIT ?"
-    : "SELECT * FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?";
+    : acceptedOnly
+      // ?status=accepted -- reconsolidation sampling (worker reflect phase).
+      // ASC: oldest canon first; the stalest memories are the candidates.
+      ? "SELECT * FROM growth_journal WHERE companion_id = ? AND review_status = 'accepted' ORDER BY created_at ASC LIMIT ?"
+      : "SELECT * FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?";
 
   const rows = await env.DB.prepare(sql).bind(companion_id, limit).all();
   return json({ journal: rows.results });
@@ -250,6 +270,21 @@ async function setReviewStatus(
     ).bind(id, companion_id).first<{ review_status: string; reviewed_at: string | null }>();
     if (!row) return json({ error: "entry not found" }, 404);
     return json({ ok: true, already_reviewed: true, review_status: row.review_status, reviewed_at: row.reviewed_at });
+  }
+
+  // Reconsolidation (0074), Zikkaron "archive+replace" lean variant: canon history is
+  // never deleted -- when an accepted entry supersedes another, the old row stays
+  // accepted but gains a machine-readable forward pointer in its tags.
+  if (status === "accepted") {
+    const accepted = await env.DB.prepare(
+      "SELECT supersedes_id FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(id, companion_id).first<{ supersedes_id: string | null }>();
+    if (accepted?.supersedes_id) {
+      await env.DB.prepare(
+        "UPDATE growth_journal SET tags_json = json_insert(coalesce(tags_json, '[]'), '$[#]', ?) WHERE id = ?"
+      ).bind(`superseded:${id}`, accepted.supersedes_id).run()
+        .catch(e => console.warn("[growth] superseded tag failed (non-fatal):", e));
+    }
   }
 
   return json({ ok: true, already_reviewed: false, review_status: status });

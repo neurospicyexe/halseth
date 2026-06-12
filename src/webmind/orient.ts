@@ -13,6 +13,7 @@ import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
+import { effectiveHeatSql, warmSql } from "./heat.js";
 import { takeUnsurfacedEvents } from "./home/store.js";
 
 /** "While you were away" block. Null-safe: orient must never break on home error. */
@@ -61,15 +62,17 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
       "SELECT * FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY priority DESC, last_touched_at DESC LIMIT 5"
     ).bind(agentId).all<WmMindThread>(),
     // 3-pool surfacing: Core (rows 0-2), Novelty (row 5, skipping rows 3-4 intentionally), Edge (deep history random)
+    // Core + Novelty rank by effective heat (0074): accessed-and-warm rows outrank
+    // merely-recent ones; the 4h coherence bonus keeps just-written notes on top.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
        WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
-       ORDER BY created_at DESC LIMIT 3`
+       ORDER BY ${effectiveHeatSql()} DESC LIMIT 3`
     ).bind(agentId).all<WmContinuityNote>(),
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
        WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
-       ORDER BY created_at DESC LIMIT 1 OFFSET 5`
+       ORDER BY ${effectiveHeatSql()} DESC LIMIT 1 OFFSET 5`
     ).bind(agentId).all<WmContinuityNote>(),
     // Note: Novelty returns empty when fewer than 6 qualifying rows exist (new/sparse agents fall back to Core-only)
     env.DB.prepare(
@@ -149,6 +152,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
       recentNotesSeen.add(n.note_id);
       recentNotes.push(n);
     }
+  }
+
+  // Warm surfaced notes (0074): access is what keeps a memory hot. Non-fatal --
+  // orient never breaks on a heat bookkeeping failure.
+  if (recentNotes.length > 0) {
+    await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", recentNotes.length))
+      .bind(...recentNotes.map(n => n.note_id)).run()
+      .catch(e => console.warn("[orient] heat warm failed (non-fatal):", e));
   }
 
   // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total)
