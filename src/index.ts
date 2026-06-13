@@ -70,6 +70,8 @@ import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./h
 import { getDrives, contactDrive } from "./handlers/drives.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures } from "./handlers/creatures.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
+import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
+import { associateDreamsHandler } from "./handlers/dream-associate.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
@@ -246,6 +248,18 @@ const router = new Router()
   // Collection / sparkle (0079) -- emotional archaeology over forage + listens (take 13)
   .on("GET",   "/mind/collection/:companion_id",     (request, env, params) => getCollection(request, env, params ?? {}))
   .on("POST",  "/mind/collection/sparkle",           (request, env)         => postSparkle(request, env))
+
+  // Council (0080) -- convene a hard question, blind cross-rank, Gaia-chairman synthesis (take 8)
+  .on("POST",  "/mind/council/convene",              (request, env)         => councilConvene(request, env))
+  .on("GET",   "/mind/council/current",              (request, env)         => councilCurrent(request, env))
+  .on("GET",   "/mind/council/rounds",               (request, env)         => councilRounds(request, env))
+  .on("GET",   "/mind/council/next-open",            (request, env)         => councilNextOpen(request, env))
+  .on("POST",  "/mind/council/answer",               (request, env)         => councilAnswer(request, env))
+  .on("POST",  "/mind/council/ranking",              (request, env)         => councilRanking(request, env))
+  .on("POST",  "/mind/council/:id/finalize",         (request, env, params) => councilFinalize(request, env, params ?? {}))
+
+  // Dream association modes (take 3) -- entity-cluster + temporal-pattern dreams
+  .on("POST",  "/mind/dreams/associate",             (request, env)         => associateDreamsHandler(request, env))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))

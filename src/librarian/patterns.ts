@@ -473,6 +473,26 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Council (0080, take 8) ──
+  council_convene: {
+    triggers: [
+      "convene the council", "council convene", "convene council", "ask the council",
+      "take it to the council", "council on",
+    ],
+    tools: ["halseth_council_convene"],
+    response_key: "witness",
+    raw: true,
+  },
+  council_status: {
+    triggers: [
+      "council status", "what did the council decide", "council verdict",
+      "council synthesis", "read the council",
+    ],
+    tools: ["halseth_council_status"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── Shared-experience layer (0071) ──
   media_recent: {
     triggers: [

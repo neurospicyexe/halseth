@@ -207,7 +207,7 @@ import {
 } from "./executors/self-monitoring.js";
 import {
   execWebSearch, execGenerateImage, execToolCallsRead, execDrivesRead,
-  execCreaturesRead, execCreatureInteract,
+  execCreaturesRead, execCreatureInteract, execCouncilConvene, execCouncilStatus,
 } from "./executors/tools.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -356,6 +356,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_drives_read: execDrivesRead,
   halseth_creatures_read: execCreaturesRead,
   halseth_creature_interact: execCreatureInteract,
+  halseth_council_convene: execCouncilConvene,
+  halseth_council_status: execCouncilStatus,
   halseth_identity_recovery: execIdentityRecovery,
   halseth_self_model_read: execSelfModelRead,
   halseth_self_model_set: execSelfModelSet,

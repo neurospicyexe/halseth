@@ -14,6 +14,7 @@ import {
   isValidAction, trustDelta, actionMood,
   listCreaturesSql, insertInteractionSql, interactBumpSql,
 } from "../../webmind/creatures.js";
+import { insertQuestionSql } from "../../webmind/council.js";
 
 function stripTrigger(request: string, re: RegExp): string {
   return request.replace(re, "").trim();
@@ -122,6 +123,39 @@ export async function execCreatureInteract(ctx: ExecutorContext): Promise<Execut
     witness: `you ${action === "give" ? "gave something to" : action} ${creature.name}`,
     interacted: true,
     meta: { operation: "creature_interact", creature: creature.name, action, trust: updated?.trust ?? null },
+  };
+}
+
+// take 8 -- convene a council question. The asker is the requesting companion (or raziel
+// from a human-present session). The worker runs answers + blind rank + synthesis.
+export async function execCouncilConvene(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const question = parseContext<{ question?: string }>(ctx.req.context)?.question?.trim()
+    ?? stripTrigger(ctx.req.request, /^(convene\s+the\s+council|council\s+convene|convene\s+council|ask\s+the\s+council)[:\s]*/i);
+  if (!question) return { error: "council_convene_failed", reason: "question required (after the trigger phrase or as context {question})" };
+  const askedBy = (ctx.req.companion_id || "raziel").slice(0, 60);
+  const id = crypto.randomUUID().replace(/-/g, "");
+  await ctx.env.DB.prepare(insertQuestionSql()).bind(id, question.slice(0, 2000), askedBy).run();
+  return {
+    response_key: "witness",
+    witness: `council convened on: "${question.slice(0, 120)}" -- the triad will answer, rank blind, and Gaia will synthesize.`,
+    convened: true,
+    meta: { operation: "council_convene", question_id: id, asked_by: askedBy },
+  };
+}
+
+// take 8 -- read the current/most-recent council round (question + synthesis + winner).
+export async function execCouncilStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const round = await ctx.env.DB.prepare(
+    "SELECT id, question, status, winning_companion_id, synthesis FROM council_questions ORDER BY created_at DESC LIMIT 1",
+  ).first<{ id: string; question: string; status: string; winning_companion_id: string | null; synthesis: string | null }>();
+  if (!round) return { response_key: "summary", council: null, meta: { operation: "council_status" } };
+  const answers = await ctx.env.DB.prepare(
+    "SELECT companion_id, answer FROM council_answers WHERE question_id = ?",
+  ).bind(round.id).all<{ companion_id: string; answer: string }>();
+  return {
+    response_key: "summary",
+    council: { ...round, answers: answers.results ?? [] },
+    meta: { operation: "council_status", status: round.status },
   };
 }
 

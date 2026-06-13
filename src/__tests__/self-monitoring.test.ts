@@ -32,8 +32,8 @@ class FakeStatement {
       return this.stores.triggers.find(r => r["companion_id"] === companionId && r["status"] === "armed" && r["trigger_text"] === text) ?? null;
     }
     if (this.sql.includes("SELECT id FROM companion_self_model")) {
-      const [companionId, observation] = this.bound as [string, string];
-      return this.stores.selfModel.find(r => r["companion_id"] === companionId && r["status"] !== "retired" && r["observation"] === observation) ?? null;
+      const [companionId, kind, observation] = this.bound as [string, string, string];
+      return this.stores.selfModel.find(r => r["companion_id"] === companionId && r["status"] !== "retired" && (r["kind"] ?? "preference") === kind && r["observation"] === observation) ?? null;
     }
     if (this.sql.includes("SELECT confidence, status FROM companion_self_model")) {
       const [id] = this.bound as [string];
@@ -49,8 +49,8 @@ class FakeStatement {
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO companion_self_model")) {
-      const [id, companion_id, observation, domain, evidence_note] = this.bound as (string | null)[];
-      this.stores.selfModel.push({ id, companion_id, observation, domain, evidence_note: evidence_note ?? null, confidence: 0.3, status: "developing", graduated_at: null });
+      const [id, companion_id, observation, domain, evidence_note, kind] = this.bound as (string | null)[];
+      this.stores.selfModel.push({ id, companion_id, observation, domain, evidence_note: evidence_note ?? null, kind: kind ?? "preference", confidence: 0.3, status: "developing", graduated_at: null });
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO voice_scores")) {

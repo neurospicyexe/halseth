@@ -192,7 +192,7 @@ export async function postSelfModel(request: Request, env: Env): Promise<Respons
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  let body: { companion_id?: string; observation?: string; domain?: string; evidence_note?: string };
+  let body: { companion_id?: string; observation?: string; domain?: string; evidence_note?: string; kind?: string };
   try {
     body = await request.json();
   } catch {
@@ -207,21 +207,24 @@ export async function postSelfModel(request: Request, env: Env): Promise<Respons
   if (!observation) return json({ error: "observation is required" }, 400);
   const domain = typeof body.domain === "string" ? body.domain.slice(0, 100) : null;
   const evidenceNote = typeof body.evidence_note === "string" ? body.evidence_note.slice(0, 1000) : null;
+  // Take 7: same ladder, two kinds. 'skill' = an operational competence the worker proves;
+  // 'preference' = a self-observation (0070 default).
+  const kind = body.kind === "skill" ? "skill" : "preference";
 
   try {
-    // Dedup: an identical non-retired observation is a no-op returning the existing id.
+    // Dedup: an identical non-retired observation of the same kind is a no-op.
     const existing = await env.DB.prepare(
-      "SELECT id FROM companion_self_model WHERE companion_id = ? AND status != 'retired' AND observation = ?"
-    ).bind(companionId, observation).first<{ id: string }>();
+      "SELECT id FROM companion_self_model WHERE companion_id = ? AND status != 'retired' AND kind = ? AND observation = ?"
+    ).bind(companionId, kind, observation).first<{ id: string }>();
     if (existing) return json({ id: existing.id, deduped: true });
 
     const id = `sm_${crypto.randomUUID()}`;
     await env.DB.prepare(
-      `INSERT INTO companion_self_model (id, companion_id, observation, domain, evidence_note)
-       VALUES (?, ?, ?, ?, ?)`
-    ).bind(id, companionId, observation, domain, evidenceNote).run();
+      `INSERT INTO companion_self_model (id, companion_id, observation, domain, evidence_note, kind)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(id, companionId, observation, domain, evidenceNote, kind).run();
 
-    return json({ id, confidence: 0.3 }, 201);
+    return json({ id, confidence: 0.3, kind }, 201);
   } catch (err) {
     console.error("[mind/self-model] write error", { companion_id: companionId, error: String(err) });
     return json({ error: "Internal server error" }, 500);
@@ -245,17 +248,18 @@ export async function getSelfModel(
   const url = new URL(request.url);
   const statusParam = url.searchParams.get("status") ?? "all";
   const status = ["developing", "ready", "graduated", "retired", "all"].includes(statusParam) ? statusParam : "all";
+  const kindParam = url.searchParams.get("kind");
+  const kind = kindParam === "skill" || kindParam === "preference" ? kindParam : null;
   const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 1), 50);
 
   try {
-    const stmt = status === "all"
-      ? env.DB.prepare(
-          "SELECT * FROM companion_self_model WHERE companion_id = ? ORDER BY updated_at DESC LIMIT ?"
-        ).bind(companion_id, limit)
-      : env.DB.prepare(
-          "SELECT * FROM companion_self_model WHERE companion_id = ? AND status = ? ORDER BY updated_at DESC LIMIT ?"
-        ).bind(companion_id, status, limit);
-    const rows = await stmt.all();
+    const conditions = ["companion_id = ?"];
+    const bindings: unknown[] = [companion_id];
+    if (status !== "all") { conditions.push("status = ?"); bindings.push(status); }
+    if (kind) { conditions.push("kind = ?"); bindings.push(kind); }
+    const rows = await env.DB.prepare(
+      `SELECT * FROM companion_self_model WHERE ${conditions.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`
+    ).bind(...bindings, limit).all();
     return json({ observations: rows.results ?? [] });
   } catch (err) {
     console.error("[mind/self-model] read error", { companion_id, error: String(err) });
