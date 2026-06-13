@@ -1,6 +1,7 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus } from "../backends/halseth.js";
 import { getCurrentLimbicState } from "../../webmind/limbic.js";
+import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 
 const COMPANIONS = ["drevan", "cypher", "gaia"] as const;
 
@@ -282,6 +283,22 @@ export async function execForageRead(ctx: ExecutorContext): Promise<ExecutorResu
       gathered_at: f.gathered_at,
     })),
     meta: { operation: "forage_read", companion_id: ctx.req.companion_id, count: finds.length },
+  };
+}
+
+export async function execMotifsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "motifs_read_failed", reason: "companion_id required" };
+  const rows = await ctx.env.DB.prepare(
+    "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status IN ('active','faded') ORDER BY trust DESC, recurrence_count DESC LIMIT 20"
+  ).bind(ctx.req.companion_id).all<MotifRow>();
+  const all = rows.results ?? [];
+  const active = all.filter(m => m.status === "active").slice(0, 8);
+  const resurrections = selectResurrections(all.filter(m => m.status === "faded"), Date.now(), { limit: 3 });
+  return {
+    response_key: "summary",
+    motifs: active.map(m => ({ display: m.display, recurrence_count: m.recurrence_count, trust: m.trust })),
+    resurrections: resurrections.map(m => ({ display: m.display, last_seen: m.last_seen, trust: m.trust })),
+    meta: { operation: "motifs_read", companion_id: ctx.req.companion_id, active: active.length, resurrections: resurrections.length },
   };
 }
 

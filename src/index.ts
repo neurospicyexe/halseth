@@ -65,6 +65,7 @@ import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kern
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
+import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
@@ -217,6 +218,10 @@ const router = new Router()
   .on("POST",  "/mind/guardian/run",               (request, env)         => postGuardianRun(request, env))
   .on("GET",   "/mind/guardian/flags",             (request, env)         => getGuardianFlags(request, env))
   .on("PATCH", "/mind/guardian/flags/:id",         (request, env, params) => patchGuardianFlag(request, env, params ?? {}))
+
+  // Motif memory + resurrection (0076) -- recurring symbolic threads as memory atoms
+  .on("POST",  "/mind/motifs/detect",              (request, env)         => postMotifsDetect(request, env))
+  .on("GET",   "/mind/motifs/:companion_id",       (request, env, params) => getMotifs(request, env, params ?? {}))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))

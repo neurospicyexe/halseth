@@ -197,7 +197,7 @@ import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
   execRecentRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
-  execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMediaRecent, execIdentityAnchorRead,
+  execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMotifsRead, execMediaRecent, execIdentityAnchorRead,
   execClubStatus, execClubRecommend, execClubVote, execClubDiscuss,
 } from "./executors/companion-growth.js";
 import {
@@ -336,6 +336,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_journal_decline: execJournalDecline,
   halseth_forage_read: execForageRead,
   halseth_forage_consume: execForageConsume,
+  halseth_motifs_read: execMotifsRead,
   halseth_media_recent: execMediaRecent,
   halseth_club_status: execClubStatus,
   halseth_club_recommend: execClubRecommend,

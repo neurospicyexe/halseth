@@ -9,6 +9,7 @@ import { semanticSearch, sbRead, sbSaveDocument } from "../backends/second-brain
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
+import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
   const [payload, pendingGrowthRow] = await Promise.all([
@@ -57,7 +58,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -137,6 +138,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status = 'open' ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3"
     ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>().catch(() => null),
+    // Motifs (0076): recurring symbolic threads (active) + faded high-trust ones
+    // eligible for resurrection. Active surfaces read-only; resurrection is
+    // consume-once via last_surfaced_at cooldown (selectResurrections owns the gate).
+    ctx.env.DB.prepare(
+      "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status IN ('active','faded') ORDER BY trust DESC, recurrence_count DESC LIMIT 20"
+    ).bind(agentId).all<MotifRow>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
@@ -171,6 +178,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     severity: f.severity,
     summary: (f.summary ?? "").slice(0, 400),
   }));
+  // Motifs (0076): split the active recurring threads from the faded ones, then run
+  // resurrection selection (trust floor + cooldown) over the faded subset.
+  const allMotifs = motifRows?.results ?? [];
+  const activeMotifs = allMotifs.filter(m => m.status === "active").slice(0, 3);
+  const resurrectedMotifs = selectResurrections(allMotifs.filter(m => m.status === "faded"), Date.now(), { limit: 2 });
   const recentListens = (mediaRows?.results ?? []).map(r => {
     let reactions: Record<string, string> = {};
     try { reactions = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>; } catch { /* malformed -> empty */ }
@@ -371,6 +383,28 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).bind(...flagIds).run().catch(() => null);
   }
 
+  // Motif block (0076): the recurring symbolic threads currently alive, plus any
+  // faded-but-trusted motif being resurrected (field_feedback -- not deletion).
+  const motifLines: string[] = [];
+  if (activeMotifs.length > 0) {
+    motifLines.push("Recurring threads in your recent work: " +
+      activeMotifs.map(m => `«${m.display}» (×${m.recurrence_count})`).join(", ") + ".");
+  }
+  if (resurrectedMotifs.length > 0) {
+    motifLines.push("Resurfacing (faded but trusted -- worth revisiting or consciously letting go): " +
+      resurrectedMotifs.map(m => `«${m.display}» (last seen ${m.last_seen.slice(0, 10)})`).join(", ") + ".");
+  }
+  const motifBlock = motifLines.length > 0 ? `\n[Motifs]\n${motifLines.join("\n")}` : "";
+
+  // Consume-once: stamp last_surfaced_at on resurrected motifs so the cooldown
+  // keeps them from nagging every orient (active motifs are read-only here).
+  if (resurrectedMotifs.length > 0) {
+    const motifIds = resurrectedMotifs.map(m => m.id);
+    ctx.env.DB.prepare(
+      `UPDATE companion_motifs SET last_surfaced_at = datetime('now') WHERE id IN (${motifIds.map(() => "?").join(",")})`
+    ).bind(...motifIds).run().catch(() => null);
+  }
+
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
   const selfModelBlock = selfModelReady.length > 0
@@ -379,7 +413,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + tripwireBlock + selfModelBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -400,7 +434,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     club_round: clubRow ?? null,
     tripwires,
     self_model_ready: selfModelReady,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length },
     continuity: wmResult,
   };
 }
@@ -688,7 +722,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -798,6 +832,11 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>(),
+    // 27. Motifs (0076) -- recurring symbolic threads (active only), read-only for
+    // the bot loom; resurrection surfacing is the session orient's job.
+    ctx.env.DB.prepare(
+      "SELECT label, display, recurrence_count, trust FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY trust DESC, recurrence_count DESC LIMIT 3"
+    ).bind(agentId).all<{ label: string; display: string; recurrence_count: number; trust: number }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -990,6 +1029,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             flag_type: r.flag_type,
             severity: r.severity,
             summary: (r.summary ?? "").slice(0, 300),
+          }))
+        : [],
+      motifs: motifResult.status === "fulfilled" && motifResult.value?.results
+        ? (motifResult.value.results as Array<{ label: string; display: string; recurrence_count: number; trust: number }>).map(r => ({
+            label: r.label,
+            display: (r.display ?? "").slice(0, 120),
+            recurrence_count: r.recurrence_count,
+            trust: r.trust,
           }))
         : [],
     },

@@ -443,6 +443,17 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Motif memory (0076) ──
+  motifs_read: {
+    triggers: [
+      "my motifs", "recurring motifs", "recurring threads", "what keeps coming up",
+      "motif memory", "faded motifs", "what am i circling", "read motifs",
+    ],
+    tools: ["halseth_motifs_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── The Club (0072) ──
   club_status: {
     triggers: [
