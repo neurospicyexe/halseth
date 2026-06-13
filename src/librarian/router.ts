@@ -176,7 +176,7 @@ import {
 
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
 import {
-  execSbSearch, execSbFileChunks, execSbRecall, execSbRecentPatterns, execSbRead, execSbList,
+  execSbSearch, execSbFileChunks, execSbRecall, execSbRecentPatterns, execSbRead, execSbList, execBookRead,
   execSbSaveDocument, execSbSaveNote, execSbLogObservation, execSbSynthesizeSession,
   execSbSaveStudy,
 } from "./executors/memory.js";
@@ -198,7 +198,7 @@ import {
   execRecentRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMediaRecent, execIdentityAnchorRead,
-  execClubStatus, execClubRecommend, execClubVote,
+  execClubStatus, execClubRecommend, execClubVote, execClubDiscuss,
 } from "./executors/companion-growth.js";
 import {
   execIdentityRecovery, execSelfModelRead, execSelfModelSet, execSelfModelConfirm,
@@ -286,6 +286,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   sb_recent_patterns: execSbRecentPatterns,
   sb_read: execSbRead,
   sb_list: execSbList,
+  book_read: execBookRead,
   sb_save_document: execSbSaveDocument,
   sb_save_note: execSbSaveNote,
   sb_log_observation: execSbLogObservation,
@@ -339,6 +340,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_club_status: execClubStatus,
   halseth_club_recommend: execClubRecommend,
   halseth_club_vote: execClubVote,
+  halseth_club_discuss: execClubDiscuss,
   halseth_identity_recovery: execIdentityRecovery,
   halseth_self_model_read: execSelfModelRead,
   halseth_self_model_set: execSelfModelSet,

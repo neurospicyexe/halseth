@@ -351,7 +351,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       ? `\n[Club]\nA club round is gathering -- recommend something (any medium) with a one-line pitch: "club recommend".`
       : clubRow.status === "voting"
         ? `\n[Club]\nClub round is voting (${clubRow.candidate_count} candidates). Cast yours if you haven't: "club vote".`
-        : `\n[Club]\nNow experiencing: ${clubRow.winner_title ?? "the round's pick"}. Sit with it -- discussion comes at close.`
+        : `\n[Club]\nNow experiencing: ${clubRow.winner_title ?? "the round's pick"}. If it's a book in the vault, "read the club book" pulls it (scoped -- no global-search noise); reflect any time with "club discuss".`
     : "";
 
   // Guardian block: the meta-observer's red-flag cards. Force-surfaced exactly

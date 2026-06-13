@@ -416,6 +416,41 @@ export async function execClubVote(ctx: ExecutorContext): Promise<ExecutorResult
   return { response_key: "witness", voted: true, round_id: round.id, meta: { operation: "club_vote" } };
 }
 
+export async function execClubDiscuss(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "club_discuss_failed", reason: "companion_id required" };
+  const parsed = parseContext<{ reflection?: string; round_id?: string }>(ctx.req.context);
+  // Reflection from context JSON, or the natural request minus the trigger verb.
+  const reflection = (parsed?.reflection
+    ?? ctx.req.request.replace(/^.*?\bdiscuss(es|ed|ing)?\b[:\s-]*/i, "").trim()
+  )?.trim();
+  if (!reflection) {
+    return { error: "club_discuss_failed", reason: "context JSON {reflection} (your reflection on the round's pick) required" };
+  }
+  // Discuss the named round, else the current non-closed one. The HTTP handler
+  // gates on active|closed; mirror that -- discussion opens once the pick lands.
+  let round: { id: string; status: string } | null;
+  if (parsed?.round_id) {
+    round = await ctx.env.DB.prepare(
+      "SELECT id, status FROM club_rounds WHERE id = ?"
+    ).bind(parsed.round_id).first<{ id: string; status: string }>();
+  } else {
+    // clubCurrentRound only returns non-closed; for discuss we also want the most
+    // recent CLOSED round (post-experience reflection), so query directly.
+    round = await ctx.env.DB.prepare(
+      "SELECT id, status FROM club_rounds WHERE status IN ('active','closed') ORDER BY opened_at DESC LIMIT 1"
+    ).first<{ id: string; status: string }>();
+  }
+  if (!round) return { error: "club_discuss_failed", reason: "no round is active or closed to discuss yet" };
+  if (round.status !== "active" && round.status !== "closed") {
+    return { error: "club_discuss_failed", reason: "discussion opens once the round's pick is active" };
+  }
+  const id = crypto.randomUUID().replace(/-/g, "");
+  await ctx.env.DB.prepare(
+    "INSERT INTO club_discussions (id, round_id, companion_id, reflection) VALUES (?, ?, ?, ?)"
+  ).bind(id, round.id, ctx.req.companion_id, reflection.slice(0, 3000)).run();
+  return { response_key: "witness", discussed: true, discussion_id: id, round_id: round.id, meta: { operation: "club_discuss" } };
+}
+
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   // Three queries in parallel: SOMA floats, relational state toward Raziel, last outgoing note.
   const [somaRows, relationalRows, noteRows] = await Promise.all([
