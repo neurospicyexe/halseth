@@ -26,11 +26,15 @@ SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
 BRIDGE_URL           = ""   # partner's Halseth base URL; leave empty to disable bridge
 BRIDGE_SECRET        = ""   # shared symmetric secret; same value in both deployments
 SECOND_BRAIN_WEBHOOK_URL = ""   # your Second Brain VPS URL (e.g. https://mcp.yourdomain.com)
+COMPANION_TOOLS_DEFAULT  = "false"  # 0077 take 14: tools_enabled gate fallback when no per-companion setting
+PUBLIC_BASE_URL          = ""   # this worker's public base URL, for building /mind/tools/image/:id links
 
 # Secrets — set via `wrangler secret put <KEY>` for production.
 # For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.
 # ADMIN_SECRET    — protects POST /admin/bootstrap
 # MCP_AUTH_SECRET — protects POST /mcp (optional; endpoint is open if unset)
+# TAVILY_API_KEY  — 0077 take 14: companion web search provider
+# GEMINI_API_KEY  — 0077 take 14: companion image gen provider
 
 # ── Workers AI (embeddings for Vectorize) ────────────────────────────────────
 [ai]

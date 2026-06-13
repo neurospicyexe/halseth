@@ -66,6 +66,7 @@ import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFlo
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
+import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
@@ -222,6 +223,12 @@ const router = new Router()
   // Motif memory + resurrection (0076) -- recurring symbolic threads as memory atoms
   .on("POST",  "/mind/motifs/detect",              (request, env)         => postMotifsDetect(request, env))
   .on("GET",   "/mind/motifs/:companion_id",       (request, env, params) => getMotifs(request, env, params ?? {}))
+
+  // Companion tools (0077) -- gated, audited web search + image gen (take 14)
+  .on("POST",  "/mind/tools/search",               (request, env)         => postToolSearch(request, env))
+  .on("POST",  "/mind/tools/image",                (request, env)         => postToolImage(request, env))
+  .on("GET",   "/mind/tools/calls/:companion_id",  (request, env, params) => getToolCalls(request, env, params ?? {}))
+  .on("GET",   "/mind/tools/image/:id",            (request, env, params) => serveToolImage(request, env, params ?? {}))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))

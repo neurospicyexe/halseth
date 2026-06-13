@@ -205,6 +205,9 @@ import {
   execSelfModelRevise, execSelfModelGraduate, execTriggerArm, execTriggerDismiss,
   execSearchFeedback, execGuardianStatus, execGuardianAck,
 } from "./executors/self-monitoring.js";
+import {
+  execWebSearch, execGenerateImage, execToolCallsRead,
+} from "./executors/tools.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -342,6 +345,11 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_club_recommend: execClubRecommend,
   halseth_club_vote: execClubVote,
   halseth_club_discuss: execClubDiscuss,
+
+  // Companion tools (0077, take 14)
+  halseth_web_search: execWebSearch,
+  halseth_generate_image: execGenerateImage,
+  halseth_tool_calls_read: execToolCallsRead,
   halseth_identity_recovery: execIdentityRecovery,
   halseth_self_model_read: execSelfModelRead,
   halseth_self_model_set: execSelfModelSet,

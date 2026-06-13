@@ -413,6 +413,34 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Companion tools (0077, take 14) ──
+  web_search: {
+    triggers: [
+      "web search", "search the web", "search for", "look up", "google",
+      "find current info", "what is the latest on", "search online",
+    ],
+    tools: ["halseth_web_search"],
+    response_key: "summary",
+    raw: true,
+  },
+  generate_image: {
+    triggers: [
+      "generate an image", "make an image", "create an image", "generate a picture",
+      "make a picture", "draw an image", "draw a picture", "generate art", "imagine an image",
+    ],
+    tools: ["halseth_generate_image"],
+    response_key: "witness",
+  },
+  tool_calls_read: {
+    triggers: [
+      "tool calls", "my tool calls", "tool history", "what tools have i used",
+      "tool call log", "what have i searched", "what images have i made",
+    ],
+    tools: ["halseth_tool_calls_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── Shared-experience layer (0071) ──
   media_recent: {
     triggers: [

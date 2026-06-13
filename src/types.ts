@@ -36,6 +36,13 @@ export interface Env {
   CYPHER_MCP_SECRET?: string;
   DREVAN_MCP_SECRET?: string;
   GAIA_MCP_SECRET?:   string;
+
+  // Companion tool layer (take 14, migration 0077). Keys are deploy-time secrets.
+  TAVILY_API_KEY?: string;            // web search provider (set via wrangler secret)
+  GEMINI_API_KEY?: string;            // image gen provider (set via wrangler secret)
+  GEMINI_IMAGE_MODEL?: string;        // optional override for the Gemini image model
+  COMPANION_TOOLS_DEFAULT?: string;   // "true" | "false" -- gate fallback when no per-companion setting (wrangler.toml [vars])
+  PUBLIC_BASE_URL?: string;           // this worker's public base URL, for building image-serve links
 }
 
 // ── Legacy domain types (Tier 0-2 HTTP API) ───────────────────────────────────
