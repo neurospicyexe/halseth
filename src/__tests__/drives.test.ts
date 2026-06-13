@@ -4,6 +4,7 @@ import {
   accruedLevel,
   driveFired,
   selectModality,
+  hoursSinceIso,
   readDrivesSql,
   upsertDriveAccrualSql,
   contactResetSql,
@@ -31,6 +32,21 @@ describe("decayedLevel (contact)", () => {
   });
   it("a partial decay sheds a fraction", () => {
     expect(decayedLevel(0.8, 0.5)).toBeCloseTo(0.4, 5);
+  });
+});
+
+describe("hoursSinceIso", () => {
+  const now = Date.parse("2026-06-13T12:00:00Z");
+  it("parses D1 space-separated UTC timestamps", () => {
+    expect(hoursSinceIso("2026-06-13 06:00:00", now)).toBeCloseTo(6, 5);
+  });
+  it("parses ISO timestamps too", () => {
+    expect(hoursSinceIso("2026-06-13T11:00:00Z", now)).toBeCloseTo(1, 5);
+  });
+  it("returns 0 for null/garbage (never negative)", () => {
+    expect(hoursSinceIso(null, now)).toBe(0);
+    expect(hoursSinceIso("not-a-date", now)).toBe(0);
+    expect(hoursSinceIso("2026-06-13 18:00:00", now)).toBe(0); // future -> clamped
   });
 });
 

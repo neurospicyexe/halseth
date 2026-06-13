@@ -11,6 +11,8 @@ class FakeDb {
   inserts: InsertCall[] = [];
   // gate value returned by the companion_settings SELECT; null = no row.
   gateValue: string | null = null;
+  // when true, INSERT INTO companion_tool_calls throws (audit-write failure).
+  failInsert = false;
 
   prepare(sql: string) {
     const self = this;
@@ -25,6 +27,7 @@ class FakeDb {
       },
       async run() {
         if (sql.startsWith("INSERT INTO companion_tool_calls")) {
+          if (self.failInsert) throw new Error("D1_ERROR: audit write failed");
           self.inserts.push({ sql, bound });
         }
         return { meta: { changes: 1 } };
@@ -122,6 +125,15 @@ describe("runImageGen", () => {
   it("env default true enables when no per-companion setting exists", async () => {
     const res = await runImageGen(makeEnv(db, bucket, "true"), "cypher", "a blade", mockProvider());
     expect(res.ok).toBe(true);
+    expect(bucket.puts).toHaveLength(1);
+  });
+
+  it("returns an error (not false success) if the audit-row write fails -- serve needs that row (F1)", async () => {
+    db.gateValue = "true";
+    db.failInsert = true;
+    const res = await runImageGen(makeEnv(db, bucket, "false"), "cypher", "a blade", mockProvider());
+    expect(res).toMatchObject({ ok: false, error: expect.stringContaining("audit log write failed") });
+    // the image still landed in R2 (tolerable orphan) but we did NOT claim success
     expect(bucket.puts).toHaveLength(1);
   });
 });

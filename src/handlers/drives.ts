@@ -10,21 +10,13 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { accruedLevel, decayedLevel, driveFired, selectModality, readDrivesSql, contactResetSql } from "../webmind/drives.js";
+import { accruedLevel, decayedLevel, driveFired, selectModality, hoursSinceIso, readDrivesSql, contactResetSql } from "../webmind/drives.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
 const VALID_COMPANIONS = new Set<string>(["cypher", "drevan", "gaia"]);
-
-function hoursSince(iso: string | null): number {
-  if (!iso) return 0;
-  // D1 datetime('now') is "YYYY-MM-DD HH:MM:SS" UTC; make it parseable.
-  const ms = Date.parse(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
-  if (Number.isNaN(ms)) return 0;
-  return Math.max(0, (Date.now() - ms) / 3_600_000);
-}
 
 interface DriveRow {
   id: string; drive_key: string; level: number;
@@ -43,7 +35,7 @@ export async function getDrives(request: Request, env: Env, params: Record<strin
   try {
     const rows = await env.DB.prepare(readDrivesSql()).bind(companionId).all<DriveRow>();
     const drives = (rows.results ?? []).map(r => {
-      const effective = accruedLevel(r.level, r.accumulate_per_day, hoursSince(r.last_event_at));
+      const effective = accruedLevel(r.level, r.accumulate_per_day, hoursSinceIso(r.last_event_at));
       const fired = driveFired(effective, r.threshold);
       return {
         drive_key: r.drive_key,
@@ -80,7 +72,7 @@ export async function contactDrive(request: Request, env: Env, params: Record<st
       "SELECT level, accumulate_per_day, decay_on_contact, last_event_at FROM companion_drives WHERE companion_id = ? AND drive_key = ?",
     ).bind(companionId, driveKey).first<{ level: number; accumulate_per_day: number; decay_on_contact: number; last_event_at: string }>();
     if (!row) return json({ error: "drive not found" }, 404);
-    const effective = accruedLevel(row.level, row.accumulate_per_day, hoursSince(row.last_event_at));
+    const effective = accruedLevel(row.level, row.accumulate_per_day, hoursSinceIso(row.last_event_at));
     const shed = decayedLevel(effective, row.decay_on_contact);
     await env.DB.prepare(contactResetSql()).bind(Number(shed.toFixed(4)), companionId, driveKey).run();
     return json({ contacted: true, drive_key: driveKey, level: Number(shed.toFixed(4)) });

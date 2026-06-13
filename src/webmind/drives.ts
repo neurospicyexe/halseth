@@ -38,6 +38,13 @@ export function selectModality(companionId: string, level: number): Modality {
   return level >= 0.9 ? "voice" : "text";
 }
 
+/** Hours elapsed since a D1 datetime string ("YYYY-MM-DD HH:MM:SS" UTC), clamped >= 0. */
+export function hoursSinceIso(iso: string | null | undefined, nowMs = Date.now()): number {
+  if (!iso) return 0;
+  const ms = Date.parse(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+  return Number.isNaN(ms) ? 0 : Math.max(0, (nowMs - ms) / 3_600_000);
+}
+
 // ── SQL builders (asserted as strings in tests; D1 is the runtime) ──────────────
 
 /** Read a companion's drives. Bind: [companion_id]. */

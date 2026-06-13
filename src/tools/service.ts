@@ -117,6 +117,9 @@ export async function runImageGen(
     const key = imageKeyFor(companionId, callId, image.mimeType);
     await env.BUCKET.put(key, image.bytes, { httpMetadata: { contentType: image.mimeType } });
     // Reuse the pre-generated callId as the row id so the R2 key and audit row share it.
+    // The serve route resolves the image by THIS row -- so if the row write fails the image
+    // is unreachable (and the deterministic-ack covenant forbids claiming success without a
+    // row). Treat an audit-insert failure as a failed call (the R2 object is a tolerable orphan).
     try {
       await env.DB.prepare(
         "INSERT INTO companion_tool_calls (id, companion_id, tool, args_summary, status, provider, result_ref, result_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -125,7 +128,9 @@ export async function runImageGen(
         provider.name, key, image.mimeType,
       ).run();
     } catch (err) {
+      const msg = `audit log write failed (image stored at ${key} but not retrievable): ${String(err)}`.slice(0, 500);
       console.error("[tools] image audit insert failed", { error: String(err) });
+      return { ok: false, error: msg, call_id: callId };
     }
     const url = `${(env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "")}/mind/tools/image/${callId}`;
     return { ok: true, key, url, mime_type: image.mimeType, call_id: callId, provider: provider.name };
