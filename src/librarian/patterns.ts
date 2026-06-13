@@ -138,6 +138,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+  // Scoped book pull: resolves a title -> Books/<folder> and reads by PATH (with a
+  // query, semantic search is scoped WITHIN the book's files, never the global
+  // index). Honest "not loaded" when the book isn't in the vault -- never invents.
+  book_read: {
+    triggers: [
+      "read the book", "read from the book", "read the club book", "pull from the book",
+      "read book", "book chapter", "read a chapter", "pull the book", "read from book",
+      "what's in the book", "from the book about",
+    ],
+    tools: ["book_read"],
+    response_key: "summary",
+  },
   sb_recent_patterns: {
     triggers: ["recent patterns", "hearth summary", "pattern summary", "what patterns", "vault patterns"],
     tools: ["sb_recent_patterns"],
@@ -454,6 +466,14 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "club vote", "vote in the club", "cast club vote", "vote for the club pick",
     ],
     tools: ["halseth_club_vote"],
+    response_key: "witness",
+  },
+  club_discuss: {
+    triggers: [
+      "club discuss", "discuss the club", "club reflection", "reflect on the club",
+      "discuss the round", "club discussion", "reflect on the round's pick",
+    ],
+    tools: ["halseth_club_discuss"],
     response_key: "witness",
   },
 
