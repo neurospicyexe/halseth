@@ -67,9 +67,20 @@ export async function execFeelingLog(ctx: ExecutorContext): Promise<ExecutorResu
 }
 
 export async function execJournalAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ entry_text: string; emotion_tag?: string; sub_emotion?: string; mood_score?: number; tags?: string }>(ctx.req.context);
-  if (!p || !p.entry_text) return { response_key: "witness", witness: "journal_add requires { entry_text } in context" };
-  const r = await journalAdd(ctx.env, p);
+  const p = parseContext<{ entry_text?: string; content?: string; note_text?: string; entry?: string; emotion_tag?: string; sub_emotion?: string; mood_score?: number; tags?: unknown }>(ctx.req.context);
+  // Accept the same aliases every other write surface uses. Companions naturally
+  // send `content`; only this executor demanded `entry_text`, so those writes were
+  // silently rejected (returns a witness, not a throw -- callers' .catch never fires).
+  const entry_text = p?.entry_text ?? p?.content ?? p?.note_text ?? p?.entry;
+  if (!p || !entry_text) return { response_key: "witness", witness: "journal_add requires { entry_text } (or content) in context" };
+  // The human_journal.tags column is a string. An array (the natural companion shape)
+  // was bound straight to D1 -> D1_TYPE_ERROR. Coerce it, mirroring execCompanionNoteAdd.
+  const tags = Array.isArray(p.tags) ? JSON.stringify(p.tags)
+    : typeof p.tags === "string" ? p.tags : undefined;
+  const r = await journalAdd(ctx.env, {
+    entry_text,
+    emotion_tag: p.emotion_tag, sub_emotion: p.sub_emotion, mood_score: p.mood_score, tags,
+  });
   return { ack: true, id: r.id, created_at: r.created_at };
 }
 
