@@ -722,7 +722,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -837,6 +837,11 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT label, display, recurrence_count, trust FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY trust DESC, recurrence_count DESC LIMIT 3"
     ).bind(agentId).all<{ label: string; display: string; recurrence_count: number; trust: number }>(),
+    // 28. Creatures (0078, take 10) -- corvid + Raziel's animals; shared presences the
+    // bot loom can ask after. No companion filter (creatures belong to Raziel/the system).
+    ctx.env.DB.prepare(
+      "SELECT name, species, kind, state_json, trust FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
+    ).all<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -1038,6 +1043,13 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             recurrence_count: r.recurrence_count,
             trust: r.trust,
           }))
+        : [],
+      creatures: creaturesResult.status === "fulfilled" && creaturesResult.value?.results
+        ? (creaturesResult.value.results as Array<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number }>).map(r => {
+            let mood: string | null = null;
+            try { mood = r.state_json ? (JSON.parse(r.state_json).mood ?? null) : null; } catch { /* malformed json -> no mood */ }
+            return { name: r.name, species: r.species, kind: r.kind, trust: Number((r.trust ?? 0).toFixed(2)), mood };
+          })
         : [],
     },
     meta: {

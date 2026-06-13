@@ -10,6 +10,10 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { runWebSearch, runImageGen } from "../../tools/service.js";
 import { createProvider } from "../../tools/live-providers.js";
 import { accruedLevel, driveFired, selectModality, hoursSinceIso, readDrivesSql } from "../../webmind/drives.js";
+import {
+  isValidAction, trustDelta, actionMood,
+  listCreaturesSql, insertInteractionSql, interactBumpSql,
+} from "../../webmind/creatures.js";
 
 function stripTrigger(request: string, re: RegExp): string {
   return request.replace(re, "").trim();
@@ -71,6 +75,54 @@ export async function execDrivesRead(ctx: ExecutorContext): Promise<ExecutorResu
     return { drive_key: r.drive_key, level: Number(effective.toFixed(4)), fired, modality: fired ? selectModality(ctx.req.companion_id, effective) : null };
   });
   return { response_key: "summary", drives, meta: { operation: "drives_read", companion_id: ctx.req.companion_id, count: drives.length } };
+}
+
+// take 10 -- creatures are shared presences (corvid + Raziel's animals); any companion
+// can ask after them, so no companion_id gate on the read.
+export async function execCreaturesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const rows = await ctx.env.DB.prepare(listCreaturesSql()).all<{
+    id: string; name: string; species: string | null; kind: string; bio: string | null;
+    state_json: string | null; trust: number; last_interaction_at: string | null;
+  }>();
+  const creatures = (rows.results ?? []).map(c => {
+    let mood: string | null = null;
+    try { mood = c.state_json ? (JSON.parse(c.state_json).mood ?? null) : null; } catch { /* malformed json -> no mood */ }
+    return {
+      id: c.id, name: c.name, species: c.species, kind: c.kind, bio: c.bio,
+      trust: Number((c.trust ?? 0).toFixed(3)), mood, last_interaction_at: c.last_interaction_at,
+    };
+  });
+  return { response_key: "summary", creatures, meta: { operation: "creatures_read", count: creatures.length } };
+}
+
+// take 10 -- a companion interacts with a creature (feed|play|talk|give). Atomic SQL
+// trust bump + append-only log, exactly the handler path. Name lookup is exact-first
+// then LIKE (name_lookup_exact_first doctrine) so a write never lands on the wrong row.
+export async function execCreatureInteract(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "creature_interact_failed", reason: "companion_id required (the actor)" };
+  const parsed = parseContext<{ creature?: string; creature_name?: string; action?: string; note?: string }>(ctx.req.context);
+  const name = (parsed?.creature ?? parsed?.creature_name ?? "").trim();
+  const action = (parsed?.action ?? "").trim().toLowerCase();
+  if (!name) return { error: "creature_interact_failed", reason: "creature name required (context {creature, action})" };
+  if (!isValidAction(action)) return { error: "creature_interact_failed", reason: "action must be one of feed, play, talk, give" };
+  const note = parsed?.note?.trim().slice(0, 500) ?? null;
+
+  const creature = (await ctx.env.DB.prepare("SELECT id, name FROM creatures WHERE name = ? COLLATE NOCASE").bind(name).first<{ id: string; name: string }>())
+    ?? (await ctx.env.DB.prepare("SELECT id, name FROM creatures WHERE name LIKE ? COLLATE NOCASE ORDER BY name ASC LIMIT 1").bind(`%${name}%`).first<{ id: string; name: string }>());
+  if (!creature) return { error: "creature_interact_failed", reason: `no creature matching "${name}"` };
+
+  const interactionId = crypto.randomUUID().replace(/-/g, "");
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(insertInteractionSql()).bind(interactionId, creature.id, ctx.req.companion_id, action, note),
+    ctx.env.DB.prepare(interactBumpSql()).bind(trustDelta(action), actionMood(action), creature.id),
+  ]);
+  const updated = await ctx.env.DB.prepare("SELECT trust FROM creatures WHERE id = ?").bind(creature.id).first<{ trust: number }>();
+  return {
+    response_key: "witness",
+    witness: `you ${action === "give" ? "gave something to" : action} ${creature.name}`,
+    interacted: true,
+    meta: { operation: "creature_interact", creature: creature.name, action, trust: updated?.trust ?? null },
+  };
 }
 
 export async function execToolCallsRead(ctx: ExecutorContext): Promise<ExecutorResult> {

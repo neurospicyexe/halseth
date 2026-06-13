@@ -14,6 +14,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { bumpSparkle } from "./collection.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -128,6 +129,9 @@ export async function consumeForageFind(
     if ((result.meta?.changes ?? 0) === 0) {
       return json({ error: "find not found or already consumed" }, 404);
     }
+    // Take 13: a consumed find earns sparkle in the collection. Best-effort -- a
+    // sparkle write must never fail the consume.
+    await bumpSparkle(env, "forage_finds", id, "consume").catch(() => {});
     return json({ consumed: true });
   } catch (err) {
     console.error("[mind/forage] consume error", { error: String(err) });

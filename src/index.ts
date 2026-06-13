@@ -68,6 +68,8 @@ import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
 import { getDrives, contactDrive } from "./handlers/drives.js";
+import { getCreatures, getCreature, interactCreature, tickCreatures } from "./handlers/creatures.js";
+import { getCollection, postSparkle } from "./handlers/collection.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
@@ -234,6 +236,16 @@ const router = new Router()
   // Drives (0078) -- need-based proactive contact (take 9)
   .on("GET",   "/mind/drives/:companion_id",         (request, env, params) => getDrives(request, env, params ?? {}))
   .on("PATCH", "/mind/drives/:companion_id/contact", (request, env, params) => contactDrive(request, env, params ?? {}))
+
+  // Creatures (0078) -- corvid + Raziel's animals as named presences (take 10)
+  .on("POST",  "/mind/creatures/tick",               (request, env)         => tickCreatures(request, env))
+  .on("GET",   "/mind/creatures",                    (request, env)         => getCreatures(request, env))
+  .on("GET",   "/mind/creatures/:id",                (request, env, params) => getCreature(request, env, params ?? {}))
+  .on("POST",  "/mind/creatures/:id/interact",       (request, env, params) => interactCreature(request, env, params ?? {}))
+
+  // Collection / sparkle (0079) -- emotional archaeology over forage + listens (take 13)
+  .on("GET",   "/mind/collection/:companion_id",     (request, env, params) => getCollection(request, env, params ?? {}))
+  .on("POST",  "/mind/collection/sparkle",           (request, env)         => postSparkle(request, env))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))

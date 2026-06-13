@@ -452,6 +452,27 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Creatures (0078, take 10) ──
+  creatures_read: {
+    triggers: [
+      "the creatures", "the animals", "raziel's animals", "how is sol",
+      "how are the creatures", "check on the animals", "read creatures", "the corvid",
+      "how are the pets", "creature status",
+    ],
+    tools: ["halseth_creatures_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  creature_interact: {
+    triggers: [
+      "feed the", "play with", "give to the creature", "pet the",
+      "interact with creature", "talk to the creature", "talk to sol", "feed sol",
+    ],
+    tools: ["halseth_creature_interact"],
+    response_key: "witness",
+    raw: true,
+  },
+
   // ── Shared-experience layer (0071) ──
   media_recent: {
     triggers: [

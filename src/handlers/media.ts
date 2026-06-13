@@ -10,6 +10,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { bumpSparkle } from "./collection.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -138,6 +139,9 @@ export async function reactToMedia(
       "UPDATE media_experiences SET reactions_json = json_set(COALESCE(reactions_json, '{}'), '$.' || ?, ?) WHERE id = ?"
     ).bind(companion, reaction.slice(0, 2000), id).run();
     if ((result.meta?.changes ?? 0) === 0) return json({ error: "experience not found" }, 404);
+    // Take 13: a listen that earned a reaction gains sparkle in the collection.
+    // Best-effort -- never fail the react on a sparkle write.
+    await bumpSparkle(env, "media_experiences", id, "react").catch(() => {});
     return json({ reacted: true });
   } catch (err) {
     console.error("[mind/media] react error", { error: String(err) });
