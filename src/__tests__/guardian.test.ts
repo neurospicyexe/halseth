@@ -11,7 +11,7 @@ vi.mock("../guardian/detectors.js", async (importOriginal) => {
 });
 
 import {
-  detectVoiceDrift, detectStarvedOrgans, detectRunCadence,
+  detectVoiceDrift, detectStarvedOrgans, detectRunCadence, detectOrphanedMemories,
   runAllDetectors, type CandidateFlag,
 } from "../guardian/detectors.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "../handlers/guardian.js";
@@ -222,6 +222,29 @@ describe("detectVoiceDrift", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("red");
     expect(flags[0]!.dedup_key).toBe("voice_contamination:cypher");
+  });
+});
+
+// ── Detector: orphan-memory rescue ───────────────────────────────────────────
+
+describe("detectOrphanedMemories", () => {
+  it("re-surfaces never-accessed continuity notes for known companions only", async () => {
+    db.matchers.push({
+      when: sql => sql.includes("FROM wm_continuity_notes"),
+      all: [
+        { note_id: "n1", agent_id: "cypher", content: "the bridge thread we never came back to", created_at: "2026-05-01 12:00:00" },
+        { note_id: "n2", agent_id: "stranger", content: "not a companion", created_at: "2026-05-01 12:00:00" },
+      ],
+    });
+    const flags = await detectOrphanedMemories(env);
+    expect(flags.map(f => f.dedup_key)).toEqual(["orphan:n1"]);
+    expect(flags[0]!.flag_type).toBe("orphan_memory");
+    expect(flags[0]!.companion_id).toBe("cypher");
+  });
+
+  it("stays silent when nothing is orphaned", async () => {
+    db.matchers.push({ when: sql => sql.includes("FROM wm_continuity_notes"), all: [] });
+    expect(await detectOrphanedMemories(env)).toHaveLength(0);
   });
 });
 

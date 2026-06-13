@@ -90,8 +90,8 @@ describe("acceptJournalEntry reconsolidation tagging", () => {
       if (sql.startsWith("UPDATE growth_journal SET review_status")) {
         return makeStmt([{}]); // changes: 1 -> flip succeeded
       }
-      if (sql.startsWith("SELECT supersedes_id FROM growth_journal")) {
-        return makeStmt([{ supersedes_id: "canon-1" }]);
+      if (sql.startsWith("SELECT supersedes_id, charge_phase FROM growth_journal")) {
+        return makeStmt([{ supersedes_id: "canon-1", charge_phase: "active" }]);
       }
       if (sql.includes("json_insert")) {
         tagSql = sql;

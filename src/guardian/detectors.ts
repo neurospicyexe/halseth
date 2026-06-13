@@ -11,7 +11,7 @@ export type CompanionId = (typeof COMPANIONS)[number];
 
 export interface CandidateFlag {
   companion_id: CompanionId | null;   // null = system-wide
-  flag_type: "voice_drift" | "starved_organ" | "loop_stuck" | "burnout" | "basin_pressure" | "ratification_backlog";
+  flag_type: "voice_drift" | "starved_organ" | "loop_stuck" | "burnout" | "basin_pressure" | "ratification_backlog" | "orphan_memory";
   severity: "notice" | "warning" | "red";
   summary: string;
   evidence: Record<string, unknown>;
@@ -31,6 +31,8 @@ export const GUARDIAN_THRESHOLDS = {
   METRONOME_SILENT_DAYS: 7,
   CLUB_GATHERING_STUCK_DAYS: 4,
   CLUB_VOTING_STUCK_DAYS: 6,     // opened_at-based (gather 2d + vote window + slack)
+  ORPHAN_COLD_DAYS: 21,          // continuity note never accessed past this = orphaned
+  ORPHAN_LIMIT: 3,               // re-surface at most this many per run (don't flood)
 } as const;
 
 const T = GUARDIAN_THRESHOLDS;
@@ -246,6 +248,29 @@ export async function detectRatificationBacklog(env: Env): Promise<CandidateFlag
   }));
 }
 
+/** Orphan-memory rescue (muse-brain daemon "rescues orphaned memories"; take 4).
+ *  Continuity notes that were written but NEVER accessed (last_access_at IS NULL) and have
+ *  aged past the cold threshold are decaying out of reach unseen. Instead of letting them rot
+ *  (or deleting them, as the vault gate does), the Guardian RE-SURFACES the oldest few as a
+ *  notice -- the `[Guardian]` orient block lifts them back into view so they can be re-linked,
+ *  re-engaged, or consciously let go. Rescue, not delete. */
+export async function detectOrphanedMemories(env: Env): Promise<CandidateFlag[]> {
+  const rows = await env.DB.prepare(
+    `SELECT note_id, agent_id, content, created_at FROM wm_continuity_notes
+     WHERE last_access_at IS NULL AND created_at < datetime('now','-' || ?1 || ' days')
+     ORDER BY created_at ASC LIMIT ?2`
+  ).bind(GUARDIAN_THRESHOLDS.ORPHAN_COLD_DAYS, GUARDIAN_THRESHOLDS.ORPHAN_LIMIT)
+    .all<{ note_id: string; agent_id: string; content: string; created_at: string }>();
+  return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.agent_id)).map(r => ({
+    companion_id: r.agent_id as CompanionId,
+    flag_type: "orphan_memory" as const,
+    severity: "notice" as const,
+    summary: `${r.agent_id}: continuity note from ${r.created_at.slice(0, 10)} has never been recalled -- «${(r.content ?? "").slice(0, 120)}». Re-link it, re-engage it, or let it go.`,
+    evidence: { note_id: r.note_id, created_at: r.created_at },
+    dedup_key: `orphan:${r.note_id}`,
+  }));
+}
+
 export async function runAllDetectors(env: Env): Promise<CandidateFlag[]> {
   const settled = await Promise.allSettled([
     detectVoiceDrift(env),
@@ -254,6 +279,7 @@ export async function runAllDetectors(env: Env): Promise<CandidateFlag[]> {
     detectRunCadence(env),
     detectBasinPressure(env),
     detectRatificationBacklog(env),
+    detectOrphanedMemories(env),
   ]);
   const flags: CandidateFlag[] = [];
   for (const s of settled) {

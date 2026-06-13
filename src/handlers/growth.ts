@@ -20,6 +20,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { nextPhase, phaseAdvances, advanceChargeSql, type ChargeSignal } from "../webmind/charge.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const MAX_TEXT = 8000;
@@ -277,13 +278,22 @@ async function setReviewStatus(
   // accepted but gains a machine-readable forward pointer in its tags.
   if (status === "accepted") {
     const accepted = await env.DB.prepare(
-      "SELECT supersedes_id FROM growth_journal WHERE id = ? AND companion_id = ?"
-    ).bind(id, companion_id).first<{ supersedes_id: string | null }>();
+      "SELECT supersedes_id, charge_phase FROM growth_journal WHERE id = ? AND companion_id = ?"
+    ).bind(id, companion_id).first<{ supersedes_id: string | null; charge_phase: string | null }>();
     if (accepted?.supersedes_id) {
       await env.DB.prepare(
         "UPDATE growth_journal SET tags_json = json_insert(coalesce(tags_json, '[]'), '$[#]', ?) WHERE id = ?"
       ).bind(`superseded:${id}`, accepted.supersedes_id).run()
         .catch(e => console.warn("[growth] superseded tag failed (non-fatal):", e));
+    }
+    // Charge-phase lifecycle (0075, take 2): ratifying an entry is intentional engagement,
+    // so the memory metabolizes one step along the ladder. A reconsolidation (supersede) is a
+    // burning paradox -- it jumps to at least 'processing'. Stored, monotonic, non-fatal.
+    const signal: ChargeSignal = accepted?.supersedes_id ? "reconsolidated" : "ratified";
+    if (phaseAdvances(accepted?.charge_phase, signal)) {
+      await env.DB.prepare(advanceChargeSql())
+        .bind(nextPhase(accepted?.charge_phase, signal), id).run()
+        .catch(e => console.warn("[growth] charge advance failed (non-fatal):", e));
     }
   }
 
