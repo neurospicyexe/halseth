@@ -206,7 +206,7 @@ import {
   execSearchFeedback, execGuardianStatus, execGuardianAck,
 } from "./executors/self-monitoring.js";
 import {
-  execWebSearch, execGenerateImage, execToolCallsRead,
+  execWebSearch, execGenerateImage, execToolCallsRead, execDrivesRead,
 } from "./executors/tools.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -350,6 +350,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_web_search: execWebSearch,
   halseth_generate_image: execGenerateImage,
   halseth_tool_calls_read: execToolCallsRead,
+
+  // Drives (0078, take 9)
+  halseth_drives_read: execDrivesRead,
   halseth_identity_recovery: execIdentityRecovery,
   halseth_self_model_read: execSelfModelRead,
   halseth_self_model_set: execSelfModelSet,

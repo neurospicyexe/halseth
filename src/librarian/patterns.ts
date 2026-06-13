@@ -441,6 +441,17 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Drives (0078, take 9) ──
+  drives_read: {
+    triggers: [
+      "my drives", "drive state", "how is my relational need", "read drives",
+      "do i need to reach out", "relational need",
+    ],
+    tools: ["halseth_drives_read"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── Shared-experience layer (0071) ──
   media_recent: {
     triggers: [

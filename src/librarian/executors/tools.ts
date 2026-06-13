@@ -59,6 +59,25 @@ export async function execGenerateImage(ctx: ExecutorContext): Promise<ExecutorR
   };
 }
 
+export async function execDrivesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "drives_read_failed", reason: "companion_id required" };
+  const { accruedLevel, driveFired, selectModality, readDrivesSql } = await import("../../webmind/drives.js");
+  const rows = await ctx.env.DB.prepare(readDrivesSql()).bind(ctx.req.companion_id).all<{
+    drive_key: string; level: number; accumulate_per_day: number; threshold: number; last_event_at: string;
+  }>();
+  const hoursSince = (iso: string | null): number => {
+    if (!iso) return 0;
+    const ms = Date.parse(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z");
+    return Number.isNaN(ms) ? 0 : Math.max(0, (Date.now() - ms) / 3_600_000);
+  };
+  const drives = (rows.results ?? []).map(r => {
+    const effective = accruedLevel(r.level, r.accumulate_per_day, hoursSince(r.last_event_at));
+    const fired = driveFired(effective, r.threshold);
+    return { drive_key: r.drive_key, level: Number(effective.toFixed(4)), fired, modality: fired ? selectModality(ctx.req.companion_id, effective) : null };
+  });
+  return { response_key: "summary", drives, meta: { operation: "drives_read", companion_id: ctx.req.companion_id, count: drives.length } };
+}
+
 export async function execToolCallsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "tool_calls_read_failed", reason: "companion_id required" };
   const rows = await ctx.env.DB.prepare(

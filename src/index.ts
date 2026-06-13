@@ -67,6 +67,7 @@ import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, pa
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
+import { getDrives, contactDrive } from "./handlers/drives.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
@@ -229,6 +230,10 @@ const router = new Router()
   .on("POST",  "/mind/tools/image",                (request, env)         => postToolImage(request, env))
   .on("GET",   "/mind/tools/calls/:companion_id",  (request, env, params) => getToolCalls(request, env, params ?? {}))
   .on("GET",   "/mind/tools/image/:id",            (request, env, params) => serveToolImage(request, env, params ?? {}))
+
+  // Drives (0078) -- need-based proactive contact (take 9)
+  .on("GET",   "/mind/drives/:companion_id",         (request, env, params) => getDrives(request, env, params ?? {}))
+  .on("PATCH", "/mind/drives/:companion_id/contact", (request, env, params) => contactDrive(request, env, params ?? {}))
 
   // Foraging pool -- outward fuel gathered by any substrate, consumed by any instance
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))
