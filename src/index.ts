@@ -65,6 +65,7 @@ import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kern
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
+import { postClearingRun } from "./handlers/clearing.js";
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
 import { getDrives, contactDrive } from "./handlers/drives.js";
@@ -186,6 +187,7 @@ const router = new Router()
   .on("GET",  "/mind/loops/:agent_id",  (request, env, params) => getMindLoops(request, env, params ?? {}))
   .on("POST", "/mind/loop/:id/close",   (request, env, params) => postMindLoopClose(request, env, params ?? {}))
   .on("POST", "/mind/loop/:id/review",  (request, env, params) => postMindLoopReview(request, env, params ?? {}))
+  .on("POST", "/mind/clearing/run",     (request, env)         => postClearingRun(request, env))
   .on("POST", "/mind/relational",       (request, env) => postMindRelational(request, env))
   .on("GET",  "/mind/relational/:agent_id", (request, env, params) => getMindRelational(request, env, params ?? {}))
   .on("POST", "/mind/spiral/run",           (request, env)         => postMindSpiralRun(request, env))

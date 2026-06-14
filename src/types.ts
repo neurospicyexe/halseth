@@ -41,6 +41,9 @@ export interface Env {
   TAVILY_API_KEY?: string;            // web search provider (set via wrangler secret)
   GEMINI_API_KEY?: string;            // image gen provider (set via wrangler secret)
   GEMINI_IMAGE_MODEL?: string;        // optional override for the Gemini image model
+  ANTHROPIC_API_KEY?: string;         // weekly clearing-pass substrate (set via wrangler secret; pass no-ops without it)
+  CLEARING_MODEL?: string;            // optional override for the clearing-pass model (default claude-opus-4-8)
+  CLEARING_MAX?: string;              // optional cap on entries triaged per pass (default 40)
   COMPANION_TOOLS_DEFAULT?: string;   // "true" | "false" -- gate fallback when no per-companion setting (wrangler.toml [vars])
   PUBLIC_BASE_URL?: string;           // this worker's public base URL, for building image-serve links
 }
