@@ -573,6 +573,24 @@ export async function execConfirmGrowthDrift(ctx: ExecutorContext): Promise<Exec
   return { ack: true, id: p.id, confirmed: true, baseline_shift_at: now, ...(baseline_warning ? { baseline_warning } : {}) };
 }
 
+// Dismiss a pressure reading as noise (B2, migration 0083). Mirror of confirm, but it
+// sets dismissed_at and -- crucially -- does NOT shift the identity-anchor baseline: a
+// noisy stretch must not become the new normal. Ownership-guarded, unaddressed-only.
+export async function execDismissDrift(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "dismiss_drift_failed", reason: "companion_id required" };
+  const p = parseContext<{ id: string }>(ctx.req.context);
+  if (!p?.id) return { response_key: "witness", witness: "dismiss_drift requires { id } in context" };
+
+  const result = await ctx.env.DB.prepare(
+    "UPDATE companion_basin_history SET dismissed_at = datetime('now') WHERE id = ? AND companion_id = ? AND caleth_confirmed = 0 AND dismissed_at IS NULL"
+  ).bind(p.id, ctx.req.companion_id).run();
+
+  if ((result.meta.changes ?? 0) === 0) {
+    return { response_key: "witness", witness: "no matching open pressure reading found for this companion" };
+  }
+  return { ack: true, id: p.id, dismissed: true };
+}
+
 export async function execIdentityAnchorRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "identity_anchor_read_failed", reason: "companion_id required" };
   const result = await queryIdentityAnchor(ctx.env, ctx.req.companion_id);

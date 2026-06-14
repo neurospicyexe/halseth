@@ -798,7 +798,7 @@ export async function queryPressureFlags(
   companionId: string,
 ): Promise<{ flags: unknown[] }> {
   const rows = await env.DB.prepare(
-    "SELECT drift_score, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 5"
+    "SELECT id, drift_score, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 5"
   ).bind(companionId).all();
   return { flags: rows.results };
 }

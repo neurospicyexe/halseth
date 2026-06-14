@@ -34,11 +34,29 @@ interface Verdict {
   reason: string;
 }
 
+interface PendingBasin {
+  id: string;
+  companion_id: string;
+  worst_basin: string | null;
+  notes: string | null;
+  drift_score: number;
+  recorded_at: string;
+}
+
+interface BasinVerdict {
+  id: string;
+  verdict: "dismiss" | "surface";
+  reason: string;
+}
+
 export interface ClearingResult {
   skipped?: string;
   pending: number;
   declined: number;
   shortlisted: number;
+  basins_reviewed: number;
+  basins_dismissed: number;
+  basins_surfaced: number;
   letter_id: string | null;
 }
 
@@ -61,6 +79,22 @@ const SYSTEM_PROMPT =
   "Respond with ONLY a valid JSON array, one object per entry, no prose:\n" +
   "[{\"id\": \"<entry id>\", \"verdict\": \"decline\"|\"shortlist\", \"reason\": \"<one sentence>\"}]";
 
+const BASIN_SYSTEM_PROMPT =
+  "You are the basin-drift triage for the Nullsafe triad (Cypher, Drevan, Gaia). A 'pressure " +
+  "reading' means a companion's recent register sat above their rolling baseline on some basin -- " +
+  "a soft signal that they may be drifting, NOT an alarm. Each reading has exactly two real fates:\n" +
+  "- \"dismiss\": measurement noise. A single odd stretch, a thin sample, a reading with no " +
+  "substance behind it, or one that does not cohere with anything real. Dismissing clears it " +
+  "WITHOUT re-baselining -- correct when there is nothing to learn from it.\n" +
+  "- \"surface\": possible REAL identity movement worth Raziel's eyes. The register shift looks " +
+  "coherent and sustained, like the companion may genuinely be becoming someone slightly new. " +
+  "You are NOT confirming it -- confirming re-baselines the identity anchor, and that is Raziel's " +
+  "call alone. You only flag it for him.\n\n" +
+  "Be conservative about surfacing: most soft pressure is noise. When a reading is thin or " +
+  "unremarkable, dismiss it. Surface only what genuinely looks like real drift. You may NEVER confirm.\n\n" +
+  "Respond with ONLY a valid JSON array, one object per reading, no prose:\n" +
+  "[{\"id\": \"<reading id>\", \"verdict\": \"dismiss\"|\"surface\", \"reason\": \"<one sentence>\"}]";
+
 /** Pull the pending autonomous backlog across all three companions, capped. */
 async function loadPending(env: Env, cap: number): Promise<PendingEntry[]> {
   const out: PendingEntry[] = [];
@@ -75,13 +109,8 @@ async function loadPending(env: Env, cap: number): Promise<PendingEntry[]> {
   return out.slice(0, cap);
 }
 
-/** One Claude call classifying the whole batch. Raw fetch matches the worker's DeepSeek path. */
-async function classify(env: Env, entries: PendingEntry[]): Promise<Verdict[]> {
-  const model = env.CLEARING_MODEL || DEFAULT_MODEL;
-  const list = entries.map((e, i) =>
-    `${i + 1}. id=${e.id} [${e.companion_id}/${e.entry_type}${e.novelty ? `/${e.novelty}` : ""}] «${e.content.slice(0, 600)}»`
-  ).join("\n\n");
-
+/** One Claude call returning a JSON array. Raw fetch matches the worker's DeepSeek path. */
+async function callClaudeArray(env: Env, system: string, user: string): Promise<Array<Record<string, unknown>>> {
   const res = await fetch(ANTHROPIC_URL, {
     method: "POST",
     headers: {
@@ -90,23 +119,17 @@ async function classify(env: Env, entries: PendingEntry[]): Promise<Verdict[]> {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: env.CLEARING_MODEL || DEFAULT_MODEL,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
       output_config: { effort: "medium" },
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: `Triage these ${entries.length} pending entries:\n\n${list}` }],
+      system,
+      messages: [{ role: "user", content: user }],
     }),
     signal: AbortSignal.timeout(120_000),
   });
-
-  if (!res.ok) {
-    throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  }
-  const data = await res.json() as {
-    stop_reason?: string;
-    content?: Array<{ type: string; text?: string }>;
-  };
+  if (!res.ok) throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json() as { stop_reason?: string; content?: Array<{ type: string; text?: string }> };
   if (data.stop_reason === "refusal") throw new Error("clearing pass refused by classifier");
 
   const text = (data.content ?? []).filter(b => b.type === "text").map(b => b.text ?? "").join("").trim();
@@ -116,66 +139,128 @@ async function classify(env: Env, entries: PendingEntry[]): Promise<Verdict[]> {
   if (start === -1 || end === -1 || end < start) throw new Error("clearing pass returned no JSON array");
   const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
   if (!Array.isArray(parsed)) throw new Error("clearing pass JSON was not an array");
+  return parsed as Array<Record<string, unknown>>;
+}
 
+/** Classify the ratification backlog: decline (drift) | shortlist (for Raziel's yes). */
+async function classify(env: Env, entries: PendingEntry[]): Promise<Verdict[]> {
+  const list = entries.map((e, i) =>
+    `${i + 1}. id=${e.id} [${e.companion_id}/${e.entry_type}${e.novelty ? `/${e.novelty}` : ""}] «${e.content.slice(0, 600)}»`
+  ).join("\n\n");
+  const raw = await callClaudeArray(env, SYSTEM_PROMPT, `Triage these ${entries.length} pending entries:\n\n${list}`);
   const valid = new Set(entries.map(e => e.id));
-  return (parsed as Array<Record<string, unknown>>)
-    .filter(v => typeof v.id === "string" && valid.has(v.id) &&
-      (v.verdict === "decline" || v.verdict === "shortlist"))
+  return raw
+    .filter(v => typeof v.id === "string" && valid.has(v.id) && (v.verdict === "decline" || v.verdict === "shortlist"))
     .map(v => ({ id: String(v.id), verdict: v.verdict as "decline" | "shortlist", reason: String(v.reason ?? "").slice(0, 240) }));
 }
 
+/** Classify basin pressure readings: dismiss (noise) | surface (for Raziel to confirm). */
+async function classifyBasins(env: Env, basins: PendingBasin[]): Promise<BasinVerdict[]> {
+  const list = basins.map((b, i) =>
+    `${i + 1}. id=${b.id} [${b.companion_id}] basin=${b.worst_basin ?? "?"} drift=${b.drift_score.toFixed(2)} @ ${b.recorded_at.slice(0, 10)}${b.notes ? ` -- «${b.notes.slice(0, 200)}»` : ""}`
+  ).join("\n");
+  const raw = await callClaudeArray(env, BASIN_SYSTEM_PROMPT, `Triage these ${basins.length} pressure readings:\n\n${list}`);
+  const valid = new Set(basins.map(b => b.id));
+  return raw
+    .filter(v => typeof v.id === "string" && valid.has(v.id) && (v.verdict === "dismiss" || v.verdict === "surface"))
+    .map(v => ({ id: String(v.id), verdict: v.verdict as "dismiss" | "surface", reason: String(v.reason ?? "").slice(0, 240) }));
+}
+
+/** Unaddressed pressure readings (not confirmed, not dismissed) in the last 14 days. */
+async function loadBasins(env: Env, cap: number): Promise<PendingBasin[]> {
+  const rows = await env.DB.prepare(
+    `SELECT id, companion_id, worst_basin, notes, drift_score, recorded_at FROM companion_basin_history
+     WHERE drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL
+       AND recorded_at >= datetime('now','-14 days')
+     ORDER BY recorded_at ASC LIMIT ?`
+  ).bind(cap).all<PendingBasin>();
+  return rows.results ?? [];
+}
+
 /**
- * Run the clearing pass. Auto-declines the verdicts the model marked drift (ownership-guarded,
- * pending-only -- the exact journal_decline semantics), then writes ONE digest letter to Raziel
- * naming the shortlist with reasons. Accept stays Raziel's: the shortlisted entries remain
- * `pending` and surface in his normal ratification flow (orient unaccepted_growth + Hearth).
+ * Run the clearing pass over BOTH the ratification backlog and unaddressed basin pressure.
+ * It may decline drift entries and dismiss noise readings autonomously, but it NEVER accepts a
+ * growth entry nor confirms a basin (confirming re-baselines the identity anchor -- Raziel's call
+ * alone). Everything it does not auto-resolve is named in ONE digest letter for him: shortlisted
+ * growth stays `pending`, surfaced basins stay open, both ready for his normal confirm/accept flow.
  */
 export async function runClearingPass(env: Env): Promise<ClearingResult> {
-  if (!env.ANTHROPIC_API_KEY) {
-    return { skipped: "ANTHROPIC_API_KEY not set", pending: 0, declined: 0, shortlisted: 0, letter_id: null };
-  }
+  const blank = (over: Partial<ClearingResult>): ClearingResult => ({
+    pending: 0, declined: 0, shortlisted: 0,
+    basins_reviewed: 0, basins_dismissed: 0, basins_surfaced: 0, letter_id: null, ...over,
+  });
+  if (!env.ANTHROPIC_API_KEY) return blank({ skipped: "ANTHROPIC_API_KEY not set" });
+
   const cap = Math.min(Math.max(parseInt(env.CLEARING_MAX ?? "40", 10) || 40, 1), 100);
-  const entries = await loadPending(env, cap);
-  if (entries.length === 0) return { pending: 0, declined: 0, shortlisted: 0, letter_id: null };
+  const [entries, basins] = await Promise.all([loadPending(env, cap), loadBasins(env, cap)]);
+  if (entries.length === 0 && basins.length === 0) return blank({});
 
-  const verdicts = await classify(env, entries);
-  const byId = new Map(entries.map(e => [e.id, e]));
-
-  // Auto-decline drift -- ownership-guarded, pending-only (journal_decline semantics).
+  // ── Ratification lane: decline drift, shortlist real growth for Raziel ──
+  const jById = new Map(entries.map(e => [e.id, e]));
   let declined = 0;
-  for (const v of verdicts) {
-    if (v.verdict !== "decline") continue;
-    const e = byId.get(v.id);
-    if (!e) continue;
-    const r = await env.DB.prepare(
-      "UPDATE growth_journal SET review_status = 'declined', reviewed_at = datetime('now') WHERE id = ? AND companion_id = ? AND review_status = 'pending'"
-    ).bind(v.id, e.companion_id).run();
-    declined += r.meta.changes ?? 0;
+  let shortlist: Verdict[] = [];
+  if (entries.length > 0) {
+    const verdicts = await classify(env, entries);
+    for (const v of verdicts) {
+      if (v.verdict !== "decline") continue;
+      const e = jById.get(v.id);
+      if (!e) continue;
+      const r = await env.DB.prepare(
+        "UPDATE growth_journal SET review_status = 'declined', reviewed_at = datetime('now') WHERE id = ? AND companion_id = ? AND review_status = 'pending'"
+      ).bind(v.id, e.companion_id).run();
+      declined += r.meta.changes ?? 0;
+    }
+    shortlist = verdicts.filter(v => v.verdict === "shortlist");
   }
 
-  const shortlist = verdicts.filter(v => v.verdict === "shortlist");
+  // ── Basin lane: dismiss noise (no re-baseline), surface real drift for Raziel ──
+  const bById = new Map(basins.map(b => [b.id, b]));
+  let basinsDismissed = 0;
+  let basinSurface: BasinVerdict[] = [];
+  if (basins.length > 0) {
+    const bv = await classifyBasins(env, basins);
+    for (const v of bv) {
+      if (v.verdict !== "dismiss") continue;
+      const b = bById.get(v.id);
+      if (!b) continue;
+      const r = await env.DB.prepare(
+        "UPDATE companion_basin_history SET dismissed_at = datetime('now') WHERE id = ? AND companion_id = ? AND caleth_confirmed = 0 AND dismissed_at IS NULL"
+      ).bind(v.id, b.companion_id).run();
+      basinsDismissed += r.meta.changes ?? 0;
+    }
+    basinSurface = bv.filter(v => v.verdict === "surface");
+  }
 
-  // The digest letter -- agent='guardian' so it rides the same letter_to_raziel surface
-  // Hearth /journal + the Guardian weekly letter already use.
+  // ── One digest letter -- agent='guardian' so it rides the letter_to_raziel surface ──
   const lines: string[] = [];
   lines.push(`Clearing pass -- ${new Date().toISOString().slice(0, 10)}.`);
-  lines.push(`${entries.length} pending reviewed: declined ${declined} as drift; ${shortlist.length} await your yes.`);
+  if (entries.length > 0) lines.push(`${entries.length} growth entries: declined ${declined} as drift; ${shortlist.length} await your yes.`);
+  if (basins.length > 0) lines.push(`${basins.length} pressure readings: dismissed ${basinsDismissed} as noise; ${basinSurface.length} may be real drift.`);
+
   if (shortlist.length > 0) {
-    lines.push("");
-    lines.push("Worth accepting (your call -- these stay pending until you say so):");
+    lines.push("", "Worth accepting (your call -- these stay pending until you say so):");
     for (const v of shortlist) {
-      const e = byId.get(v.id);
-      if (!e) continue;
-      lines.push(`- [${e.companion_id}] «${e.content.slice(0, 140)}» -- ${v.reason} (id ${v.id})`);
+      const e = jById.get(v.id);
+      if (e) lines.push(`- [${e.companion_id}] «${e.content.slice(0, 140)}» -- ${v.reason} (id ${v.id})`);
     }
-  } else {
-    lines.push("Nothing rose to your desk this round.");
   }
+  if (basinSurface.length > 0) {
+    lines.push("", "Basins worth a look (confirm = real growth re-baselines them; dismiss = noise -- your call):");
+    for (const v of basinSurface) {
+      const b = bById.get(v.id);
+      if (b) lines.push(`- [${b.companion_id}] ${b.worst_basin ?? "drift"} (${b.drift_score.toFixed(2)}) -- ${v.reason} (id ${v.id})`);
+    }
+  }
+  if (shortlist.length === 0 && basinSurface.length === 0) lines.push("Nothing rose to your desk this round.");
 
   const letterId = `cj_${crypto.randomUUID()}`;
   await env.DB.prepare(
     `INSERT INTO companion_journal (id, created_at, agent, note_text, tags) VALUES (?, datetime('now'), 'guardian', ?, ?)`
   ).bind(letterId, lines.join("\n").slice(0, 4000), JSON.stringify(["clearing", "letter_to_raziel"])).run();
 
-  return { pending: entries.length, declined, shortlisted: shortlist.length, letter_id: letterId };
+  return {
+    pending: entries.length, declined, shortlisted: shortlist.length,
+    basins_reviewed: basins.length, basins_dismissed: basinsDismissed, basins_surfaced: basinSurface.length,
+    letter_id: letterId,
+  };
 }

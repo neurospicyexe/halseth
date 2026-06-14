@@ -196,7 +196,7 @@ import {
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
   execRecentRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
-  execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execLimbicRead,
+  execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execDismissDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMotifsRead, execMediaRecent, execIdentityAnchorRead,
   execClubStatus, execClubRecommend, execClubVote, execClubDiscuss,
 } from "./executors/companion-growth.js";
@@ -331,6 +331,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   limbic_read: execLimbicRead,
   triad_state_read: execTriadStateRead,
   confirm_growth_drift: execConfirmGrowthDrift,
+  dismiss_drift: execDismissDrift,
   pressure_drift_log: execPressureDriftLog,
   conclusion_add: execConclusionAdd,
   conclusions_read: execConclusionsRead,

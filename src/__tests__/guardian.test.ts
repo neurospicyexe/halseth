@@ -12,7 +12,7 @@ vi.mock("../guardian/detectors.js", async (importOriginal) => {
 
 import {
   detectVoiceDrift, detectStarvedOrgans, detectRunCadence, detectOrphanedMemories,
-  detectStuckLoops, runAllDetectors, type CandidateFlag,
+  detectStuckLoops, detectBasinPressure, runAllDetectors, type CandidateFlag,
 } from "../guardian/detectors.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "../handlers/guardian.js";
 
@@ -274,6 +274,30 @@ describe("detectStuckLoops", () => {
     });
     await detectStuckLoops(env);
     expect(seenSql).toContain("reviewed_at");
+  });
+});
+
+// ── Detector: basin pressure ─────────────────────────────────────────────────
+
+describe("detectBasinPressure", () => {
+  it("flags a companion over the unaddressed-pressure threshold", async () => {
+    db.matchers.push({
+      when: sql => sql.includes("FROM companion_basin_history"),
+      all: [{ companion_id: "gaia", n: 4 }],
+    });
+    const flags = await detectBasinPressure(env);
+    expect(flags.map(f => f.dedup_key)).toEqual(["basin_pressure:gaia"]);
+  });
+
+  it("excludes both confirmed AND dismissed readings (migration 0083)", async () => {
+    let seenSql = "";
+    db.matchers.push({
+      when: sql => { if (sql.includes("FROM companion_basin_history")) seenSql = sql; return sql.includes("FROM companion_basin_history"); },
+      all: [],
+    });
+    await detectBasinPressure(env);
+    expect(seenSql).toContain("caleth_confirmed = 0");
+    expect(seenSql).toContain("dismissed_at IS NULL");
   });
 });
 

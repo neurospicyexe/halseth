@@ -88,7 +88,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(agentId).all<WmTensionRow>(),
     // Self-defense: unconfirmed pressure drift flags -- surface for self-correction
     env.DB.prepare(
-      "SELECT drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
+      "SELECT id, drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<WmBasinHistoryRow>(),
     // Growth tracking: recently confirmed growth records -- surface alongside pressure flags
     env.DB.prepare(

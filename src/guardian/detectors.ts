@@ -220,8 +220,9 @@ export async function detectRunCadence(env: Env): Promise<CandidateFlag[]> {
 /** Unconfirmed basin pressure accumulating -- post-calibration this is real signal. */
 export async function detectBasinPressure(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
+    // Unaddressed = neither confirmed as growth nor dismissed as noise (migration 0083).
     `SELECT companion_id, COUNT(*) AS n FROM companion_basin_history
-     WHERE drift_type = 'pressure' AND caleth_confirmed = 0
+     WHERE drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL
        AND recorded_at >= datetime('now','-14 days')
      GROUP BY companion_id HAVING n >= ?1`
   ).bind(GUARDIAN_THRESHOLDS.BASIN_PRESSURE_14D).all<{ companion_id: string; n: number }>();

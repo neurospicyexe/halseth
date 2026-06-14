@@ -798,8 +798,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).bind(agentId).all<{ id: string; loop_text: string }>(),
     // 19. Pressure flags (unconfirmed drift) -- self-correction signal for the worker.
     ctx.env.DB.prepare(
-      "SELECT worst_basin, notes FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 ORDER BY recorded_at DESC LIMIT 3"
-    ).bind(agentId).all<{ worst_basin: string | null; notes: string | null }>(),
+      "SELECT id, worst_basin, notes FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 3"
+    ).bind(agentId).all<{ id: string; worst_basin: string | null; notes: string | null }>(),
     // 20. Open continuity-gap questions -- things this companion is holding to ask Raziel.
     ctx.env.DB.prepare(
       "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
@@ -963,10 +963,15 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
           loop_text: (r.loop_text ?? "").slice(0, 200),
         }))
       : [];
+  // Carry the row id (migration 0083) so a companion can confirm-as-growth or dismiss-as-noise
+  // a SPECIFIC reading in conversation -- the handle the confirm/dismiss executors need.
   const pressure_flags =
     pressureResult.status === "fulfilled" && pressureResult.value?.results
-      ? (pressureResult.value.results as Array<{ worst_basin: string | null; notes: string | null }>)
-          .map(r => [r.worst_basin, r.notes].filter(Boolean).join(": ").slice(0, 150))
+      ? (pressureResult.value.results as Array<{ id: string; worst_basin: string | null; notes: string | null }>)
+          .map(r => {
+            const body = [r.worst_basin, r.notes].filter(Boolean).join(": ").slice(0, 130);
+            return body ? `${body} (id ${r.id})` : `(id ${r.id})`;
+          })
           .filter(Boolean)
       : [];
 

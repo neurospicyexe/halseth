@@ -37,7 +37,7 @@ import { postConclusion, getConclusions, supersedeConclusionById } from "./handl
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
 import {
   getBasins, postBasin,
-  getBasinHistory, postBasinHistory, confirmBasinHistory,
+  getBasinHistory, postBasinHistory, confirmBasinHistory, dismissBasinHistory,
   getTensions, postTension, patchTension,
 } from "./handlers/companion-growth.js";
 import {
@@ -321,6 +321,7 @@ const router = new Router()
   .on("GET",  "/companion-growth/basin-history/:companion_id",    (request, env, params) => getBasinHistory(request, env, params ?? {}))
   .on("POST", "/companion-growth/basin-history",                  (request, env)         => postBasinHistory(request, env))
   .on("POST", "/companion-growth/basin-history/:id/confirm",      (request, env, params) => confirmBasinHistory(request, env, params ?? {}))
+  .on("POST", "/companion-growth/basin-history/:id/dismiss",      (request, env, params) => dismissBasinHistory(request, env, params ?? {}))
   .on("GET",  "/companion-growth/tensions/:companion_id",         (request, env, params) => getTensions(request, env, params ?? {}))
   .on("POST", "/companion-growth/tensions",                       (request, env)         => postTension(request, env))
   .on("PATCH","/companion-growth/tensions/:id",                   (request, env, params) => patchTension(request, env, params ?? {}))

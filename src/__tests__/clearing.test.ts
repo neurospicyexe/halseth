@@ -12,6 +12,8 @@ interface Row { [k: string]: unknown }
 class FakeDb {
   pending: Record<string, Row[]> = { cypher: [], drevan: [], gaia: [] };
   declined: string[] = [];
+  basins: Row[] = [];
+  basinDismissed: string[] = [];
   journal: Row[] = [];
 
   prepare(sql: string) { return new FakeStmt(sql, this); }
@@ -26,12 +28,19 @@ class FakeStmt {
       const companion = this.bound[0] as string;
       return { results: (this.db.pending[companion] ?? []) as T[] };
     }
+    if (this.sql.includes("FROM companion_basin_history")) {
+      return { results: this.db.basins as T[] };
+    }
     return { results: [] };
   }
 
   async run(): Promise<{ meta: { changes: number } }> {
     if (this.sql.includes("UPDATE growth_journal SET review_status = 'declined'")) {
       this.db.declined.push(this.bound[0] as string);
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("UPDATE companion_basin_history SET dismissed_at")) {
+      this.db.basinDismissed.push(this.bound[0] as string);
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO companion_journal")) {
@@ -97,6 +106,27 @@ describe("runClearingPass", () => {
     expect(db.journal[0]!["tags"]).toContain("clearing");
     expect(db.journal[0]!["note_text"]).toContain("g2");      // shortlist surfaced with its id
     expect(db.journal[0]!["note_text"]).not.toContain("accepted"); // never accepts
+  });
+
+  it("dismisses noise basins (no re-baseline) and surfaces real drift in the letter -- never confirms", async () => {
+    db.basins = [
+      { id: "b1", companion_id: "drevan", worst_basin: "tender", notes: "thin sample", drift_score: 0.42, recorded_at: "2026-06-12 09:00:00" },
+      { id: "b2", companion_id: "drevan", worst_basin: "dark", notes: "sustained register shift", drift_score: 0.71, recorded_at: "2026-06-13 09:00:00" },
+    ];
+    stubAnthropic([
+      { id: "b1", verdict: "dismiss", reason: "thin, no substance" },
+      { id: "b2", verdict: "surface", reason: "coherent sustained drift" },
+    ]);
+
+    const res = await runClearingPass(makeEnv(db));
+
+    expect(res.basins_reviewed).toBe(2);
+    expect(res.basins_dismissed).toBe(1);
+    expect(res.basins_surfaced).toBe(1);
+    expect(db.basinDismissed).toEqual(["b1"]);   // only the noise reading dismissed
+    expect(db.journal).toHaveLength(1);
+    expect(db.journal[0]!["note_text"]).toContain("b2");          // real drift surfaced with id
+    expect(db.journal[0]!["note_text"]).toContain("re-baseline"); // letter names the stakes
   });
 
   it("ignores hallucinated ids and invalid verdicts from the model", async () => {

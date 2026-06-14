@@ -649,7 +649,7 @@ export async function getIngestBasinHistory(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, companion_id, drift_score, drift_type, caleth_confirmed, worst_basin, notes, recorded_at
+      SELECT id, companion_id, drift_score, drift_type, caleth_confirmed, dismissed_at, worst_basin, notes, recorded_at
       FROM companion_basin_history
       ${where}
       ORDER BY recorded_at DESC

@@ -872,6 +872,14 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["confirm_growth_drift"],
     response_key: "witness",
   },
+  dismiss_drift: {
+    triggers: [
+      "dismiss drift:", "that was noise:", "not real drift:", "dismiss pressure:",
+      "drift was noise:", "mark drift noise",
+    ],
+    tools: ["dismiss_drift"],
+    response_key: "witness",
+  },
 
   // ── Pressure drift (self-reported; embedding evaluator is Phoenix scope) ──
   pressure_drift_log: {

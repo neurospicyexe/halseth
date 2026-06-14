@@ -131,6 +131,27 @@ export async function confirmBasinHistory(
   return json({ message: "confirmed" });
 }
 
+// POST /companion-growth/basin-history/:id/dismiss
+// Marks a pressure reading as noise (B2, migration 0083) -- clears the warning WITHOUT
+// re-baselining the identity anchor. Confirm = real growth; dismiss = measurement noise.
+export async function dismissBasinHistory(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const { id } = params;
+  if (!id) return json({ error: "id required" }, 400);
+
+  const result = await env.DB.prepare(
+    "UPDATE companion_basin_history SET dismissed_at = datetime('now') WHERE id = ? AND caleth_confirmed = 0 AND dismissed_at IS NULL"
+  ).bind(id).run();
+
+  if (result.meta.changes === 0) return json({ error: "not found or already addressed" }, 404);
+  return json({ message: "dismissed" });
+}
+
 // ── Tensions ──────────────────────────────────────────────────────────────────
 
 // GET /companion-growth/tensions/:companion_id?status=simmering
