@@ -10,7 +10,7 @@ import { upsertThread } from '../../webmind/threads.js';
 import { addNote } from '../../webmind/notes.js';
 import { writeHandoff } from '../../webmind/handoffs.js';
 import { writeDream, readDreams, examineDream } from '../../webmind/dreams.js';
-import { writeLoop, readLoops, closeLoop } from '../../webmind/loops.js';
+import { writeLoop, readLoops, closeLoop, reviewLoop } from '../../webmind/loops.js';
 import { writeRelationalState, readRelationalHistory } from '../../webmind/relational.js';
 import { sitNote, metabolizeNote, readSittingNotes } from '../../webmind/sits.js';
 
@@ -70,6 +70,10 @@ export async function wmReadLoops(env: Env, agentId: WmAgentId, opts?: { include
 
 export async function wmCloseLoop(env: Env, id: string, agentId: WmAgentId) {
   return closeLoop(env, id, agentId);
+}
+
+export async function wmReviewLoop(env: Env, id: string, agentId: WmAgentId, reason: string) {
+  return reviewLoop(env, id, agentId, reason);
 }
 
 export async function wmWriteRelationalState(env: Env, input: WmRelationalStateInput) {

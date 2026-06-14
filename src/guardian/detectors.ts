@@ -168,8 +168,12 @@ export async function detectStarvedOrgans(env: Env): Promise<CandidateFlag[]> {
 /** Loops open past the stuck threshold -- carried weight that never resolves. */
 export async function detectStuckLoops(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
+    // A loop the companion reviewed (held-with-reason) within the window is an intentional
+    // carry, not a nag: reviewed_at >= now-21d suppresses the flag, and it re-raises only
+    // once the hold itself goes stale (migration 0082, Guardian self-resolution).
     `SELECT id, companion_id, loop_text, opened_at FROM companion_open_loops
      WHERE closed_at IS NULL AND opened_at < datetime('now','-' || ?1 || ' days')
+       AND (reviewed_at IS NULL OR reviewed_at < datetime('now','-' || ?1 || ' days'))
      ORDER BY opened_at ASC LIMIT 10`
   ).bind(GUARDIAN_THRESHOLDS.LOOP_STUCK_DAYS).all<{ id: string; companion_id: string; loop_text: string; opened_at: string }>();
   return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => ({

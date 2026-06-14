@@ -854,6 +854,14 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["wm_loop_close"],
     response_key: "witness",
   },
+  wm_loop_review: {
+    triggers: [
+      "hold loop", "hold this loop", "keep loop open", "loop stays open",
+      "review loop", "loop held", "name why it stays",
+    ],
+    tools: ["wm_loop_review"],
+    response_key: "witness",
+  },
 
   // ── Growth drift confirm (clears pressure flag; marks anchor baseline shift) ──
   confirm_growth_drift: {

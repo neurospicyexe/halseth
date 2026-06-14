@@ -185,7 +185,7 @@ import {
 import {
   execWmOrient, execWmGround, execWmThreadUpsert, execWmNoteAdd, execWmHandoffWrite,
   execWmDreamWrite, execWmDreamsRead, execWmDreamExamine,
-  execWmLoopWrite, execWmLoopsRead, execWmLoopClose,
+  execWmLoopWrite, execWmLoopsRead, execWmLoopClose, execWmLoopReview,
   execWmRelationalWrite, execWmRelationalRead,
   execRazielWitness,
   execNoteSit, execNoteMetabolize, execSittingRead,
@@ -309,6 +309,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   wm_loop_write: execWmLoopWrite,
   wm_loops_read: execWmLoopsRead,
   wm_loop_close: execWmLoopClose,
+  wm_loop_review: execWmLoopReview,
   wm_relational_write: execWmRelationalWrite,
   wm_relational_read: execWmRelationalRead,
   raziel_witness: execRazielWitness,

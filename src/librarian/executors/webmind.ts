@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
+import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmReviewLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -196,6 +196,13 @@ export async function execWmLoopClose(ctx: ExecutorContext): Promise<ExecutorRes
   const p = parseContext<{ id: string }>(ctx.req.context);
   if (!p?.id) return { error: "wm_loop_close_failed", reason: "missing required field: id" };
   const r = await wmCloseLoop(ctx.env, p.id, ctx.req.companion_id as WmAgentId);
+  return { ack: true, ok: r.ok };
+}
+
+export async function execWmLoopReview(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ id: string; reason?: string }>(ctx.req.context);
+  if (!p?.id) return { error: "wm_loop_review_failed", reason: "missing required field: id" };
+  const r = await wmReviewLoop(ctx.env, p.id, ctx.req.companion_id as WmAgentId, p.reason ?? "");
   return { ack: true, ok: r.ok };
 }
 

@@ -39,3 +39,23 @@ export async function closeLoop(env: Env, id: string, companionId: WmAgentId): P
   ).bind(now, id, companionId).run();
   return { ok: (result.meta?.changes ?? 0) > 0 };
 }
+
+/**
+ * Hold a loop open on purpose (migration 0082, Guardian self-resolution). A companion
+ * clearing its own loop_stuck flag can keep the loop but record WHY it stays; reviewed_at
+ * suppresses the stuck flag for 21d (detectStuckLoops). The reason is appended to loop_text
+ * so the held justification travels with the loop. Ownership-guarded; only an open loop.
+ */
+export async function reviewLoop(
+  env: Env, id: string, companionId: WmAgentId, reason: string
+): Promise<{ ok: boolean }> {
+  const now = new Date().toISOString();
+  const note = (reason ?? "").trim().slice(0, 280);
+  const result = await env.DB.prepare(
+    `UPDATE companion_open_loops
+       SET reviewed_at = ?1,
+           loop_text = CASE WHEN ?2 != '' THEN loop_text || ' [held ' || ?3 || ': ' || ?2 || ']' ELSE loop_text END
+     WHERE id = ?4 AND companion_id = ?5 AND closed_at IS NULL`
+  ).bind(now, note, now.slice(0, 10), id, companionId).run();
+  return { ok: (result.meta?.changes ?? 0) > 0 };
+}

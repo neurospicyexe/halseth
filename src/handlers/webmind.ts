@@ -13,7 +13,7 @@ import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes,
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
-import { writeLoop, readLoops, closeLoop } from "../webmind/loops.js";
+import { writeLoop, readLoops, closeLoop, reviewLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
 import { writeLimbicState, getCurrentLimbicState } from "../webmind/limbic.js";
 import { queueAndRunSpiral } from '../webmind/spiral.js';
@@ -420,6 +420,42 @@ export async function postMindLoopClose(
     return json(result);
   } catch (err) {
     console.error("[mind/loop/close] error", { id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/loop/:id/review   body: { companion_id, reason }
+// Hold a loop open on purpose (Guardian self-resolution): records WHY it stays and
+// suppresses the loop_stuck flag for 21d. Ownership-guarded inside reviewLoop.
+export async function postMindLoopReview(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id || typeof id !== "string") {
+    return json({ error: "loop id is required" }, 400);
+  }
+
+  let body: { companion_id: string; reason?: string };
+  try {
+    body = await request.json() as { companion_id: string; reason?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.companion_id || !isValidAgentId(body.companion_id)) {
+    return json({ error: "companion_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+
+  try {
+    const result = await reviewLoop(env, id, body.companion_id, body.reason ?? "");
+    return json(result);
+  } catch (err) {
+    console.error("[mind/loop/review] error", { id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

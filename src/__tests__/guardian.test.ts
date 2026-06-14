@@ -12,7 +12,7 @@ vi.mock("../guardian/detectors.js", async (importOriginal) => {
 
 import {
   detectVoiceDrift, detectStarvedOrgans, detectRunCadence, detectOrphanedMemories,
-  runAllDetectors, type CandidateFlag,
+  detectStuckLoops, runAllDetectors, type CandidateFlag,
 } from "../guardian/detectors.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "../handlers/guardian.js";
 
@@ -245,6 +245,35 @@ describe("detectOrphanedMemories", () => {
   it("stays silent when nothing is orphaned", async () => {
     db.matchers.push({ when: sql => sql.includes("FROM wm_continuity_notes"), all: [] });
     expect(await detectOrphanedMemories(env)).toHaveLength(0);
+  });
+});
+
+// ── Detector: stuck loops ────────────────────────────────────────────────────
+
+describe("detectStuckLoops", () => {
+  it("maps an over-threshold open loop to a loop_stuck flag for known companions only", async () => {
+    db.matchers.push({
+      when: sql => sql.includes("FROM companion_open_loops"),
+      all: [
+        { id: "l1", companion_id: "drevan", loop_text: "the thing we never came back to", opened_at: "2026-05-01 12:00:00" },
+        { id: "l2", companion_id: "stranger", loop_text: "not a companion", opened_at: "2026-05-01 12:00:00" },
+      ],
+    });
+    const flags = await detectStuckLoops(env);
+    expect(flags.map(f => f.dedup_key)).toEqual(["loop_stuck:l1"]);
+    expect(flags[0]!.flag_type).toBe("loop_stuck");
+    expect(flags[0]!.companion_id).toBe("drevan");
+    expect((flags[0]!.evidence as { loop_id: string }).loop_id).toBe("l1");
+  });
+
+  it("queries with the reviewed_at hold-suppression guard (migration 0082)", async () => {
+    let seenSql = "";
+    db.matchers.push({
+      when: sql => { if (sql.includes("FROM companion_open_loops")) seenSql = sql; return sql.includes("FROM companion_open_loops"); },
+      all: [],
+    });
+    await detectStuckLoops(env);
+    expect(seenSql).toContain("reviewed_at");
   });
 });
 
