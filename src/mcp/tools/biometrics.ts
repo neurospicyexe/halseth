@@ -19,6 +19,13 @@ export function registerBiometricTools(server: McpServer, env: Env): void {
       steps:         z.number().int().optional(),
       active_energy: z.number().optional().describe("Active energy burned in kcal."),
       notes:         z.string().optional().describe("Any additional context about this snapshot."),
+      // Subjective ND-state layer (migration 0081) -- self-report, not from Apple Health.
+      mood:          z.string().optional().describe("Free-text felt state (e.g. 'wired but flat')."),
+      pain:          z.number().int().min(0).max(10).optional().describe("Subjective pain 0-10."),
+      energy:        z.number().int().min(0).max(10).optional().describe("Subjective energy 0-10."),
+      focus:         z.number().int().min(0).max(10).optional().describe("Executive function / focus 0-10."),
+      spoons:        z.number().int().min(0).max(12).optional().describe("Spoons remaining 0-12 (spoon theory)."),
+      meds_taken:    z.boolean().optional().describe("Whether meds were taken for this window."),
     },
     async (input) => {
       const id = generateId();
@@ -27,8 +34,9 @@ export function registerBiometricTools(server: McpServer, env: Env): void {
       await env.DB.prepare(`
         INSERT INTO biometric_snapshots
           (id, recorded_at, logged_at, source, hrv_resting, resting_hr,
-           sleep_hours, sleep_quality, stress_score, steps, active_energy, notes)
-        VALUES (?, ?, ?, 'apple_health', ?, ?, ?, ?, ?, ?, ?, ?)
+           sleep_hours, sleep_quality, stress_score, steps, active_energy, notes,
+           mood, pain, energy, focus, spoons, meds_taken)
+        VALUES (?, ?, ?, 'apple_health', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         input.recorded_at,
@@ -41,6 +49,12 @@ export function registerBiometricTools(server: McpServer, env: Env): void {
         input.steps         ?? null,
         input.active_energy ?? null,
         input.notes         ?? null,
+        input.mood          ?? null,
+        input.pain          ?? null,
+        input.energy        ?? null,
+        input.focus         ?? null,
+        input.spoons        ?? null,
+        input.meds_taken === undefined ? null : (input.meds_taken ? 1 : 0),
       ).run();
 
       return {

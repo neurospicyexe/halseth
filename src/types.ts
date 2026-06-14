@@ -245,6 +245,13 @@ export interface BiometricSnapshot {
   steps: number | null;
   active_energy: number | null; // kcal
   notes: string | null;
+  // Subjective ND-state layer (migration 0081) -- nullable; log what you have.
+  mood: string | null;          // free-text felt state
+  pain: number | null;          // 0-10
+  energy: number | null;        // 0-10
+  focus: number | null;         // 0-10 (executive function)
+  spoons: number | null;        // 0-12 remaining
+  meds_taken: number | null;    // 0/1 boolean
 }
 
 // ── Schema v2 additions ───────────────────────────────────────────────────────

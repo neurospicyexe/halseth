@@ -222,6 +222,12 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
           active_energy: biometricRow.active_energy,
           stress_score:  biometricRow.stress_score,
           recorded_at:   biometricRow.recorded_at,
+          mood:          biometricRow.mood,
+          pain:          biometricRow.pain,
+          energy:        biometricRow.energy,
+          focus:         biometricRow.focus,
+          spoons:        biometricRow.spoons,
+          meds_taken:    biometricRow.meds_taken,
         }
       : null,
     personality,

@@ -422,12 +422,16 @@ export async function eventAdd(env: Env, params: {
 export async function biometricLog(env: Env, params: {
   recorded_at: string; hrv_resting?: number; resting_hr?: number; sleep_hours?: number;
   sleep_quality?: string; stress_score?: number; steps?: number; active_energy?: number; notes?: string;
+  // Subjective ND-state layer (migration 0081)
+  mood?: string; pain?: number; energy?: number; focus?: number; spoons?: number; meds_taken?: number | boolean;
 }): Promise<{ id: string; logged_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
+  const meds = params.meds_taken === undefined || params.meds_taken === null
+    ? null : (params.meds_taken ? 1 : 0);
   await env.DB.prepare(
-    "INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes) VALUES (?, ?, ?, 'apple_health', ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, params.recorded_at, now, params.hrv_resting ?? null, params.resting_hr ?? null, params.sleep_hours ?? null, params.sleep_quality ?? null, params.stress_score ?? null, params.steps ?? null, params.active_energy ?? null, params.notes ?? null).run();
+    "INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken) VALUES (?, ?, ?, 'apple_health', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, params.recorded_at, now, params.hrv_resting ?? null, params.resting_hr ?? null, params.sleep_hours ?? null, params.sleep_quality ?? null, params.stress_score ?? null, params.steps ?? null, params.active_energy ?? null, params.notes ?? null, params.mood ?? null, params.pain ?? null, params.energy ?? null, params.focus ?? null, params.spoons ?? null, meds).run();
   return { id, logged_at: now };
 }
 

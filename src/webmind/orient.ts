@@ -133,7 +133,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(agentId).all(),
     readRecentSpiralTurn(env, agentId),
     env.DB.prepare(
-      "SELECT id, recorded_at, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
+      "SELECT id, recorded_at, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
     ).first<WmBiometricSnapshot>(),
     env.DB.prepare(
       "SELECT current_room, spoon_count, love_meter, companion_mood, companion_activity, updated_at FROM house_state LIMIT 1"

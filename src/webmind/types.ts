@@ -308,6 +308,13 @@ export interface WmBiometricSnapshot {
   steps: number | null;
   active_energy: number | null;
   notes: string | null;
+  // Subjective ND-state layer (migration 0081)
+  mood: string | null;
+  pain: number | null;
+  energy: number | null;
+  focus: number | null;
+  spoons: number | null;
+  meds_taken: number | null;
 }
 
 export interface WmHouseState {

@@ -205,7 +205,7 @@ export async function execEventAdd(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execBiometricLog(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ recorded_at: string; hrv_resting?: number; resting_hr?: number; sleep_hours?: number; sleep_quality?: string; stress_score?: number; steps?: number; active_energy?: number; notes?: string }>(ctx.req.context);
+  const p = parseContext<{ recorded_at: string; hrv_resting?: number; resting_hr?: number; sleep_hours?: number; sleep_quality?: string; stress_score?: number; steps?: number; active_energy?: number; notes?: string; mood?: string; pain?: number; energy?: number; focus?: number; spoons?: number; meds_taken?: number | boolean }>(ctx.req.context);
   if (!p || !p.recorded_at) return { response_key: "witness", witness: "biometric_log requires { recorded_at } in context" };
   const r = await biometricLog(ctx.env, p);
   return { ack: true, id: r.id, logged_at: r.logged_at };
