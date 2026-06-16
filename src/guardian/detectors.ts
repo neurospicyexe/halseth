@@ -23,6 +23,11 @@ export const GUARDIAN_THRESHOLDS = {
   VOICE_ABS_FLOOR: 0.5,          // recent avg below this = warning
   VOICE_DROP_DELTA: 0.15,        // recent avg this far below 21d baseline = warning
   VOICE_CONTAMINATION_RATE: 0.2, // >20% of recent replies contaminated = red
+  // Clean replies are sampled at 10% at write time (voice-markers.ts reportVoiceScore,
+  // sample rate 0.1) to keep voice_scores signal-dense; non-clean rows are stored 1:1.
+  // So recent_n understates true reply count and any rate over it reads ~10x high.
+  // Each stored clean row stands for ~1/0.1 = 10 real replies; un-bias the denominator.
+  VOICE_CLEAN_SAMPLE_INVERSE: 10,
   LOOP_STUCK_DAYS: 21,
   BURNOUT_RUNS_7D: 14,           // 2/day pulse cap ridden all week
   BASIN_PRESSURE_14D: 3,         // unconfirmed pressure rows in 14d
@@ -51,11 +56,16 @@ export async function detectVoiceDrift(env: Env): Promise<CandidateFlag[]> {
         (SELECT AVG(score) FROM voice_scores WHERE companion_id = ?1 AND created_at >= datetime('now','-7 days')) AS recent_avg,
         (SELECT COUNT(*)  FROM voice_scores WHERE companion_id = ?1 AND created_at >= datetime('now','-7 days')) AS recent_n,
         (SELECT COUNT(*)  FROM voice_scores WHERE companion_id = ?1 AND created_at >= datetime('now','-7 days') AND contamination_hits IS NOT NULL) AS contaminated_n,
+        (SELECT COUNT(*)  FROM voice_scores WHERE companion_id = ?1 AND created_at >= datetime('now','-7 days') AND anti_hits IS NULL AND contamination_hits IS NULL) AS clean_n,
         (SELECT AVG(score) FROM voice_scores WHERE companion_id = ?1 AND created_at < datetime('now','-7 days') AND created_at >= datetime('now','-28 days')) AS baseline_avg`
-    ).bind(id).first<{ recent_avg: number | null; recent_n: number; contaminated_n: number; baseline_avg: number | null }>();
+    ).bind(id).first<{ recent_avg: number | null; recent_n: number; contaminated_n: number; clean_n: number; baseline_avg: number | null }>();
     if (!row || row.recent_n < T.VOICE_MIN_SAMPLES || row.recent_avg === null) continue;
 
-    const contaminationRate = row.contaminated_n / row.recent_n;
+    // Un-bias the 10%-sampled clean rows so the rate reflects true reply volume, not
+    // the signal-dense subset that gets stored. Each clean row stands for ~10 replies.
+    const cleanN = row.clean_n ?? 0;
+    const estimatedTotal = (row.recent_n - cleanN) + cleanN * T.VOICE_CLEAN_SAMPLE_INVERSE;
+    const contaminationRate = estimatedTotal > 0 ? row.contaminated_n / estimatedTotal : 0;
     if (contaminationRate > T.VOICE_CONTAMINATION_RATE) {
       flags.push({
         companion_id: id, flag_type: "voice_drift", severity: "red",

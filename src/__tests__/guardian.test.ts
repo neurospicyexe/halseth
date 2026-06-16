@@ -223,6 +223,19 @@ describe("detectVoiceDrift", () => {
     expect(flags[0]!.severity).toBe("red");
     expect(flags[0]!.dedup_key).toBe("voice_contamination:cypher");
   });
+
+  it("does NOT flag when contamination is high only because clean rows are 10%-sampled", async () => {
+    // Real 06-15 prod shape: cypher 4 contaminated, 2 clean stored, n=7. The naive
+    // ratio 4/7=57% would red-flag; un-biasing the 2 clean rows (x10) gives
+    // 4/(5+20)=16% < 20%, so no flag. Same correction clears drevan 8/(8+70)=10%.
+    db.matchers.push(
+      voiceRow("cypher", { recent_avg: 0.86, recent_n: 7, contaminated_n: 4, clean_n: 2, baseline_avg: 0.86 }),
+      voiceRow("drevan", { recent_avg: 0.89, recent_n: 15, contaminated_n: 8, clean_n: 7, baseline_avg: 0.89 }),
+      voiceRow("gaia", { recent_avg: 0.88, recent_n: 5, contaminated_n: 0, clean_n: 1, baseline_avg: 0.88 }),
+    );
+    const flags = await detectVoiceDrift(env);
+    expect(flags.filter(f => f.dedup_key.startsWith("voice_contamination:"))).toHaveLength(0);
+  });
 });
 
 // ── Detector: orphan-memory rescue ───────────────────────────────────────────
