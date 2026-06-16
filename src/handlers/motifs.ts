@@ -49,7 +49,7 @@ export async function postMotifsDetect(request: Request, env: Env): Promise<Resp
       const [journalRows, growthRows] = await Promise.all([
         env.DB.prepare(
           `SELECT note_text AS t FROM companion_journal
-           WHERE agent = ? AND created_at > COALESCE(?, datetime('now','-' || ?2 || ' days'))
+           WHERE agent = ?1 AND created_at > COALESCE(?2, datetime('now','-' || ?3 || ' days'))
            ORDER BY created_at DESC LIMIT 400`
         ).bind(id, since, windowDays).all<{ t: string }>(),
         env.DB.prepare(

@@ -133,6 +133,29 @@ describe("postMotifsDetect", () => {
     const res = await (await postMotifsDetect(detectReq({ companion_id: "stranger" }), env)).json() as { detected: Record<string, number> };
     expect(Object.keys(res.detected).sort()).toEqual(["cypher", "drevan", "gaia"]);
   });
+
+  // Regression: the corpus SELECTs must NOT mix anonymous `?` and numbered `?N`
+  // placeholders. SQLite parses `... ? ... ? ... ?2 ...` as only TWO distinct
+  // params (the second `?` and `?2` collapse to index 2), so a 3-bind call throws
+  // "Incorrect number of bindings supplied (statement uses 2, 3 supplied)" in D1.
+  // The FakeDb above ignores binding semantics, so this asserts the SQL text
+  // directly -- the only layer that would have caught the prod 500.
+  it("corpus queries use consistent numbered placeholders, not mixed styles", async () => {
+    const captured: string[] = [];
+    const realPrepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => { captured.push(sql); return realPrepare(sql); };
+
+    db.setCorpus(["bridge here", "bridge there", "bridge again"]);
+    await postMotifsDetect(detectReq({ companion_id: "cypher" }), env);
+
+    const corpusSql = captured.filter(s => s.includes("FROM companion_journal") || s.includes("FROM growth_journal"));
+    expect(corpusSql.length).toBeGreaterThanOrEqual(2);
+    for (const sql of corpusSql) {
+      const hasAnonymous = /\?(?!\d)/.test(sql); // a ? not followed by a digit
+      const hasNumbered = /\?\d/.test(sql);
+      expect(hasAnonymous && hasNumbered).toBe(false); // never both in one statement
+    }
+  });
 });
 
 describe("getMotifs", () => {
