@@ -3,6 +3,7 @@
 import { Env } from "../types.js";
 import type { Feeling, Dream } from "../types.js";
 import { generateId } from "../db/queries.js";
+import { COMPANION_ID_SET } from "../companions.js";
 
 function authGuard(request: Request, env: Env): Response | null {
   if (!env.ADMIN_SECRET) return null;
@@ -33,7 +34,7 @@ export async function getFeelings(request: Request, env: Env): Promise<Response>
     });
   }
 
-  const validCompanions = new Set(["drevan", "cypher", "gaia"]);
+  const validCompanions = COMPANION_ID_SET;
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
 
@@ -67,7 +68,7 @@ export async function getDreams(request: Request, env: Env): Promise<Response> {
   const companionId = url.searchParams.get("companion_id");
   const examined    = url.searchParams.get("examined");
 
-  const validCompanions = new Set(["drevan", "cypher", "gaia"]);
+  const validCompanions = COMPANION_ID_SET;
 
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
@@ -124,7 +125,7 @@ export async function postDreamSeed(request: Request, env: Env): Promise<Respons
     return new Response("content is required", { status: 400 });
   }
 
-  const validCompanions = new Set(["drevan", "cypher", "gaia"]);
+  const validCompanions = COMPANION_ID_SET;
   const companion = for_companion && validCompanions.has(for_companion) ? for_companion : null;
 
   const id  = generateId();

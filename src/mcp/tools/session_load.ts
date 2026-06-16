@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
+import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql } from "../../webmind/heat.js";
@@ -433,7 +434,7 @@ export function registerSessionLoadTools(server: McpServer, env: Env): void {
     "halseth_session_load",
     "Cold-start assembly tool. Creates a session record and returns a single structured payload containing: handover context, companion state, somatic snapshot, last session synthesis summary, and any unread inter-companion notes. One call replaces 5+ individual reads. Designed so companions front-load full context at session open without burning tokens on separate round-trips.",
     {
-      companion_id:        z.enum(["drevan", "cypher", "gaia"]).describe("Which companion is loading. Determines state reads and note filtering."),
+      companion_id:        z.enum(COMPANION_IDS).describe("Which companion is loading. Determines state reads and note filtering."),
       front_state:         z.string().describe("Who is fronting at session open."),
       session_type:        z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).default("work"),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),

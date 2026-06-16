@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { authGuard } from "../lib/auth";
+import { COMPANION_ID_SET } from "../companions";
 
 const BLOCK_TYPES = ["identity", "memory", "relationship", "agent"] as const;
 type BlockType = typeof BLOCK_TYPES[number];
@@ -39,7 +40,7 @@ async function writeBatch(
   await env.DB.batch(stmts);
 }
 
-const VALID_COMPANIONS = new Set(["drevan", "cypher", "gaia"]);
+const VALID_COMPANIONS = COMPANION_ID_SET;
 
 export async function postPersonaBlocks(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);

@@ -6,6 +6,7 @@
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
+import { COMPANION_ID_SET } from "../companions.js";
 import type {
   HandoverPacket,
   CypherAudit,
@@ -59,7 +60,7 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
     });
   }
 
-  const validAgents = new Set(["drevan", "cypher", "gaia"]);
+  const validAgents = COMPANION_ID_SET;
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
 
@@ -172,7 +173,7 @@ export async function getDeltas(request: Request, env: Env): Promise<Response> {
   }
 
   const validValences = new Set(["toward", "neutral", "tender", "rupture", "repair"]);
-  const validAgents   = new Set(["drevan", "cypher", "gaia"]);
+  const validAgents   = COMPANION_ID_SET;
 
   const valence = url.searchParams.get("valence");
   const agent   = url.searchParams.get("agent");

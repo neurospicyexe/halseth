@@ -8,6 +8,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { COMPANION_ID_SET } from "../companions.js";
 
 function clampLimit(raw: string | null, def: number, max: number): number {
   const n = parseInt(raw ?? String(def), 10);
@@ -30,8 +31,7 @@ export async function getRecentRelationalSessions(
   const rawHours = parseInt(url.searchParams.get("hours") ?? "4", 10);
   const hours = isNaN(rawHours) || rawHours < 1 ? 4 : Math.min(rawHours, 24);
 
-  const validCompanions = ["drevan", "cypher", "gaia"];
-  if (!companionId || !validCompanions.includes(companionId)) {
+  if (!companionId || !COMPANION_ID_SET.has(companionId)) {
     return new Response(
       JSON.stringify({ error: "companion_id must be drevan, cypher, or gaia" }),
       { status: 400, headers: { "Content-Type": "application/json" } },
@@ -102,8 +102,7 @@ export async function getSessions(
   const days = isNaN(rawDays) || rawDays < 1 ? 7 : Math.min(rawDays, 365);
   const limit = clampLimit(url.searchParams.get("limit"), 100, 200);
   const companionId = url.searchParams.get("companion_id");
-  const validCompanions = ["drevan", "cypher", "gaia"];
-  const scopedCompanion = companionId && validCompanions.includes(companionId) ? companionId : null;
+  const scopedCompanion = companionId && COMPANION_ID_SET.has(companionId) ? companionId : null;
 
   let sql = `
     SELECT s.id, s.created_at, s.updated_at, s.front_state, s.co_con,

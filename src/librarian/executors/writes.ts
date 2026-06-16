@@ -1,4 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { COMPANION_IDS } from "../../companions.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
 import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
 import {
@@ -246,7 +247,7 @@ export async function execWitnessLog(ctx: ExecutorContext): Promise<ExecutorResu
 }
 
 export async function execSetAutonomousTurn(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const ORDER = ["drevan", "cypher", "gaia"] as const;
+  const ORDER = COMPANION_IDS;
   type Turn = typeof ORDER[number];
   let companion: Turn | null;
   if (/next\s+companion|advance\s+turn|pass\s+turn|next\s+after/i.test(ctx.req.request)) {

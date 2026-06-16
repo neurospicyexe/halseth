@@ -2,8 +2,9 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus } from "../backends/halseth.js";
 import { getCurrentLimbicState } from "../../webmind/limbic.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
+import { COMPANION_IDS } from "../../companions.js";
 
-const COMPANIONS = ["drevan", "cypher", "gaia"] as const;
+const COMPANIONS = COMPANION_IDS;
 
 export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "add_tension_failed", reason: "companion_id required" };

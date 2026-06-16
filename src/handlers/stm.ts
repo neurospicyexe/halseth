@@ -8,6 +8,7 @@
 
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { COMPANION_ID_SET } from "../companions.js";
 import { generateId } from "../db/queries.js";
 
 const STM_PRUNE_LIMIT = 50;
@@ -30,7 +31,7 @@ export async function postStmEntry(request: Request, env: Env): Promise<Response
   catch { return new Response("Bad JSON", { status: 400 }); }
 
   const { companion_id, channel_id, role, content, author_name } = body;
-  const VALID_COMPANIONS = new Set(["drevan", "cypher", "gaia"]);
+  const VALID_COMPANIONS = COMPANION_ID_SET;
   if (
     typeof companion_id !== "string" || !companion_id ||
     typeof channel_id !== "string" || !channel_id ||

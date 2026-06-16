@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
+import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { embedAndStore } from "../embed.js";
 
@@ -10,7 +11,7 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
     "halseth_companion_note_add",
     "Log a companion self-discovery or identity claim to the companion journal. Attributed to the agent — never to Raziel. Append-only by covenant. If this note involves encountering, observing, or interacting with a system member (fronter from the plural system), also call log_front_change in the Nullsafe-Plural MCP to record the fronter encounter.",
     {
-      agent:      z.enum(["drevan", "cypher", "gaia"]).describe("The companion making this claim. Attribution is sacred."),
+      agent:      z.enum(COMPANION_IDS).describe("The companion making this claim. Attribution is sacred."),
       note_text:  z.string().describe("The self-discovery or identity claim, in the companion's own voice."),
       tags:       z.array(z.string()).optional().describe("Optional tags for categorization. E.g. ['identity', 'boundary', 'desire']."),
       session_id: z.string().optional().describe("Session this note belongs to, if any."),
@@ -42,7 +43,7 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
     "halseth_companion_notes_read",
     "Read entries from the companion journal. Filterable by agent and session.",
     {
-      agent:      z.enum(["drevan", "cypher", "gaia"]).optional().describe("Filter by companion. If omitted, returns all agents."),
+      agent:      z.enum(COMPANION_IDS).optional().describe("Filter by companion. If omitted, returns all agents."),
       session_id: z.string().optional().describe("Filter by session ID."),
       limit:      z.number().int().min(1).max(100).default(20),
     },

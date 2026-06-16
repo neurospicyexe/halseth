@@ -5,6 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
+import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { embedAndStore, EMBEDDING_MODEL } from "../embed.js";
 
@@ -15,7 +16,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
     "Append a relational moment. Drevan is the primary user. Exact language matters — this is never paraphrased or summarized.",
     {
       session_id:   z.string(),
-      agent:        z.enum(["drevan", "cypher", "gaia"]),
+      agent:        z.enum(COMPANION_IDS),
       delta_text:   z.string().describe("The raw moment. Exact language. Never paraphrased, never summarized."),
       valence:      z.enum(["toward", "neutral", "tender", "rupture", "repair"]),
       initiated_by: z.enum(["architect", "companion", "mutual"]).optional().describe("Who moved first into this moment. Asymmetry is information."),
@@ -56,7 +57,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
     "Read recent relational deltas with optional filters. Returns spec v0.4 rows only (those with delta_text populated).",
     {
       session_id: z.string().optional(),
-      agent:      z.enum(["drevan", "cypher", "gaia"]).optional(),
+      agent:      z.enum(COMPANION_IDS).optional(),
       query:      z.string().optional().describe("Substring search across delta_text content."),
       limit:      z.number().int().min(1).max(100).default(20),
     },
@@ -233,7 +234,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       query:        z.string().describe("Natural language search query."),
       tables:       z.array(z.enum(["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams"])).optional()
                      .describe("Filter to specific tables. Defaults to all six."),
-      companion_id: z.enum(["drevan", "cypher", "gaia"]).optional().describe("Filter by companion."),
+      companion_id: z.enum(COMPANION_IDS).optional().describe("Filter by companion."),
       limit:        z.number().int().min(1).max(20).default(5),
       after:        z.string().optional().describe("ISO datetime — only entries after this date."),
       before:       z.string().optional().describe("ISO datetime — only entries before this date."),

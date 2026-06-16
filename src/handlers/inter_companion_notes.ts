@@ -9,8 +9,9 @@
 
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { COMPANION_ID_SET } from "../companions.js";
 
-const VALID_COMPANIONS = new Set(["drevan", "cypher", "gaia"]);
+const VALID_COMPANIONS = COMPANION_ID_SET;
 const MAX_ITEMS = 20;
 
 interface NoteRow {

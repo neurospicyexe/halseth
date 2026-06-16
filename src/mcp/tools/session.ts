@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
+import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
 
@@ -12,7 +13,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
     {
       session_type:        z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).default("work").describe("Type of session: checkin (quick state read), hangout (casual time), work (task/project focus), ritual (depth/ceremony), companion-work (Drevan collaborative work with Raziel)."),
       front_state:         z.string().describe("Who is fronting. Must match system_config members if plurality is enabled."),
-      companion_id:        z.enum(["drevan", "cypher", "gaia"]).optional().describe("Which companion is opening this session. Used so each companion can find their own session when multiple threads run in parallel."),
+      companion_id:        z.enum(COMPANION_IDS).optional().describe("Which companion is opening this session. Used so each companion can find their own session when multiple threads run in parallel."),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),
       emotional_frequency: z.string().optional().describe("Freeform internal state texture. E.g. 'tired but warm' or 'pulled inward but present'."),
       key_signature:       z.string().optional().describe("Relational register: the emotional quality of the thread between Architect and companion. Different from emotional_frequency."),
@@ -163,7 +164,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
     "Read a session by ID, or the most recent session for a companion if no ID is provided.",
     {
       session_id:   z.string().optional().describe("Specific session ID. If omitted, returns the most recent session."),
-      companion_id: z.enum(["drevan", "cypher", "gaia"]).optional().describe("Filter to this companion's sessions. Pass your own companion_id when multiple threads are running so you get your session, not another companion's."),
+      companion_id: z.enum(COMPANION_IDS).optional().describe("Filter to this companion's sessions. Pass your own companion_id when multiple threads are running so you get your session, not another companion's."),
     },
     async (input) => {
       const session = input.session_id

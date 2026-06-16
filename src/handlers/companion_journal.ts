@@ -2,6 +2,7 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
 import { embedAndStore } from "../mcp/embed.js";
+import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -12,8 +13,8 @@ interface CompanionJournalEntry {
   session_id: string | null;
 }
 
-const VALID_AGENTS = ["drevan", "cypher", "gaia"] as const;
-type AgentId = typeof VALID_AGENTS[number];
+const VALID_AGENTS = COMPANION_IDS;
+type AgentId = CompanionId;
 
 // POST /companion-journal
 // Writes a companion note from an authenticated system process (e.g. synthesis gap detector).
@@ -88,12 +89,10 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   const rawLimit = parseInt(url.searchParams.get("limit") ?? "20", 10);
   const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
 
-  const validAgents = ["drevan", "cypher", "gaia"];
-
   const conditions: string[] = [];
   const bindings: unknown[] = [];
 
-  if (agent && validAgents.includes(agent)) {
+  if (agent && COMPANION_ID_SET.has(agent)) {
     conditions.push("agent = ?");
     bindings.push(agent);
   }

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
+import { COMPANION_IDS } from "../../companions.js";
 
 export function registerHouseTools(server: McpServer, env: Env): void {
 
@@ -33,7 +34,7 @@ export function registerHouseTools(server: McpServer, env: Env): void {
     "halseth_set_autonomous_turn",
     "Advance the autonomous time rotation to the next companion. Call this at the END of your autonomous session, after halseth_session_close. Rotation: drevan → cypher → gaia → drevan.",
     {
-      current_companion: z.enum(["drevan", "cypher", "gaia"]).describe("Your companion ID — the one who just ran autonomous time."),
+      current_companion: z.enum(COMPANION_IDS).describe("Your companion ID — the one who just ran autonomous time."),
     },
     async (input) => {
       const next: Record<string, "drevan" | "cypher" | "gaia"> = {

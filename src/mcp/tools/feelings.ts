@@ -4,8 +4,7 @@ import { Env } from "../../types.js";
 import { generateId } from "../../db/queries.js";
 import { embedAndStore } from "../embed.js";
 import type { Feeling, Dream, EqSnapshot } from "../../types.js";
-
-const COMPANION_IDS = ["drevan", "cypher", "gaia"] as const;
+import { COMPANION_IDS } from "../../companions.js";
 
 type DreamSeed = {
   id: string;
