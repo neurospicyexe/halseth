@@ -119,14 +119,17 @@ async function callClaudeArray(env: Env, system: string, user: string): Promise<
       "content-type": "application/json",
     },
     body: JSON.stringify({
+      // Thinking OFF + low effort: this is bounded binary triage with a clear rubric, and the
+      // pass makes two sequential calls inside ONE Cloudflare request -- adaptive thinking made
+      // each call slow enough to blow the request window. Opus-4.8 judgment at low effort is
+      // ample here; extra prose before the JSON array is tolerated (we extract the first [...]).
       model: env.CLEARING_MODEL || DEFAULT_MODEL,
-      max_tokens: 4000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
+      max_tokens: 3000,
+      output_config: { effort: "low" },
       system,
       messages: [{ role: "user", content: user }],
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json() as { stop_reason?: string; content?: Array<{ type: string; text?: string }> };
