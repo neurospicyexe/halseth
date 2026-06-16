@@ -78,8 +78,8 @@ export async function detectVoiceDrift(env: Env): Promise<CandidateFlag[]> {
     if (droppedVsBaseline || row.recent_avg < T.VOICE_ABS_FLOOR) {
       flags.push({
         companion_id: id, flag_type: "voice_drift", severity: "warning",
-        summary: `${id}: voice score avg ${row.recent_avg.toFixed(2)} over ${row.recent_n} replies this week` +
-          (droppedVsBaseline ? ` (baseline was ${row.baseline_avg!.toFixed(2)}).` : ` -- below the ${T.VOICE_ABS_FLOOR} floor.`),
+        summary: `${id}: voice score avg ${Number.isFinite(row.recent_avg) ? row.recent_avg.toFixed(2) : "?"} over ${row.recent_n} replies this week` +
+          (droppedVsBaseline ? ` (baseline was ${Number.isFinite(row.baseline_avg) ? row.baseline_avg!.toFixed(2) : "?"}).` : ` -- below the ${T.VOICE_ABS_FLOOR} floor.`),
         evidence: { recent_avg: row.recent_avg, baseline_avg: row.baseline_avg, recent_n: row.recent_n },
         dedup_key: `voice_drift:${id}`,
       });
@@ -165,7 +165,7 @@ export async function detectStarvedOrgans(env: Env): Promise<CandidateFlag[]> {
     if (stuck) {
       flags.push({
         companion_id: null, flag_type: "starved_organ", severity: "warning",
-        summary: `Club round stuck in '${club.status}' for ${ageDays.toFixed(1)} days -- the 6PM tick may not be advancing it.`,
+        summary: `Club round stuck in '${club.status}' for ${Number.isFinite(ageDays) ? ageDays.toFixed(1) : "?"} days -- the 6PM tick may not be advancing it.`,
         evidence: { round_id: club.id, status: club.status, age_days: Math.round(ageDays * 10) / 10 },
         dedup_key: `stuck:club:${club.id}:${club.status}`,
       });

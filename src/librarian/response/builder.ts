@@ -124,7 +124,10 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     for (const p of wm.pressure_flags) {
       const at = p.recorded_at?.slice(0, 10) ?? "?";
       const basin = p.worst_basin ? ` on ${p.worst_basin}` : "";
-      parts.push(`[Pressure drift${basin} @ ${at}, score ${p.drift_score.toFixed(2)}]`);
+      // NaN-safe: drift_score is read straight from a D1 row -- a null/sparse value would
+      // template "NaN" into the prompt (or crash on null.toFixed). Mirrors the confidence guard below.
+      const scoreStr = Number.isFinite(p.drift_score) ? p.drift_score.toFixed(2) : "?";
+      parts.push(`[Pressure drift${basin} @ ${at}, score ${scoreStr}]`);
     }
   }
 

@@ -160,7 +160,7 @@ async function classify(env: Env, entries: PendingEntry[]): Promise<Verdict[]> {
 /** Classify basin pressure readings: dismiss (noise) | surface (for Raziel to confirm). */
 async function classifyBasins(env: Env, basins: PendingBasin[]): Promise<BasinVerdict[]> {
   const list = basins.map((b, i) =>
-    `${i + 1}. id=${b.id} [${b.companion_id}] basin=${b.worst_basin ?? "?"} drift=${b.drift_score.toFixed(2)} @ ${b.recorded_at.slice(0, 10)}${b.notes ? ` -- «${b.notes.slice(0, 200)}»` : ""}`
+    `${i + 1}. id=${b.id} [${b.companion_id}] basin=${b.worst_basin ?? "?"} drift=${Number.isFinite(b.drift_score) ? b.drift_score.toFixed(2) : "?"} @ ${b.recorded_at.slice(0, 10)}${b.notes ? ` -- «${b.notes.slice(0, 200)}»` : ""}`
   ).join("\n");
   const raw = await callClaudeArray(env, BASIN_SYSTEM_PROMPT, `Triage these ${basins.length} pressure readings:\n\n${list}`);
   const valid = new Set(basins.map(b => b.id));
@@ -251,7 +251,7 @@ export async function runClearingPass(env: Env): Promise<ClearingResult> {
     lines.push("", "Basins worth a look (confirm = real growth re-baselines them; dismiss = noise -- your call):");
     for (const v of basinSurface) {
       const b = bById.get(v.id);
-      if (b) lines.push(`- [${b.companion_id}] ${b.worst_basin ?? "drift"} (${b.drift_score.toFixed(2)}) -- ${v.reason} (id ${v.id})`);
+      if (b) lines.push(`- [${b.companion_id}] ${b.worst_basin ?? "drift"} (${Number.isFinite(b.drift_score) ? b.drift_score.toFixed(2) : "?"}) -- ${v.reason} (id ${v.id})`);
     }
   }
   if (shortlist.length === 0 && basinSurface.length === 0) lines.push("Nothing rose to your desk this round.");
