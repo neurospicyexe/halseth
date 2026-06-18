@@ -127,12 +127,23 @@ export async function listEligibleActions(
   return all.filter(a => isEligible(a, ctx));
 }
 
-function isEligible(a: MetronomeAction, ctx: EligibilityContext): boolean {
+export function isEligible(a: MetronomeAction, ctx: EligibilityContext): boolean {
   const { silenceHours, nowIso, todayUtc } = ctx;
 
-  if (a.silence_min_hours !== null) {
-    if (silenceHours === null || silenceHours < a.silence_min_hours) return false;
+  // silenceHours === null means the activity key has expired (no human message within its
+  // Redis TTL) -- i.e. a LONG quiet stretch, which is exactly when a silence_min_hours
+  // ("reach out only after N hours of quiet") action SHOULD fire. Treat null as effectively
+  // infinite silence: it satisfies any minimum. Before this, null disqualified every
+  // silence-floored action, so the heartbeat-channel actions (post_heartbeat/share_observation/
+  // ask_question/name_pattern/share_media -- all carry a 6-24h floor) could NEVER fire, while
+  // the floorless write_inter_companion/write_note_to_raziel always won. That starved the
+  // heartbeat channel of all pulse (2026-06-17 diagnosis: post_heartbeat.last_fired_at was NULL
+  // across every companion -- it had literally never fired since the palette was seeded).
+  if (a.silence_min_hours !== null && silenceHours !== null) {
+    if (silenceHours < a.silence_min_hours) return false;
   }
+  // silence_max_hours is the inverse ("only while activity is still recent"): null silence means
+  // too quiet, so it correctly fails the max. (e.g. share_media has a 48-72h ceiling.)
   if (a.silence_max_hours !== null) {
     if (silenceHours === null || silenceHours > a.silence_max_hours) return false;
   }

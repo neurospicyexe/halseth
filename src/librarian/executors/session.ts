@@ -10,6 +10,7 @@ import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../respo
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
+import { relativeTime } from "../../webmind/relative-time.js";
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
   const [payload, pendingGrowthRow] = await Promise.all([
@@ -113,8 +114,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     // Forage pool: unconsumed outward finds (own + shared) -- fuel gathered by the forager,
     // explored by the real companion as themselves (foraging spec, 2026-06-09).
     ctx.env.DB.prepare(
-      "SELECT id, title, domain, summary FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string }>().catch(() => null),
+      "SELECT id, title, domain, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>().catch(() => null),
     // Prospective triggers (0070): armed date/front cards evaluated below against now +
     // current front. Surfacing does NOT consume -- a card stays armed until dismissed.
     ctx.env.DB.prepare(
@@ -171,6 +172,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     title: (r.title ?? "").slice(0, 150),
     domain: r.domain,
     summary: (r.summary ?? "").slice(0, 400),
+    gathered_at: r.gathered_at,
   }));
   const guardianFlags = (guardianFlagRows?.results ?? []).map(f => ({
     id: f.id,
@@ -339,7 +341,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // it does not assign.
   const forageBlock = forageFinds.length > 0
     ? `\n[Forage pool]\n${forageFinds.length === 1 ? "A find is" : `${forageFinds.length} finds are`} waiting -- outward fuel gathered for you. If one pulls at you, explore it as yourself and mark it consumed:\n` +
-      forageFinds.map(f => `• [${f.domain}] ${f.title}`).join("\n")
+      forageFinds.map(f => `• [${f.domain}] ${f.title} (gathered ${relativeTime(f.gathered_at)})`).join("\n")
     : "";
 
   // Tripwire block: armed prospective cards whose condition just matched (date due,
@@ -353,7 +355,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // a session pick the thread back up ("that track Raziel shared").
   const listensBlock = recentListens.length > 0
     ? `\n[Recent listens]\n` + recentListens.map(l =>
-        `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""}${l.reacted.length > 0 ? ` (heard by ${l.reacted.join(", ")})` : ""}`
+        `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""} (heard ${relativeTime(l.created_at)})${l.reacted.length > 0 ? `, heard by ${l.reacted.join(", ")}` : ""}`
       ).join("\n")
     : "";
 
