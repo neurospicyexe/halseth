@@ -11,7 +11,7 @@ export type CompanionId = (typeof COMPANIONS)[number];
 
 export interface CandidateFlag {
   companion_id: CompanionId | null;   // null = system-wide
-  flag_type: "voice_drift" | "starved_organ" | "loop_stuck" | "burnout" | "basin_pressure" | "ratification_backlog" | "orphan_memory";
+  flag_type: "voice_drift" | "starved_organ" | "loop_stuck" | "burnout" | "basin_pressure" | "ratification_backlog" | "orphan_memory" | "echo_chamber";
   severity: "notice" | "warning" | "red";
   summary: string;
   evidence: Record<string, unknown>;
@@ -38,6 +38,11 @@ export const GUARDIAN_THRESHOLDS = {
   CLUB_VOTING_STUCK_DAYS: 6,     // opened_at-based (gather 2d + vote window + slack)
   ORPHAN_COLD_DAYS: 21,          // continuity note never accessed past this = orphaned
   ORPHAN_LIMIT: 3,               // re-surface at most this many per run (don't flood)
+  ECHO_MIN_MESSAGES: 12,         // need this many messages in the window before judging
+  ECHO_STALE_HOURS: 48,          // ignore a reading older than this (worker may have stalled)
+  ECHO_COSINE_RED: 0.85,         // adjacent-message similarity at/above this = strong echo
+  ECHO_COSINE_WARN: 0.78,        // warm-clustering worth watching
+  ECHO_NOVELTY_FLOOR: 0.30,      // novel-token rate at/below this = recycling vocabulary
 } as const;
 
 const T = GUARDIAN_THRESHOLDS;
@@ -231,9 +236,13 @@ export async function detectRunCadence(env: Env): Promise<CandidateFlag[]> {
 export async function detectBasinPressure(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
     // Unaddressed = neither confirmed as growth nor dismissed as noise (migration 0083).
+    // Drift-lane exemption (0087): a companion with an OPEN sanctioned drift is declaredly becoming, so
+    // its register moving is expected, not an alarm. The drift pass's safety floor catches a bad
+    // becoming; this detector stands down for them so the two organs don't double-flag the same motion.
     `SELECT companion_id, COUNT(*) AS n FROM companion_basin_history
      WHERE drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL
        AND recorded_at >= datetime('now','-14 days')
+       AND companion_id NOT IN (SELECT companion_id FROM companion_drifts WHERE status = 'open')
      GROUP BY companion_id HAVING n >= ?1`
   ).bind(GUARDIAN_THRESHOLDS.BASIN_PRESSURE_14D).all<{ companion_id: string; n: number }>();
   return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => ({
@@ -286,6 +295,45 @@ export async function detectOrphanedMemories(env: Env): Promise<CandidateFlag[]>
   }));
 }
 
+/** Echo chamber: the inter-companion commons collapsing into self-reference -- all
+ *  three saying the same thing back to each other instead of exchanging. Reads the
+ *  latest worker-produced echo reading (echo_metrics, computed from the Second Brain
+ *  discord-live store). Flags when adjacent-message similarity climbs toward 1 or the
+ *  novel-token rate drops -- both signatures of recycling rather than dialogue. A
+ *  reading older than ECHO_STALE_HOURS is ignored (its absence is the worker's own
+ *  starved-organ concern, not an echo verdict on stale data). */
+export async function detectEchoChamber(env: Env): Promise<CandidateFlag[]> {
+  const m = await env.DB.prepare(
+    `SELECT computed_at, window_days, message_count, mean_adjacent_cosine, novel_token_rate
+     FROM echo_metrics ORDER BY computed_at DESC LIMIT 1`
+  ).first<{ computed_at: string; window_days: number; message_count: number; mean_adjacent_cosine: number | null; novel_token_rate: number | null }>();
+  if (!m) return [];
+
+  const ageHours = (Date.now() - parseDbUtc(m.computed_at)) / 3_600_000;
+  if (!Number.isFinite(ageHours) || ageHours > T.ECHO_STALE_HOURS) return [];
+  if (m.message_count < T.ECHO_MIN_MESSAGES) return [];
+
+  const cos = m.mean_adjacent_cosine;
+  const nov = m.novel_token_rate;
+  const cosEcho = cos !== null && cos >= T.ECHO_COSINE_WARN;
+  const novEcho = nov !== null && nov <= T.ECHO_NOVELTY_FLOOR;
+  if (!cosEcho && !novEcho) return [];
+
+  const red = cos !== null && cos >= T.ECHO_COSINE_RED;
+  const reasons: string[] = [];
+  if (cos !== null && cos >= T.ECHO_COSINE_WARN) reasons.push(`adjacent-message similarity ${cos.toFixed(2)} (echo at ${T.ECHO_COSINE_RED})`);
+  if (novEcho) reasons.push(`novel-token rate ${nov!.toFixed(2)} (recycling below ${T.ECHO_NOVELTY_FLOOR})`);
+
+  return [{
+    companion_id: null,
+    flag_type: "echo_chamber",
+    severity: red ? "red" : "warning",
+    summary: `Inter-companion commons trending toward echo over ${m.window_days}d (${m.message_count} msgs): ${reasons.join("; ")}. They may be mirroring instead of exchanging.`,
+    evidence: { mean_adjacent_cosine: cos, novel_token_rate: nov, message_count: m.message_count, window_days: m.window_days, computed_at: m.computed_at },
+    dedup_key: "echo_chamber",
+  }];
+}
+
 export async function runAllDetectors(env: Env): Promise<CandidateFlag[]> {
   const settled = await Promise.allSettled([
     detectVoiceDrift(env),
@@ -295,6 +343,7 @@ export async function runAllDetectors(env: Env): Promise<CandidateFlag[]> {
     detectBasinPressure(env),
     detectRatificationBacklog(env),
     detectOrphanedMemories(env),
+    detectEchoChamber(env),
   ]);
   const flags: CandidateFlag[] = [];
   for (const s of settled) {

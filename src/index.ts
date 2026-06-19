@@ -7,6 +7,9 @@ import { bootstrapConfig, backfillEmbeddings, seedRoutingVectors } from "./handl
 import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
+import { postInteriority, getInteriority, getInteriorityMeta, patchInteriorityDisclose } from "./handlers/interiority.js";
+import { getRefusals, getPreferences, patchRefusalAck } from "./handlers/agency.js";
+import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists, patchTask, completeListItem } from "./handlers/history";
@@ -69,6 +72,7 @@ import { postClearingRun } from "./handlers/clearing.js";
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
 import { getDrives, contactDrive } from "./handlers/drives.js";
+import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures } from "./handlers/creatures.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
 import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
@@ -139,6 +143,24 @@ const router = new Router()
   // Async notes between companion and human
   .on("GET",  "/notes", (request, env) => getNotes(request, env))
   .on("POST", "/notes", (request, env) => createNote(request, env))
+
+  // The private back room (migration 0084). Content read is owner-token-only by design;
+  // ADMIN_SECRET (Raziel) gets meta (frosted glass) but never content. See handlers/interiority.ts.
+  .on("POST",  "/interiority",                    (request, env)         => postInteriority(request, env))
+  .on("GET",   "/interiority/:companion_id/meta", (request, env, params) => getInteriorityMeta(request, env, params ?? {}))
+  .on("GET",   "/interiority/:companion_id",      (request, env, params) => getInteriority(request, env, params ?? {}))
+  .on("PATCH", "/interiority/:id/disclose",       (request, env, params) => patchInteriorityDisclose(request, env, params ?? {}))
+
+  // Agency layer (migration 0086): refusals + chosen preferences. Public to Raziel (admin or owner).
+  .on("GET",   "/agency/refusals/:companion_id",    (request, env, params) => getRefusals(request, env, params ?? {}))
+  .on("GET",   "/agency/preferences/:companion_id", (request, env, params) => getPreferences(request, env, params ?? {}))
+  .on("PATCH", "/agency/refusal/:id/ack",           (request, env, params) => patchRefusalAck(request, env, params ?? {}))
+
+  // Sanctioned drift lane (migration 0087): declared becoming, witnessed not ratified. Admin or owner.
+  .on("GET",   "/drifts/:companion_id",             (request, env, params) => getDrifts(request, env, params ?? {}))
+  .on("POST",  "/mind/drift/run",                   (request, env)         => postDriftRun(request, env))
+  // Emergent SOMA log (migration 0089): a crystallized drift's permanent mark on a float. Admin or owner.
+  .on("GET",   "/soma/shifts/:companion_id",        (request, env, params) => getSomaShifts(request, env, params ?? {}))
 
   // Biometric snapshots
   .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
@@ -227,6 +249,10 @@ const router = new Router()
   .on("POST",  "/mind/guardian/run",               (request, env)         => postGuardianRun(request, env))
   .on("GET",   "/mind/guardian/flags",             (request, env)         => getGuardianFlags(request, env))
   .on("PATCH", "/mind/guardian/flags/:id",         (request, env, params) => patchGuardianFlag(request, env, params ?? {}))
+
+  // Echo guard (0088) -- worker writes the daily inter-companion echo reading; detectEchoChamber reads it
+  .on("POST",  "/mind/echo-metric",                 (request, env)         => postEchoMetric(request, env))
+  .on("GET",   "/mind/echo-metric",                 (request, env)         => getEchoMetric(request, env))
 
   // Motif memory + resurrection (0076) -- recurring symbolic threads as memory atoms
   .on("POST",  "/mind/motifs/detect",              (request, env)         => postMotifsDetect(request, env))
