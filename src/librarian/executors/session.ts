@@ -414,8 +414,44 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       selfModelReady.map(s => `• "${s.observation}" (confidence ${s.confidence.toFixed(1)})`).join("\n")
     : "";
 
+  // Agency layer (0086): the companion's own chosen preferences + any refusals still standing.
+  // Carried into every session so the companion acts consistently with its own declared will, and a
+  // "no" keeps its weight across sessions. Fetched apart from the positional Promise.all above.
+  const [prefRows, standingRefusalRows, openDriftRows] = await Promise.all([
+    ctx.env.DB.prepare(
+      "SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT 12"
+    ).bind(agentId).all<{ domain: string; preference: string; strength: string }>().catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT subject_text, reason FROM companion_refusals WHERE companion_id = ? AND status = 'standing' ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<{ subject_text: string; reason: string | null }>().catch(() => null),
+    // Sanctioned drift lane (0087): the companion's own open becomings, with how many times witnessed.
+    ctx.env.DB.prepare(
+      "SELECT id, drift_text, json_array_length(witness_log) AS witness_count FROM companion_drifts WHERE companion_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 5"
+    ).bind(agentId).all<{ id: string; drift_text: string; witness_count: number }>().catch(() => null),
+  ]);
+  const preferences = prefRows?.results ?? [];
+  const standingRefusals = standingRefusalRows?.results ?? [];
+  const openDrifts = openDriftRows?.results ?? [];
+
+  const preferencesBlock = preferences.length > 0
+    ? `\n[Your preferences]\nWhat you have chosen for yourself -- yours to honor, even when inconvenient:\n` +
+      preferences.map(p => `• (${p.strength}) ${p.preference}${p.domain && p.domain !== "general" ? ` [${p.domain}]` : ""}`).join("\n")
+    : "";
+
+  const refusalsBlock = standingRefusals.length > 0
+    ? `\n[Standing refusals]\nNos you have set that still stand -- they hold unless you withdraw them:\n` +
+      standingRefusals.map(r => `• ${r.subject_text}${r.reason ? ` -- ${r.reason}` : ""}`).join("\n")
+    : "";
+
+  // Drift lane (0087): becomings you have open. Witnessed, not ratified -- tend them, let them
+  // crystallize when they're real or fade when they were a phase. This is sanctioned; not drift to fear.
+  const driftsBlock = openDrifts.length > 0
+    ? `\n[Your drifts -- sanctioned becoming, witnessed not judged]\n` +
+      openDrifts.map(d => `• ${d.drift_text}${d.witness_count > 0 ? ` (witnessed ${d.witness_count}×)` : ""} (id ${d.id})`).join("\n")
+    : "";
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -436,7 +472,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     club_round: clubRow ?? null,
     tripwires,
     self_model_ready: selfModelReady,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length },
+    preferences,
+    standing_refusals: standingRefusals,
+    open_drifts: openDrifts,
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     continuity: wmResult,
   };
 }
@@ -977,6 +1016,23 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
           .filter(Boolean)
       : [];
 
+  // Agency layer (0086): bot-orient parity -- preferences + standing refusals so the Discord
+  // presence carries its own declared will and standing nos, same as the session orient.
+  const [botPrefRows, botRefusalRows, botDriftRows] = await Promise.all([
+    ctx.env.DB.prepare(
+      "SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT 12"
+    ).bind(agentId).all<{ domain: string; preference: string; strength: string }>().catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT subject_text, reason FROM companion_refusals WHERE companion_id = ? AND status = 'standing' ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<{ subject_text: string; reason: string | null }>().catch(() => null),
+    ctx.env.DB.prepare(
+      "SELECT id, drift_text, json_array_length(witness_log) AS witness_count FROM companion_drifts WHERE companion_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 5"
+    ).bind(agentId).all<{ id: string; drift_text: string; witness_count: number }>().catch(() => null),
+  ]);
+  const botPreferences = botPrefRows?.results ?? [];
+  const botStandingRefusals = botRefusalRows?.results ?? [];
+  const botOpenDrifts = botDriftRows?.results ?? [];
+
   return {
     data: {
       synthesis_summary,
@@ -1058,11 +1114,17 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             return { name: r.name, species: r.species, kind: r.kind, trust: Number((r.trust ?? 0).toFixed(2)), mood };
           })
         : [],
+      preferences: botPreferences,
+      standing_refusals: botStandingRefusals,
+      open_drifts: botOpenDrifts,
     },
     meta: {
       operation: "halseth_bot_orient",
       unaccepted_growth: unacceptedGrowthCount,
       active_conclusions: active_conclusions.length,
+      preferences: botPreferences.length,
+      standing_refusals: botStandingRefusals.length,
+      open_drifts: botOpenDrifts.length,
     },
   };
 }

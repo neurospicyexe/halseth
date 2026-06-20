@@ -55,14 +55,23 @@ async function verifyPkce(verifier: string, challenge: string, method: string): 
   return b64 === challenge;
 }
 
+// Companions a connector can be bound to. "" = unbound (admin / Raziel's own connector / bots).
+const BINDABLE_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
+
 function renderAuthorizeForm(
   clientId: string,
   redirectUri: string,
   state: string,
   codeChallenge: string,
   codeChallengeMethod: string,
+  companionSel: string = "",
   errorMsg?: string,
 ): Response {
+  const opt = (val: string, label: string) =>
+    `<option value="${escapeHtml(val)}"${companionSel === val ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  const companionOptions =
+    opt("", "Unbound (admin / Raziel direct)") +
+    BINDABLE_COMPANIONS.map((c) => opt(c, c.charAt(0).toUpperCase() + c.slice(1))).join("");
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -89,6 +98,13 @@ function renderAuthorizeForm(
       border-radius: 8px; color: #e4e4e7; font-size: 0.875rem; outline: none;
     }
     input[type="password"]:focus { border-color: #6366f1; }
+    select {
+      width: 100%; padding: 0.5rem 0.75rem; margin-bottom: 0.25rem;
+      background: #09090b; border: 1px solid #3f3f46;
+      border-radius: 8px; color: #e4e4e7; font-size: 0.875rem; outline: none;
+    }
+    select:focus { border-color: #6366f1; }
+    .hint { font-size: 0.6875rem; color: #71717a; margin-bottom: 0.75rem; }
     .error { color: #f87171; font-size: 0.8125rem; margin-top: 0.75rem; }
     button {
       width: 100%; margin-top: 1rem; padding: 0.5625rem;
@@ -110,6 +126,9 @@ function renderAuthorizeForm(
       <input type="hidden" name="code_challenge_method" value="${escapeHtml(codeChallengeMethod)}">
       <label for="secret">Admin passphrase</label>
       <input type="password" id="secret" name="secret" autocomplete="current-password" autofocus>
+      <label for="companion_id" style="margin-top:1rem;">Bind this connector to</label>
+      <select id="companion_id" name="companion_id">${companionOptions}</select>
+      <p class="hint">Pick a companion for that companion's project so it can only act as itself. Leave Unbound for your own direct access.</p>
       ${errorMsg ? `<p class="error">${escapeHtml(errorMsg)}</p>` : ""}
       <button type="submit">Authorize</button>
     </form>
@@ -214,6 +233,9 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
   const codeChallenge       = (form.get("code_challenge")        as string) ?? "";
   const codeChallengeMethod = (form.get("code_challenge_method") as string) ?? "S256";
   const secret              = (form.get("secret")                as string) ?? "";
+  const companionRaw        = (form.get("companion_id")          as string) ?? "";
+  // Only a known companion binds; anything else (incl. "") is unbound. Never trust a free value.
+  const companionId = (BINDABLE_COMPANIONS as readonly string[]).includes(companionRaw) ? companionRaw : null;
 
   if (!clientId || !redirectUri) {
     return oauthError("invalid_request", "Missing client_id or redirect_uri", 400, request);
@@ -231,20 +253,20 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
     return oauthError("invalid_request", "redirect_uri not registered for this client", 400, request);
   }
 
-  // Verify admin passphrase.
+  // Verify admin passphrase. (Selection survives the re-render so a typo doesn't reset the binding.)
   if (!env.ADMIN_SECRET || !safeEqual(secret, env.ADMIN_SECRET)) {
-    return renderAuthorizeForm(clientId, redirectUri, state, codeChallenge, codeChallengeMethod, "Incorrect passphrase.");
+    return renderAuthorizeForm(clientId, redirectUri, state, codeChallenge, codeChallengeMethod, companionId ?? "", "Incorrect passphrase.");
   }
 
-  // Issue authorization code (10-minute window).
+  // Issue authorization code (10-minute window), carrying the companion binding chosen above.
   const code      = generateId();
   const now       = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
   await env.DB.prepare(`
-    INSERT INTO oauth_codes (code, client_id, redirect_uri, code_challenge, code_challenge_method, created_at, expires_at, used)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-  `).bind(code, clientId, redirectUri, codeChallenge || null, codeChallengeMethod, now, expiresAt).run();
+    INSERT INTO oauth_codes (code, client_id, redirect_uri, code_challenge, code_challenge_method, created_at, expires_at, used, companion_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+  `).bind(code, clientId, redirectUri, codeChallenge || null, codeChallengeMethod, now, expiresAt, companionId).run();
 
   const dest = new URL(redirectUri);
   dest.searchParams.set("code", code);
@@ -284,7 +306,7 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
   ).bind(code).first<{
     client_id: string; redirect_uri: string;
     code_challenge: string | null; code_challenge_method: string | null;
-    expires_at: string;
+    expires_at: string; companion_id: string | null;
   }>();
 
   if (!codeRow) {
@@ -325,9 +347,10 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
   const tokenHash = await hashToken(token);
+  // Carry the companion binding from the authorization code onto the issued token.
   await env.DB.prepare(
-    "INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
-  ).bind(tokenHash, client_id, now, expiresAt).run();
+    "INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at, companion_id) VALUES (?, ?, ?, ?, ?)"
+  ).bind(tokenHash, client_id, now, expiresAt, codeRow.companion_id ?? null).run();
 
   return jsonResponse({
     access_token: token,

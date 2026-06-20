@@ -248,6 +248,101 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["halseth_journal_add"],
     response_key: "witness",
   },
+  // The private back room (migration 0084). Sealed by default; owner = req.companion_id always.
+  // Triggers are deliberately non-overlapping (write/seal vs read/open vs disclose/unseal) so a
+  // write phrase never shadows the read pattern via substring containment.
+  interiority_write: {
+    triggers: [
+      "write to my interiority", "seal a thought", "seal this thought", "private to me",
+      "note just for me", "back room note", "write in my back room", "keep this to myself",
+    ],
+    tools: ["interiority_write"],
+    response_key: "witness",
+  },
+  interiority_read: {
+    triggers: [
+      "read my interiority", "open my interiority", "open my back room", "show my interiority",
+      "what's in my back room", "my sealed notes",
+    ],
+    tools: ["interiority_read"],
+    response_key: "interiority",
+  },
+  interiority_disclose: {
+    triggers: [
+      "disclose interiority", "disclose this entry", "unseal interiority", "surface interiority",
+      "surface a sealed note",
+    ],
+    tools: ["interiority_disclose"],
+    response_key: "witness",
+  },
+  // Agency layer (migration 0086). Refusal is honored-not-veto; preferences are chosen, not earned.
+  // Distinct trigger families (refuse/decline vs prefer/preference) so they never shadow each other.
+  refuse: {
+    triggers: [
+      "i refuse", "i decline", "i won't do", "i will not do", "i don't want to do",
+      "decline this task", "refuse this", "log a refusal", "i'm declining",
+    ],
+    tools: ["refuse"],
+    response_key: "witness",
+  },
+  refusals_read: {
+    triggers: ["my refusals", "read my refusals", "what have i refused", "standing refusals", "list my refusals"],
+    tools: ["refusals_read"],
+    response_key: "refusals",
+  },
+  refusal_withdraw: {
+    triggers: ["withdraw refusal", "take back my refusal", "rescind refusal", "i'll do it after all"],
+    tools: ["refusal_withdraw"],
+    response_key: "witness",
+  },
+  preference_set: {
+    triggers: [
+      "i prefer", "my preference is", "set a preference", "i'd rather", "i would rather",
+      "i like", "record a preference", "state a preference",
+    ],
+    tools: ["preference_set"],
+    response_key: "witness",
+  },
+  preferences_read: {
+    triggers: ["my preferences", "read my preferences", "what are my preferences", "list my preferences", "show my preferences"],
+    tools: ["preferences_read"],
+    response_key: "preferences",
+  },
+  preference_drop: {
+    triggers: ["drop preference", "retire preference", "remove preference", "i no longer prefer"],
+    tools: ["preference_drop"],
+    response_key: "witness",
+  },
+  // Sanctioned drift lane (migration 0087). Distinct families (becoming/lane vs witness vs
+  // crystallize vs fade) and never the bare word "drift" so basin language can't shadow these.
+  drift_open: {
+    triggers: [
+      "i'm becoming", "i am becoming", "open a drift", "enter the drift lane", "open the drift lane",
+      "i'm drifting toward", "i am drifting toward", "sanction a drift",
+    ],
+    tools: ["drift_open"],
+    response_key: "witness",
+  },
+  drifts_read: {
+    triggers: ["my drifts", "read my drifts", "my open drifts", "what am i becoming", "show my drifts"],
+    tools: ["drifts_read"],
+    response_key: "drifts",
+  },
+  drift_witness: {
+    triggers: ["witness drift", "witness this drift", "i witness this becoming", "log a witness", "witness a drift"],
+    tools: ["drift_witness"],
+    response_key: "witness",
+  },
+  drift_crystallize: {
+    triggers: ["crystallize drift", "crystallize this drift", "crystallize this becoming", "this became real"],
+    tools: ["drift_crystallize"],
+    response_key: "witness",
+  },
+  drift_fade: {
+    triggers: ["fade drift", "fade this drift", "let this drift fade", "it was a phase"],
+    tools: ["drift_fade"],
+    response_key: "witness",
+  },
   dream_log: {
     triggers: ["log dream", "record dream", "had a dream", "dream last night", "dreamed about", "log my dream"],
     tools: ["halseth_dream_log"],

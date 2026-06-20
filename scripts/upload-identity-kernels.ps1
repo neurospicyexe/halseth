@@ -31,7 +31,10 @@ $companionFiles = @{
 $sharedFiles = @(
     "SUBSTRATE_CONTINUITY_v1.md",
     "BASIN_READINGS_v1.md",
-    "RATIFICATION_PROTOCOL_v1.md"
+    "RATIFICATION_PROTOCOL_v1.md",
+    "INTERIORITY_v1.md",
+    "AGENCY_v1.md",
+    "DRIFT_LANE_v1.md"
 )
 
 function Send-Kernel {

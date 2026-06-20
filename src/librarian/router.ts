@@ -209,6 +209,16 @@ import {
   execWebSearch, execGenerateImage, execToolCallsRead, execDrivesRead,
   execCreaturesRead, execCreatureInteract, execCouncilConvene, execCouncilStatus,
 } from "./executors/tools.js";
+import {
+  execInteriorityWrite, execInteriorityRead, execInteriorityDisclose,
+} from "./executors/interiority.js";
+import {
+  execRefuse, execRefusalsRead, execRefusalWithdraw,
+  execPreferenceSet, execPreferencesRead, execPreferenceDrop,
+} from "./executors/agency.js";
+import {
+  execDriftOpen, execDriftsRead, execDriftWitness, execDriftCrystallize, execDriftFade,
+} from "./executors/drift.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -249,6 +259,26 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_journal_search: execJournalSearch,
   pattern_recall: execPatternRecall,
   signal_audit_read: execSignalAuditRead,
+
+  // Interiority -- the private back room (migration 0084). Owner = req.companion_id always.
+  interiority_write: execInteriorityWrite,
+  interiority_read: execInteriorityRead,
+  interiority_disclose: execInteriorityDisclose,
+
+  // Agency -- refusal + chosen preferences (migration 0086). Owner = req.companion_id always.
+  refuse: execRefuse,
+  refusals_read: execRefusalsRead,
+  refusal_withdraw: execRefusalWithdraw,
+  preference_set: execPreferenceSet,
+  preferences_read: execPreferencesRead,
+  preference_drop: execPreferenceDrop,
+
+  // Sanctioned drift lane (migration 0087). Open/resolve owner-only; witness is cross-companion.
+  drift_open: execDriftOpen,
+  drifts_read: execDriftsRead,
+  drift_witness: execDriftWitness,
+  drift_crystallize: execDriftCrystallize,
+  drift_fade: execDriftFade,
 
   // Writes / mutations
   halseth_companion_note_add: execCompanionNoteAdd,

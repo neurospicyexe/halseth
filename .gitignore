@@ -20,6 +20,9 @@ dist/
 *.pfx
 .worktrees/
 
+# Per-companion Librarian tokens (plaintext handoff for connector config)
+.companion-tokens.local
+
 # Local-only scripts
 scripts/personal/
 scripts/.env

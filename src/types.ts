@@ -44,6 +44,10 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;         // weekly clearing-pass substrate (set via wrangler secret; pass no-ops without it)
   CLEARING_MODEL?: string;            // optional override for the clearing-pass model (default claude-opus-4-8)
   CLEARING_MAX?: string;              // optional cap on entries triaged per pass (default 40)
+  DRIFT_MODEL?: string;               // optional override for the drift-lane pass model (default claude-opus-4-8)
+  DRIFT_MAX?: string;                 // optional cap on drifts witnessed per pass (default 20)
+  SOMA_SHIFT_MODEL?: string;          // optional override for the emergent-SOMA delta model (default DRIFT_MODEL/claude-opus-4-8)
+  SOMA_SHIFT_MAX?: string;            // optional cap on |delta| a single crystallize moves a float (default 0.03, hard ceiling 0.08)
   COMPANION_TOOLS_DEFAULT?: string;   // "true" | "false" -- gate fallback when no per-companion setting (wrangler.toml [vars])
   PUBLIC_BASE_URL?: string;           // this worker's public base URL, for building image-serve links
 }

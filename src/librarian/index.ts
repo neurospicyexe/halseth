@@ -8,6 +8,7 @@ import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
 import { safeEqual } from "../lib/auth.js";
+import { createLogger } from "../lib/log.js";
 
 const COMPANION_SECRET_ENV_KEYS: Record<string, keyof Env> = {
   cypher: "CYPHER_MCP_SECRET",
@@ -112,10 +113,10 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     session_type: (b.session_type as LibrarianRequest["session_type"]) ?? "work",
   };
 
+  const log = createLogger({ component: "librarian", companion_id: req.companion_id });
+
   if (authenticatedCompanionId && authenticatedCompanionId !== req.companion_id) {
-    console.warn(
-      `[librarian] companion_id mismatch: token=${authenticatedCompanionId} claimed=${req.companion_id}`
-    );
+    log.warn("companion_id_mismatch", { token_companion: authenticatedCompanionId, claimed: req.companion_id });
     return new Response(
       JSON.stringify({ error: "companion_id does not match authenticated token" }),
       { status: 403, headers: { "Content-Type": "application/json" } }
@@ -126,13 +127,15 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     const router = new LibrarianRouter(env);
     const result = await router.route(req);
     return new Response(JSON.stringify(result), {
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Trace-Id": log.traceId },
     });
   } catch (err) {
-    console.error("[librarian] error:", err);
-    return new Response(JSON.stringify({ error: "Internal error" }), {
+    // Was a bare `console.error("[librarian] error:", err)` -- unsearchable, lost the error
+    // shape, and gave the caller no way to correlate. Now structured + trace-correlated.
+    log.error("route_failed", { request: req.request, err });
+    return new Response(JSON.stringify({ error: "Internal error", trace_id: log.traceId }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Trace-Id": log.traceId },
     });
   }
 }

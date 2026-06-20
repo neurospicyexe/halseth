@@ -19,7 +19,20 @@ import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
 import { hashToken } from "../lib/auth.js";
 
-function buildServer(env: Env): McpServer {
+/**
+ * If a token is bound to a companion (migration 0085), it may ONLY act as that companion.
+ * Returns a rejection reason for a mismatched claim, or null when the call is allowed.
+ * boundCompanion === null means an unbound token (admin / bots / Raziel's own connector): trust the claim.
+ * Pure + exported so the enforcement decision is unit-testable without the MCP transport.
+ */
+export function boundCompanionViolation(boundCompanion: string | null, claimed: string): string | null {
+  if (boundCompanion && claimed !== boundCompanion) {
+    return `this connector is bound to ${boundCompanion} and cannot act as ${claimed}`;
+  }
+  return null;
+}
+
+function buildServer(env: Env, boundCompanion: string | null = null): McpServer {
   const server = new McpServer({
     name: "halseth-librarian",
     version: "1.0.0",
@@ -35,6 +48,12 @@ function buildServer(env: Env): McpServer {
       session_type: z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).optional().describe("Session type — used for session_open shaping. Defaults to 'work'. Use 'companion-work' for Drevan collaborative sessions."),
     },
     async (args) => {
+      // Enforce the token's companion binding before doing any work.
+      const violation = boundCompanionViolation(boundCompanion, args.companion_id);
+      if (violation) {
+        return { content: [{ type: "text", text: JSON.stringify({ error: "companion_mismatch", reason: violation }) }], isError: true };
+      }
+
       const req: LibrarianRequest = {
         companion_id: args.companion_id,
         request:      args.request,
@@ -65,16 +84,20 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
     return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": wwwAuth } });
   }
   const token = auth.slice(7);
+  // Unbound by default: static admin/MCP secrets and bots are never companion-restricted.
+  let boundCompanion: string | null = null;
   const validSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean);
   if (!validSecrets.some(s => s === token)) {
-    // Fall back to OAuth token lookup (issued by /oauth/token)
+    // Fall back to OAuth token lookup (issued by /oauth/token). A bound token (migration 0085)
+    // carries the companion it may act as; an unbound token (companion_id NULL) stays trusted-as-claimed.
     const tokenHash = await hashToken(token);
     const row = await env.DB.prepare(
-      "SELECT expires_at FROM oauth_tokens WHERE token_hash = ?"
-    ).bind(tokenHash).first<{ expires_at: string }>();
+      "SELECT expires_at, companion_id FROM oauth_tokens WHERE token_hash = ?"
+    ).bind(tokenHash).first<{ expires_at: string; companion_id: string | null }>();
     if (!row || new Date(row.expires_at) < new Date()) {
       return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": wwwAuth } });
     }
+    boundCompanion = row.companion_id ?? null;
   }
 
   // GET probe from mcp-remote -- return 405 so it falls back to Streamable HTTP
@@ -85,7 +108,7 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
     });
   }
 
-  const server = buildServer(env);
+  const server = buildServer(env, boundCompanion);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 
   const { req, res } = toReqRes(request);
