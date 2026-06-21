@@ -516,8 +516,11 @@ export class LibrarianRouter {
       const index = await this.env.LIBRARIAN_KV.get("_index") ?? "";
       const kvKeys = index.split(",").map(k => k.trim()).filter(Boolean);
 
-      // Nothing in KV yet -- return unknown without burning API tokens
-      if (!kvKeys.length) return "unknown";
+      // Bail only when there is genuinely nothing to classify against. Fast-path keys
+      // (session_open, feelings_read, etc.) are always available even when KV is empty
+      // (fresh deploy / local dev / tests), and the classifier can still route paraphrased
+      // requests to them -- so an empty _index alone must not skip classification.
+      if (!kvKeys.length && !Object.keys(FAST_PATH_PATTERNS).length) return "unknown";
 
       // Fetch trigger hints for each key to help the classifier distinguish ambiguous patterns.
       // "_hints" is a KV entry mapping key -> first trigger phrase (comma-separated pairs).

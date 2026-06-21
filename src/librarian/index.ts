@@ -25,33 +25,36 @@ function resolveCompanionFromToken(token: string, env: Env): string | null {
 }
 
 export async function handleLibrarian(request: Request, env: Env): Promise<Response> {
-  // Auth guard -- same pattern as MCP
-  if (env.MCP_AUTH_SECRET) {
-    const auth = request.headers.get("Authorization") ?? "";
-    if (!safeEqual(auth, `Bearer ${env.MCP_AUTH_SECRET}`)) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  // Per-companion identity enforcement (opt-in via CYPHER/DREVAN/GAIA_MCP_SECRET env vars).
-  // If any per-companion secret is configured, the bearer token must map to a known companion.
-  // If no per-companion secrets are set, falls back to shared MCP_AUTH_SECRET (lean phase).
+  // Auth guard. Accept EITHER the shared MCP_AUTH_SECRET OR a valid per-companion secret
+  // (CYPHER/DREVAN/GAIA_MCP_SECRET). These are alternatives, not both-required: gating them
+  // serially deadlocked the endpoint whenever both were configured (a companion token failed
+  // the shared check; the shared token mapped to no companion). When a per-companion secret
+  // matches, the caller is locked to that companion_id (enforced below). A shared-secret caller
+  // is unbound (admin / Raziel / bots) and may act as any companion.
+  const auth = request.headers.get("Authorization") ?? "";
   const hasPerCompanionSecrets =
     !!(env.CYPHER_MCP_SECRET || env.DREVAN_MCP_SECRET || env.GAIA_MCP_SECRET);
 
   let authenticatedCompanionId: string | null = null;
+  let isAuthorized = false;
+
+  if (env.MCP_AUTH_SECRET && safeEqual(auth, `Bearer ${env.MCP_AUTH_SECRET}`)) {
+    isAuthorized = true;
+  }
   if (hasPerCompanionSecrets) {
-    const auth = request.headers.get("Authorization") ?? "";
     authenticatedCompanionId = resolveCompanionFromToken(auth, env);
-    if (!authenticatedCompanionId) {
-      return new Response(
-        JSON.stringify({ error: "Token does not map to a known companion" }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    if (authenticatedCompanionId) isAuthorized = true;
+  }
+  // If neither secret type is configured, the endpoint is open (lean-phase parity with /mcp).
+  if (!env.MCP_AUTH_SECRET && !hasPerCompanionSecrets) {
+    isAuthorized = true;
+  }
+
+  if (!isAuthorized) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   let body: unknown;

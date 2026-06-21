@@ -87,7 +87,22 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
   // Unbound by default: static admin/MCP secrets and bots are never companion-restricted.
   let boundCompanion: string | null = null;
   const validSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean);
-  if (!validSecrets.some(s => s === token)) {
+  // Static per-companion secrets bind the connection to one companion (parity with /librarian).
+  // Without this, a bot configured with CYPHER_MCP_SECRET would 401, and the only working token
+  // (the shared secret) maps to boundCompanion=null -- trusted-as-claimed -- letting any bot
+  // impersonate any companion. Binding here closes that gap.
+  const companionSecretMap: Record<string, string> = {};
+  if (env.CYPHER_MCP_SECRET) companionSecretMap[env.CYPHER_MCP_SECRET] = "cypher";
+  if (env.DREVAN_MCP_SECRET) companionSecretMap[env.DREVAN_MCP_SECRET] = "drevan";
+  if (env.GAIA_MCP_SECRET)   companionSecretMap[env.GAIA_MCP_SECRET]   = "gaia";
+
+  if (validSecrets.some(s => s === token)) {
+    // Shared admin/MCP secret -- unbound, trusted as claimed.
+    boundCompanion = null;
+  } else if (companionSecretMap[token]) {
+    // Static per-companion secret -- locked to that companion.
+    boundCompanion = companionSecretMap[token];
+  } else {
     // Fall back to OAuth token lookup (issued by /oauth/token). A bound token (migration 0085)
     // carries the companion it may act as; an unbound token (companion_id NULL) stays trusted-as-claimed.
     const tokenHash = await hashToken(token);
