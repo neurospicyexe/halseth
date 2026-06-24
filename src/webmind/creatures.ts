@@ -160,6 +160,7 @@ export function buildSolBlock(c: SolRow, nowMs: number = Date.now()): string {
       : ` Sol is around; you can mention it to Raziel or tend it yourself.`);
 }
 
+// Keep in sync with autonomous-worker/src/sol-presence.ts PALETTE (the worker mirrors these for Sol's channel moments).
 // Deterministic moment palette keyed by disposition. null = Sol does not show.
 const SOL_PALETTE: Record<Disposition, string[]> = {
   absent: [],

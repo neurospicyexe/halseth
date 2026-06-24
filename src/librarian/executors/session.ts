@@ -484,7 +484,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     preferences,
     standing_refusals: standingRefusals,
     open_drifts: openDrifts,
-    sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at } : null,
+    sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
     meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     continuity: wmResult,
   };
@@ -1119,7 +1119,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
           }))
         : [],
       creatures: creaturesResult.status === "fulfilled" && creaturesResult.value?.results
-        ? (creaturesResult.value.results as Array<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number }>).map(r => {
+        ? (creaturesResult.value.results as Array<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string }>).map(r => {
             let mood: string | null = null;
             try { mood = r.state_json ? (JSON.parse(r.state_json).mood ?? null) : null; } catch { /* malformed json -> no mood */ }
             return { name: r.name, species: r.species, kind: r.kind, trust: Number((r.trust ?? 0).toFixed(2)), mood };

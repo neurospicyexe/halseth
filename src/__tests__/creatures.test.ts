@@ -134,6 +134,8 @@ describe("solMoment", () => {
     expect(typeof solMoment("affectionate", 3)).toBe("string");
   });
   it("deterministic for a given seed", () => {
-    expect(solMoment("present", 7)).toBe(solMoment("present", 7));
+    // SOL_PALETTE.present has 2 entries; seed 7 selects 7 % 2 = 1 (the second item)
+    const expected = "*Sol hops closer along the rail, leaving a twist of bright wire as toll.*";
+    expect(solMoment("present", 7)).toBe(expected);
   });
 });

@@ -113,6 +113,8 @@ export async function interactCreature(request: Request, env: Env, params: Recor
     const interactionId = crypto.randomUUID().replace(/-/g, "");
 
     if (actor === "sol") {
+      // Sol's appearance is logged WITHOUT a trust bump or last_interaction_at restamp,
+      // so a sol-only creature reads last_interaction_at null by design (restlessness falls back to created_at).
       await env.DB.prepare(insertInteractionSql()).bind(interactionId, id, actor, action, note).run();
       return json({ interacted: true, action, trust: null, state_json: null });
     }
