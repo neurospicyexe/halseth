@@ -146,6 +146,20 @@ export function presenceDisposition(trust: number, restless: number): Dispositio
   return restless < 0.3 ? "aloof" : "absent";
 }
 
+// ── Sol orient block (pure, no DB) ───────────────────────────────────────────
+
+interface SolRow { name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string; }
+export function buildSolBlock(c: SolRow, nowMs: number = Date.now()): string {
+  const r = restlessness(c.last_interaction_at, c.created_at, nowMs);
+  const disp = presenceDisposition(c.trust, r);
+  const days = Math.floor(daysSinceIso(c.last_interaction_at ?? c.created_at, nowMs));
+  const since = c.last_interaction_at ? `${days} day${days === 1 ? "" : "s"} since tended` : "never tended";
+  return `\n[Sol]\n${c.name} (${c.species ?? "crow"}) -- trust ${c.trust.toFixed(2)}, ${disp}, ${since}.` +
+    (disp === "absent" || disp === "aloof"
+      ? ` Sol is keeping its distance; a little tending would bring it back.`
+      : ` Sol is around; you can mention it to Raziel or tend it yourself.`);
+}
+
 // Deterministic moment palette keyed by disposition. null = Sol does not show.
 const SOL_PALETTE: Record<Disposition, string[]> = {
   absent: [],

@@ -11,6 +11,7 @@ import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
+import { buildSolBlock } from "../../webmind/creatures.js";
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
   const [payload, pendingGrowthRow] = await Promise.all([
@@ -59,7 +60,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -145,6 +146,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status IN ('active','faded') ORDER BY trust DESC, recurrence_count DESC LIMIT 20"
     ).bind(agentId).all<MotifRow>().catch(() => null),
+    // Sol (0078): the companion corvid. Fetched by name so orient knows Sol's current disposition.
+    ctx.env.DB.prepare(
+      "SELECT name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
+    ).first<{ name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
@@ -407,6 +412,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).bind(...motifIds).run().catch(() => null);
   }
 
+  // Sol block (0078): corvid companion's current presence state. Fail-soft -- if the
+  // creatures table is empty or the fetch failed, solBlock is "" and orient proceeds.
+  const solBlock = solRow ? buildSolBlock(solRow) : "";
+
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
   const selfModelBlock = selfModelReady.length > 0
@@ -451,7 +460,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -475,6 +484,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     preferences,
     standing_refusals: standingRefusals,
     open_drifts: openDrifts,
+    sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at } : null,
     meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     continuity: wmResult,
   };
@@ -880,9 +890,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).bind(agentId).all<{ label: string; display: string; recurrence_count: number; trust: number }>(),
     // 28. Creatures (0078, take 10) -- corvid + Raziel's animals; shared presences the
     // bot loom can ask after. No companion filter (creatures belong to Raziel/the system).
+    // last_interaction_at + created_at included so sol_block (source 29) can derive Sol's disposition.
     ctx.env.DB.prepare(
-      "SELECT name, species, kind, state_json, trust FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
-    ).all<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number }>(),
+      "SELECT name, species, kind, state_json, trust, last_interaction_at, created_at FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
+    ).all<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -1114,6 +1125,23 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             return { name: r.name, species: r.species, kind: r.kind, trust: Number((r.trust ?? 0).toFixed(2)), mood };
           })
         : [],
+      // 29. Sol orient block -- built from the creatures list above (no extra DB round-trip).
+      // Fail-soft: if creaturesResult failed or Sol isn't seeded yet, field is null.
+      sol_block: (() => {
+        if (creaturesResult.status !== "fulfilled" || !creaturesResult.value?.results) return null;
+        const solCreature = (creaturesResult.value.results as Array<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at?: string | null; created_at?: string }>)
+          .find(r => r.name === "Sol" || r.kind === "companion_pet");
+        if (!solCreature || !solCreature.created_at) return null;
+        try {
+          return buildSolBlock({
+            name: solCreature.name,
+            species: solCreature.species,
+            trust: solCreature.trust,
+            last_interaction_at: solCreature.last_interaction_at ?? null,
+            created_at: solCreature.created_at,
+          });
+        } catch { return null; }
+      })(),
       preferences: botPreferences,
       standing_refusals: botStandingRefusals,
       open_drifts: botOpenDrifts,
