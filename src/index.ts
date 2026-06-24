@@ -73,6 +73,7 @@ import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
 import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
+import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures } from "./handlers/creatures.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
 import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
@@ -253,6 +254,10 @@ const router = new Router()
   // Echo guard (0088) -- worker writes the daily inter-companion echo reading; detectEchoChamber reads it
   .on("POST",  "/mind/echo-metric",                 (request, env)         => postEchoMetric(request, env))
   .on("GET",   "/mind/echo-metric",                 (request, env)         => getEchoMetric(request, env))
+
+  // Imp activations log (0091) -- reply-flavor layer instrument; settings live in companion_settings KV
+  .on("POST",  "/mind/imp-activations",             (request, env)         => postImpActivation(request, env))
+  .on("GET",   "/mind/imp-activations",             (request, env)         => getImpActivations(request, env))
 
   // Motif memory + resurrection (0076) -- recurring symbolic threads as memory atoms
   .on("POST",  "/mind/motifs/detect",              (request, env)         => postMotifsDetect(request, env))
