@@ -206,16 +206,26 @@ export async function getAutonomySeeds(
   if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
 
   const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "5", 10), 20);
+  // include_used=1 returns used seeds too (for the Hearth manage surface: see-what-ran + re-enable).
+  // Default stays unused-only, so the worker's seed-pick path is unchanged.
+  const includeUsed = url.searchParams.get("include_used") === "1";
+  const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "5", 10), includeUsed ? 100 : 20);
 
-  const rows = await env.DB.prepare(
-    "SELECT * FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT ?"
-  ).bind(companion_id, limit).all();
+  const rows = includeUsed
+    ? await env.DB.prepare(
+        // unused first (used_at NULL sorts ahead), then by priority, newest used last
+        "SELECT * FROM autonomy_seeds WHERE companion_id = ? ORDER BY (used_at IS NOT NULL), priority DESC, created_at DESC LIMIT ?"
+      ).bind(companion_id, limit).all()
+    : await env.DB.prepare(
+        "SELECT * FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at ASC LIMIT ?"
+      ).bind(companion_id, limit).all();
 
   return json({ seeds: rows.results });
 }
 
-// PATCH /mind/autonomy/seeds/:id  -- mark used
+// PATCH /mind/autonomy/seeds/:id
+//   default (no/empty body)        -- mark used (back-compat: the worker + old proxy send no body)
+//   { action: "reenable" }         -- clear used_at so a consumed seed re-enters the queue
 export async function patchAutonomySeed(
   request: Request,
   env: Env,
@@ -227,12 +237,48 @@ export async function patchAutonomySeed(
   const { id } = params;
   if (!id) return json({ error: "id required" }, 400);
 
+  // Body is optional; tolerate empty/non-JSON so the no-body mark-used callers keep working.
+  let action: string | undefined;
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    if (typeof body?.action === "string") action = body.action;
+  } catch { /* no body -> default mark-used */ }
+
+  if (action === "reenable") {
+    const result = await env.DB.prepare(
+      "UPDATE autonomy_seeds SET used_at = NULL WHERE id = ? AND used_at IS NOT NULL"
+    ).bind(id).run();
+    if (result.meta.changes === 0) return json({ error: "not found or already active" }, 404);
+    return json({ message: "ok", reenabled: true });
+  }
+
   const result = await env.DB.prepare(
     "UPDATE autonomy_seeds SET used_at = datetime('now') WHERE id = ? AND used_at IS NULL"
   ).bind(id).run();
 
   if (result.meta.changes === 0) return json({ error: "not found or already used" }, 404);
   return json({ message: "ok" });
+}
+
+// DELETE /mind/autonomy/seeds/:id  -- remove a seed outright (autonomy_seeds is a leaf table;
+// nothing FK-references it, so removal is clean). Used to prune bad/duplicate seeds from the UI.
+export async function deleteAutonomySeed(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id required" }, 400);
+
+  const result = await env.DB.prepare(
+    "DELETE FROM autonomy_seeds WHERE id = ?"
+  ).bind(id).run();
+
+  if (result.meta.changes === 0) return json({ error: "not found" }, 404);
+  return json({ ok: true, deleted: true });
 }
 
 // ---------------------------------------------------------------------------

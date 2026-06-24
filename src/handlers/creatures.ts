@@ -104,6 +104,9 @@ export async function interactCreature(request: Request, env: Env, params: Recor
   const action = (body.action ?? "").trim().toLowerCase();
   const err = validateInteract(actor, action);
   if (err) return json({ error: err }, 400);
+  // validateInteract already guarantees a valid action; this guard narrows the string to
+  // CreatureAction for trustDelta/actionMood (TS can't infer it through validateInteract).
+  if (!isValidAction(action)) return json({ error: "invalid action" }, 400);
   const note = body.note?.trim().slice(0, 500) ?? null;
 
   try {

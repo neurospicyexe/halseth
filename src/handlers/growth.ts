@@ -336,6 +336,42 @@ export async function declineJournalEntry(
   return setReviewStatus(env, id, body.companion_id as string, "declined");
 }
 
+// DELETE /mind/growth/journal/:id?companion_id=
+// Hard-prune for bad autonomous (DeepSeek) noise. Honors the "canon is never deleted"
+// covenant structurally: an ACCEPTED entry cannot be hard-deleted (use decline/supersede
+// instead) -- only pending/declined rows are removable. Ownership-scoped by companion_id so
+// a mistargeted delete can't hit the wrong companion's row. FK-safe: supersedes_id only ever
+// points at accepted parents (which this refuses to delete), so no child is orphaned.
+export async function deleteJournalEntry(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id required" }, 400);
+
+  const url = new URL(request.url);
+  const companion_id = url.searchParams.get("companion_id");
+  if (!validateCompanion(companion_id)) return json({ error: "companion_id query param required" }, 400);
+
+  const row = await env.DB.prepare(
+    "SELECT review_status FROM growth_journal WHERE id = ? AND companion_id = ?"
+  ).bind(id, companion_id).first<{ review_status: string }>();
+  if (!row) return json({ error: "entry not found" }, 404);
+  if (row.review_status === "accepted") {
+    return json({ error: "accepted canon cannot be deleted -- decline or supersede instead" }, 409);
+  }
+
+  await env.DB.prepare(
+    "DELETE FROM growth_journal WHERE id = ? AND companion_id = ? AND review_status != 'accepted'"
+  ).bind(id, companion_id).run();
+
+  return json({ ok: true, deleted: true });
+}
+
 // ---------------------------------------------------------------------------
 // Patterns -- Jaccard-similarity UPSERT
 // ---------------------------------------------------------------------------

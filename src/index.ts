@@ -46,12 +46,12 @@ import {
 import {
   postAutonomyRun, patchAutonomyRun, getAutonomyRuns,
   postAutonomyRunLog, getAutonomyRunLogs,
-  postAutonomySeed, getAutonomySeeds, patchAutonomySeed,
+  postAutonomySeed, getAutonomySeeds, patchAutonomySeed, deleteAutonomySeed,
   postAutonomyReflection, getAutonomyReflections,
   getAutonomyThreads,
 } from "./handlers/autonomy.js";
 import {
-  postGrowthJournal, getGrowthJournal, acceptJournalEntry, declineJournalEntry,
+  postGrowthJournal, getGrowthJournal, acceptJournalEntry, declineJournalEntry, deleteJournalEntry,
   postGrowthPattern, getGrowthPatterns,
   postGrowthMarker, getGrowthMarkers,
   getUnmaterialized, patchVaultPath, postVaultPathsLookup,
@@ -318,6 +318,7 @@ const router = new Router()
   .on("POST",  "/mind/autonomy/seeds",                           (request, env)         => postAutonomySeed(request, env))
   .on("GET",   "/mind/autonomy/seeds/:companion_id",             (request, env, params) => getAutonomySeeds(request, env, params ?? {}))
   .on("PATCH", "/mind/autonomy/seeds/:id",                       (request, env, params) => patchAutonomySeed(request, env, params ?? {}))
+  .on("DELETE","/mind/autonomy/seeds/:id",                       (request, env, params) => deleteAutonomySeed(request, env, params ?? {}))
   .on("GET",   "/mind/autonomy/threads/:companion_id",           (request, env, params) => getAutonomyThreads(request, env, params ?? {}))
   .on("POST",  "/mind/autonomy/reflections",                     (request, env)         => postAutonomyReflection(request, env))
   .on("GET",   "/mind/autonomy/reflections/:companion_id",       (request, env, params) => getAutonomyReflections(request, env, params ?? {}))
@@ -327,6 +328,7 @@ const router = new Router()
   .on("GET",  "/mind/growth/journal/:companion_id",              (request, env, params) => getGrowthJournal(request, env, params ?? {}))
   .on("PATCH", "/mind/growth/journal/:id/accept",               (request, env, params) => acceptJournalEntry(request, env, params ?? {}))
   .on("PATCH", "/mind/growth/journal/:id/decline",              (request, env, params) => declineJournalEntry(request, env, params ?? {}))
+  .on("DELETE", "/mind/growth/journal/:id",                     (request, env, params) => deleteJournalEntry(request, env, params ?? {}))
   .on("POST", "/mind/growth/patterns",                           (request, env)         => postGrowthPattern(request, env))
   .on("GET",  "/mind/growth/patterns/:companion_id",             (request, env, params) => getGrowthPatterns(request, env, params ?? {}))
   .on("POST", "/mind/growth/markers",                            (request, env)         => postGrowthMarker(request, env))
