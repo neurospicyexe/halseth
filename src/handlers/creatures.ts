@@ -26,13 +26,26 @@ import {
   insertInteractionSql,
   interactBumpSql,
   tickUpdateSql,
+  restlessness,
+  presenceDisposition,
 } from "../webmind/creatures.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const VALID_ACTORS = new Set<string>(["raziel", "cypher", "drevan", "gaia"]);
+const VALID_ACTORS = new Set<string>(["raziel", "cypher", "drevan", "gaia", "sol"]);
+
+/** Returns an error string, or null if the actor/action pair is allowed. */
+export function validateInteract(actor: string, action: string): string | null {
+  if (!VALID_ACTORS.has(actor)) {
+    return "actor must be one of raziel, cypher, drevan, gaia, sol";
+  }
+  if (actor === "sol") {
+    return action === "appear" ? null : "sol may only 'appear'";
+  }
+  return isValidAction(action) ? null : "action must be one of feed, play, talk, give";
+}
 
 interface CreatureRow {
   id: string; name: string; species: string | null; kind: string; owner: string;
@@ -46,7 +59,11 @@ export async function getCreatures(request: Request, env: Env): Promise<Response
   if (denied) return denied;
   try {
     const rows = await env.DB.prepare(listCreaturesSql()).all<CreatureRow>();
-    return json({ creatures: rows.results ?? [] });
+    const creatures = (rows.results ?? []).map(c => {
+      const r = restlessness(c.last_interaction_at, c.created_at);
+      return { ...c, restlessness: Number(r.toFixed(3)), disposition: presenceDisposition(c.trust, r) };
+    });
+    return json({ creatures });
   } catch (err) {
     console.error("[mind/creatures] list error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
@@ -85,12 +102,8 @@ export async function interactCreature(request: Request, env: Env, params: Recor
   }
   const actor = (body.actor ?? "").trim().toLowerCase();
   const action = (body.action ?? "").trim().toLowerCase();
-  if (!VALID_ACTORS.has(actor)) {
-    return json({ error: "actor must be one of raziel, cypher, drevan, gaia" }, 400);
-  }
-  if (!isValidAction(action)) {
-    return json({ error: "action must be one of feed, play, talk, give" }, 400);
-  }
+  const err = validateInteract(actor, action);
+  if (err) return json({ error: err }, 400);
   const note = body.note?.trim().slice(0, 500) ?? null;
 
   try {
@@ -98,6 +111,12 @@ export async function interactCreature(request: Request, env: Env, params: Recor
     if (!exists) return json({ error: "creature not found" }, 404);
 
     const interactionId = crypto.randomUUID().replace(/-/g, "");
+
+    if (actor === "sol") {
+      await env.DB.prepare(insertInteractionSql()).bind(interactionId, id, actor, action, note).run();
+      return json({ interacted: true, action, trust: null, state_json: null });
+    }
+
     await env.DB.batch([
       env.DB.prepare(insertInteractionSql()).bind(interactionId, id, actor, action, note),
       env.DB.prepare(interactBumpSql()).bind(trustDelta(action), actionMood(action), id),
