@@ -14,6 +14,9 @@ import {
   insertInteractionSql,
   interactBumpSql,
   tickUpdateSql,
+  restlessness,
+  presenceDisposition,
+  solMoment,
 } from "../webmind/creatures.js";
 
 describe("interaction trust deltas", () => {
@@ -95,5 +98,42 @@ describe("sql builders", () => {
     expect(listCreaturesSql()).toContain("FROM creatures");
     expect(getCreatureSql()).toContain("WHERE id = ?");
     expect(recentInteractionsSql()).toContain("FROM creature_interactions");
+  });
+});
+
+describe("restlessness", () => {
+  const now = Date.parse("2026-06-22T00:00:00Z");
+  it("fresh interaction = low restlessness", () => {
+    expect(restlessness("2026-06-21 12:00:00", "2026-01-01 00:00:00", now)).toBeLessThan(0.3);
+  });
+  it("long untended = high, capped at 1", () => {
+    expect(restlessness("2026-05-01 00:00:00", "2026-01-01 00:00:00", now)).toBe(1);
+  });
+  it("never interacted falls back to createdAt", () => {
+    expect(restlessness(null, "2026-06-21 00:00:00", now)).toBeLessThan(0.3);
+  });
+});
+
+describe("presenceDisposition", () => {
+  it("high trust + low restlessness = affectionate", () => {
+    expect(presenceDisposition(0.8, 0.1)).toBe("affectionate");
+  });
+  it("low trust = aloof or absent", () => {
+    expect(["aloof", "absent"]).toContain(presenceDisposition(0.1, 0.2));
+  });
+  it("high restlessness pulls toward absent regardless of trust", () => {
+    expect(presenceDisposition(0.5, 0.95)).toBe("absent");
+  });
+});
+
+describe("solMoment", () => {
+  it("absent disposition yields no moment", () => {
+    expect(solMoment("absent", 0)).toBeNull();
+  });
+  it("affectionate yields a non-empty string", () => {
+    expect(typeof solMoment("affectionate", 3)).toBe("string");
+  });
+  it("deterministic for a given seed", () => {
+    expect(solMoment("present", 7)).toBe(solMoment("present", 7));
   });
 });

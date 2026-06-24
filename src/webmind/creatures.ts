@@ -122,3 +122,53 @@ export function interactBumpSql(): string {
 export function tickUpdateSql(): string {
   return `UPDATE creatures SET trust = ?, state_json = json_set(COALESCE(state_json,'{}'), '$.mood', ?) WHERE id = ?`;
 }
+
+// ── Sol need-state helpers (pure, derived) ────────────────────────────────────
+
+export type Disposition = "absent" | "aloof" | "watchful" | "present" | "affectionate";
+
+// Untended need, derived (no table). Grows ~linearly to 1 over RESTLESS_FULL_DAYS.
+export const RESTLESS_FULL_DAYS = 7;
+export function restlessness(
+  lastInteractionAt: string | null,
+  createdAt: string,
+  nowMs: number = Date.now(),
+): number {
+  const days = daysSinceIso(lastInteractionAt ?? createdAt, nowMs);
+  return Math.min(1, Math.max(0, days / RESTLESS_FULL_DAYS));
+}
+
+// Trust gives warmth; restlessness pulls Sol away (a neglected crow keeps its distance).
+export function presenceDisposition(trust: number, restless: number): Disposition {
+  if (restless >= 0.85) return "absent";
+  if (trust >= 0.7) return restless < 0.4 ? "affectionate" : "present";
+  if (trust >= 0.4) return restless < 0.5 ? "watchful" : "aloof";
+  return restless < 0.3 ? "aloof" : "absent";
+}
+
+// Deterministic moment palette keyed by disposition. null = Sol does not show.
+const SOL_PALETTE: Record<Disposition, string[]> = {
+  absent: [],
+  aloof: [
+    "*a black shape watches from the far rail, unmoving, then is gone.*",
+    "*one wingbeat against the window — Sol, keeping its distance.*",
+  ],
+  watchful: [
+    "*Sol lands on the sill, head cocked, weighing the room before settling.*",
+    "*a low, considering* kraa *from the gutter — Sol is paying attention.*",
+  ],
+  present: [
+    "*a scuff of talons — Sol drops a dull bottlecap where you'll find it, and waits.*",
+    "*Sol hops closer along the rail, leaving a twist of bright wire as toll.*",
+  ],
+  affectionate: [
+    "*Sol settles near, preens once, and sets a small smooth stone beside your hand.* 🪶",
+    "*a soft, throaty* prruk *— Sol leans in, unhurried, glad of you.*",
+  ],
+};
+export function solMoment(disp: Disposition, seed: number): string | null {
+  const palette = SOL_PALETTE[disp];
+  if (!palette || palette.length === 0) return null;
+  const idx = Math.abs(Math.floor(seed)) % palette.length;
+  return palette[idx]!;
+}
