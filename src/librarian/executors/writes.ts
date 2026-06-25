@@ -101,10 +101,15 @@ export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ agent?: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
+  const p = parseContext<{ agent?: string; delta_text?: string; content?: string; text?: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
 
   // Structured context wins; fall back to inline parsing from the request string.
-  let deltaText = p?.delta_text?.trim();
+  // Accept the same aliases every other write surface takes (content/text). Claude.ai
+  // naturally sends `content`; this executor used to read ONLY delta_text, so those
+  // writes fell through to the inline regex -- which requires a trailing colon -- and
+  // stored the bare request string ("Log a relational delta for cypher") as the delta.
+  // (2026-06-24 Hermes/OpenClaw delta-misfield bug.)
+  let deltaText = (p?.delta_text ?? p?.content ?? p?.text)?.trim();
   let valence = p?.valence?.trim();
 
   if (!deltaText) {

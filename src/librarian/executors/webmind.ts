@@ -266,6 +266,31 @@ export async function execRazielWitness(ctx: ExecutorContext): Promise<ExecutorR
   return { ack: true, id: r.id, noted_at: r.noted_at };
 }
 
+// ── Continuity-note read ──────────────────────────────────────────────────────
+// Direct read of wm_continuity_notes for the requesting companion. The write
+// surface (wm_note_add) had no read counterpart, so "read my continuity notes"
+// dead-ended at the classifier's unknown-witness (2026-06-24). High-salience rows
+// surface first, then by recency. Optional { salience, limit } in context.
+export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ salience?: string; limit?: number }>(ctx.req.context);
+  const limit = Math.min(Math.max(p?.limit ?? 20, 1), 50);
+  const conditions = ["agent_id = ?", "archived = 0"];
+  const bindings: unknown[] = [ctx.req.companion_id];
+  if (p?.salience && ["high", "medium", "normal", "low"].includes(p.salience)) {
+    conditions.push("salience = ?");
+    bindings.push(p.salience);
+  }
+  bindings.push(limit);
+  const rows = await ctx.env.DB.prepare(
+    `SELECT note_id, note_type, content, salience, source, created_at
+     FROM wm_continuity_notes
+     WHERE ${conditions.join(" AND ")}
+     ORDER BY CASE salience WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, created_at DESC
+     LIMIT ?`
+  ).bind(...bindings).all();
+  return { data: rows.results ?? [], meta: { operation: "continuity_notes_read" } };
+}
+
 // ── Sit & Resolve ─────────────────────────────────────────────────────────────
 
 export async function execNoteSit(ctx: ExecutorContext): Promise<ExecutorResult> {

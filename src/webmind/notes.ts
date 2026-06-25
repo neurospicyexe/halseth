@@ -7,6 +7,9 @@ import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
 import { effectiveHeatSql } from "./heat.js";
 
+// Active-note cap for the evictable (non-high) tier, enforced lazily on write.
+const NOTE_CAP = 100;
+
 export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuityNote> {
   // Write gate: if thread_key is set, return the existing note if one was written
   // in the last 10 minutes. Prevents Claude Code Stop hooks and Discord synthesis
@@ -36,64 +39,78 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Digest-then-delete (capacity debt, 2026-06-09; heat-aware since 0074): rows past
-  // the cap are written to wm_archive_notes as a truncation digest BEFORE the cap
-  // delete, so continuity content is compressed rather than silently lost. The keep
-  // set is the 99 HOTTEST by effective heat (the about-to-insert note occupies slot
-  // 100 -- age 0 gives it the full coherence bonus, so it always survives its own
-  // cap). Overflow = the coldest, matching exactly what the cap DELETE removes after
-  // the insert lands (both use the same effective-heat ORDER BY). If a concurrent
-  // write shifts the boundary between this read and the batch, the worst case is a
-  // row digested twice or deleted one tick later -- never deleted undigested-and-unkept.
-  const overflow = await env.DB.prepare(`
-    SELECT note_id, content, created_at FROM wm_continuity_notes
-    WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
-      SELECT note_id FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 99
-    )
-    ORDER BY created_at ASC
-  `).bind(input.agent_id, input.agent_id)
-    .all<{ note_id: string; content: string; created_at: string }>()
-    .then(r => r.results ?? [])
-    .catch(() => []);
+  // ROOT CAUSE of bug #7 (2026-06-24): the cap DELETE sorts the note set by
+  // effectiveHeatSql() (julianday math) inside a NOT IN subquery. Running that on EVERY
+  // insert, in the same D1 batch as the INSERT, intermittently exceeded D1's storage-
+  // operation timeout ("object was reset"), which rolled back the WHOLE batch -- the
+  // just-written note included -- while the request still returned ack:true. Freshly
+  // written continuity notes silently vanished (the original Hermes/OpenClaw handover,
+  // and every probe in this session).
+  //
+  // Fix: a cheap COUNT gate. The cap only matters when the EVICTABLE tier (non-high;
+  // high-salience notes are never cap-evicted) is at/over NOTE_CAP. The common case is
+  // under cap -> we skip the digest + heavy DELETE entirely and the batch is a single
+  // fast INSERT, so the note always commits. Heavy work runs only when there is genuinely
+  // overflow to trim. Guards retained for that path: high notes are never candidates, and
+  // `note_id != ?` makes the cap structurally unable to evict the row it just wrote.
+  const evictableRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND salience != 'high'`
+  ).bind(input.agent_id).first<{ c: number }>();
+  const overCap = (evictableRow?.c ?? 0) >= NOTE_CAP;
 
-  // Batch: INSERT, digest (if overflow), then write-time cap. Cap runs after insert so the
-  // new row is included in the "keep" set. The effective-heat ORDER BY sorts the ~100
-  // surviving rows in memory after the index narrows by agent -- fine at cap scale.
-  const statements = [
-    env.DB.prepare(`
-      INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      id, input.agent_id,
-      input.thread_key ?? null, input.note_type ?? "continuity",
-      input.content, input.salience ?? "normal",
-      input.actor ?? "agent", input.source ?? "system",
-      input.correlation_id ?? null, now,
-    ),
-  ];
-  if (overflow.length > 0) {
-    const summary = overflow
-      .map(r => `[${r.created_at.slice(0, 10)}] ${r.content.slice(0, 200)}`)
-      .join("\n")
-      .slice(0, 8000);
-    statements.push(env.DB.prepare(`
-      INSERT INTO wm_archive_notes (id, agent_id, summary, note_ids, note_count, period_from, period_to)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      generateId(), input.agent_id, summary,
-      JSON.stringify(overflow.map(r => r.note_id)), overflow.length,
-      overflow[0]!.created_at, overflow[overflow.length - 1]!.created_at,
-    ));
+  // SECOND ROOT CAUSE of bug #7 (2026-06-24): this write used env.DB.batch(). Via the
+  // Librarian MCP path (handleLibrarianMcp -> fetch-to-node toReqRes/toFetchResponse),
+  // the Node-compat response shim tears the request context down as the result serializes,
+  // and D1 batch()'s commit does not flush in time -- the INSERT is silently discarded
+  // while the tool still returns {ack:true}. Every OTHER write executor that persists via
+  // Librarian (deltaLog, conclusion_add, the soma_arc note) uses single-statement .run(),
+  // which commits in-line. So addNote now uses .run() too. The cap cleanup runs as separate
+  // awaited .run() calls (it was never a real transaction -- D1 batch isn't atomic across
+  // these statements anyway, per the original comment).
+  await env.DB.prepare(`
+    INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id, input.agent_id,
+    input.thread_key ?? null, input.note_type ?? "continuity",
+    input.content, input.salience ?? "normal",
+    input.actor ?? "agent", input.source ?? "system",
+    input.correlation_id ?? null, now,
+  ).run();
+
+  if (overCap) {
+    // Digest the coldest evictable overflow before deleting it (capacity debt, heat-aware
+    // since 0074). High-salience notes are excluded from both digest and delete, and the
+    // just-inserted row is excluded by id so the cap can never evict what it just wrote.
+    const overflow = await env.DB.prepare(`
+      SELECT note_id, content, created_at FROM wm_continuity_notes
+      WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND note_id != ? AND note_id NOT IN (
+        SELECT note_id FROM wm_continuity_notes
+        WHERE agent_id = ? AND archived = 0 AND salience != 'high' ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
+      )
+      ORDER BY created_at ASC
+    `).bind(input.agent_id, id, input.agent_id)
+      .all<{ note_id: string; content: string; created_at: string }>()
+      .then(r => r.results ?? [])
+      .catch(() => []);
+    if (overflow.length > 0) {
+      const summary = overflow
+        .map(r => `[${r.created_at.slice(0, 10)}] ${r.content.slice(0, 200)}`)
+        .join("\n")
+        .slice(0, 8000);
+      await env.DB.prepare(`
+        INSERT INTO wm_archive_notes (id, agent_id, summary, note_ids, note_count, period_from, period_to)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        generateId(), input.agent_id, summary,
+        JSON.stringify(overflow.map(r => r.note_id)), overflow.length,
+        overflow[0]!.created_at, overflow[overflow.length - 1]!.created_at,
+      ).run();
+      await env.DB.prepare(
+        `DELETE FROM wm_continuity_notes WHERE note_id IN (${overflow.map(() => "?").join(", ")})`
+      ).bind(...overflow.map(r => r.note_id)).run();
+    }
   }
-  statements.push(env.DB.prepare(`
-    DELETE FROM wm_continuity_notes
-    WHERE agent_id = ? AND archived = 0 AND note_id NOT IN (
-      SELECT note_id FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
-    )
-  `).bind(input.agent_id, input.agent_id));
-  await env.DB.batch(statements);
 
   return {
     note_id: id,

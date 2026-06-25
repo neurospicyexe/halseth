@@ -96,6 +96,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "have we talked about", "what did we say about", "do we have anything on",
       "pull context on", "check the vault for", "vault search", "search for",
       "what do i know about", "what's in vault about",
+      "search the vault", "search the vault for", "search vault for", "look in the vault for",
       // Corpus-scoped: routes here so execSbSearch can restrict to historical_corpus
       // (the origin layer). The executor's CORPUS_SCOPE_RE then sets content_type.
       "search the corpus", "search corpus", "search the historical corpus",
@@ -163,14 +164,19 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   sb_save_note: {
-    // For quick personal notes (not inbox observations, not structured documents)
-    triggers: ["save note", "save a note", "quick note", "vault note", "jot to vault", "personal note to vault"],
+    // For quick personal notes (not inbox observations, not structured documents).
+    // "save to vault" / "log to vault" live HERE (path-aware, persists to a readable
+    // vault path) -- they USED to route to sb_log_observation, which is path-blind and
+    // silently dropped the {path} arg into the inbox. A "save to vault: path=..." write
+    // then 404'd on sb_read. (Hermes/OpenClaw migration-brief loss, 2026-06-24.)
+    triggers: ["save note", "save a note", "quick note", "vault note", "jot to vault", "personal note to vault", "save to vault", "save to the vault", "log to vault", "save this to vault"],
     tools: ["sb_save_note"],
     response_key: "witness",
   },
   sb_log_observation: {
-    // For raw inbox-style observations; less curated than notes
-    triggers: ["log observation", "note observation", "inbox observation", "log an observation", "save to vault", "log to vault"],
+    // For raw inbox-style observations; less curated than notes. Path-blind by design --
+    // never put "save to vault" here (see sb_save_note above).
+    triggers: ["log observation", "note observation", "inbox observation", "log an observation"],
     tools: ["sb_log_observation"],
     response_key: "witness",
   },
@@ -743,6 +749,21 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   companion_notes_read: {
     triggers: ["companion notes", "my notes to you", "notes from session", "notes about me", "companion note read"],
     tools: ["halseth_companion_notes_read"],
+    response_key: "summary",
+    raw: true,
+  },
+  // Read wm_continuity_notes directly (high-salience handovers, SOMA arcs, metronome
+  // notes). Distinct read verbs from wm_note_add's "continuity note" write trigger;
+  // an anchored guard (router.ts) forces the read form to win. Added 2026-06-24 after
+  // "read my continuity notes" dead-ended at the classifier's unknown-witness.
+  continuity_notes_read: {
+    triggers: [
+      "my continuity notes", "read my continuity notes", "read continuity notes",
+      "list continuity notes", "show continuity notes", "my recent continuity notes",
+      "high-salience notes", "high salience notes", "my high-salience notes",
+      "read my wm notes", "my webmind notes",
+    ],
+    tools: ["continuity_notes_read"],
     response_key: "summary",
     raw: true,
   },

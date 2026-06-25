@@ -304,6 +304,15 @@ export async function sbList(env: Env, path?: string): Promise<string | null> {
 
 // ── Mutations (return ack) ─────────────────────────────────────────────────────
 
+// Ack honesty: callTool returns null on transport/JSON-RPC error, but a structurally
+// valid empty/no-op response ("") is NOT success. A save that returns nothing did not
+// persist -- treat empty as failure so the {ack:true} never outruns the write. (Part of
+// the 2026-06-24 silent-write-failure cluster; the primary fix was routing, this is
+// defense-in-depth so a future path bug surfaces loud instead of lying.)
+function savedOk(text: string | null): boolean {
+  return text !== null && text.trim().length > 0;
+}
+
 export async function sbSaveDocument(env: Env, params: {
   content: string;
   path?: string;
@@ -312,12 +321,12 @@ export async function sbSaveDocument(env: Env, params: {
   content_type?: "document" | "note";
 }): Promise<{ ack: boolean; response: string | null }> {
   const text = await callTool(env, "sb_save_document", params);
-  return { ack: text !== null, response: text };
+  return { ack: savedOk(text), response: text };
 }
 
 export async function sbLogObservation(env: Env, content: string, tags?: string[]): Promise<{ ack: boolean }> {
   const text = await callTool(env, "sb_log_observation", tags?.length ? { content, tags } : { content });
-  return { ack: text !== null };
+  return { ack: savedOk(text) };
 }
 
 export async function sbSynthesizeSession(env: Env, session_id: string): Promise<{ ack: boolean }> {

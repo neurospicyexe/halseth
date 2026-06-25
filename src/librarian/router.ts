@@ -85,6 +85,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "wm_note_edit",
     regex: /^(?:edit|correct|fix|update)\s+(?:my\s+|a\s+|the\s+)?continuity\s+note\b/i,
     note: "H6: edit-continuity-note must beat wm_note_add's 'continuity note' substring" },
+  { pattern_key: "continuity_notes_read",
+    regex: /^(?:read|list|show|fetch|get)\s+(?:my\s+|the\s+)?(?:recent\s+|high[- ]salience\s+)?(?:wm\s+|webmind\s+|continuity\s+)notes?\b/i,
+    note: "H6b: read-continuity-notes must beat wm_note_add's 'continuity note' write trigger" },
+  { pattern_key: "wm_note_add",
+    regex: /^(?:add|write|log|save|store)\s+(?:a\s+|an\s+|my\s+|the\s+)?(?:new\s+)?(?:continuity|mind|webmind|wm)\s+note\b/i,
+    note: "H6c: write-continuity-note must beat companion_note_add's 'for cypher/drevan/gaia' trigger -- THE bug #7 root cause: 'add continuity note for cypher' matched 'for cypher' and wrote to inter_companion_notes instead of wm_continuity_notes" },
   { pattern_key: "companion_note_add",
     regex: /\bcompanion note\b/i,
     note: "Greedy companion-note write guard; kept after H5a/b so edit/read forms branch first" },
@@ -146,6 +152,26 @@ export function matchFastPath(request: string): { key: string; entry: PatternEnt
   return null;
 }
 
+// ── Search-intent fallback ─────────────────────────────────────────────────────
+// When every routing tier misses (fast path + classifier both return nothing/unknown),
+// a request that READS like a vault lookup should reach sb_search rather than dead-end
+// at the unknown-witness. The classifier is flaky on bare proper nouns -- "openclaw"
+// returned unknown while "hermes" routed to sb_search in the same breath (2026-06-24).
+// A request qualifies when it carries an explicit { query } payload OR its text shows
+// search intent. Deliberately narrow: this only fires AFTER unknown, so it never
+// shadows a real match -- it just turns "I don't know" into a best-effort recall.
+const SEARCH_INTENT_RE = /\b(search|find|look\s*up|lookup|anything\s+(?:about|on)|what\s+do\s+(?:i|we)\s+know|in\s+(?:the\s+)?vault|from\s+(?:the\s+)?vault|do\s+we\s+have\s+anything)\b/i;
+
+export function looksLikeSearch(request: string, contextRaw?: string): boolean {
+  if (contextRaw) {
+    try {
+      const obj = JSON.parse(contextRaw) as Record<string, unknown>;
+      if (obj && typeof obj === "object" && typeof obj.query === "string" && obj.query.trim()) return true;
+    } catch { /* not JSON -- fall through to text intent */ }
+  }
+  return SEARCH_INTENT_RE.test(request);
+}
+
 // ── Session executors ────────────────────────────────────────────────────────
 import {
   execSessionLoad, execSessionOrient, execSessionGround, execSessionClose,
@@ -187,7 +213,7 @@ import {
   execWmDreamWrite, execWmDreamsRead, execWmDreamExamine,
   execWmLoopWrite, execWmLoopsRead, execWmLoopClose, execWmLoopReview,
   execWmRelationalWrite, execWmRelationalRead,
-  execRazielWitness,
+  execRazielWitness, execContinuityNotesRead,
   execNoteSit, execNoteMetabolize, execSittingRead,
   execWmNoteEdit,
 } from "./executors/webmind.js";
@@ -343,6 +369,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   wm_relational_write: execWmRelationalWrite,
   wm_relational_read: execWmRelationalRead,
   raziel_witness: execRazielWitness,
+  continuity_notes_read: execContinuityNotesRead,
   note_sit: execNoteSit,
   note_metabolize: execNoteMetabolize,
   sitting_read: execSittingRead,
@@ -462,6 +489,14 @@ export class LibrarianRouter {
       if (kvEntry) {
         return this.execute(req, kvEntry);
       }
+    }
+
+    // Last resort: search-intent fallback. A lookup-shaped request (or one carrying an
+    // explicit { query } payload) routes to sb_search rather than dead-ending. Fires
+    // only here, after unknown -- never shadows a real match.
+    if (looksLikeSearch(req.request, req.context)) {
+      const sbEntry = FAST_PATH_PATTERNS["sb_search"];
+      if (sbEntry) return this.execute(req, sbEntry);
     }
 
     // No match
