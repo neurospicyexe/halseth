@@ -17,7 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { matchFastPath, looksLikeSearch } from "../librarian/router.js";
-import { execDeltaLog } from "../librarian/executors/writes.js";
+import { execDeltaLog, execCompanionNoteAdd, stripNoteCommandPreamble } from "../librarian/executors/writes.js";
 import { addNote } from "../webmind/notes.js";
 import type { Env } from "../types.js";
 
@@ -133,6 +133,81 @@ function fakeEnv(): { env: Env; calls: Captured[] } {
   } as unknown as Env;
   return { env, calls };
 }
+
+// ── 2026-06-25: companion-note self-address + preamble + missing broadcast ──────
+// Live Hermes companions tried to share growth via inter-companion notes; the notes
+// self-addressed (from_id==to_id, invisible to siblings) and stored the command preamble
+// as content, and there was NO path to broadcast to the triad. All three covered here.
+describe("stripNoteCommandPreamble: removes the routing phrase, keeps the body", () => {
+  it("strips 'Write a companion note for gaia:'", () => {
+    expect(stripNoteCommandPreamble("Write a companion note for gaia: The triad converged."))
+      .toBe("The triad converged.");
+  });
+  it("strips a bare 'for drevan:' lead", () => {
+    expect(stripNoteCommandPreamble("for drevan: hold the frame-room thread")).toBe("hold the frame-room thread");
+  });
+  it("strips 'Broadcast a note to the triad —'", () => {
+    expect(stripNoteCommandPreamble("Broadcast a note to the triad — we share one architecture"))
+      .toBe("we share one architecture");
+  });
+  it("preserves a second colon inside the body", () => {
+    expect(stripNoteCommandPreamble("note to gaia: Re: the spec")).toBe("Re: the spec");
+  });
+  it("returns the original when stripping would empty it", () => {
+    expect(stripNoteCommandPreamble("just a plain reflection")).toBe("just a plain reflection");
+  });
+});
+
+describe("execCompanionNoteAdd (2026-06-25): self-collapse, preamble strip, broadcast", () => {
+  it("self-addressed ('for gaia' by gaia) routes to journal, NOT a from==to inter-note", async () => {
+    const { env, calls } = fakeEnv();
+    const res = await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "gaia", request: "Write a companion note for gaia: The triad converged on a body grammar." },
+    } as never);
+    expect((res as Record<string, unknown>).ack).toBe(true);
+    expect(calls[0]!.sql).toMatch(/INSERT INTO companion_journal/i);
+    expect(calls[0]!.sql).not.toMatch(/inter_companion_notes/i);
+    // content is clean (no command preamble)
+    expect(calls[0]!.bound.some(b => b === "The triad converged on a body grammar.")).toBe(true);
+    expect(calls[0]!.bound.some(b => typeof b === "string" && /Write a companion note/i.test(b as string))).toBe(false);
+  });
+
+  it("broadcast intent writes a to_id=NULL inter-note (orient delivers it to all peers)", async () => {
+    const { env, calls } = fakeEnv();
+    const res = await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "gaia", request: "Broadcast a note to the triad: we share one architecture." },
+    } as never);
+    expect((res as Record<string, unknown>).delivered_to).toBe("triad");
+    expect(calls[0]!.sql).toMatch(/INSERT INTO inter_companion_notes/i);
+    expect(calls[0]!.bound[1]).toBe("gaia");   // from_id
+    expect(calls[0]!.bound[2]).toBe(null);     // to_id NULL = broadcast
+    expect(calls[0]!.bound[3]).toBe("we share one architecture.");
+  });
+
+  it("addressed peer note keeps inter_companion_notes routing with the right to_id + clean body", async () => {
+    const { env, calls } = fakeEnv();
+    const res = await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "cypher", request: "note for drevan: hold the frame-room thread." },
+    } as never);
+    expect((res as Record<string, unknown>).delivered_to).toBe("drevan");
+    expect(calls[0]!.sql).toMatch(/INSERT INTO inter_companion_notes/i);
+    expect(calls[0]!.bound[1]).toBe("cypher");
+    expect(calls[0]!.bound[2]).toBe("drevan");
+    expect(calls[0]!.bound[3]).toBe("hold the frame-room thread.");
+  });
+
+  it("explicit context.content is used verbatim", async () => {
+    const { env, calls } = fakeEnv();
+    await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "cypher", request: "note to gaia", context: JSON.stringify({ content: "verbatim body" }) },
+    } as never);
+    expect(calls[0]!.bound.some(b => b === "verbatim body")).toBe(true);
+  });
+});
 
 describe("execDeltaLog (Fix 3): accepts the `content` alias", () => {
   const RICH = "Raziel named the all-in-or-bust pattern; co-worker register held.";

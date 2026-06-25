@@ -14,9 +14,32 @@ import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
 
+// Strip a leading note-command preamble ("Write a companion note for gaia:", "for drevan:",
+// "Broadcast a note to the triad —") so the routing phrase is never stored as the note body.
+// Two passes: the full "…note (to|for) X:" command, then a bare "(to|for) X:" addressee lead.
+// Returns the trimmed original when stripping would empty it (the whole string was content).
+export function stripNoteCommandPreamble(s: string): string {
+  const stripped = s
+    .replace(/^\s*(?:please\s+)?(?:write|add|send|log|leave|drop|post|make|tell|broadcast)?\s*(?:a|an|the)?\s*(?:broadcast\s+)?(?:inter[-\s]?companion\s+|companion\s+)?note\b[^:：—-]*[:：—-]\s*/i, "")
+    .replace(/^\s*(?:to|for)\s+(?:drevan|cypher|gaia|the\s+triad|all|everyone|both|the\s+others)\s*[:：—-]\s*/i, "")
+    .trim();
+  return stripped || s.trim();
+}
+
 export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const toMatch = ctx.req.request.match(/(to|for)\s+(drevan|cypher|gaia)/i);
-  const to_id = toMatch?.[2]?.toLowerCase() ?? null;
+  const reqText = ctx.req.request;
+  const toMatch = reqText.match(/(?:to|for)\s+(drevan|cypher|gaia)/i);
+  let to_id: string | null = toMatch?.[1]?.toLowerCase() ?? null;
+
+  // Broadcast intent: a note meant for the whole triad must land as to_id=NULL, which orient
+  // delivers to every peer (`WHERE to_id = ? OR to_id IS NULL`). Without this, an unaddressed
+  // note fell through to the journal and never reached a sibling -- so broadcasting was impossible.
+  const isBroadcast = /\bbroadcast\b|\bto\s+(?:the\s+)?(?:triad|all|everyone|both|others)\b|\bto\s+you\s+both\b/i.test(reqText);
+
+  // A note addressed to the caller itself is not a peer note: from_id==to_id is invisible to
+  // siblings (the 2026-06-25 self-note bug). Collapse it -- honor broadcast intent if present,
+  // otherwise it is functionally a self-reflection and belongs in the journal.
+  if (to_id === ctx.req.companion_id) to_id = null;
 
   // Parse context: companions may send raw text OR structured JSON.
   // noteText starts null -- falls back to request string only when no context is provided at all.
@@ -47,17 +70,23 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
     }
   }
 
-  // Fall back to request string only when no context was provided
-  if (noteText === null) noteText = ctx.req.request;
+  // Fall back to the request string only when no context was provided -- and strip the command
+  // preamble so "Write a companion note for gaia:" is never stored as the note content.
+  if (noteText === null) noteText = stripNoteCommandPreamble(reqText);
 
   if (to_id) {
-    // Addressed to another companion — inter_companion_notes
+    // Addressed to a specific peer — inter_companion_notes, delivered by orient.
     const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, noteText);
-    return { ack: true, id: note.id };
+    return { ack: true, id: note.id, delivered_to: to_id };
   }
-  // Self-note or unaddressed — companion_journal (visible in Hearth)
+  if (isBroadcast) {
+    // Broadcast to the triad: to_id NULL, surfaced to all peers (orient: to_id IS NULL).
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, null, noteText);
+    return { ack: true, id: note.id, delivered_to: "triad" };
+  }
+  // Unaddressed, no broadcast intent — a self-reflection — companion_journal (visible in Hearth).
   const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
-  return { ack: true, id: r.id };
+  return { ack: true, id: r.id, routed_to: "journal" };
 }
 
 export async function execFeelingLog(ctx: ExecutorContext): Promise<ExecutorResult> {
