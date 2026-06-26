@@ -508,6 +508,22 @@ describe("regression: librarian sweep 2026-05-02 — anchored guards H1-H7", () 
     expect(result!.key).toBe("companion_notes_read");
   });
 
+  // ── H7: broadcast-to-triad guard beats the classifier, even with a long search-y body ──
+  it("H7: 'tell the triad: <long body>' routes to companion_note_add (not the classifier)", () => {
+    const result = matchFastPath("tell the triad: our body grew today, we have new search and reading tools and Sol needs tending");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("companion_note_add");
+  });
+  it("H7: 'let everyone know: ...' routes to companion_note_add", () => {
+    expect(matchFastPath("let everyone know: search is live now")?.key).toBe("companion_note_add");
+  });
+  it("H7: 'broadcast to the triad: ...' routes to companion_note_add", () => {
+    expect(matchFastPath("broadcast to the triad: we share one architecture")?.key).toBe("companion_note_add");
+  });
+  it("H7 non-regression: addressed 'tell drevan: ...' still routes to companion_note_add", () => {
+    expect(matchFastPath("tell drevan: hold the frame-room thread")?.key).toBe("companion_note_add");
+  });
+
   // ── H5b: companion_note_add greedy guard shadowed inter_note_edit ──────────
   it("H5b: 'edit companion note xyz' routes to inter_note_edit (not companion_note_add)", () => {
     const result = matchFastPath("edit companion note xyz");
