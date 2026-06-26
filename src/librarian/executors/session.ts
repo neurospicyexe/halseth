@@ -12,6 +12,7 @@ import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { buildSolBlock } from "../../webmind/creatures.js";
+import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
   const [payload, pendingGrowthRow] = await Promise.all([
@@ -342,6 +343,19 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       openQuestions.map(q => `• ${q}`).join("\n")
     : "";
 
+  // Commons (0092): Raziel's ambient log posts this companion hasn't answered yet --
+  // surfaced as drops, not pings (buildCommonsBlock carries the anti-confusion framing).
+  // Standalone query, deliberately NOT in the mega Promise.all above, so it can never
+  // shift that positional destructure (boot-path safety).
+  const commonsRows = await ctx.env.DB.prepare(
+    `SELECT id, context, body, created_at FROM commons_posts
+     WHERE author = 'raziel'
+       AND id NOT IN (SELECT reply_to FROM commons_posts WHERE author = ?1 AND reply_to IS NOT NULL)
+     ORDER BY created_at DESC LIMIT 5`
+  ).bind(agentId).all<CommonsPostRow>().catch(() => null);
+  const commonsPosts: CommonsPostRow[] = commonsRows?.results ?? [];
+  const commonsBlock = buildCommonsBlock(commonsPosts);
+
   // Forage block: outward fuel waiting in the pool. Pull, not duty -- the cue invites,
   // it does not assign.
   const forageBlock = forageFinds.length > 0
@@ -460,7 +474,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -476,6 +490,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     undercurrent_emotion: os?.undercurrent_emotion ?? null,
     unaccepted_growth: unacceptedGrowth,
     open_questions: openQuestions,
+    commons: commonsPosts,
     forage_finds: forageFinds,
     recent_listens: recentListens,
     club_round: clubRow ?? null,
@@ -485,7 +500,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     standing_refusals: standingRefusals,
     open_drifts: openDrifts,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     continuity: wmResult,
   };
 }
