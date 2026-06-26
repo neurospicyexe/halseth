@@ -66,6 +66,7 @@ class FakeStatement {
       row["status"] = this.bound[0];
       if (this.sql.includes("winning_recommendation_id")) row["winning_recommendation_id"] = this.bound[1];
       if (this.sql.includes("activated_at")) row["activated_at"] = new Date().toISOString();
+      if (this.sql.includes("discussing_at")) row["discussing_at"] = new Date().toISOString();
       if (this.sql.includes("closed_at")) row["closed_at"] = new Date().toISOString();
       return { meta: { changes: 1 } };
     }
@@ -197,12 +198,16 @@ describe("postClubVote", () => {
 });
 
 describe("patchClubStatus", () => {
-  it("advances gathering -> voting -> active -> closed", async () => {
+  it("advances gathering -> voting -> active -> discussing -> closed (Phase 2)", async () => {
     const store = emptyStore();
     store.rounds.push({ id: "r1", status: "gathering", opened_at: "2026-06-11" });
     expect((await patchClubStatus(req("PATCH", { status: "voting" }), makeEnv(store), { id: "r1" })).status).toBe(200);
     expect((await patchClubStatus(req("PATCH", { status: "active", winning_recommendation_id: "rec9" }), makeEnv(store), { id: "r1" })).status).toBe(200);
     expect(store.rounds[0]!["winning_recommendation_id"]).toBe("rec9");
+    // active -> closed is now illegal: a standing discussing phase sits between them.
+    expect((await patchClubStatus(req("PATCH", { status: "closed" }), makeEnv(store), { id: "r1" })).status).toBe(400);
+    expect((await patchClubStatus(req("PATCH", { status: "discussing" }), makeEnv(store), { id: "r1" })).status).toBe(200);
+    expect(store.rounds[0]!["discussing_at"]).toBeTruthy();
     expect((await patchClubStatus(req("PATCH", { status: "closed" }), makeEnv(store), { id: "r1" })).status).toBe(200);
   });
 
