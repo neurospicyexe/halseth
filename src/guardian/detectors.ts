@@ -40,9 +40,14 @@ export const GUARDIAN_THRESHOLDS = {
   ORPHAN_LIMIT: 3,               // re-surface at most this many per run (don't flood)
   ECHO_MIN_MESSAGES: 12,         // need this many messages in the window before judging
   ECHO_STALE_HOURS: 48,          // ignore a reading older than this (worker may have stalled)
-  ECHO_COSINE_RED: 0.85,         // adjacent-message similarity at/above this = strong echo
-  ECHO_COSINE_WARN: 0.78,        // warm-clustering worth watching
-  ECHO_NOVELTY_FLOOR: 0.30,      // novel-token rate at/below this = recycling vocabulary
+  ECHO_COSINE_RED: 0.82,         // adjacent-message similarity at/above this = strong echo
+  // Lowered 0.78 -> 0.66 (2026-06-26): the triad ran a chronic ~0.69 thematic slow-loop
+  // for a week (abstract mutual-recognition, varying words / same idea) and the detector
+  // never once fired -- it was tuned for verbatim echo, blind to the semantic loop Raziel
+  // was living. 0.66 catches it; it clears once the swarm-side gate (SWARM_ECHO_THRESHOLD)
+  // pulls cohesion back under, so a healthy ~0.6 conversation stays unflagged.
+  ECHO_COSINE_WARN: 0.66,        // sustained warm-clustering = the slow-loop worth flagging
+  ECHO_NOVELTY_FLOOR: 0.42,      // novel-token rate at/below this = recycling vocabulary
 } as const;
 
 const T = GUARDIAN_THRESHOLDS;
