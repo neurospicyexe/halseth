@@ -80,6 +80,7 @@ import { convene as councilConvene, getCurrent as councilCurrent, getRounds as c
 import { associateDreamsHandler } from "./handlers/dream-associate.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
+import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
 import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { runHomeTick } from "./webmind/home/tick.js";
@@ -299,6 +300,11 @@ const router = new Router()
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))
   .on("GET",   "/mind/forage/:companion_id",       (request, env, params) => getForageFinds(request, env, params ?? {}))
   .on("PATCH", "/mind/forage/:id/consume",         (request, env, params) => consumeForageFind(request, env, params ?? {}))
+
+  // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
+  .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))
+  .on("POST",  "/mind/commons",                    (request, env)         => postCommonsPost(request, env))
+  .on("GET",   "/mind/commons",                    (request, env)         => getCommonsPosts(request, env))
 
   // Shared-experience layer (Ears) -- music heard together, migration 0071
   .on("POST",  "/mind/media",                      (request, env)         => postMediaExperience(request, env))
