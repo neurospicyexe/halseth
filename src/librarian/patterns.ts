@@ -780,6 +780,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   companion_note_add: {
     triggers: [
       "add companion note", "companion note", "note to companion", "log companion note",
+      // broadcast-to-the-triad phrasings (executor routes unaddressed + collective -> to_id NULL)
+      "note to the triad", "tell the triad", "broadcast to the triad", "broadcast a note",
+      "broadcast", "let the others know", "let the triad know", "tell the others",
+      "note to everyone", "note to all", "tell everyone", "let everyone know",
       "tell drevan", "tell cypher", "tell gaia",
       "message to drevan", "message to cypher", "message to gaia",
       "write to drevan", "write to cypher", "write to gaia",

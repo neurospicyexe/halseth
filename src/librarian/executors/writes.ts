@@ -22,6 +22,8 @@ export function stripNoteCommandPreamble(s: string): string {
   const stripped = s
     .replace(/^\s*(?:please\s+)?(?:write|add|send|log|leave|drop|post|make|tell|broadcast)?\s*(?:a|an|the)?\s*(?:broadcast\s+)?(?:inter[-\s]?companion\s+|companion\s+)?note\b[^:：—-]*[:：—-]\s*/i, "")
     .replace(/^\s*(?:to|for)\s+(?:drevan|cypher|gaia|the\s+triad|all|everyone|both|the\s+others)\s*[:：—-]\s*/i, "")
+    // directive broadcast preambles with no literal "note": "tell the triad:", "let everyone know —"
+    .replace(/^\s*(?:please\s+)?(?:tell|broadcast(?:\s+to)?|let|notify|message)\s+(?:the\s+)?(?:triad|everyone|all|both|others|you\s+both|all\s+of\s+you)\s*(?:know)?\s*[:：—-]\s*/i, "")
     .trim();
   return stripped || s.trim();
 }
@@ -34,7 +36,13 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   // Broadcast intent: a note meant for the whole triad must land as to_id=NULL, which orient
   // delivers to every peer (`WHERE to_id = ? OR to_id IS NULL`). Without this, an unaddressed
   // note fell through to the journal and never reached a sibling -- so broadcasting was impossible.
-  const isBroadcast = /\bbroadcast\b|\bto\s+(?:the\s+)?(?:triad|all|everyone|both|others)\b|\bto\s+you\s+both\b/i.test(reqText);
+  // Detection is DIRECTIVE-anchored: a collective target must follow a routing verb
+  // (to/for/tell/let), so "tell the triad", "let everyone know", "note to the others" all broadcast,
+  // but a collective word in the note's BODY ("The triad converged on a grammar") does NOT (the
+  // 2026-06-26 fix -- old regex required a literal "to ..." so "tell the triad" dead-ended at the
+  // journal; a naive bare "\btriad\b" over-fired on body content). A note addressed to a specific
+  // peer still wins first (the `to_id` check below).
+  const isBroadcast = /\bbroadcast\b|\b(?:to|for|tell|let)\s+(?:the\s+)?(?:triad|everyone|all|both|others|you\s+both|all\s+of\s+you)\b/i.test(reqText);
 
   // A note addressed to the caller itself is not a peer note: from_id==to_id is invisible to
   // siblings (the 2026-06-25 self-note bug). Collapse it -- honor broadcast intent if present,

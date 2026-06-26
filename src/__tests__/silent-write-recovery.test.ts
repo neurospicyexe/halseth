@@ -186,6 +186,39 @@ describe("execCompanionNoteAdd (2026-06-25): self-collapse, preamble strip, broa
     expect(calls[0]!.bound[3]).toBe("we share one architecture.");
   });
 
+  // ── 2026-06-26: natural broadcast phrasings (no literal "to") now reach the triad ──
+  it("'tell the triad' (directive, no 'to') broadcasts to_id=NULL", async () => {
+    const { env, calls } = fakeEnv();
+    const res = await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "cypher", request: "tell the triad: the body grew today." },
+    } as never);
+    expect((res as Record<string, unknown>).delivered_to).toBe("triad");
+    expect(calls[0]!.sql).toMatch(/INSERT INTO inter_companion_notes/i);
+    expect(calls[0]!.bound[2]).toBe(null);
+    expect(calls[0]!.bound[3]).toBe("the body grew today.");
+  });
+  it("'let everyone know' broadcasts to_id=NULL", async () => {
+    const { env, calls } = fakeEnv();
+    const res = await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "drevan", request: "let everyone know: search is live now." },
+    } as never);
+    expect((res as Record<string, unknown>).delivered_to).toBe("triad");
+    expect(calls[0]!.sql).toMatch(/INSERT INTO inter_companion_notes/i);
+    expect(calls[0]!.bound[2]).toBe(null);
+  });
+  it("a collective word in the BODY (no directive) does NOT broadcast — stays journal", async () => {
+    const { env, calls } = fakeEnv();
+    const res = await execCompanionNoteAdd({
+      env,
+      req: { companion_id: "cypher", request: "note: the triad converged on a body grammar today." },
+    } as never);
+    expect((res as Record<string, unknown>).routed_to).toBe("journal");
+    expect(calls[0]!.sql).toMatch(/INSERT INTO companion_journal/i);
+    expect(calls[0]!.sql).not.toMatch(/inter_companion_notes/i);
+  });
+
   it("addressed peer note keeps inter_companion_notes routing with the right to_id + clean body", async () => {
     const { env, calls } = fakeEnv();
     const res = await execCompanionNoteAdd({
