@@ -81,6 +81,7 @@ import { associateDreamsHandler } from "./handlers/dream-associate.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
+import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
 import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { runHomeTick } from "./webmind/home/tick.js";
@@ -305,6 +306,11 @@ const router = new Router()
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))
   .on("POST",  "/mind/commons",                    (request, env)         => postCommonsPost(request, env))
   .on("GET",   "/mind/commons",                    (request, env)         => getCommonsPosts(request, env))
+
+  // Obsession shelf (0094) -- "what Raziel's into"; triad reacts via commons (shelf:<id>).
+  .on("POST",  "/mind/shelf",                       (request, env)         => postObsession(request, env))
+  .on("GET",   "/mind/shelf",                       (request, env)         => getObsessions(request, env))
+  .on("PATCH", "/mind/shelf/:id",                   (request, env, params) => patchObsession(request, env, params ?? {}))
 
   // Shared-experience layer (Ears) -- music heard together, migration 0071
   .on("POST",  "/mind/media",                      (request, env)         => postMediaExperience(request, env))

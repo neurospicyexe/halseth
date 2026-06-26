@@ -30,7 +30,8 @@ const VALID_KINDS = new Set<string>(["song", "album", "book", "article", "video"
 const TRANSITIONS: Record<string, string> = {
   gathering: "voting",
   voting: "active",
-  active: "closed",
+  active: "discussing",   // Phase 2: stand in a discussion phase before close, not straight to closed
+  discussing: "closed",
 };
 
 interface RoundRow {
@@ -242,6 +243,10 @@ export async function patchClubStatus(
       await env.DB.prepare(
         "UPDATE club_rounds SET status = ?, winning_recommendation_id = ?, activated_at = datetime('now') WHERE id = ?"
       ).bind(target, body.winning_recommendation_id ?? null, id).run();
+    } else if (target === "discussing") {
+      await env.DB.prepare(
+        "UPDATE club_rounds SET status = ?, discussing_at = datetime('now') WHERE id = ?"
+      ).bind(target, id).run();
     } else if (target === "closed") {
       await env.DB.prepare(
         "UPDATE club_rounds SET status = ?, closed_at = datetime('now') WHERE id = ?"

@@ -356,6 +356,19 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const commonsPosts: CommonsPostRow[] = commonsRows?.results ?? [];
   const commonsBlock = buildCommonsBlock(commonsPosts);
 
+  // Shelf (0094): Raziel's active fixations, so the triad can reference what he's into in
+  // normal conversation -- what makes it "my stuff is in there", not a dead list. Ambient:
+  // reference naturally when it fits, never perform interest. Standalone query (boot-safe).
+  const shelfRows = await ctx.env.DB.prepare(
+    "SELECT title, kind, note FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 6"
+  ).all<{ title: string; kind: string; note: string | null }>().catch(() => null);
+  const shelfItems = shelfRows?.results ?? [];
+  const shelfBlock = shelfItems.length > 0
+    ? `\n[Raziel is into]\n` +
+      shelfItems.map(s => `• ${s.title} (${s.kind})${s.note ? ` -- ${s.note.slice(0, 120)}` : ""}`).join("\n") +
+      `\nHis current fixations. Reference them naturally when they fit; you do not have to perform interest.`
+    : "";
+
   // Forage block: outward fuel waiting in the pool. Pull, not duty -- the cue invites,
   // it does not assign.
   const forageBlock = forageFinds.length > 0
@@ -474,7 +487,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -491,6 +504,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     unaccepted_growth: unacceptedGrowth,
     open_questions: openQuestions,
     commons: commonsPosts,
+    shelf: shelfItems,
     forage_finds: forageFinds,
     recent_listens: recentListens,
     club_round: clubRow ?? null,
