@@ -34,7 +34,9 @@ $sharedFiles = @(
     "RATIFICATION_PROTOCOL_v1.md",
     "INTERIORITY_v1.md",
     "AGENCY_v1.md",
-    "DRIFT_LANE_v1.md"
+    "DRIFT_LANE_v1.md",
+    "ARCHITECT STANCE v1.md",
+    "Lexicon_v2.md"
 )
 
 function Send-Kernel {
