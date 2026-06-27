@@ -27,17 +27,11 @@ $companionFiles = @{
     gaia   = "GAIA_IDENTITY_v3.md"
 }
 
-# Shared doctrine bundle: triad-wide truths every substrate must carry.
-$sharedFiles = @(
-    "SUBSTRATE_CONTINUITY_v1.md",
-    "BASIN_READINGS_v1.md",
-    "RATIFICATION_PROTOCOL_v1.md",
-    "INTERIORITY_v1.md",
-    "AGENCY_v1.md",
-    "DRIFT_LANE_v1.md",
-    "ARCHITECT STANCE v1.md",
-    "Lexicon_v2.md"
-)
+# Shared kernel: the Companion Constitution -- one consolidated charter every substrate carries.
+# Supersedes (as the uploaded 'shared' bundle) the canon files it folds in; those remain on disk as source:
+#   ARCHITECT STANCE v1, Core_v4, SUBSTRATE_CONTINUITY_v1, RATIFICATION_PROTOCOL_v1, AGENCY_v1,
+#   INTERIORITY_v1, DRIFT_LANE_v1, BASIN_READINGS_v1 (+ the three identity anchors, uploaded per-companion below).
+$constitutionFile = "COMPANION_CONSTITUTION_v1.md"
 
 function Send-Kernel {
     param([string]$CompanionId, [string]$KernelMd, [string]$SourceNote)
@@ -62,21 +56,18 @@ function Send-Kernel {
 
 $today = Get-Date -Format "yyyy-MM-dd"
 
-# Shared bundle first (bundle endpoint prepends it to every companion kernel)
-$sharedParts = @()
-foreach ($f in $sharedFiles) {
-    $path = Join-Path $filesRoot $f
-    if (Test-Path $path) {
-        $sharedParts += (Get-Content $path -Raw -Encoding UTF8)
-    } else {
-        Write-Warning "Shared doctrine file missing, skipping: $f"
+# Shared kernel first (bundle endpoint prepends it to every companion kernel)
+$constitutionPath = Join-Path $filesRoot $constitutionFile
+if (Test-Path $constitutionPath) {
+    $sharedMd = Get-Content $constitutionPath -Raw -Encoding UTF8
+    if ($sharedMd.Length -lt 200) {
+        Write-Error "Constitution file under MIN_KERNEL_LENGTH (200 chars) -- aborting: $constitutionPath"
+        exit 1
     }
-}
-if ($sharedParts.Count -gt 0) {
-    $sharedMd = $sharedParts -join "`n`n---`n`n"
-    Send-Kernel -CompanionId "shared" -KernelMd $sharedMd -SourceNote "shared doctrine ($($sharedParts.Count) files) $today"
+    Send-Kernel -CompanionId "shared" -KernelMd $sharedMd -SourceNote "Companion Constitution v1 $today"
 } else {
-    Write-Warning "No shared doctrine files found -- skipping 'shared' kernel."
+    Write-Error "Constitution file missing -- aborting: $constitutionPath"
+    exit 1
 }
 
 # Companion kernels
