@@ -12,7 +12,7 @@ if (Test-Path $EnvFile) {
 }
 
 # Halseth API
-$HalsethUrl    = "https://halseth.example.com"
+$HalsethUrl    = "https://halseth.your-account.workers.dev"
 $HalsethSecret = $env:HALSETH_SECRET
 
 # Path to AutoHotkey v2 executable — adjust if installed elsewhere

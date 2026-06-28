@@ -6,7 +6,7 @@
 // letter_to_raziel rail (a companion_journal row Hearth /journal already renders, mirroring
 // guardian.ts) -- so NO new table and NO new surface. Migration-free, pure-additive.
 //
-// Design (AuDHD/DID-aware):
+// Design (neurodivergent / plural-aware):
 //   - consistent format every run (predictability lowers cognitive load)
 //   - terse + scannable; counts and short bullets, never walls of text
 //   - ONE focus surfaced, not a backlog dump (ADHD prioritisation support)

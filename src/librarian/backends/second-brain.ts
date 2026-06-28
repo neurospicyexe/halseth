@@ -1,6 +1,6 @@
 // src/librarian/backends/second-brain.ts
 //
-// HTTPS MCP client for Second Brain at mcp.example.com.
+// HTTPS MCP client for Second Brain at the configured Second Brain MCP endpoint.
 // Uses StreamableHTTP MCP protocol (POST /mcp with JSON-RPC body).
 // OAuth token from SECOND_BRAIN_TOKEN secret.
 //
@@ -13,7 +13,15 @@
 
 import { Env } from "../../types.js";
 
-const SECOND_BRAIN_URL = "https://mcp.example.com/mcp";
+// Resolve the Second Brain MCP endpoint from the Worker env. Prefers an explicit
+// MCP URL, falls back to the webhook base URL. Appends /mcp when the configured
+// value does not already point at the MCP path. Returns null when neither var is
+// set so all Second Brain calls no-op gracefully (the public default ships unset).
+function resolveSecondBrainUrl(env: Env): string | null {
+  const base = env.SECOND_BRAIN_MCP_URL ?? env.SECOND_BRAIN_WEBHOOK_URL;
+  if (!base) return null;
+  return base.endsWith("/mcp") ? base : `${base.replace(/\/+$/, "")}/mcp`;
+}
 
 // Cached MCP session. Cloudflare Workers are short-lived but may handle
 // multiple Librarian calls within a single request (e.g. orient does
@@ -22,13 +30,13 @@ let cachedSessionId: string | null = null;
 let cachedSessionAt = 0;
 const SESSION_TTL_MS = 4 * 60 * 1000; // 4 minutes; conservative vs typical 5min server TTL
 
-async function acquireSession(headers: Record<string, string>): Promise<string | null> {
+async function acquireSession(url: string, headers: Record<string, string>): Promise<string | null> {
   const now = Date.now();
   if (cachedSessionId && (now - cachedSessionAt) < SESSION_TTL_MS) {
     return cachedSessionId;
   }
 
-  const initRes = await fetch(SECOND_BRAIN_URL, {
+  const initRes = await fetch(url, {
     method: "POST",
     headers,
     signal: AbortSignal.timeout(5_000),
@@ -60,7 +68,7 @@ async function acquireSession(headers: Record<string, string>): Promise<string |
   // response is returned. This notification is required by the MCP spec to
   // transition the server from "initializing" to "ready" before tool calls.
   try {
-    await fetch(SECOND_BRAIN_URL, {
+    await fetch(url, {
       method: "POST",
       headers: { ...headers, "mcp-session-id": sessionId },
       signal: AbortSignal.timeout(3_000),
@@ -78,6 +86,12 @@ async function acquireSession(headers: Record<string, string>): Promise<string |
 }
 
 async function callTool(env: Env, toolName: string, args: Record<string, unknown>): Promise<string | null> {
+  const url = resolveSecondBrainUrl(env);
+  if (!url) {
+    // No Second Brain endpoint configured -- no-op gracefully so the public
+    // default leaks nothing and never crashes.
+    return null;
+  }
   if (!env.SECOND_BRAIN_TOKEN) {
     console.error("[sb] callTool: SECOND_BRAIN_TOKEN not set");
     return null;
@@ -90,11 +104,11 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
   };
 
   try {
-    const sessionId = await acquireSession(headers);
+    const sessionId = await acquireSession(url, headers);
     if (!sessionId) return null;
 
     // Call the tool
-    const toolRes = await fetch(SECOND_BRAIN_URL, {
+    const toolRes = await fetch(url, {
       method: "POST",
       headers: { ...headers, "mcp-session-id": sessionId },
       signal: AbortSignal.timeout(10_000),
@@ -111,10 +125,10 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     if (toolRes.status === 404 || toolRes.status === 410) {
       console.warn(`[sb] session expired (${toolRes.status}), retrying with fresh session tool=${toolName}`);
       cachedSessionId = null;
-      const freshId = await acquireSession(headers);
+      const freshId = await acquireSession(url, headers);
       if (!freshId) return null;
 
-      finalRes = await fetch(SECOND_BRAIN_URL, {
+      finalRes = await fetch(url, {
         method: "POST",
         headers: { ...headers, "mcp-session-id": freshId },
         signal: AbortSignal.timeout(10_000),

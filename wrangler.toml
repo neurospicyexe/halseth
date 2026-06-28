@@ -57,7 +57,7 @@ binding = "PLURAL"
 service = "nullsafe-plural-v2"
 
 # Secrets (set via `wrangler secret put SECOND_BRAIN_TOKEN`):
-# SECOND_BRAIN_TOKEN — OAuth token for mcp.example.com
+# SECOND_BRAIN_TOKEN — OAuth token for your Second Brain MCP endpoint (e.g. https://your-second-brain.example.com/mcp)
 # DEEPSEEK_API_KEY   — DeepSeek V3 API key (classifier + synthesis worker)
 
 # ── Cron triggers ─────────────────────────────────────────────────────────────

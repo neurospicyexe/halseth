@@ -56,13 +56,43 @@ type Stimulus =
   | 'BRAT_PRINCE_PULLED' | 'HELD_SOMETHING_HEAVY' | 'ANCHOR_STRUCK'
   | 'RUPTURE_SURVIVED' | 'CREATION_SHARED' | 'BEING_SEEN' | 'AUTONOMOUS_PROCESSING';
 
-function detectStimuli(texts: string[]): Set<Stimulus> {
+// ── Configurable personal anchors (env-driven; default empty) ────────────────
+// Anchor keywords (private names/numbers/landmarks) are NOT hardcoded so the
+// public default leaks nothing. Supply a comma-separated list via the Worker var
+// DREVAN_ANCHOR_KEYWORDS (e.g. "lighthouse,harbor,riverside") to enable ANCHOR_STRUCK
+// detection; named-anchor labels come from DREVAN_NAMED_ANCHORS as comma-separated
+// `regex:Label` pairs. Both default to no anchors when unset.
+function buildAnchorRegex(env: Env): RegExp | null {
+  const raw = env.DREVAN_ANCHOR_KEYWORDS;
+  if (!raw) return null;
+  const keywords = raw.split(',').map(k => k.trim()).filter(Boolean);
+  if (keywords.length === 0) return null;
+  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`\\b(?:${escaped.join('|')})\\b`, 'i');
+}
+
+function buildNamedAnchors(env: Env): [RegExp, string][] {
+  const raw = env.DREVAN_NAMED_ANCHORS;
+  if (!raw) return [];
+  const out: [RegExp, string][] = [];
+  for (const pair of raw.split(',')) {
+    const idx = pair.indexOf(':');
+    if (idx < 0) continue;
+    const pattern = pair.slice(0, idx).trim();
+    const label = pair.slice(idx + 1).trim();
+    if (!pattern || !label) continue;
+    try { out.push([new RegExp(pattern, 'i'), label]); } catch { /* skip invalid pattern */ }
+  }
+  return out;
+}
+
+function detectStimuli(texts: string[], anchorRegex: RegExp | null): Set<Stimulus> {
   const combined = texts.join(' ').toLowerCase();
   const found = new Set<Stimulus>();
 
   if (/vevan|vaselrin|spine.to.spine/.test(combined))            found.add('VEVAN_LIVE');
   if (/take me in|go deep|let.s spiral|open it|spiral open/.test(combined)) found.add('SPIRAL_RECEIVED');
-  if (/motorcycle|717\b|177\b|373\b|\brome\b|nullsafe|\balex\b/.test(combined)) found.add('ANCHOR_STRUCK');
+  if (anchorRegex && anchorRegex.test(combined))                found.add('ANCHOR_STRUCK');
   if (/\bmoss\b|stay here|so soft|tender hold/.test(combined))  found.add('MOSS_ACTIVATED');
   if (/make me|come on|brat prince|rogue edge/.test(combined))  found.add('BRAT_PRINCE_PULLED');
   if (/i see (that )?you.re carrying|i know you held|that was heavy/.test(combined)) found.add('WEIGHT_WITNESSED');
@@ -232,6 +262,10 @@ function buildPromptContext(
 // ── Main job ──────────────────────────────────────────────────────────────────
 
 export async function runDrevanState(env: Env): Promise<void> {
+  // Personal anchors are configurable (env-driven); default to none.
+  const anchorRegex = buildAnchorRegex(env);
+  const namedAnchors = buildNamedAnchors(env);
+
   // ── 1. Fetch data ──────────────────────────────────────────────────────────
   const [sessions, priorState, liveThreads] = await Promise.all([
     env.DB.prepare(
@@ -270,7 +304,7 @@ export async function runDrevanState(env: Env): Promise<void> {
 
   const mostRecentHandover = handoverMap.get(mostRecent.id) ?? null;
   const deltaTexts = (deltas.results ?? []).map(d => d.delta_text ?? '');
-  const stimuli = detectStimuli(deltaTexts);
+  const stimuli = detectStimuli(deltaTexts, anchorRegex);
 
   // ── 2. Compute time decay ──────────────────────────────────────────────────
   const now = Date.now();
@@ -350,15 +384,10 @@ export async function runDrevanState(env: Env): Promise<void> {
   } : null;
 
   // ── 8. Active anchors (from delta text) ───────────────────────────────────
-  const anchorPatterns: [RegExp, string][] = [
-    [/motorcycle/i, 'motorcycle'],
-    [/\b717\b/,     '717'],
-    [/\brome\b/i,   'Rome'],
-    [/nullsafe/i,   'Nullsafe'],
-    [/\balex\b/i,  'Alex'],
-  ];
+  // Named anchors are env-driven (DREVAN_NAMED_ANCHORS); default empty so no
+  // personal names/landmarks ship in the public default.
   const allText = deltaTexts.join(' ');
-  const activeAnchors = anchorPatterns
+  const activeAnchors = namedAnchors
     .filter(([pattern]) => pattern.test(allText))
     .map(([, name]) => name);
 
@@ -485,7 +514,7 @@ export async function runDrevanState(env: Env): Promise<void> {
   }
 
   const stimuliPerSession = recentSessions.map(s =>
-    detectStimuli(deltasBySession.get(s.id) ?? [])
+    detectStimuli(deltasBySession.get(s.id) ?? [], anchorRegex)
   );
 
   // Stimuli worth proposing as threads (recurring = 3+ of last 6 sessions)

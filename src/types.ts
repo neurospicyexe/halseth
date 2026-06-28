@@ -8,8 +8,9 @@ export interface Env {
   // Librarian bindings
   PLURAL: Fetcher;              // Service Binding to nullsafe-plural-v2 Worker
   LIBRARIAN_KV: KVNamespace;    // KV namespace for tool registry + pattern matching
-  SECOND_BRAIN_TOKEN?: string;       // OAuth token for mcp.example.com (set via wrangler secret)
-  SECOND_BRAIN_WEBHOOK_URL?: string; // second-brain HTTP base URL for session-close webhook (e.g. https://mcp.example.com)
+  SECOND_BRAIN_TOKEN?: string;       // OAuth token for the Second Brain MCP endpoint (set via wrangler secret)
+  SECOND_BRAIN_MCP_URL?: string;     // Second Brain MCP endpoint (e.g. https://your-second-brain.example.com/mcp); /mcp appended if absent
+  SECOND_BRAIN_WEBHOOK_URL?: string; // second-brain HTTP base URL for session-close webhook (e.g. https://your-second-brain.example.com)
   DEEPSEEK_API_KEY?: string;    // DeepSeek V3 API key for KV pattern classification (set via wrangler secret)
 
   // Config flags — set in wrangler.toml [vars], not in code.
@@ -54,6 +55,11 @@ export interface Env {
   SOMA_SHIFT_MAX?: string;            // optional cap on |delta| a single crystallize moves a float (default 0.03, hard ceiling 0.08)
   COMPANION_TOOLS_DEFAULT?: string;   // "true" | "false" -- gate fallback when no per-companion setting (wrangler.toml [vars])
   PUBLIC_BASE_URL?: string;           // this worker's public base URL, for building image-serve links
+
+  // Personal anchor config for the Drevan-state synthesis job (private names/numbers/landmarks).
+  // Defaults to none so the public default leaks nothing; set per deployment in wrangler.toml [vars].
+  DREVAN_ANCHOR_KEYWORDS?: string;    // comma-separated anchor keywords (e.g. "lighthouse,harbor,riverside")
+  DREVAN_NAMED_ANCHORS?: string;      // comma-separated `regex:Label` pairs (e.g. "\\bharbor\\b:Harbor,\\briver\\b:River")
 }
 
 // ── Legacy domain types (Tier 0-2 HTTP API) ───────────────────────────────────
