@@ -17,8 +17,12 @@ import {
 } from "./providers.js";
 
 const TAVILY_URL = "https://api.tavily.com/search";
+// Image gen stays on /v1beta -- the `responseModalities` field below is a v1beta-only
+// feature (stable /v1 rejects it with a 400). The old gemini-2.5-flash-image-preview
+// default was deprecated (2026-06); gemini-2.5-flash-image (Nano Banana) is the
+// current Flash-tier image model that supports the `responseModalities` parameter.
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image-preview";
+const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
 
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
   const bin = atob(b64);

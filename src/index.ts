@@ -488,7 +488,12 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.has(pathname) || pathname.startsWith("/assets/");
+  // The trailing slash on /mind/tools/image/ exempts ONLY the GET-by-id stream
+  // (public read: unguessable random id, DB-validated; mirrors /assets/). The POST
+  // generator at /mind/tools/image (no trailing slash) stays gated + audited.
+  return PUBLIC_PATHS.has(pathname)
+    || pathname.startsWith("/assets/")
+    || pathname.startsWith("/mind/tools/image/");
 }
 
 export default {
