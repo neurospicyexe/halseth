@@ -23,9 +23,24 @@ export async function postGuardianRun(request: Request, env: Env): Promise<Respo
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  let body: { letter?: boolean } = {};
+  let body: { letter?: boolean; catchup?: boolean } = {};
   try { body = await request.json(); } catch { /* empty body is fine */ }
   const writeLetter = body.letter === true;
+
+  // Catch-up calls (fired on autonomous-worker startup) no-op if the Guardian already ran
+  // recently. node-cron timers are in-memory, so a worker restart resets them and a restart
+  // landing after the daily 8AM slot silently skips that day -- that is how the Guardian
+  // napped 2026-06-26 -> 06-28. The startup catch-up recovers a genuine nap on the next
+  // restart; this 18h guard stops it from spamming runs on rapid restarts.
+  if (body.catchup === true) {
+    const recent = await env.DB
+      .prepare("SELECT 1 AS x FROM guardian_runs WHERE ran_at >= datetime('now','-18 hours') LIMIT 1")
+      .first<{ x: number }>()
+      .catch(() => null);
+    if (recent) {
+      return json({ skipped: true, reason: "guardian ran within 18h", flags_created: 0, flags_resolved: 0, letter_id: null });
+    }
+  }
 
   try {
     const candidates = await runAllDetectors(env);

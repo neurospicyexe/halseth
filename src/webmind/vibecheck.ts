@@ -74,8 +74,11 @@ export function formatVibeCheck(d: VibeData): string {
   }
 
   const echoStr = d.echo != null ? d.echo.toFixed(2) : "unread";
+  // State the verdict, not just the number -- below alarm is CALM, not a gap to close.
+  // (The triad read a healthy 0.69-vs-0.82 as a tension; this names it plainly.)
+  const echoState = d.echo == null ? "" : d.echo >= ECHO_ALARM ? ", ELEVATED" : ", calm";
   const organs = d.starvedOrgans === 0 ? "all fed" : `${d.starvedOrgans} starved`;
-  lines.push(`Field: echo ${echoStr} (alarm ${ECHO_ALARM.toFixed(2)}); organs: ${organs}.`);
+  lines.push(`Field: echo ${echoStr}${echoState} (alarm at ${ECHO_ALARM.toFixed(2)}); organs: ${organs}.`);
 
   return lines.join("\n").slice(0, 1800);
 }

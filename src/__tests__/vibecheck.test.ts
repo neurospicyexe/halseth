@@ -50,7 +50,7 @@ describe("formatVibeCheck -- voice + accessibility invariants", () => {
 
   it("ends with a system field line carrying echo, alarm, and organ status", () => {
     const out = formatVibeCheck(data());
-    expect(out).toContain("Field: echo 0.69 (alarm 0.82); organs: all fed.");
+    expect(out).toContain("Field: echo 0.69, calm (alarm at 0.82); organs: all fed.");
   });
 
   it("names the worst_basin when a companion is under pressure", () => {
