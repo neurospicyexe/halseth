@@ -37,6 +37,10 @@ export interface Env {
   DREVAN_MCP_SECRET?: string;
   GAIA_MCP_SECRET?:   string;
 
+  // ND daily-rhythm briefing gate (accessibility layer). Ships dormant; set to "true" to
+  // enable delivery of morning/midday/evening briefings via the letter_to_raziel rail.
+  BRIEFING_ENABLED?: string;
+
   // Companion tool layer (take 14, migration 0077). Keys are deploy-time secrets.
   TAVILY_API_KEY?: string;            // web search provider (set via wrangler secret)
   GEMINI_API_KEY?: string;            // image gen provider (set via wrangler secret)

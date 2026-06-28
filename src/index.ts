@@ -68,6 +68,7 @@ import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kern
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
+import { postBriefingRun, getBriefingPreview } from "./handlers/briefing.js";
 import { postClearingRun } from "./handlers/clearing.js";
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
@@ -252,6 +253,10 @@ const router = new Router()
   .on("POST",  "/mind/guardian/run",               (request, env)         => postGuardianRun(request, env))
   .on("GET",   "/mind/guardian/flags",             (request, env)         => getGuardianFlags(request, env))
   .on("PATCH", "/mind/guardian/flags/:id",         (request, env, params) => patchGuardianFlag(request, env, params ?? {}))
+
+  // ND daily-rhythm briefing (accessibility / executive-function layer; ships gated off)
+  .on("POST",  "/mind/briefing/run",               (request, env)         => postBriefingRun(request, env))
+  .on("GET",   "/mind/briefing/:kind",             (request, env, params) => getBriefingPreview(request, env, params ?? {}))
 
   // Echo guard (0088) -- worker writes the daily inter-companion echo reading; detectEchoChamber reads it
   .on("POST",  "/mind/echo-metric",                 (request, env)         => postEchoMetric(request, env))
