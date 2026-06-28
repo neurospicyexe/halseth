@@ -1,8 +1,12 @@
 // src/librarian/index.ts
 //
 // POST /librarian handler.
-// Auth: same MCP_AUTH_SECRET bearer token as POST /mcp.
-// If MCP_AUTH_SECRET is unset, endpoint is open (same behavior as /mcp).
+// Auth: shared admin-tier bearer (MCP_AUTH_SECRET OR ADMIN_SECRET) -- parity with
+// POST /mcp and POST /librarian/mcp, both of which accept ADMIN_SECRET. Discord bots
+// carry this admin token as HALSETH_SECRET; omitting ADMIN_SECRET here silently 401'd
+// the autonomous bridge/NL pollers (bug found 2026-06-27 after varlock rotation).
+// A valid per-companion secret (CYPHER/DREVAN/GAIA_MCP_SECRET) is also accepted.
+// If no shared admin secret AND no per-companion secret is configured, endpoint is open.
 
 import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
@@ -34,19 +38,26 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
   const auth = request.headers.get("Authorization") ?? "";
   const hasPerCompanionSecrets =
     !!(env.CYPHER_MCP_SECRET || env.DREVAN_MCP_SECRET || env.GAIA_MCP_SECRET);
+  // Shared admin-tier tokens are alternatives, not both-required. ADMIN_SECRET is included
+  // for parity with /librarian/mcp + authGuard (Discord bots send it as HALSETH_SECRET).
+  const sharedAdminSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean) as string[];
 
   let authenticatedCompanionId: string | null = null;
   let isAuthorized = false;
 
-  if (env.MCP_AUTH_SECRET && safeEqual(auth, `Bearer ${env.MCP_AUTH_SECRET}`)) {
-    isAuthorized = true;
+  for (const secret of sharedAdminSecrets) {
+    if (safeEqual(auth, `Bearer ${secret}`)) {
+      isAuthorized = true;
+      break;
+    }
   }
   if (hasPerCompanionSecrets) {
     authenticatedCompanionId = resolveCompanionFromToken(auth, env);
     if (authenticatedCompanionId) isAuthorized = true;
   }
-  // If neither secret type is configured, the endpoint is open (lean-phase parity with /mcp).
-  if (!env.MCP_AUTH_SECRET && !hasPerCompanionSecrets) {
+  // If neither a shared admin secret nor a per-companion secret is configured, the
+  // endpoint is open (lean-phase parity with /mcp).
+  if (sharedAdminSecrets.length === 0 && !hasPerCompanionSecrets) {
     isAuthorized = true;
   }
 
