@@ -61,7 +61,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -151,6 +151,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
     ).first<{ name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string }>().catch(() => null),
+    // Active forage: finds already picked up (consumed). The pool above is what's waiting;
+    // this is what the companion is mid-chew on -- continuity across sessions.
+    ctx.env.DB.prepare(
+      "SELECT id, title, domain, summary, consumed_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>().catch(() => null),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
@@ -179,6 +184,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     domain: r.domain,
     summary: (r.summary ?? "").slice(0, 400),
     gathered_at: r.gathered_at,
+  }));
+  const consumedForageFinds = (consumedForageRows?.results ?? []).map(r => ({
+    id: r.id,
+    title: (r.title ?? "").slice(0, 150),
+    domain: r.domain,
+    summary: (r.summary ?? "").slice(0, 400),
+    consumed_at: r.consumed_at,
   }));
   const guardianFlags = (guardianFlagRows?.results ?? []).map(f => ({
     id: f.id,
@@ -376,6 +388,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       forageFinds.map(f => `• [${f.domain}] ${f.title} (gathered ${relativeTime(f.gathered_at)})`).join("\n")
     : "";
 
+  // Active forage: finds already picked up. Gives the session a "you've been chewing on this"
+  // thread to continue, not just a fresh pool. Relative time = when you started in, not a duration.
+  const consumedForageBlock = consumedForageFinds.length > 0
+    ? `\n[Active forage]\nYou picked ${consumedForageFinds.length === 1 ? "this up" : "these up"} recently -- threads already in motion:\n` +
+      consumedForageFinds.map(f => `• [${f.domain}] ${f.title} (picked up ${relativeTime(f.consumed_at)})`).join("\n")
+    : "";
+
   // Tripwire block: armed prospective cards whose condition just matched (date due,
   // front match). Force-surfaced -- this is the one block that must not be ambient.
   const tripwireBlock = tripwires.length > 0
@@ -487,7 +506,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : "";
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + forageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -506,6 +525,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     commons: commonsPosts,
     shelf: shelfItems,
     forage_finds: forageFinds,
+    consumed_forage_finds: consumedForageFinds,
     recent_listens: recentListens,
     club_round: clubRow ?? null,
     tripwires,
@@ -514,7 +534,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     standing_refusals: standingRefusals,
     open_drifts: openDrifts,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     continuity: wmResult,
   };
 }
@@ -802,7 +822,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -885,9 +905,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
     ).bind(agentId).all<{ question: string }>(),
     // 21. Forage pool: unconsumed outward finds (own + shared) for any instance to pick up.
+    // gathered_at carried so the bot can stamp each find with how long it's been waiting.
     ctx.env.DB.prepare(
-      "SELECT id, title, domain, summary FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string }>(),
+      "SELECT id, title, domain, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>(),
     // 22. Armed prospective triggers (0070) -- keyword ones matched bot-side per message,
     // date ones checked by the bot at orient load. Expired rows lazily dismissed by GET path.
     ctx.env.DB.prepare(
@@ -923,6 +944,12 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT name, species, kind, state_json, trust, last_interaction_at, created_at FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
     ).all<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string }>(),
+    // 29. Active forage: recently-consumed finds (own + shared). The pool (source 21) is what's
+    // waiting; this is what the companion has already picked up and is chewing on -- gives the
+    // live presence continuity ("you started in on X earlier") instead of a stateless pool.
+    ctx.env.DB.prepare(
+      "SELECT id, title, domain, summary, consumed_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -1098,11 +1125,21 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
         ? (openQuestionsResult.value.results as Array<{ question: string }>).map(r => (r.question ?? "").slice(0, 300)).filter(Boolean)
         : [],
       forage_finds: forageResult.status === "fulfilled" && forageResult.value?.results
-        ? (forageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string }>).map(r => ({
+        ? (forageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>).map(r => ({
             id: r.id,
             title: (r.title ?? "").slice(0, 150),
             domain: r.domain,
             summary: (r.summary ?? "").slice(0, 400),
+            gathered_at: r.gathered_at,
+          }))
+        : [],
+      consumed_forage_finds: consumedForageResult.status === "fulfilled" && consumedForageResult.value?.results
+        ? (consumedForageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>).map(r => ({
+            id: r.id,
+            title: (r.title ?? "").slice(0, 150),
+            domain: r.domain,
+            summary: (r.summary ?? "").slice(0, 400),
+            consumed_at: r.consumed_at,
           }))
         : [],
       armed_triggers: triggersResult.status === "fulfilled" && triggersResult.value?.results
