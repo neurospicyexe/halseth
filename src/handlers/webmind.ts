@@ -8,7 +8,7 @@ import { authGuard } from "../lib/auth.js";
 import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
-import { upsertThread } from "../webmind/threads.js";
+import { upsertThread, sweepThreads } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, type CompressibleNote } from "../webmind/notes.js";
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
@@ -175,6 +175,12 @@ export async function postMindThread(
   if (!body.thread_key || typeof body.thread_key !== "string") {
     return json({ error: "thread_key is required" }, 400);
   }
+  // Keys are identifiers, not prose. Brain's synthesis loop once wrote a whole
+  // model sentence as a key ("no_dreams_or_loops_were_provided_—_…"), which then
+  // sat open forever. Reject at the boundary; callers must slug or use an id.
+  if (!/^[A-Za-z0-9:._/-]{1,64}$/.test(body.thread_key)) {
+    return json({ error: "thread_key must be 1-64 chars of [A-Za-z0-9:._/-] — an identifier, not prose" }, 400);
+  }
   if (!body.title || typeof body.title !== "string") {
     return json({ error: "title is required" }, 400);
   }
@@ -190,6 +196,46 @@ export async function postMindThread(
     return json(result, 201);
   } catch (err) {
     console.error("[mind/thread] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/threads/sweep — bulk-resolve threads that will never be revisited:
+// stale machine-opened `auto:*` threads and/or over-long prose keys. Hygiene
+// endpoint; the autonomous worker calls it once per run, and it backfills the
+// ~220-open-per-companion accumulation found 2026-07-02.
+// Body: { agent_id, older_than_days? (default 14), prefix? (default "auto:"), invalid_keys? }
+export async function postThreadsSweep(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: { agent_id?: string; older_than_days?: number; prefix?: string; invalid_keys?: boolean };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.agent_id || !isValidAgentId(body.agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (body.prefix !== undefined && (typeof body.prefix !== "string" || body.prefix.length > 32)) {
+    return json({ error: "prefix must be a string of at most 32 chars" }, 400);
+  }
+
+  try {
+    const result = await sweepThreads(env, {
+      agent_id: body.agent_id,
+      older_than_days: typeof body.older_than_days === "number" ? body.older_than_days : undefined,
+      prefix: body.prefix,
+      invalid_keys: body.invalid_keys === true,
+    });
+    return json({ ok: true, ...result });
+  } catch (err) {
+    console.error("[mind/threads/sweep] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

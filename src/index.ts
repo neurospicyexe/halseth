@@ -8,7 +8,7 @@ import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
 import { postInteriority, getInteriority, getInteriorityMeta, patchInteriorityDisclose } from "./handlers/interiority.js";
-import { getRefusals, getPreferences, patchRefusalAck } from "./handlers/agency.js";
+import { getRefusals, getPreferences, patchRefusalAck, postPreferenceHttp, postRefusalHttp } from "./handlers/agency.js";
 import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
@@ -35,7 +35,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
-import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -159,7 +159,9 @@ const router = new Router()
 
   // Agency layer (migration 0086): refusals + chosen preferences. Public to Raziel (admin or owner).
   .on("GET",   "/agency/refusals/:companion_id",    (request, env, params) => getRefusals(request, env, params ?? {}))
+  .on("POST",  "/agency/refusals",                  (request, env)         => postRefusalHttp(request, env))
   .on("GET",   "/agency/preferences/:companion_id", (request, env, params) => getPreferences(request, env, params ?? {}))
+  .on("POST",  "/agency/preferences",               (request, env)         => postPreferenceHttp(request, env))
   .on("PATCH", "/agency/refusal/:id/ack",           (request, env, params) => patchRefusalAck(request, env, params ?? {}))
 
   // Sanctioned drift lane (migration 0087): declared becoming, witnessed not ratified. Admin or owner.
@@ -198,6 +200,7 @@ const router = new Router()
   .on("GET",  "/mind/ground/:agent_id",       (request, env, params) => getMindGround(request, env, params ?? {}))
   .on("POST", "/mind/handoff",          (request, env) => postMindHandoff(request, env))
   .on("POST",  "/mind/thread",                        (request, env)         => postMindThread(request, env))
+  .on("POST",  "/mind/threads/sweep",                 (request, env)         => postThreadsSweep(request, env))
   .on("PATCH", "/mind/thread/:thread_key/status",     (request, env, params) => patchMindThreadStatus(request, env, params ?? {}))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
   .on("GET",  "/mind/search",                        (request, env)         => getMindSearch(request, env))

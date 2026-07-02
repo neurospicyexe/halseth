@@ -95,3 +95,41 @@ export async function upsertThread(
 
   return { thread, event };
 }
+
+// Bulk-resolve open threads that will never be revisited. Two modes, combinable:
+//   prefix + olderThanDays -- stale machine-opened threads (the autonomous worker
+//     opens `auto:<runId>` per run and its conclude path rarely fires, so they
+//     accumulate: ~220 open per companion by 2026-07-02).
+//   invalidKeys -- threads whose key is over the 64-char cap (model prose written
+//     as a key before postMindThread validated shape).
+// Respects do_not_resolve. datetime() normalizes the two timestamp formats that
+// coexist in last_touched_at ('YYYY-MM-DD HH:MM:SS' and ISO-8601).
+export async function sweepThreads(
+  env: Env,
+  input: { agent_id: WmAgentId; older_than_days?: number; prefix?: string; invalid_keys?: boolean },
+): Promise<{ swept: number }> {
+  const days = Math.min(365, Math.max(1, Math.round(input.older_than_days ?? 14)));
+  const prefix = input.prefix ?? "auto:";
+  const now = new Date().toISOString();
+
+  const conditions: string[] = [];
+  const bindings: unknown[] = [];
+  if (prefix) {
+    // ESCAPE so a literal '%'/'_' in the prefix can't widen the match.
+    conditions.push(`(thread_key LIKE ? ESCAPE '\\' AND datetime(last_touched_at) < datetime('now', ?))`);
+    bindings.push(prefix.replace(/[\\%_]/g, (c) => `\\${c}`) + "%", `-${days} days`);
+  }
+  if (input.invalid_keys) {
+    conditions.push("length(thread_key) > 64");
+  }
+  if (conditions.length === 0) return { swept: 0 };
+
+  const res = await env.DB.prepare(`
+    UPDATE wm_mind_threads
+    SET status = 'resolved', status_changed = ?, updated_at = ?
+    WHERE agent_id = ? AND status = 'open' AND do_not_resolve = 0
+      AND (${conditions.join(" OR ")})
+  `).bind(now, now, input.agent_id, ...bindings).run();
+
+  return { swept: res.meta?.changes ?? 0 };
+}
