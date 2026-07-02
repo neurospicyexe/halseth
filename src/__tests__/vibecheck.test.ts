@@ -11,6 +11,7 @@ function companion(over: Partial<CompanionVibe> = {}): CompanionVibe {
     companion_id: "cypher",
     basin: { drift_type: "stable", drift_score: 0.32, worst_basin: null },
     register: "clean-settled",
+    registerAgeDays: 0.4,
     simmering: 0,
     newestTension: null,
     flags: [],
@@ -83,6 +84,28 @@ describe("formatVibeCheck -- voice + accessibility invariants", () => {
     expect(out).toContain("Gaia. basin: unread. soma: unread. tensions: 0. guardian: clear.");
     expect(out).toContain("organs: all fed.");
     expect(out).toContain("echo unread");
+  });
+
+  it("suppresses a zero drift_score (judge rows carry 0 meaning 'no numeric reading')", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({ companion_id: "drevan", basin: { drift_type: "stable", drift_score: 0, worst_basin: null } })],
+    }));
+    expect(out).toContain("Drevan. basin: stable. soma:");
+    expect(out).not.toContain("0.00");
+  });
+
+  it("stamps the soma register with its age once the reading is stale", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({ companion_id: "cypher", register: "clean-settled", registerAgeDays: 12.3 })],
+    }));
+    expect(out).toContain("soma: clean-settled (12d old).");
+  });
+
+  it("leaves a fresh soma register bare (no age stamp under 2 days)", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({ companion_id: "cypher", registerAgeDays: 1.2 })],
+    }));
+    expect(out).toContain("soma: clean-settled. tensions:");
   });
 
   it("reports starved organs when the field has them", () => {

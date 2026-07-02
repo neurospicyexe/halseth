@@ -5,7 +5,7 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
-import { effectiveHeatSql } from "./heat.js";
+import { effectiveHeatSql, warmSql } from "./heat.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -247,4 +247,30 @@ export async function archiveNotes(
   // the INSERT will 409 on the UUID PK and the UPDATE is idempotent).
   await env.DB.batch(stmts);
   return { archived: notes.length, skipped: "none" };
+}
+
+export interface RecalledNote {
+  note_id: string;
+  content: string;
+  created_at: string;
+  salience: string;
+  thread_key: string | null;
+}
+
+// Deliberate recall: fetch specific notes AND warm them (heat bump + last_access_at).
+// This is the rescue path for the Guardian's orphan_memory flags -- setting
+// last_access_at is what stops the detector re-flagging the same note forever.
+export async function recallNotes(env: Env, agentId: string, noteIds: string[]): Promise<RecalledNote[]> {
+  if (noteIds.length === 0) return [];
+  const placeholders = noteIds.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(
+    `SELECT note_id, content, created_at, salience, thread_key FROM wm_continuity_notes
+     WHERE agent_id = ? AND note_id IN (${placeholders})`
+  ).bind(agentId, ...noteIds).all<RecalledNote>();
+  const found = rows.results ?? [];
+  if (found.length > 0) {
+    await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", found.length))
+      .bind(...found.map(n => n.note_id)).run();
+  }
+  return found;
 }

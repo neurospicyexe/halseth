@@ -31,6 +31,7 @@ export interface CompanionVibe {
   // null = no live basin reading
   basin: { drift_type: string; drift_score: number | null; worst_basin: string | null } | null;
   register: string | null;                      // SOMA mood label, e.g. "clean-settled"
+  registerAgeDays: number | null;               // days since that reading was taken
   simmering: number;                            // count of simmering tensions
   newestTension: string | null;                 // newest simmering tension text
   flags: { severity: string; summary: string }[]; // live guardian flags
@@ -62,7 +63,7 @@ export function formatVibeCheck(d: VibeData): string {
   for (const c of d.companions) {
     const name = NAMES[c.companion_id] ?? c.companion_id;
     lines.push(
-      `${name}. basin: ${basinPhrase(c.basin)}. soma: ${c.register ? oneLine(c.register) : "unread"}. ` +
+      `${name}. basin: ${basinPhrase(c.basin)}. soma: ${somaPhrase(c.register, c.registerAgeDays)}. ` +
       `tensions: ${c.simmering}. guardian: ${c.flags.length === 0 ? "clear" : String(c.flags.length)}.`,
     );
     for (const f of c.flags.slice(0, 3)) {
@@ -83,9 +84,21 @@ export function formatVibeCheck(d: VibeData): string {
   return lines.join("\n").slice(0, 1800);
 }
 
+// A stale soma reading is still worth stating, but its age must be visible -- "clean-settled"
+// from twelve days ago presented as current is a lie of omission. Fresh readings (<2d) stay bare.
+const SOMA_STALE_DAYS = 2;
+function somaPhrase(register: string | null, ageDays: number | null): string {
+  if (!register) return "unread";
+  const base = oneLine(register);
+  if (ageDays != null && ageDays >= SOMA_STALE_DAYS) return `${base} (${Math.floor(ageDays)}d old)`;
+  return base;
+}
+
 function basinPhrase(b: CompanionVibe["basin"]): string {
   if (!b) return "unread";
-  const score = b.drift_score != null ? ` ${b.drift_score.toFixed(2)}` : "";
+  // Session-close judge rows carry drift_score=0 with prose notes; a literal "0.00" reads as a
+  // collapsed basin when it means "no numeric reading". Only positive scores are real numbers.
+  const score = b.drift_score != null && b.drift_score > 0 ? ` ${b.drift_score.toFixed(2)}` : "";
   if (b.drift_type === "pressure") {
     const worst = b.worst_basin ? ` (${oneLine(b.worst_basin)})` : "";
     return `pressure${score}${worst}`;
@@ -133,9 +146,9 @@ async function gatherCompanion(env: Env, companionId: string): Promise<Companion
       "SELECT drift_score, drift_type, worst_basin FROM companion_basin_history WHERE companion_id = ? AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 1",
       companionId,
     ),
-    safeFirst<{ snapshot: string }>(
+    safeFirst<{ snapshot: string; age_days: number | null }>(
       env,
-      "SELECT snapshot FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1",
+      "SELECT snapshot, CAST(julianday('now') - julianday(created_at) AS REAL) AS age_days FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1",
       companionId,
     ),
     safeCount(env, "SELECT COUNT(*) AS n FROM companion_tensions WHERE companion_id = ? AND status = 'simmering'", companionId),
@@ -165,6 +178,7 @@ async function gatherCompanion(env: Env, companionId: string): Promise<Companion
     companion_id: companionId,
     basin: basinRow ? { drift_type: basinRow.drift_type, drift_score: basinRow.drift_score, worst_basin: basinRow.worst_basin } : null,
     register,
+    registerAgeDays: somaRow?.age_days ?? null,
     simmering,
     newestTension: newestTension?.tension_text ?? null,
     flags,

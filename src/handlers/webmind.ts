@@ -9,7 +9,7 @@ import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
-import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, type CompressibleNote } from "../webmind/notes.js";
+import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, type CompressibleNote } from "../webmind/notes.js";
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
@@ -804,6 +804,41 @@ export async function postMindNotesArchive(
     return json(result);
   } catch (err) {
     console.error("[mind/notes/archive] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/notes/recall
+// Deliberate recall of specific continuity notes: returns their content and warms them
+// (heat bump + last_access_at), which clears the Guardian's orphan_memory condition.
+export async function postMindNotesRecall(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: { agent_id?: string; note_ids?: unknown };
+  try {
+    body = await request.json() as { agent_id?: string; note_ids?: unknown };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const { agent_id, note_ids } = body;
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!Array.isArray(note_ids) || note_ids.length === 0 || note_ids.length > 20
+      || !note_ids.every(n => typeof n === "string" && n)) {
+    return json({ error: "note_ids must be 1-20 non-empty strings" }, 400);
+  }
+
+  try {
+    const notes = await recallNotes(env, agent_id, note_ids as string[]);
+    return json({ recalled: notes.length, notes });
+  } catch (err) {
+    console.error("[mind/notes/recall] error", { agent_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
