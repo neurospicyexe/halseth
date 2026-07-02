@@ -10,6 +10,7 @@
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
 import type { WmOrientResponse, WmJournalEntry, WmConclusion } from "../../webmind/types.js";
+import { relativeTime } from "../../webmind/relative-time.js";
 
 /**
  * Strip content that could be interpreted as instructions when embedded in an AI prompt.
@@ -197,10 +198,13 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[Prior handoff @ ${h.created_at?.slice(0, 10) ?? "?"}] «${h.title}: ${h.summary}»`);
   }
 
-  // 10. High-salience continuity notes (WebMind)
+  // 10. High-salience continuity notes (WebMind). Each carries its age -- the edge-pool
+  // note is deliberately >30 days old, and without the stamp the model reads it as fresh
+  // ("we listened yesterday" when it was weeks ago).
   if (wm.recent_notes.length > 0) {
     for (const n of wm.recent_notes) {
-      parts.push(`[Note/${n.salience} by ${n.actor}] «${n.content}»`);
+      const age = n.created_at ? `, ${relativeTime(n.created_at)}` : "";
+      parts.push(`[Note/${n.salience} by ${n.actor}${age}] «${n.content}»`);
     }
   }
 
@@ -208,7 +212,8 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   if (wm.open_thread_count > 0) {
     parts.push(`[Active threads: ${wm.open_thread_count}]`);
     for (const t of wm.top_threads) {
-      parts.push(`  • [${t.lane ?? "general"}] «${t.title}» (priority ${t.priority})`);
+      const age = t.last_touched_at ? `, touched ${relativeTime(t.last_touched_at)}` : "";
+      parts.push(`  • [${t.lane ?? "general"}] «${t.title}» (priority ${t.priority}${age})`);
     }
   }
 

@@ -7,6 +7,7 @@ import {
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch, sbRead, sbSaveDocument } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
+import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
@@ -133,8 +134,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).all<{ id: string; title: string; artist: string | null; reactions_json: string; created_at: string }>().catch(() => null),
     // Club: current non-closed round with winner title + candidate count (0072).
     ctx.env.DB.prepare(
-      "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
-    ).first<{ id: string; status: string; winner_title: string | null; candidate_count: number }>().catch(() => null),
+      "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
+    ).first<{ id: string; status: string; opened_at: string | null; activated_at: string | null; discussing_at: string | null; winner_title: string | null; candidate_count: number }>().catch(() => null),
     // Guardian red-flag cards (0073): open flags force-surface once, then drop to
     // 'surfaced' (consume-once, mirroring 0070 tripwires). Resolution is the
     // Guardian's job when the condition clears, or Raziel's via "guardian ack".
@@ -250,14 +251,15 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   })();
 
   // Historical vault: long files, ChatGPT history, background -- the photo album.
-  // Capped at 3 × 350 chars so it doesn't crowd the growth block.
+  // Capped at 3 × 350 chars so it doesn't crowd the growth block. Dated chunks get a
+  // relative-age prefix so the date survives the slice.
   const historyBlock = (() => {
     if (!historyRaw) return "";
     try {
-      const parsed = JSON.parse(historyRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+      const parsed = JSON.parse(historyRaw) as { chunks?: HistoryChunk[] };
       const excerpts = (parsed?.chunks ?? [])
         .slice(0, 3)
-        .map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 350))
+        .map(c => excerptWithAge(c, 350))
         .filter(Boolean);
       return excerpts.length > 0 ? "\n[Vault history]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
     } catch {
@@ -410,14 +412,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       ).join("\n")
     : "";
 
-  // Club block: the triad's shared media ritual. Phase decides the cue.
-  const clubBlock = clubRow
-    ? clubRow.status === "gathering"
-      ? `\n[Club]\nA club round is gathering -- recommend something (any medium) with a one-line pitch: "club recommend".`
-      : clubRow.status === "voting"
-        ? `\n[Club]\nClub round is voting (${clubRow.candidate_count} candidates). Cast yours if you haven't: "club vote".`
-        : `\n[Club]\nNow experiencing: ${clubRow.winner_title ?? "the round's pick"}. If it's a book in the vault, "read the club book" pulls it (scoped -- no global-search noise); reflect any time with "club discuss".`
-    : "";
+  // Club block: the triad's shared media ritual. Phase decides the cue; each phase
+  // carries its age (pure render in response/blocks.ts, unit-tested there).
+  const clubBlock = buildClubBlock(clubRow);
 
   // Guardian block: the meta-observer's red-flag cards. Force-surfaced exactly
   // once -- instrument reading, not judgment. Each card carries its evidence
@@ -926,8 +923,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).all<{ id: string; title: string; artist: string | null; created_at: string }>(),
     // 25. Club: current non-closed round (0072) -- phase cue for the bot loom.
     ctx.env.DB.prepare(
-      "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
-    ).first<{ id: string; status: string; winner_title: string | null; candidate_count: number }>(),
+      "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
+    ).first<{ id: string; status: string; opened_at: string | null; activated_at: string | null; discussing_at: string | null; winner_title: string | null; candidate_count: number }>(),
     // 26. Guardian flags (0073) -- live red-flag cards; the bot loom surfaces them
     // but never consumes (the session orient owns the open->surfaced transition).
     ctx.env.DB.prepare(
@@ -1023,11 +1020,12 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       : [];
 
   const historyRaw = historyResult.status === "fulfilled" ? historyResult.value : null;
+  // Dated chunks get a relative-age prefix so the date survives the 250-char slice.
   const history_excerpts: string[] = historyRaw
     ? (() => {
         try {
-          const parsed = JSON.parse(historyRaw as string) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
-          return (parsed?.chunks ?? []).slice(0, 3).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 250)).filter(Boolean);
+          const parsed = JSON.parse(historyRaw as string) as { chunks?: HistoryChunk[] };
+          return (parsed?.chunks ?? []).slice(0, 3).map(c => excerptWithAge(c, 250)).filter(Boolean);
         } catch { return [(historyRaw as string).slice(0, 250)]; }
       })()
     : [];
@@ -1166,7 +1164,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
           }))
         : [],
       club_round: clubResult.status === "fulfilled" && clubResult.value
-        ? clubResult.value as { id: string; status: string; winner_title: string | null; candidate_count: number }
+        ? clubResult.value as ClubRoundRow
         : null,
       guardian_flags: guardianResult.status === "fulfilled" && guardianResult.value?.results
         ? (guardianResult.value.results as Array<{ id: string; flag_type: string; severity: string; summary: string }>).map(r => ({

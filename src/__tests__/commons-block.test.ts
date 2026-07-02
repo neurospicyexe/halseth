@@ -27,8 +27,26 @@ describe("buildCommonsBlock", () => {
     ]);
     expect(block).toContain("club round");
     expect(block).toContain("currently into");
-    // a global note carries no context suffix
-    expect(block).toMatch(/«stray thought»\s*$/m);
+    // a global note carries no context suffix (only its age)
+    expect(block).toMatch(/«stray thought» \(dropped .+\)\s*$/m);
+    expect(block).not.toMatch(/«stray thought» \(he left/);
+  });
+
+  it("stamps each post with its relative age so old drops never read as fresh", () => {
+    const NOW = Date.parse("2026-06-28T12:00:00Z");
+    const block = buildCommonsBlock(
+      [{ id: "1", context: "global", body: "old thought", created_at: "2026-06-26 12:00:00" }],
+      NOW,
+    );
+    expect(block).toContain("«old thought» (dropped 2 days ago)");
+  });
+
+  it("renders no age when created_at is missing (never 'NaN ago')", () => {
+    const block = buildCommonsBlock([
+      { id: "1", context: "global", body: "undated", created_at: null as unknown as string },
+    ]);
+    expect(block).toMatch(/«undated»\s*$/m);
+    expect(block).not.toContain("NaN");
   });
 
   it("pluralizes the count", () => {

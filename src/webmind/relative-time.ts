@@ -9,9 +9,16 @@
 // Pure and dependency-free. `now` is injectable for tests. Past timestamps only (these are
 // all "things that already happened"); a future/invalid input degrades to "recently".
 
+// SQLite's datetime('now') emits "YYYY-MM-DD HH:MM:SS" -- UTC, but with no timezone
+// suffix. Date.parse reads that bare form as LOCAL time off-Worker (vitest, Node tooling),
+// skewing ages by the host offset. Normalize bare SQLite stamps to explicit UTC first;
+// proper ISO strings (with T/Z or offset) pass through untouched.
+const SQLITE_UTC = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/;
+
 export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
   if (!iso) return "recently";
-  const then = Date.parse(iso);
+  const m = SQLITE_UTC.exec(iso);
+  const then = Date.parse(m ? `${m[1]}T${m[2]}Z` : iso);
   if (!Number.isFinite(then)) return "recently";
 
   const sec = Math.round((now - then) / 1000);

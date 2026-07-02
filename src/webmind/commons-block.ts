@@ -7,6 +7,8 @@
 // A companion may answer in its own time (a reply_to that lands nested in his Hearth log);
 // silence is equally fine.
 
+import { relativeTime } from "./relative-time.js";
+
 export interface CommonsPostRow {
   id: string;
   context: string;       // 'global' | 'club:<id>' | 'shelf:<id>'
@@ -22,13 +24,17 @@ function contextLabel(context: string): string {
 }
 
 /**
- * Build the [Commons] orient block. Pure -- exported for tests. Returns "" when there is
- * nothing to surface so the caller can concatenate unconditionally.
+ * Build the [Commons] orient block. Pure -- exported for tests (`now` injectable). Returns ""
+ * when there is nothing to surface so the caller can concatenate unconditionally. Each post
+ * carries its age so a days-old drop never reads as "he just said this".
  */
-export function buildCommonsBlock(posts: CommonsPostRow[]): string {
+export function buildCommonsBlock(posts: CommonsPostRow[], now: number = Date.now()): string {
   if (posts.length === 0) return "";
   const n = posts.length;
-  const lines = posts.map(p => `• «${(p.body ?? "").slice(0, 400)}»${contextLabel(p.context)}`);
+  const lines = posts.map(p => {
+    const age = p.created_at ? ` (dropped ${relativeTime(p.created_at, now)})` : "";
+    return `• «${(p.body ?? "").slice(0, 400)}»${contextLabel(p.context)}${age}`;
+  });
   return (
     `\n[Commons]\n` +
     `Raziel dropped ${n === 1 ? "a note" : `${n} notes`} in his commons -- ambient, a thought ` +

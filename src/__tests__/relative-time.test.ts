@@ -30,4 +30,12 @@ describe("relativeTime", () => {
     expect(relativeTime("not-a-date", NOW)).toBe("recently");
     expect(relativeTime(ago(-5 * H), NOW)).toBe("just now");
   });
+
+  it("treats bare SQLite datetime('now') stamps as UTC, not host-local time", () => {
+    // D1 emits "YYYY-MM-DD HH:MM:SS" (UTC, no suffix). Must age identically to the
+    // explicit-Z form regardless of the test host's timezone.
+    expect(relativeTime("2026-06-15 12:00:00", NOW)).toBe("2 days ago");
+    expect(relativeTime("2026-06-15 12:00:00", NOW)).toBe(relativeTime("2026-06-15T12:00:00Z", NOW));
+    expect(relativeTime("2026-06-17 09:00:00", NOW)).toBe("3 hours ago");
+  });
 });
