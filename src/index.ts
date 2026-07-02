@@ -12,7 +12,8 @@ import { getRefusals, getPreferences, patchRefusalAck } from "./handlers/agency.
 import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, getEvents, getLists, patchTask, completeListItem } from "./handlers/history";
+import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
+import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
@@ -416,7 +417,8 @@ const router = new Router()
   .on("GET", "/cypher-audit",      (request, env) => getCypherAudit(request, env))
   .on("GET", "/gaia-witness",      (request, env) => getGaiaWitness(request, env))
   .on("GET", "/wounds",            (request, env) => getWounds(request, env))
-  .on("GET", "/routines",          (request, env) => getRoutines(request, env))
+  .on("GET",  "/routines",         (request, env) => getRoutines(request, env))
+  .on("POST", "/routines",         (request, env) => logRoutine(request, env))
   .on("GET", "/deltas",            (request, env) => getDeltas(request, env))
 
   // Emotion and dream feeds
@@ -430,8 +432,10 @@ const router = new Router()
 
   // Tasks, events, lists (direct access — no bridge required)
   .on("GET",   "/tasks",       (request, env) => getTasks(request, env))
+  .on("POST",  "/tasks",       (request, env) => postTask(request, env))
   .on("PATCH", "/tasks/:id",   (request, env, params) => patchTask(request, env, params ?? {}))
   .on("GET",   "/events",      (request, env) => getEvents(request, env))
+  .on("POST",  "/events",      (request, env) => postEvent(request, env))
   .on("GET",   "/lists",       (request, env) => getLists(request, env))
   .on("POST",  "/lists/:id/complete", (request, env, params) => completeListItem(request, env, params ?? {}))
 
@@ -485,6 +489,12 @@ const PUBLIC_PATHS = new Set([
   "/oauth/token",
   "/presence",
   "/librarian/mcp",  // has its own auth gate that accepts OAuth tokens
+  // Bridge does its own auth (checkBridgeAuth: admin tier OR symmetric
+  // BRIDGE_SECRET). Without this exemption the global authGuard 401s a partner
+  // deployment that only holds BRIDGE_SECRET before the handler ever runs.
+  "/bridge/shared",
+  "/bridge/act",
+  "/bridge/toggle",
 ]);
 
 function isPublicPath(pathname: string): boolean {

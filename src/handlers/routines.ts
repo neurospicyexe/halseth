@@ -1,14 +1,6 @@
 import { Env, Routine } from "../types.js";
 import { generateId } from "../db/queries.js";
-
-function authGuard(request: Request, env: Env): Response | null {
-  if (!env.ADMIN_SECRET) return null;
-  const auth = request.headers.get("Authorization") ?? "";
-  if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  return null;
-}
+import { authGuard } from "../lib/auth.js";
 
 // GET /routines?today=true — returns routine logs.
 // today=true: only today's logs. Otherwise returns the most recent 20.
@@ -30,11 +22,15 @@ export async function getRoutines(request: Request, env: Env): Promise<Response>
   });
 }
 
-// POST /routines — log a routine completion.
+// POST /routines — log a routine completion. Append-only: meds AM + PM,
+// water five times, mid-day re-logs are all separate rows.
 // Body: { routine_name, owner?, notes? }
 export async function logRoutine(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
+  if (env.COORDINATION_ENABLED !== "true") {
+    return new Response("Coordination zone disabled", { status: 403 });
+  }
 
   let body: { routine_name?: string; owner?: string; notes?: string };
   try {

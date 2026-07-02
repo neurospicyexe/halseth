@@ -1,6 +1,7 @@
 // Read-only history feed endpoints.
 // GET /handovers, /companion-journal, /cypher-audit, /gaia-witness, /wounds, /routines, /deltas
 // GET /tasks, /events, /lists
+// POST /tasks, /events
 // PATCH /tasks/:id
 
 import { Env } from "../types.js";
@@ -289,6 +290,107 @@ export async function completeListItem(request: Request, env: Env, params: Recor
   ).bind(new Date().toISOString(), id).run();
 
   return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+}
+
+// POST /tasks — create a task. Mirrors the MCP halseth_task_add insert so both
+// interfaces write identical rows (and both gate on COORDINATION_ENABLED).
+// Body: { title (required), description?, priority?, due_at?, assigned_to?, created_by?, shared? }
+export async function postTask(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  if (env.COORDINATION_ENABLED !== "true") {
+    return new Response("Coordination zone disabled", { status: 403 });
+  }
+
+  let body: {
+    title?: string; description?: string; priority?: string;
+    due_at?: string; assigned_to?: string; created_by?: string; shared?: boolean;
+  };
+  try { body = await request.json() as typeof body; }
+  catch { return new Response("Invalid JSON", { status: 400 }); }
+
+  if (!body.title || typeof body.title !== "string" || !body.title.trim()) {
+    return new Response("title is required", { status: 400 });
+  }
+  const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+  if (body.priority !== undefined && !PRIORITIES.includes(body.priority as typeof PRIORITIES[number])) {
+    return new Response("priority must be low, normal, high, or urgent", { status: 400 });
+  }
+  const priority = body.priority ?? "normal";
+
+  const id = generateId();
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO tasks (id, title, description, priority, due_at, assigned_to, status, created_at, updated_at, created_by, shared)
+    VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+  `).bind(
+    id,
+    body.title.trim(),
+    body.description ?? null,
+    priority,
+    body.due_at ?? null,
+    body.assigned_to ?? null,
+    now, now,
+    body.created_by ?? null,
+    body.shared ? 1 : 0,
+  ).run();
+
+  return new Response(JSON.stringify({ id, created_at: now }), {
+    status: 201,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// POST /events — create a calendar event. Mirrors MCP halseth_event_add
+// (and gates on COORDINATION_ENABLED like the MCP tools do).
+// Body: { title (required), start_time (required ISO), description?, end_time?, category?, attendees?, created_by?, shared? }
+export async function postEvent(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  if (env.COORDINATION_ENABLED !== "true") {
+    return new Response("Coordination zone disabled", { status: 403 });
+  }
+
+  let body: {
+    title?: string; start_time?: string; description?: string;
+    end_time?: string; category?: string; attendees?: string[];
+    created_by?: string; shared?: boolean;
+  };
+  try { body = await request.json() as typeof body; }
+  catch { return new Response("Invalid JSON", { status: 400 }); }
+
+  if (!body.title || typeof body.title !== "string" || !body.title.trim()) {
+    return new Response("title is required", { status: 400 });
+  }
+  if (!body.start_time || isNaN(Date.parse(body.start_time))) {
+    return new Response("start_time must be a valid ISO 8601 datetime", { status: 400 });
+  }
+  const attendees = Array.isArray(body.attendees)
+    ? body.attendees.filter((a): a is string => typeof a === "string")
+    : null;
+
+  const id = generateId();
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO events (id, title, description, start_time, end_time, category, attendees_json, created_at, created_by, shared)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    body.title.trim(),
+    body.description ?? null,
+    body.start_time,
+    body.end_time ?? null,
+    body.category ?? null,
+    attendees && attendees.length > 0 ? JSON.stringify(attendees) : null,
+    now,
+    body.created_by ?? null,
+    body.shared ? 1 : 0,
+  ).run();
+
+  return new Response(JSON.stringify({ id, created_at: now }), {
+    status: 201,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 // PATCH /tasks/:id — update task status. When → "done", logs a companion_journal entry

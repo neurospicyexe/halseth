@@ -3,9 +3,17 @@ import { safeEqual } from "../lib/auth.js";
 
 // ── Auth helper ──────────────────────────────────────────────────────────────
 
+// Accepts EITHER the symmetric BRIDGE_SECRET (partner deployment) OR an
+// admin-tier bearer (ADMIN_SECRET / MCP_AUTH_SECRET) — the owner's own
+// dashboard reads its own bridge state without the partner secret. Deliberately
+// NOT authGuard: that would also admit companion-tier tokens, and /bridge/toggle
+// flips a privacy boundary with the partner. Admin tier only.
+// (Hearth /us was permanently 401 before this: it only holds the admin secret.)
 function checkBridgeAuth(request: Request, env: Env): boolean {
-  if (!env.BRIDGE_SECRET) return false; // no secret configured — deny; bridge requires explicit opt-in
   const auth = request.headers.get("Authorization") ?? "";
+  const adminSecrets = [env.ADMIN_SECRET, env.MCP_AUTH_SECRET].filter(Boolean) as string[];
+  if (adminSecrets.some((s) => safeEqual(auth, `Bearer ${s}`))) return true;
+  if (!env.BRIDGE_SECRET) return false; // no secret configured — deny; bridge requires explicit opt-in
   return safeEqual(auth, `Bearer ${env.BRIDGE_SECRET}`);
 }
 
