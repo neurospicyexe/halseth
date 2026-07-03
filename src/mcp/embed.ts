@@ -18,12 +18,15 @@ export function vectorId(table: string, rowId: string): string {
   return `${table}:${rowId}`;
 }
 
-async function embed(env: Env, text: string): Promise<number[] | null> {
+export async function embedText(env: Env, text: string): Promise<number[] | null> {
   const embedding = await env.AI.run(EMBEDDING_MODEL, {
     text: [text],
   }) as { data: number[][] };
   return embedding.data[0] ?? null;
 }
+
+// Local alias -- internal callers below predate the export.
+const embed = embedText;
 
 /**
  * Awaitable embed — use in backfill/rebuild or any context where the response

@@ -6,6 +6,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { embedText } from "../mcp/embed.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const MAX_TEXT = 4000;
@@ -53,12 +54,26 @@ export async function postBasin(request: Request, env: Env): Promise<Response> {
   if (!validateCompanion(b.companion_id)) return json({ error: "invalid companion_id" }, 400);
   if (typeof b.basin_name !== "string" || !b.basin_name.trim()) return json({ error: "basin_name required" }, 400);
   if (typeof b.basin_description !== "string" || b.basin_description.length > MAX_TEXT) return json({ error: "basin_description required (max 4000 chars)" }, 400);
-  if (!Array.isArray(b.embedding) || b.embedding.length === 0) return json({ error: "embedding required" }, 400);
+
+  // Embedding (2026-07-02): server-side via Workers AI when the caller doesn't supply one.
+  // Caller-supplied embeddings had unknown provenance (any model, any dims) which made the
+  // column unusable for similarity; bge-base-en-v1.5 here matches the drift check's embedder
+  // so basin geometry is finally consistent and load-bearing.
+  let embedding: number[] | null = Array.isArray(b.embedding) && b.embedding.length > 0
+    ? (b.embedding as number[])
+    : null;
+  if (!embedding) {
+    try {
+      embedding = await embedText(env, `${(b.basin_name as string).trim()}: ${b.basin_description as string}`);
+    } catch (e) {
+      console.warn("[companion-growth] basin embed failed, storing empty:", String(e));
+    }
+  }
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
     "INSERT INTO companion_basins (id, companion_id, basin_name, basin_description, embedding) VALUES (?, ?, ?, ?, ?)"
-  ).bind(id, b.companion_id, (b.basin_name as string).trim(), b.basin_description, JSON.stringify(b.embedding)).run();
+  ).bind(id, b.companion_id, (b.basin_name as string).trim(), b.basin_description, JSON.stringify(embedding ?? [])).run();
 
   return json({ id, message: "ok" }, 201);
 }

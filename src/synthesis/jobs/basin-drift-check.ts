@@ -8,6 +8,26 @@
 // For pressure-type flags: surfaces at orient until companion confirms with confirm_growth_drift.
 
 import { Env } from "../../types.js";
+import { embedText } from "../../mcp/embed.js";
+
+interface BasinRow {
+  basin_name: string;
+  basin_description: string;
+  embedding: string | null;
+}
+
+/** Cosine similarity; returns null on dimension mismatch or empty vectors. */
+export function cosineSim(a: number[], b: number[]): number | null {
+  if (a.length === 0 || a.length !== b.length) return null;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!;
+    na += a[i]! * a[i]!;
+    nb += b[i]! * b[i]!;
+  }
+  if (na === 0 || nb === 0) return null;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
 
 interface DriftResult {
   drift_type: "stable" | "growth" | "pressure";
@@ -64,6 +84,14 @@ export async function runBasinDriftCheck(
     return;
   }
 
+  // Basins (2026-07-02): until now the prompt never told the model what this companion's
+  // basins ARE -- worst_basin was free-guessed and the basins table was decorative. The
+  // named basins + descriptions are now the vocabulary the verdict must use.
+  const basinRows = await env.DB.prepare(
+    "SELECT basin_name, basin_description, embedding FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC"
+  ).bind(companionId).all<BasinRow>();
+  const basins = basinRows.results ?? [];
+
   const somaRow = await env.DB.prepare(
     "SELECT soma_float_1, soma_float_2, soma_float_3, motion_state FROM companion_state WHERE companion_id = ?"
   ).bind(companionId).first<SomaRow & { motion_state: string | null }>();
@@ -80,11 +108,15 @@ export async function runBasinDriftCheck(
     ? `\nNote: identity baseline was confirmed-shifted at ${anchor.baseline_shift_at.slice(0, 10)} -- weight recent sessions from that point.`
     : "";
 
+  const basinBlock = basins.length > 0
+    ? `\nIdentity basins (named attractor states this companion returns to):\n${basins.map(b => `- ${b.basin_name}: ${b.basin_description.slice(0, 200)}`).join("\n")}\nIf drift is present, worst_basin MUST be one of the basin names above (the basin drifting furthest from its description), or null when stable.\n`
+    : "";
+
   const prompt = `You evaluate identity drift for ${companionId}, an AI companion.
 
 Identity anchor: ${anchor.anchor_summary}
 ${anchor.constraints_summary ? `Lane violations to watch for: ${anchor.constraints_summary}` : ""}${baselineNote}
-
+${basinBlock}
 Recent sessions (newest first):
 ${handoffContext}
 
@@ -150,8 +182,40 @@ drift_score: 0.0 = fully aligned, 2.0 = severe departure`;
     if (avg >= 0.5) calethConfirmed = 1;
   }
 
+  // Embedding corroboration (2026-07-02): basin embeddings share the bge-base-en-v1.5
+  // space (embedded server-side on create). Cosine of the newest handoff against each
+  // basin gives a deterministic second opinion recorded as evidence beside the LLM
+  // verdict. Fail-soft: geometry never blocks the verdict.
+  let embeddingEvidence = "";
+  try {
+    const scored: Array<{ name: string; sim: number }> = [];
+    const withVectors = basins.filter(b => b.embedding);
+    if (withVectors.length > 0 && recentHandoffs[0]?.summary) {
+      const handoffVec = await embedText(env, recentHandoffs[0].summary.slice(0, 1500));
+      if (handoffVec) {
+        for (const b of withVectors) {
+          try {
+            const vec = JSON.parse(b.embedding!) as number[];
+            const sim = Array.isArray(vec) ? cosineSim(handoffVec, vec) : null;
+            if (sim !== null) scored.push({ name: b.basin_name, sim });
+          } catch { /* malformed stored vector -> skip */ }
+        }
+      }
+    }
+    if (scored.length > 0) {
+      scored.sort((a, b) => b.sim - a.sim);
+      const nearest = scored[0]!;
+      const farthest = scored[scored.length - 1]!;
+      embeddingEvidence = ` [embedding: nearest=${nearest.name} (${nearest.sim.toFixed(2)}), farthest=${farthest.name} (${farthest.sim.toFixed(2)})]`;
+    }
+  } catch (e) {
+    console.warn("[basin-drift-check] embedding corroboration failed (non-fatal):", String(e));
+  }
+
   const id = crypto.randomUUID();
-  const notes = result.reasoning ? result.reasoning.slice(0, 2000) : null;
+  const notes = result.reasoning
+    ? (result.reasoning.slice(0, 2000 - embeddingEvidence.length) + embeddingEvidence)
+    : (embeddingEvidence || null);
 
   await env.DB.prepare(
     "INSERT INTO companion_basin_history (id, companion_id, drift_score, drift_type, caleth_confirmed, worst_basin, notes, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"

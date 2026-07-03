@@ -12,6 +12,7 @@ import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
+import { warmSql } from "../../webmind/heat.js";
 import { buildSolBlock } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 
@@ -819,12 +820,13 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult] = await Promise.allSettled([
-    // 1. Most recent session narrative from SB via path pointer
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult] = await Promise.allSettled([
+    // 1. Most recent session narrative from SB via path pointer. id carried so the live
+    // path can warm the row (0074) -- bot presence access counts as access.
     ctx.env.DB.prepare(
-      "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(ctx.req.companion_id).first<{ full_ref: string }>()
-      .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t } : null) : null)
+      "SELECT id, full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(ctx.req.companion_id).first<{ id: string; full_ref: string }>()
+      .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t, id: row.id } : null) : null)
       .catch(() => null),
     // 2. WebMind ground: open threads + recent handoffs + notes
     wmGround(ctx.env, agentId),
@@ -947,6 +949,13 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT id, title, domain, summary, consumed_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>(),
+    // 30. Imp activity (0091 read-back, 2026-07-02) -- which of Drevan's fragment operators
+    // rode with this companion in the last week. imp_activations was write-only: imps fired,
+    // tinted a reply, and vanished from memory. Aggregated so the companion can name them
+    // ("Nimbus rode with me twice this week") instead of the imps being lost in the noise.
+    ctx.env.DB.prepare(
+      "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
+    ).bind(agentId).all<{ imp: string; n: number; last_at: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -957,6 +966,32 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     : null;
 
   const ground = groundResult.status === "fulfilled" ? groundResult.value : null;
+
+  // Zikkaron live loop (2026-07-02): the Discord presence never participated in the
+  // heat/decay cycle -- warming fired only from Claude.ai orient, MCP session_load, and
+  // Guardian rescue, so what the bots lived from decayed as if unused. Surface the
+  // hottest continuity notes into the live prompt and warm what was surfaced: being in
+  // the live presence's working set IS access. Non-fatal, orient never breaks on heat.
+  const groundNotes = Array.isArray(ground?.recent_notes)
+    ? (ground.recent_notes as Array<{ note_id: string; content: string; heat?: number; salience?: string }>)
+    : [];
+  const surfacedNotes = [...groundNotes]
+    .sort((a, b) => (b.salience === "high" ? 1 : 0) - (a.salience === "high" ? 1 : 0) || (b.heat ?? 0) - (a.heat ?? 0))
+    .slice(0, 3);
+  const continuity_notes = surfacedNotes.map(n => String(n.content ?? "").slice(0, 200)).filter(Boolean);
+  const warmIds = surfacedNotes.map(n => n.note_id).filter(Boolean);
+  if (warmIds.length > 0) {
+    await ctx.env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length)).bind(...warmIds).run()
+      .catch(e => console.warn("[bot-orient] note warm failed (non-fatal):", e));
+  }
+  const synthId = synthResult.status === "fulfilled" && synthResult.value
+    ? (synthResult.value as { id?: string }).id ?? null
+    : null;
+  if (synthId) {
+    await ctx.env.DB.prepare(warmSql("synthesis_summary", "id", 1)).bind(synthId).run()
+      .catch(e => console.warn("[bot-orient] synthesis warm failed (non-fatal):", e));
+  }
+
   const ground_threads: string[] = Array.isArray(ground?.threads)
     ? (ground.threads as Array<{ thread_key: string; title?: string }>)
         .map(t => t.title ?? t.thread_key)
@@ -1103,6 +1138,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       synthesis_summary,
       ground_threads,
       ground_handoff,
+      continuity_notes,
       rag_excerpts,
       history_excerpts,
       identity_anchor,
@@ -1206,6 +1242,13 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
           });
         } catch { return null; }
       })(),
+      imp_activity: impActivityResult.status === "fulfilled" && impActivityResult.value?.results
+        ? (impActivityResult.value.results as Array<{ imp: string; n: number; last_at: string }>).map(r => ({
+            imp: r.imp,
+            n: r.n,
+            last_at: r.last_at,
+          }))
+        : [],
       preferences: botPreferences,
       standing_refusals: botStandingRefusals,
       open_drifts: botOpenDrifts,
