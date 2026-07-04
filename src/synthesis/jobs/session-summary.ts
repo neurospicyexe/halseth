@@ -78,9 +78,19 @@ export async function runSessionSummary(
     .map((n, i) => `${i + 1}. [${n.agent ?? "unknown"}] ${n.note_text}`)
     .join("\n") || "none logged";
 
-  const openThreads = handover?.open_threads
-    ? JSON.parse(handover.open_threads) as string[]
-    : [];
+  // open_threads is usually a JSON array, but some write paths stored a bare
+  // string or double-encoded JSON. Coerce to string[] no matter which shape.
+  const openThreads: string[] = (() => {
+    const raw = handover?.open_threads;
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String);
+      return [String(parsed)];
+    } catch {
+      return [raw];
+    }
+  })();
 
   const userPrompt = `SESSION DATA:
 - Session ID: ${session.id}

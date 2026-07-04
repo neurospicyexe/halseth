@@ -32,6 +32,17 @@ export async function processQueue(env: Env): Promise<void> {
        AND created_at < datetime('now', '-5 minutes')`
   ).run().catch((e: unknown) => console.warn("[synthesis] stuck-job recovery failed:", String(e)));
 
+  // Terminal-state sweep: jobs that exhausted their retries used to sit in
+  // 'pending' forever -- invisible to the picker (attempts < 3) but never
+  // marked failed, so nothing surfaced them. 113 jobs rotted that way for
+  // three months (found 2026-07-04). Flip them to 'failed' so queue health
+  // checks and Guardian can see them.
+  await env.DB.prepare(
+    `UPDATE synthesis_queue
+     SET status = 'failed'
+     WHERE status = 'pending' AND attempts >= 3`
+  ).run().catch((e: unknown) => console.warn("[synthesis] failed-sweep failed:", String(e)));
+
   const pending = await env.DB.prepare(`
     SELECT id, session_id, companion_id, job_type, attempts
     FROM synthesis_queue

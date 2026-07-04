@@ -429,7 +429,7 @@ export async function runDrevanState(env: Env): Promise<void> {
       (companion_id, heat, heat_value, reach, reach_value, weight, weight_value,
        processing_type, last_contact, last_resolution, prompt_context,
        soma_float_1, soma_float_2, soma_float_3, compound_state, updated_at)
-    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(companion_id) DO UPDATE SET
       heat            = excluded.heat,
       heat_value      = excluded.heat_value,
