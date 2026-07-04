@@ -1,15 +1,7 @@
 import { Env } from "../types";
 import type { CompanionNote } from "../types";
 import { generateId } from "../db/queries";
-
-function authGuard(request: Request, env: Env): Response | null {
-  if (!env.ADMIN_SECRET) return null;
-  const auth = request.headers.get("Authorization") ?? "";
-  if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  return null;
-}
+import { authGuard } from "../lib/auth.js";
 
 // GET /notes?limit=N — returns notes newest-first.
 export async function getNotes(request: Request, env: Env): Promise<Response> {

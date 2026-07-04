@@ -1,4 +1,5 @@
 import { Env } from "../types";
+import { authGuard } from "../lib/auth.js";
 
 // Allowed upload MIME types. Anything else is stored as application/octet-stream.
 const ALLOWED_MIME_TYPES = new Set([
@@ -12,15 +13,6 @@ const ALLOWED_MIME_TYPES = new Set([
 const INLINE_IMAGE_TYPES = new Set([
   "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
 ]);
-
-function authGuard(request: Request, env: Env): Response | null {
-  if (!env.ADMIN_SECRET) return null;
-  const auth = request.headers.get("Authorization") ?? "";
-  if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  return null;
-}
 
 // POST /assets/upload
 // Accepts multipart/form-data with a `file` field and an optional `key` field.

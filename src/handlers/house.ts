@@ -1,14 +1,6 @@
 import { Env } from "../types";
 import type { HouseState } from "../types";
-
-function authGuard(request: Request, env: Env): Response | null {
-  if (!env.ADMIN_SECRET) return null;
-  const auth = request.headers.get("Authorization") ?? "";
-  if (auth !== `Bearer ${env.ADMIN_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  return null;
-}
+import { authGuard } from "../lib/auth.js";
 
 // GET /house — returns current house state.
 export async function getHouseState(_request: Request, env: Env): Promise<Response> {
