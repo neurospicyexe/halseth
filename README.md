@@ -72,3 +72,23 @@ wrangler.prod.toml  Your private config (gitignored — never committed)
 ## The one rule
 
 `relational_deltas` is **append-only**. No `UPDATE` or `DELETE` against that table, ever.
+
+## Acknowledgments
+
+Some of Halseth's best ideas came from other people's open work. The implementations here are
+independent, but credit where it's due:
+
+- **[MalkinK/Zikkaron](https://github.com/MalkinK/Zikkaron)** — the memory-holds layer **keeps the
+  Zikkaron name outright**. Its surprisal gate, predictive-coding dedup, and lazy heat/decay
+  reconsolidation are our take on patterns from that biologically-inspired memory engine.
+- **[Riley-Coyote/memory-ledger-protocol-v0.2](https://github.com/Riley-Coyote/memory-ledger-protocol-v0.2)** —
+  the **Guardian** meta-observer carries its name and concept from MLP's sovereign-memory work, as
+  does the versioned Identity Kernel framing.
+- **[amarisaster/Companion-Continuity-Kit](https://github.com/amarisaster/Companion-Continuity-Kit)** —
+  emotional-state schema patterns and the drift-log concept.
+- **[karpathy/llm-council](https://github.com/karpathy/llm-council)** — the Council's
+  models-deliberate-first shape.
+
+The fuller list lives in the suite README:
+[nullsafe-suite acknowledgments](https://github.com/neurospicyexe/nullsafe-suite#acknowledgments).
+Thank you all.
