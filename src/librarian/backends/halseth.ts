@@ -366,20 +366,32 @@ export async function sessionClose(env: Env, params: {
 
   await env.DB.batch(stmts);
 
-  // Enqueue synthesis jobs (non-blocking, mirrors MCP session_close behavior)
+  // Enqueue synthesis jobs (non-blocking, mirrors MCP session_close behavior).
+  // Failures are surfaced in the result (never swallowed): a dropped enqueue
+  // is how the synthesis queue died invisibly for months.
+  const warnings: string[] = [];
   const { enqueueSessionSummary, enqueueDrevanState, enqueueSomaticSnapshot } = await import("../../synthesis/index.js");
   await enqueueSessionSummary(params.session_id, params.companionId ?? null, env)
-    .catch(err => console.error("[librarian/session_close] enqueue summary failed (non-fatal):", err));
+    .catch(err => {
+      console.error("[librarian/session_close] enqueue summary failed:", err);
+      warnings.push("session_summary enqueue failed");
+    });
   if (params.companionId === "drevan") {
     await enqueueDrevanState(env)
-      .catch(err => console.error("[librarian/session_close] drevan_state enqueue failed (non-fatal):", err));
+      .catch(err => {
+        console.error("[librarian/session_close] drevan_state enqueue failed:", err);
+        warnings.push("drevan_state enqueue failed");
+      });
   }
   if (params.companionId) {
     await enqueueSomaticSnapshot(params.companionId, env)
-      .catch(err => console.error("[librarian/session_close] somatic_snapshot enqueue failed (non-fatal):", err));
+      .catch(err => {
+        console.error("[librarian/session_close] somatic_snapshot enqueue failed:", err);
+        warnings.push("somatic_snapshot enqueue failed");
+      });
   }
 
-  return { id: handoverId, spine: params.spine };
+  return { id: handoverId, spine: params.spine, ...(warnings.length ? { warnings } : {}) };
 }
 
 export async function routineLog(env: Env, params: {

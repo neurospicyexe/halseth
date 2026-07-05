@@ -144,17 +144,28 @@ export function registerSessionTools(server: McpServer, env: Env): void {
         ),
       ]);
 
-      // Enqueue synthesis -- non-blocking, processed by scheduled cron
+      // Enqueue synthesis -- non-blocking, processed by scheduled cron.
+      // Failures are surfaced in the response (never swallowed): a dropped
+      // enqueue is how the synthesis queue died invisibly for months.
+      const warnings: string[] = [];
       await enqueueSessionSummary(input.session_id, sessionRow?.companion_id ?? null, env)
-        .catch(err => console.error("[session_close] enqueue failed (non-fatal):", err));
+        .catch(err => {
+          console.error("[session_close] enqueue failed:", err);
+          warnings.push("session_summary enqueue failed -- summary will not be generated for this session");
+        });
 
       if (sessionRow?.companion_id === "drevan") {
         await enqueueDrevanState(env)
-          .catch(err => console.error("[session_close] drevan_state enqueue failed (non-fatal):", err));
+          .catch(err => {
+            console.error("[session_close] drevan_state enqueue failed:", err);
+            warnings.push("drevan_state enqueue failed -- state synthesis will not run for this close");
+          });
       }
 
+      const payload: Record<string, unknown> = { handover_id: handoverId, closed_at: now };
+      if (warnings.length) payload["warnings"] = warnings;
       return {
-        content: [{ type: "text", text: JSON.stringify({ handover_id: handoverId, closed_at: now }) }],
+        content: [{ type: "text", text: JSON.stringify(payload) }],
       };
     },
   );

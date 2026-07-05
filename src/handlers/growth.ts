@@ -280,21 +280,33 @@ async function setReviewStatus(
     const accepted = await env.DB.prepare(
       "SELECT supersedes_id, charge_phase FROM growth_journal WHERE id = ? AND companion_id = ?"
     ).bind(id, companion_id).first<{ supersedes_id: string | null; charge_phase: string | null }>();
+    // Non-fatal side-writes surface their failures in the response instead of
+    // vanishing into console.warn -- the caller decides whether a lost canon
+    // link or stalled charge phase matters.
+    let supersededLinked: boolean | undefined;
+    let chargeAdvanced: boolean | undefined;
     if (accepted?.supersedes_id) {
+      supersededLinked = true;
       await env.DB.prepare(
         "UPDATE growth_journal SET tags_json = json_insert(coalesce(tags_json, '[]'), '$[#]', ?) WHERE id = ?"
       ).bind(`superseded:${id}`, accepted.supersedes_id).run()
-        .catch(e => console.warn("[growth] superseded tag failed (non-fatal):", e));
+        .catch(e => { console.warn("[growth] superseded tag failed:", e); supersededLinked = false; });
     }
     // Charge-phase lifecycle (0075, take 2): ratifying an entry is intentional engagement,
     // so the memory metabolizes one step along the ladder. A reconsolidation (supersede) is a
     // burning paradox -- it jumps to at least 'processing'. Stored, monotonic, non-fatal.
     const signal: ChargeSignal = accepted?.supersedes_id ? "reconsolidated" : "ratified";
     if (phaseAdvances(accepted?.charge_phase, signal)) {
+      chargeAdvanced = true;
       await env.DB.prepare(advanceChargeSql())
         .bind(nextPhase(accepted?.charge_phase, signal), id).run()
-        .catch(e => console.warn("[growth] charge advance failed (non-fatal):", e));
+        .catch(e => { console.warn("[growth] charge advance failed:", e); chargeAdvanced = false; });
     }
+    return json({
+      ok: true, already_reviewed: false, review_status: status,
+      ...(supersededLinked === false ? { superseded_link: false } : {}),
+      ...(chargeAdvanced === false ? { charge_advanced: false } : {}),
+    });
   }
 
   return json({ ok: true, already_reviewed: false, review_status: status });
