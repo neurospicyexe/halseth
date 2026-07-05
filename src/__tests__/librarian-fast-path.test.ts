@@ -508,6 +508,35 @@ describe("regression: librarian sweep 2026-05-02 — anchored guards H1-H7", () 
     expect(result!.key).toBe("companion_notes_read");
   });
 
+  // ── H10: 'journal:' colon form beats trigger words hiding in the body ──────
+  it("H10: 'journal: ...' with 'task list' in the body routes to journal_add (not get_tasks)", () => {
+    const result = matchFastPath("journal: auth debt paid tonight. The shortfall list became a task list and the first item is done.");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("journal_add");
+  });
+  it("H10: 'journal: ...' with 'search' and 'open tasks' in the body still routes to journal_add", () => {
+    const result = matchFastPath("journal: ran a web search over the open tasks today and closed most of what's open");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("journal_add");
+  });
+
+  // ── H10b: read-verb + journal beats journal_add's 'journal entry' substring ──
+  it("H10b: 'read my most recent journal entry' routes to journal_read (not journal_add)", () => {
+    const result = matchFastPath("read my most recent journal entry");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("journal_read");
+  });
+  it("H10b: 'show my latest journal entry' routes to journal_read", () => {
+    const result = matchFastPath("show my latest journal entry");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("journal_read");
+  });
+  it("H10b: 'add journal entry' still routes to journal_add (write form untouched)", () => {
+    const result = matchFastPath("add journal entry about tonight");
+    expect(result).not.toBeNull();
+    expect(result!.key).toBe("journal_add");
+  });
+
   // ── H7: broadcast-to-triad guard beats the classifier, even with a long search-y body ──
   it("H7: 'tell the triad: <long body>' routes to companion_note_add (not the classifier)", () => {
     const result = matchFastPath("tell the triad: our body grew today, we have new search and reading tools and Sol needs tending");
