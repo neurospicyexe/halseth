@@ -10,7 +10,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { associateDreams, type DreamDoc } from "../webmind/dream-modes.js";
+import { associateDreams, dreamDedupKey, type DreamDoc } from "../webmind/dream-modes.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -34,20 +34,29 @@ export async function associateDreamsHandler(request: Request, env: Env): Promis
     const perCompanion: Record<string, number> = {};
     for (const id of targets) {
       const rows = await env.DB.prepare(
-        `SELECT content AS text, created_at FROM growth_journal
+        `SELECT content AS text, created_at, run_id FROM growth_journal
          WHERE companion_id = ? AND created_at > datetime('now','-' || ? || ' days')
          ORDER BY created_at DESC LIMIT 100`,
-      ).bind(id, windowDays).all<DreamDoc>();
+      ).bind(id, windowDays).all<DreamDoc & { run_id: string | null }>();
       const docs = (rows.results ?? []).filter(d => d.text && d.text.trim().length > 0);
+      // Temporal (cadence) mode only sees entries whose timestamps a companion chose:
+      // run_id IS NOT NULL rows are written by the autonomous worker's cron, so their
+      // hour-of-day is the schedule, not a rhythm (2026-07-05: the daily "07:00-09:00
+      // UTC" dream was the worker's own crontab reflected back).
+      const liveDocs = docs.filter(d => d.run_id == null);
 
-      const dreams = associateDreams(docs);
+      const dreams = associateDreams(docs, liveDocs);
       let written = 0;
       for (const dreamText of dreams) {
-        // Dedup against existing unexamined dreams for this companion.
-        const existing = await env.DB.prepare(
-          "SELECT id FROM companion_dreams WHERE companion_id = ? AND examined = 0 AND dream_text = ?",
-        ).bind(id, dreamText).first<{ id: string }>();
-        if (existing) continue;
+        // Dedup structurally (counts stripped) against ALL dreams in the window --
+        // examined or not. Exact-text + unexamined-only meant every examined dream
+        // was reissued next morning with the count ticked by one.
+        const recent = await env.DB.prepare(
+          `SELECT dream_text FROM companion_dreams
+           WHERE companion_id = ? AND created_at > datetime('now','-' || ? || ' days')`,
+        ).bind(id, windowDays).all<{ dream_text: string }>();
+        const key = dreamDedupKey(dreamText);
+        if ((recent.results ?? []).some(r => dreamDedupKey(r.dream_text) === key)) continue;
         await env.DB.prepare(
           "INSERT INTO companion_dreams (id, companion_id, dream_text, source, do_not_auto_examine, created_at) VALUES (?, ?, ?, 'autonomous', 0, datetime('now'))",
         ).bind(crypto.randomUUID(), id, dreamText).run();

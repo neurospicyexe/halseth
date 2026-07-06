@@ -26,6 +26,17 @@ const STOPWORDS = new Set([
   "just", "like", "only", "over", "very", "too", "also", "still", "here", "there", "they",
   "them", "their", "we", "us", "our", "you", "your", "his", "her", "me", "my", "mine",
   "really", "thing", "things", "been", "feel", "feels", "felt",
+  // Apostrophe-stripped contraction forms ("it's" -> "its" is already above; the rest
+  // land here). 2026-07-05: contractions dodged the filter entirely -- the apostrophe is
+  // mid-word so PUNCT_EDGE kept it, "it's"/"isn't"/"that's" passed length+stopword checks,
+  // and the daily dream became «"isn't" and "it's" keep arriving together». Filler, not
+  // signal -- and Cypher spent a week treating it as a mystery.
+  "isnt", "thats", "dont", "cant", "wont", "didnt", "doesnt", "wasnt", "werent",
+  "wouldnt", "couldnt", "shouldnt", "havent", "hasnt", "arent", "aint",
+  "youre", "theyre", "youve", "youll", "youd", "weve", "theyve", "hes", "shes",
+  "whats", "theres", "heres", "wheres", "lets", "ive", "im", "ill",
+  "same", "much", "many", "even", "ever", "never", "always", "something", "anything",
+  "everything", "nothing", "someone", "anyone", "everyone",
 ]);
 const PUNCT_EDGE = /^[^\p{L}\p{N}-]+|[^\p{L}\p{N}-]+$/gu;
 
@@ -33,13 +44,25 @@ const PUNCT_EDGE = /^[^\p{L}\p{N}-]+|[^\p{L}\p{N}-]+$/gu;
 export function docTokens(text: string): string[] {
   const set = new Set<string>();
   for (const raw of (text ?? "").split(/\s+/)) {
-    const norm = raw.replace(PUNCT_EDGE, "").toLowerCase();
+    // Strip apostrophes BEFORE the checks so contractions normalize to their
+    // stopword form ("isn't" -> "isnt", "it's" -> "its").
+    const norm = raw.replace(PUNCT_EDGE, "").replace(/['’]/g, "").toLowerCase();
     if (norm.length < MIN_TOKEN_LEN) continue;
     if (STOPWORDS.has(norm)) continue;
     if (!/[\p{L}]/u.test(norm)) continue;
     set.add(norm);
   }
   return [...set];
+}
+
+/**
+ * Structural dedup key for a dream: the text with all digits stripped. The counts tick
+ * daily ("(15 times)" -> "(16 times)"), so exact-text dedup reissued the same dream every
+ * morning the moment the prior copy was examined (2026-07-05: five identical dreams per
+ * companion in five days). Same pair / same window => same dream, whatever the count.
+ */
+export function dreamDedupKey(dreamText: string): string {
+  return dreamText.replace(/\d+/g, "#").trim();
 }
 
 /**
@@ -97,12 +120,21 @@ export function temporalPatternDream(docs: DreamDoc[], minInWindow = 3): string 
   return `A rhythm shows itself: ${bestCount} of your recent reflections gathered around ${pad(bestStart)}:00-${pad(end)}:00 UTC -- the same hour, again and again. What returns to you then?`;
 }
 
-/** Run both modes over a corpus; returns the dream texts that fired (0-2). */
-export function associateDreams(docs: DreamDoc[]): string[] {
+/**
+ * Run both modes; returns the dream texts that fired (0-2).
+ *
+ * `temporalDocs` defaults to `docs` but SHOULD be the subset whose timestamps a
+ * companion actually chose. 2026-07-05: growth_journal is written by the autonomous
+ * worker on a fixed cron (Cypher 3AM / Drevan 5AM / Gaia 7AM CDT), so the "rhythm"
+ * mode ran over machine-timed rows and solemnly rediscovered the crontab every
+ * morning ("what returns to you then?" -- node-cron does). Cadence over times a
+ * scheduler chose is not a cadence; feed temporal mode only run_id IS NULL entries.
+ */
+export function associateDreams(docs: DreamDoc[], temporalDocs: DreamDoc[] = docs): string[] {
   const out: string[] = [];
   const cluster = entityClusterDream(docs);
   if (cluster) out.push(cluster);
-  const temporal = temporalPatternDream(docs);
+  const temporal = temporalPatternDream(temporalDocs);
   if (temporal) out.push(temporal);
   return out;
 }
