@@ -135,13 +135,14 @@ export interface RecentNote {
   agent_id: string;
   content: string;
   salience: string;
+  note_type: string | null;
   source: string | null;
   created_at: string;
 }
 
 export async function readRecentNotes(
   env: Env,
-  opts: { sinceHours?: number; limit?: number; source?: string } = {},
+  opts: { sinceHours?: number; limit?: number; source?: string; agent_id?: string; note_type?: string } = {},
 ): Promise<RecentNote[]> {
   const sinceHours = Math.min(opts.sinceHours ?? 24, 168);
   const limit = Math.min(opts.limit ?? 30, 100);
@@ -153,16 +154,47 @@ export async function readRecentNotes(
     conditions.push("source = ?");
     bindings.push(opts.source);
   }
+  if (opts.agent_id) {
+    conditions.push("agent_id = ?");
+    bindings.push(opts.agent_id);
+  }
+  if (opts.note_type) {
+    conditions.push("note_type = ?");
+    bindings.push(opts.note_type);
+  }
   bindings.push(limit);
 
   const rows = await env.DB.prepare(
-    `SELECT note_id, agent_id, content, salience, source, created_at
+    `SELECT note_id, agent_id, content, salience, note_type, source, created_at
      FROM wm_continuity_notes
      WHERE ${conditions.join(" AND ")}
      ORDER BY created_at DESC LIMIT ?`,
   ).bind(...bindings).all<RecentNote>();
 
   return rows.results ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Salience demotion (day-distillation, 2026-07-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Demote a companion's high-salience notes of one type to normal. Used by the nightly
+ * day-distillation: after the rich first-person day note lands (salience=high), the
+ * day's session fragments drop out of the orient diet (orient reads salience='high'
+ * only) without being archived or deleted -- they stay readable on Hearth and in
+ * recall, so digests can be audited against their raw material.
+ */
+export async function demoteNotes(
+  env: Env,
+  opts: { agent_id: string; note_type: string; before?: string },
+): Promise<number> {
+  const before = opts.before ?? new Date().toISOString();
+  const r = await env.DB.prepare(
+    `UPDATE wm_continuity_notes SET salience = 'normal'
+     WHERE agent_id = ? AND note_type = ? AND salience = 'high' AND archived = 0 AND created_at <= ?`,
+  ).bind(opts.agent_id, opts.note_type, before).run();
+  return r.meta.changes ?? 0;
 }
 
 // ---------------------------------------------------------------------------

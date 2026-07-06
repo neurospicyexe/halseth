@@ -9,7 +9,7 @@ import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
-import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, type CompressibleNote } from "../webmind/notes.js";
+import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
@@ -859,12 +859,50 @@ export async function getMindNotesRecent(
   const parsedLimit = parseInt(url.searchParams.get("limit") ?? "30", 10);
   const limit = isNaN(parsedLimit) ? 30 : parsedLimit;
   const source = url.searchParams.get("source") ?? undefined;
+  const agentId = url.searchParams.get("agent_id") ?? undefined;
+  const noteType = url.searchParams.get("note_type") ?? undefined;
+  if (agentId && !isValidAgentId(agentId)) {
+    return json({ error: "agent_id must be cypher, drevan, or gaia" }, 400);
+  }
 
   try {
-    const notes = await readRecentNotes(env, { sinceHours, limit, source });
+    const notes = await readRecentNotes(env, { sinceHours, limit, source, agent_id: agentId, note_type: noteType });
     return json({ notes });
   } catch (err) {
     console.error("[mind/notes/recent] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/notes/demote  { agent_id, note_type, before? }
+// Day-distillation support (2026-07-06): after the nightly digest lands at salience=high,
+// the day's session fragments demote to normal so orient boots on the digest, not twelve
+// two-sentence fragments. Demotion, not archive -- fragments stay readable everywhere else.
+export async function postMindNotesDemote(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  let body: { agent_id?: string; note_type?: string; before?: string };
+  try {
+    body = await request.json() as { agent_id?: string; note_type?: string; before?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  if (!body.agent_id || !isValidAgentId(body.agent_id)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  if (!body.note_type) {
+    return json({ error: "note_type required (refusing an untyped bulk demotion)" }, 400);
+  }
+
+  try {
+    const demoted = await demoteNotes(env, { agent_id: body.agent_id, note_type: body.note_type, before: body.before });
+    return json({ ok: true, demoted });
+  } catch (err) {
+    console.error("[mind/notes/demote] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
