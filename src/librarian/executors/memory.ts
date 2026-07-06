@@ -333,10 +333,25 @@ export async function execSbLogObservation(ctx: ExecutorContext): Promise<Execut
 }
 
 export async function execSbSynthesizeSession(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ session_id: string }>(ctx.req.context);
-  if (!p?.session_id) return { response_key: "witness", witness: "sb_synthesize_session requires { session_id } in context" };
-  const r = await sbSynthesizeSession(ctx.env, p.session_id);
-  return { ack: r.ack };
+  const p = parseContext<{ session_id?: string; summary?: string; channel?: string }>(ctx.req.context);
+  if (p?.session_id) {
+    const r = await sbSynthesizeSession(ctx.env, p.session_id);
+    return { ack: r.ack };
+  }
+  // Discord-bot shape: the bot already synthesized the session in-voice and sends the
+  // finished text as { summary, channel }. Persist it to the vault as a session-synthesis
+  // note -- this write was silently dropped for months when only session_id was accepted.
+  if (p?.summary) {
+    const tags = ["session-synthesis", ...(p.channel ? [`channel:${p.channel}`] : [])];
+    const r = await sbSaveDocument(ctx.env, {
+      content: p.summary,
+      companion: ctx.req.companion_id,
+      tags,
+      content_type: "note",
+    });
+    return { ack: r.ack, response: r.response };
+  }
+  return { response_key: "witness", witness: "sb_synthesize_session requires { session_id } or { summary } in context" };
 }
 
 export async function execSbSaveStudy(ctx: ExecutorContext): Promise<ExecutorResult> {
