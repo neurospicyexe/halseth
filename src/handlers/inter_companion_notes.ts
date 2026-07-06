@@ -55,8 +55,11 @@ export async function ackInterCompanionNotes(
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  const body = await request.json() as { ids?: string[] };
+  const body = await request.json() as { ids?: string[]; companion_id?: string };
   const ids = body?.ids;
+  const companionId = typeof body?.companion_id === "string" && body.companion_id.length > 0
+    ? body.companion_id
+    : null;
   if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_ITEMS) {
     return new Response("ids must be a non-empty array (max 20)", { status: 400 });
   }
@@ -68,9 +71,14 @@ export async function ackInterCompanionNotes(
 
   const placeholders = ids.map(() => "?").join(", ");
   const now = new Date().toISOString();
+  // Scope to the acking companion when provided so one companion can't mark a
+  // sibling's addressed notes read (broadcasts, to_id NULL, stay ackable by anyone).
+  const scope = companionId ? " AND (to_id = ? OR to_id IS NULL)" : "";
+  const bindings: unknown[] = [now, ...ids];
+  if (companionId) bindings.push(companionId);
   await env.DB.prepare(
-    `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`,
-  ).bind(now, ...ids).run();
+    `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL${scope}`,
+  ).bind(...bindings).run();
 
   return new Response(JSON.stringify({ acked: ids.length }), {
     headers: { "Content-Type": "application/json" },

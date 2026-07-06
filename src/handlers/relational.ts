@@ -36,7 +36,7 @@ export async function listDeltas(
   `;
 
   const result = await env.DB.prepare(sql).bind(...bindings).all<RelationalDelta>();
-  return Response.json(result.results);
+  return Response.json(result.results ?? []);
 }
 
 export async function appendDelta(

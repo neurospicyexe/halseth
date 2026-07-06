@@ -1,26 +1,9 @@
-import { Env, Routine } from "../types.js";
+import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { authGuard } from "../lib/auth.js";
 
-// GET /routines?today=true — returns routine logs.
-// today=true: only today's logs. Otherwise returns the most recent 20.
-export async function getRoutines(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const todayOnly = url.searchParams.get("today") === "true";
-
-  const result = todayOnly
-    ? await env.DB.prepare(
-        "SELECT * FROM routines WHERE DATE(logged_at) = DATE('now') ORDER BY logged_at DESC"
-      ).all<Routine>()
-    : await env.DB.prepare(
-        "SELECT * FROM routines ORDER BY logged_at DESC LIMIT 20"
-      ).all<Routine>();
-
-  return new Response(JSON.stringify(result.results ?? []), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+// GET /routines is served by handlers/history.ts (?date=YYYY-MM-DD). A second
+// unrouted (and unauthenticated) getRoutines used to live here; removed 2026-07-06.
 
 // POST /routines — log a routine completion. Append-only: meds AM + PM,
 // water five times, mid-day re-logs are all separate rows.

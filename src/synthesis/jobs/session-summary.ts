@@ -255,7 +255,7 @@ companion_id: ${session.companion_id ?? "unknown"}
       content: buildTranscript(session, deltas.results ?? [], notes.results ?? [], handover ?? null),
       companion: session.companion_id ?? undefined,
       tags: ["session-transcript", "raw-exchange", session.companion_id ?? "unknown"],
-    }).catch(() => {});
+    }).catch(e => console.warn("[synthesis:session-summary] sb raw-transcript ingest failed:", e));
   }
 }
 
