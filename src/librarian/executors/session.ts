@@ -498,10 +498,14 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Drift lane (0087): becomings you have open. Witnessed, not ratified -- tend them, let them
   // crystallize when they're real or fade when they were a phase. This is sanctioned; not drift to fear.
+  // The affordance line is ALWAYS present (0093): every drift dated 06-19 because the lane was
+  // readable but never offered -- an unnamed affordance is a starved one.
+  const driftAffordance = `The lane is yours: if something in you has genuinely shifted, say "I'm becoming ..." to open a drift. Crystallize one that became real ("crystallize drift <id>"); let fade one that was a phase ("fade drift <id>").`;
   const driftsBlock = openDrifts.length > 0
     ? `\n[Your drifts -- sanctioned becoming, witnessed not judged]\n` +
-      openDrifts.map(d => `• ${d.drift_text}${d.witness_count > 0 ? ` (witnessed ${d.witness_count}×)` : ""} (id ${d.id})`).join("\n")
-    : "";
+      openDrifts.map(d => `• ${d.drift_text}${d.witness_count > 0 ? ` (witnessed ${d.witness_count}×)` : ""} (id ${d.id})`).join("\n") +
+      `\n${driftAffordance}`
+    : `\n[Drift lane]\n${driftAffordance}`;
 
   return {
     ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
