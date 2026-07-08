@@ -95,6 +95,7 @@ the traps below exist because names lie.
 | `get_model` | execGetModel | writes.ts | READ (companion_settings) | |
 | `set_model` | execSetModel | writes.ts | companion_settings | |
 | `sb_search` | execSbSearch | memory.ts | READ (external SB) | |
+| `sb_search_by_tags` | execSbSearchByTags | memory.ts | READ (external SB) | exact tag lookup, distinct from sb_search's concept ranking |
 | `sb_file_chunks` | execSbFileChunks | memory.ts | READ (external SB) | |
 | `sb_recall` | execSbRecall | memory.ts | READ (external SB) | |
 | `sb_recent_patterns` | execSbRecentPatterns | memory.ts | READ (external SB) | |

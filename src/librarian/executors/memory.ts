@@ -2,7 +2,7 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import {
   dualVectorSearch, filteredRecall, recentPatterns,
   sbRead, sbList, sbSaveDocument, sbLogObservation, sbSynthesizeSession, sbSaveStudy,
-  sbFileChunks,
+  sbFileChunks, searchByTags,
 } from "../backends/second-brain.js";
 import { truncateRaw, RAW_DATA_CHARS } from "../response/budget.js";
 
@@ -89,6 +89,22 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
   // to widen recall via dual-vector retrieval. Absent -> single-vector.
   const result = await dualVectorSearch(ctx.env, query, c?.recent_context, null, contentType);
   return { data: result ? trimSearchChunks(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
+}
+
+// Extracts tag words from natural language when no structured context is given.
+// "find things tagged babita, health" / "search vault tagged babita" -> ["babita", "health"].
+function extractTagsFromRequest(request: string): string[] {
+  const match = request.match(/tagged\s+(.+)$/i);
+  if (!match) return [];
+  return match[1]!.split(/[,\s]+and\s+|[,]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
+}
+
+export async function execSbSearchByTags(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const c = parseContext<{ tags?: string[]; limit?: number }>(ctx.req.context);
+  const tags = (c?.tags && c.tags.length > 0) ? c.tags : extractTagsFromRequest(ctx.req.request);
+  if (tags.length === 0) return { response_key: "witness", witness: "sb_search_by_tags requires { tags: [...] } or a request like 'find things tagged X'" };
+  const result = await searchByTags(ctx.env, tags, c?.limit);
+  return { data: result ? trimSearchChunks(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search_by_tags" } };
 }
 
 export async function execSbFileChunks(ctx: ExecutorContext): Promise<ExecutorResult> {

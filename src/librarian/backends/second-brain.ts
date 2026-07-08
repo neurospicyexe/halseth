@@ -219,6 +219,20 @@ export async function semanticSearch(
   return callTool(env, "sb_search", args);
 }
 
+// Exact tag lookup (2026-07-08) -- distinct from semanticSearch's meaning-based ranking.
+// "find things tagged X" where X is a domain (health, projects) or a specific named thing
+// (babita, house-of-translation). Currently only companion_journal rows carry tags.
+export async function searchByTags(
+  env: Env,
+  tags: string[],
+  limit?: number,
+): Promise<string | null> {
+  if (tags.length === 0) return null;
+  const args: Record<string, unknown> = { tags: tags.slice(0, 20) };
+  if (limit) args.limit = limit;
+  return callTool(env, "sb_search_by_tags", args);
+}
+
 // Metamemory feedback (0070): rate recalled chunks useful/useless. The store nudges
 // future ranking by Laplace-smoothed reliability (+/-0.05 max, never gates recall).
 export async function searchFeedback(

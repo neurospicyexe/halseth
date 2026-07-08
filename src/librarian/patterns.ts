@@ -106,6 +106,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+  sb_search_by_tags: {
+    triggers: [
+      "find things tagged", "find notes tagged", "search vault tagged", "search tagged",
+      "find tagged", "vault tagged", "tagged with", "notes tagged", "entries tagged",
+      "what's tagged", "show me tagged", "find everything tagged",
+    ],
+    tools: ["sb_search_by_tags"],
+    response_key: "summary",
+    raw: true,
+  },
   sb_file_chunks: {
     triggers: [
       "read file", "show file", "file chunks", "show chunks from", "read chunks from",
