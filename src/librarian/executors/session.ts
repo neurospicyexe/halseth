@@ -71,7 +71,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     }),
     wmOrient(ctx.env, agentId).catch(() => null),
     ctx.env.DB.prepare(
-      "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+      "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(agentId).first<{ full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
@@ -828,7 +828,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     // 1. Most recent session narrative from SB via path pointer. id carried so the live
     // path can warm the row (0074) -- bot presence access counts as access.
     ctx.env.DB.prepare(
-      "SELECT id, full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+      "SELECT id, full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(ctx.req.companion_id).first<{ id: string; full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t, id: row.id } : null) : null)
       .catch(() => null),

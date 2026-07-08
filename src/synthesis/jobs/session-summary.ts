@@ -211,8 +211,8 @@ companion_id: ${session.companion_id ?? "unknown"}
     INSERT INTO synthesis_summary
       (id, summary_type, companion_id, subject, narrative, emotional_register,
        key_decisions, open_threads, drevan_state, full_ref, stale_after,
-       confidence, evidence_count, domains, created_at)
-    VALUES (?, 'session', ?, ?, ?, ?, '[]', ?, NULL, ?, NULL, 0.6, ?, ?, datetime('now'))
+       confidence, evidence_count, domains, created_at, session_created_at)
+    VALUES (?, 'session', ?, ?, ?, ?, '[]', ?, NULL, ?, NULL, 0.6, ?, ?, datetime('now'), ?)
   `).bind(
     summaryId,
     session.companion_id ?? null,
@@ -223,6 +223,7 @@ companion_id: ${session.companion_id ?? "unknown"}
     sbResult.ack ? sbPath : null,
     evidenceCount,
     JSON.stringify(domains),
+    session.created_at,
   ).run();
 
   // Write-time cap (capacity debt, 2026-06-09; heat-aware since 0074): synthesis_summary

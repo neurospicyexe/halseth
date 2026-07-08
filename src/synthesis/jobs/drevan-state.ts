@@ -466,7 +466,7 @@ export async function runDrevanState(env: Env): Promise<void> {
     WHERE id = (
       SELECT id FROM synthesis_summary
       WHERE summary_type = 'session' AND companion_id = 'drevan'
-      ORDER BY created_at DESC LIMIT 1
+      ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1
     )
   `).bind(JSON.stringify({
     heat: heatState, heat_value: heatVal,

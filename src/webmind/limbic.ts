@@ -6,6 +6,36 @@
 import { Env } from "../types.js";
 import { WmLimbicState, WmLimbicStateInput } from "./types.js";
 
+// Boot audit 2026-07-08 finding: the boot protocol reads active_tensions (companion_tensions,
+// status='simmering') and trusts an empty result as "no live tensions" -- but the swarm's
+// limbic synthesis writes its own tension read into live_tensions on every pass, and nothing
+// ever routed that into the structured table. Content existed; it just didn't reach the field
+// the protocol reads. This closes that gap: every tension the swarm names gets a simmering row,
+// deduped case-insensitively per companion so repeated synthesis passes don't pile up duplicates.
+async function routeLiveTensionsIntoSelfDefense(
+  env: Env,
+  companionId: string,
+  liveTensions: string[],
+): Promise<void> {
+  const texts = liveTensions.map(t => t.trim()).filter(Boolean);
+  if (texts.length === 0) return;
+
+  const existing = await env.DB.prepare(
+    "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering'"
+  ).bind(companionId).all<{ tension_text: string }>();
+  const seen = new Set((existing.results ?? []).map(r => r.tension_text.trim().toLowerCase()));
+
+  const fresh = texts.filter(t => !seen.has(t.toLowerCase()));
+  if (fresh.length === 0) return;
+
+  const stmts = fresh.map(text =>
+    env.DB.prepare(
+      "INSERT INTO companion_tensions (id, companion_id, tension_text, status, first_noted_at) VALUES (?, ?, ?, 'simmering', datetime('now'))"
+    ).bind(crypto.randomUUID().replace(/-/g, ""), companionId, text.slice(0, 2000))
+  );
+  await env.DB.batch(stmts);
+}
+
 export async function writeLimbicState(
   env: Env,
   input: WmLimbicStateInput,
@@ -31,6 +61,12 @@ export async function writeLimbicState(
     companionId,
     now,
   ).run();
+
+  // Non-fatal: routing is a self-defense enrichment, never allowed to break limbic writes.
+  if (companionId && input.live_tensions.length > 0) {
+    await routeLiveTensionsIntoSelfDefense(env, companionId, input.live_tensions)
+      .catch(e => console.error("[limbic] tension routing failed (non-fatal):", e));
+  }
 
   return {
     state_id: id,
