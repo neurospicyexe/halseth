@@ -12,6 +12,7 @@ import {
   loadLightGroundData,
 } from "../../mcp/tools/session_load.js";
 import { generateId } from "../../db/queries.js";
+import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
@@ -562,9 +563,15 @@ export async function companionJournalAdd(
 ): Promise<{ id: string; created_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
+  // 2026-07-08 vault-tagging fix: tags was write-once-if-caller-supplies-it, which in
+  // practice meant never (companions write free text, not {tags:[...]} JSON). Auto-classify
+  // when the caller didn't supply tags, so every journal entry gets a domain bucket +
+  // content-keyword tags at write time, no new job/schedule.
+  const resolvedTags = tags ?? JSON.stringify(classifyDomainTags(note_text));
+  const topicTags = JSON.stringify(classifyKeywordTags(note_text));
   await env.DB.prepare(
-    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, now, agent, note_text, tags ?? null, null, source ?? null).run();
+    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, now, agent, note_text, resolvedTags, null, source ?? null, topicTags).run();
   embedAndStore(env, note_text, "companion_journal", id, agent);
   return { id, created_at: now };
 }

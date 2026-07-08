@@ -4,6 +4,7 @@ import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { embedAndStore } from "../embed.js";
+import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 
 export function registerCompanionTools(server: McpServer, env: Env): void {
 
@@ -21,17 +22,21 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
       const id  = generateId();
       const now = new Date().toISOString();
 
+      const resolvedTags = input.tags ? JSON.stringify(input.tags) : JSON.stringify(classifyDomainTags(input.note_text));
+      const topicTags = JSON.stringify(classifyKeywordTags(input.note_text));
+
       await env.DB.prepare(`
-        INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id,
         now,
         input.agent,
         input.note_text,
-        input.tags ? JSON.stringify(input.tags) : null,
+        resolvedTags,
         input.session_id ?? null,
         input.source ?? null,
+        topicTags,
       ).run();
 
       embedAndStore(env, input.note_text, "companion_journal", id, input.agent);

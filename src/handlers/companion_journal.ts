@@ -3,6 +3,7 @@ import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
 import { embedAndStore } from "../mcp/embed.js";
 import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions.js";
+import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -61,16 +62,18 @@ export async function postCompanionJournal(
   const safeSessionId = typeof session_id === "string" && session_id.length > 0
     ? session_id
     : null;
-  const safeTags = Array.isArray(tags) ? JSON.stringify(tags) : null;
+  const trimmedText = note_text.trim();
+  const safeTags = Array.isArray(tags) ? JSON.stringify(tags) : JSON.stringify(classifyDomainTags(trimmedText));
+  const topicTags = JSON.stringify(classifyKeywordTags(trimmedText));
   const safeSource = typeof source === "string" ? source : null;
 
   const id = generateId();
   const now = new Date().toISOString();
 
   await env.DB.prepare(`
-    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, now, agent, note_text.trim(), safeTags, safeSessionId, safeSource).run();
+    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, now, agent, trimmedText, safeTags, safeSessionId, safeSource, topicTags).run();
 
   embedAndStore(env, note_text.trim(), "companion_journal", id, agent);
 
