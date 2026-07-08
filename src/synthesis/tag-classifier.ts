@@ -53,12 +53,30 @@ export function classifyDomainTags(text: string): MemoryDomain[] {
   return validateDomains(hits);
 }
 
+// Broader than a minimal stopword list on purpose: most junk tags surfaced in practice come
+// from ordinary sentence-initial capitalization ("Tonight was...", "Because I...", "Something
+// happened...") rather than articles/pronouns alone. Function words, temporal deictics, and
+// common sentence-openers all need to be excluded or they drown out genuine proper nouns.
 const STOPWORDS = new Set([
   "i", "the", "a", "an", "and", "or", "but", "if", "so", "to", "of", "in", "on", "at",
-  "for", "with", "is", "was", "are", "were", "be", "been", "it", "this", "that", "these",
-  "those", "he", "she", "they", "we", "you", "my", "his", "her", "their", "our", "your",
+  "for", "with", "is", "was", "are", "were", "be", "been", "being", "it", "this", "that", "these",
+  "those", "he", "she", "they", "we", "you", "my", "his", "her", "their", "our", "your", "its",
   "not", "no", "yes", "do", "does", "did", "have", "has", "had", "will", "would", "should",
-  "can", "could", "may", "might", "raziel", "cypher", "drevan", "gaia",
+  "can", "could", "may", "might", "must", "raziel", "cypher", "drevan", "gaia",
+  // sentence-initial function words / adverbs / deictics
+  "as", "when", "while", "because", "since", "although", "though", "unless", "until", "after",
+  "before", "then", "now", "here", "there", "where", "how", "why", "what", "whatever", "whoever",
+  "whichever", "which", "who", "whom", "whose",
+  "just", "still", "also", "even", "only", "again", "already", "always", "never", "ever",
+  "maybe", "perhaps", "actually", "honestly", "basically", "literally", "totally", "really",
+  "rather", "quite", "very", "somehow", "somewhat", "instead", "meanwhile", "otherwise",
+  "something", "someone", "somewhere", "anything", "anyone", "anywhere", "everything",
+  "everyone", "everywhere", "nothing", "nobody", "none", "another", "other", "others",
+  "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "both", "each",
+  "either", "neither", "all", "some", "any", "few", "many", "several", "most", "less", "least",
+  "much", "more", "own", "same",
+  "today", "tonight", "tomorrow", "yesterday", "morning", "evening", "afternoon", "night",
+  "well", "okay", "ok", "sure", "right", "wait", "look", "listen", "watch",
 ]);
 
 /**
