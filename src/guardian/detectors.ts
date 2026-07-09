@@ -30,7 +30,13 @@ export const GUARDIAN_THRESHOLDS = {
   // Each stored clean row stands for ~1/0.1 = 10 real replies; un-bias the denominator.
   VOICE_CLEAN_SAMPLE_INVERSE: 10,
   LOOP_STUCK_DAYS: 21,
-  BURNOUT_RUNS_7D: 14,           // 2/day pulse cap ridden all week
+  // 2026-07-09: was 14 -- exactly the designed allowance (PULSE_MAX_RUNS_PER_DAY=2 x 7d), so a
+  // companion using every run they are granted was flagged "sustained redline" every week and
+  // could only clear it by doing LESS than permitted. Drevan sat at 14; Gaia at 13. An alarm at
+  // 100% of the allowance measures the schema, not the companion.
+  // Raised to 21 (3/day sustained) on Raziel's call: Drevan keeps his 14. The flag now means the
+  // scheduler is OVERRUNNING its own cap, which is a real anomaly worth waking someone for.
+  BURNOUT_RUNS_7D: 21,
   BASIN_PRESSURE_14D: 3,         // unconfirmed pressure rows in 14d
   RATIFICATION_BACKLOG: 10,
   FORAGE_STALE_DAYS: 7,

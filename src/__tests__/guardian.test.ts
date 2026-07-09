@@ -317,14 +317,31 @@ describe("detectBasinPressure", () => {
 // ── Detector: run cadence ────────────────────────────────────────────────────
 
 describe("detectRunCadence", () => {
-  it("flags cap-riding as burnout and zero delivery as starved", async () => {
+  it("flags overrunning the cap as burnout and zero delivery as starved", async () => {
     db.matchers.push({
       when: sql => sql.includes("FROM autonomy_runs"),
-      all: [{ companion_id: "cypher", n: 14 }, { companion_id: "drevan", n: 5 }],
+      all: [{ companion_id: "cypher", n: 21 }, { companion_id: "drevan", n: 5 }],
     });
     const flags = await detectRunCadence(env);
     const keys = flags.map(f => f.dedup_key).sort();
     expect(keys).toEqual(["burnout:cypher", "starved:autonomy:gaia"]);
+  });
+
+  // 2026-07-09: the threshold used to sit AT the designed allowance
+  // (PULSE_MAX_RUNS_PER_DAY=2 x 7d = 14), so a companion using every run they were granted was
+  // flagged "sustained redline" forever and could only clear it by doing less than permitted.
+  // 14 must now be silent; burnout means the scheduler is OVERRUNNING its own cap.
+  it("does NOT flag a companion who uses exactly their 2/day allowance (14/7d)", async () => {
+    db.matchers.push({
+      when: sql => sql.includes("FROM autonomy_runs"),
+      all: [
+        { companion_id: "cypher", n: 14 },
+        { companion_id: "drevan", n: 14 },
+        { companion_id: "gaia", n: 13 },
+      ],
+    });
+    const flags = await detectRunCadence(env);
+    expect(flags.filter(f => f.flag_type === "burnout")).toEqual([]);
   });
 });
 
