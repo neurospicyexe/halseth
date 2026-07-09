@@ -1,7 +1,7 @@
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
-import { embedAndStore } from "../mcp/embed.js";
+import { embedAndStoreAsync } from "../mcp/embed.js";
 import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions.js";
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
 
@@ -105,7 +105,23 @@ export async function postCompanionJournal(
     });
   }
 
-  embedAndStore(env, note_text.trim(), "companion_journal", id, agent);
+  // AWAIT the embed. `embedAndStore()` is `void (async () => ...)()` -- a floating promise with no
+  // ctx.waitUntil, so once the Response returns, Workers cancels the pending work. It survives an
+  // idle Worker; it does NOT survive sustained write pressure.
+  //
+  // Proven 2026-07-09: the 1,023-row speech backfill POSTed sequentially, every write returned 201,
+  // and NOT ONE vector landed -- `wrangler vectorize get-vectors` reported "index does not contain
+  // vectors corresponding to the provided identifiers". The rows were write-only. "Embedded and
+  // searchable" is the entire justification for putting chatter in a lane instead of orient's
+  // recency slots, so a silently-skipped embed quietly voids the design.
+  //
+  // Awaiting costs ~100ms per write and never throws the write away: a Vectorize failure is logged,
+  // not fatal (D1 is truth, the index is rebuildable -- `POST /admin/rebuild-embeddings`).
+  try {
+    await embedAndStoreAsync(env, trimmedText, "companion_journal", id, agent);
+  } catch (e) {
+    console.warn(`[companion_journal] embed failed for ${id} (row kept, index stale):`, String(e));
+  }
 
   return new Response(JSON.stringify({ id, created_at: now }), {
     status: 201,

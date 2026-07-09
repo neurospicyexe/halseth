@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../mcp/embed.js", () => ({ embedAndStore: vi.fn() }));
+vi.mock("../mcp/embed.js", () => ({ embedAndStoreAsync: vi.fn(async () => {}) }));
 vi.mock("../lib/auth.js", () => ({ authGuard: () => null }));
 vi.mock("../db/queries.js", () => ({ generateId: () => "generated-id" }));
 vi.mock("../synthesis/tag-classifier.js", () => ({
@@ -16,7 +16,7 @@ vi.mock("../synthesis/tag-classifier.js", () => ({
 }));
 
 import { postCompanionJournal } from "../handlers/companion_journal.js";
-import { embedAndStore } from "../mcp/embed.js";
+import { embedAndStoreAsync } from "../mcp/embed.js";
 
 /** Fake D1 that reports `changes: 0` when the external_id was seen before. */
 function makeEnv(seen = new Set<string>()) {
@@ -56,7 +56,28 @@ describe("POST /companion-journal external_id", () => {
     const { env } = makeEnv();
     const res = await postCompanionJournal(post({ ...base, external_id: "discord:999" }), env);
     expect(res.status).toBe(201);
-    expect(embedAndStore).toHaveBeenCalledOnce();
+    expect(embedAndStoreAsync).toHaveBeenCalledOnce();
+  });
+
+  // The 1,023-row backfill returned 201 on every write and landed ZERO vectors: embedAndStore()
+  // is a floating promise (no ctx.waitUntil), which Workers cancels once the Response returns.
+  // The embed must be AWAITED, or "embedded and searchable" -- the whole justification for the
+  // chatter lane -- is silently false under write pressure.
+  it("AWAITS the embed, so the index cannot be silently skipped", async () => {
+    let settled = false;
+    (embedAndStoreAsync as unknown as { mockImplementation: (f: () => Promise<void>) => void })
+      .mockImplementation(async () => { await Promise.resolve(); settled = true; });
+    const { env } = makeEnv();
+    await postCompanionJournal(post({ ...base, external_id: "discord:7" }), env);
+    expect(settled).toBe(true);
+  });
+
+  it("keeps the row when the embed fails (D1 is truth, the index is rebuildable)", async () => {
+    (embedAndStoreAsync as unknown as { mockImplementation: (f: () => Promise<void>) => void })
+      .mockImplementation(async () => { throw new Error("vectorize 500"); });
+    const { env } = makeEnv();
+    const res = await postCompanionJournal(post({ ...base, external_id: "discord:8" }), env);
+    expect(res.status).toBe(201);
   });
 
   it("is a NO-OP on a repeat write with the same key (writeQueue retry safety)", async () => {
@@ -74,7 +95,7 @@ describe("POST /companion-journal external_id", () => {
     const seen = new Set<string>(["discord:999"]);
     const { env } = makeEnv(seen);
     await postCompanionJournal(post({ ...base, external_id: "discord:999" }), env);
-    expect(embedAndStore).not.toHaveBeenCalled();
+    expect(embedAndStoreAsync).not.toHaveBeenCalled();
   });
 
   it("leaves ordinary journal writes unkeyed, so they are never deduped against each other", async () => {
