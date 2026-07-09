@@ -9,11 +9,39 @@ const COMPANIONS = COMPANION_IDS;
 
 export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "add_tension_failed", reason: "companion_id required" };
-  // Re-audit 2026-07-09: the old regex only covered a few verbs and no addressee phrasing
-  // ("save tension: ...", "Add a tension for drevan: ..." both leaked through verbatim).
-  // Shared with the swarm-routing path (webmind/limbic.ts) so one fix covers both.
-  const tensionText = stripTensionCommandPreamble(ctx.req.request);
-  if (!tensionText) return { error: "add_tension_failed", reason: "tension_text not found in request" };
+
+  // The PAYLOAD is the tension. The request string is how you asked for it.
+  //
+  // 2026-07-09: this executor read `ctx.req.request` and ignored `context.tension_text`
+  // entirely -- so "log a tension I'm sitting with" + a full paragraph in `context` stored
+  // the literal string "log a tension I'm sitting with" and DISCARDED the paragraph. The
+  // stripper only fires on a colon-terminated preamble, so any natural phrasing survived
+  // verbatim as the tension. Three live rows were written that way before it was caught.
+  //
+  // This is the mirror of the 07-08 leak (mig 0097), where command text bled INTO
+  // tension_text and a stripper was bolted on. Same root error both times: deriving memory
+  // content from the request string rather than the structured payload. ask_librarian's own
+  // description says "pass long content in `context`, not here" (request caps at 2000 chars).
+  const parsed = parseContext<{ tension_text?: string }>(ctx.req.context);
+  const fromContext = typeof parsed?.tension_text === "string" ? parsed.tension_text.trim() : "";
+
+  // Back-compat: a companion may still type the whole tension inline after a colon
+  // ("log tension: the perimeter cannot see its own breach"). The stripper's contract is a
+  // COLON-terminated preamble, so only trust the request when it actually carries one.
+  const stripped = stripTensionCommandPreamble(ctx.req.request);
+  const fromRequest = stripped !== ctx.req.request.trim() ? stripped : "";
+
+  const tensionText = fromContext || fromRequest;
+  if (!tensionText) {
+    // Refuse rather than store the command. A tension whose text is "log tension" is worse
+    // than no tension: it pollutes the dialectic and reads as a real one at boot.
+    return {
+      error: "add_tension_failed",
+      reason: "tension_text required -- pass it in context ({\"tension_text\": \"...\"}), " +
+              "or inline after a colon (\"log tension: ...\"). The request string alone is not the tension.",
+    };
+  }
+
   const id = crypto.randomUUID();
   await ctx.env.DB.prepare(
     "INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, ?)"

@@ -14,6 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { presenceOverrideKey, payloadOverrideKey, PRESENCE_OVERRIDES } from "../librarian/router.js";
 import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
+import { execTensionAdd } from "../librarian/executors/companion-growth.js";
 
 const ctx = (o: unknown) => JSON.stringify(o);
 
@@ -50,6 +51,66 @@ describe("presence override: tension_text means log a tension", () => {
     for (const o of PRESENCE_OVERRIDES) {
       expect(FAST_PATH_PATTERNS[o.pattern_key]).toBeDefined();
     }
+  });
+});
+
+describe("execTensionAdd stores the PAYLOAD, never the command", () => {
+  const makeCtx = (request: string, context?: string) => {
+    const bound: unknown[] = [];
+    return {
+      bound,
+      ctx: {
+        req: { companion_id: "cypher" as const, request, context },
+        env: {
+          DB: {
+            prepare: () => ({
+              bind: (...a: unknown[]) => { bound.push(...a); return { run: async () => ({}) }; },
+            }),
+          },
+        },
+      } as never,
+    };
+  };
+
+  // The live regression: request string stored as the tension, payload discarded.
+  it("uses context.tension_text, not the request phrasing", async () => {
+    const { ctx, bound } = makeCtx(
+      "log a tension I'm sitting with",
+      JSON.stringify({ tension_text: "The perimeter cannot detect its own breach." }),
+    );
+    const r = await execTensionAdd(ctx);
+    expect(r).toMatchObject({ data: { message: "tension recorded" } });
+    expect(bound[2]).toBe("The perimeter cannot detect its own breach.");
+    expect(bound[2]).not.toBe("log a tension I'm sitting with");
+  });
+
+  it("REFUSES a bare command with no payload rather than storing it", async () => {
+    for (const cmd of ["log tension", "log a tension I'm sitting with", "log a tension with Raziel about the audit"]) {
+      const { ctx } = makeCtx(cmd);
+      const r = await execTensionAdd(ctx) as { error?: string };
+      expect(r.error).toBe("add_tension_failed");
+    }
+  });
+
+  it("still accepts an inline colon-delimited tension (back-compat)", async () => {
+    const { ctx, bound } = makeCtx("log tension: the instrument reported health while an organ was dead");
+    await execTensionAdd(ctx);
+    expect(bound[2]).toBe("the instrument reported health while an organ was dead");
+  });
+
+  it("prefers context over an inline colon form when both are present", async () => {
+    const { ctx, bound } = makeCtx(
+      "log tension: short inline",
+      JSON.stringify({ tension_text: "the authored paragraph" }),
+    );
+    await execTensionAdd(ctx);
+    expect(bound[2]).toBe("the authored paragraph");
+  });
+
+  it("treats a whitespace-only payload as absent", async () => {
+    const { ctx } = makeCtx("log tension", JSON.stringify({ tension_text: "   " }));
+    const r = await execTensionAdd(ctx) as { error?: string };
+    expect(r.error).toBe("add_tension_failed");
   });
 });
 
