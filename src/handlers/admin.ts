@@ -182,13 +182,32 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
   const targets = table ? [table] : Object.keys(TABLES);
   const results: Record<string, number> = {};
 
+  // Pagination (2026-07-09). `SELECT ... .all()` silently TRUNCATES at D1's result-size cap:
+  // a companion_journal rebuild reported `{companion_journal: 2500}` and stopped, having never
+  // seen the newest ~2,100 rows -- including the 1,023 backfilled speech rows it was run to
+  // repair. Nothing errored; the count read like a total. A rebuild that silently covers half
+  // the table is worse than none, because it reports success.
+  //
+  // Page by a stable ORDER BY id with LIMIT/OFFSET, and return `scanned` + `has_more` so the
+  // caller can tell "done" from "truncated". Wrapping def.sql as a subquery keeps each table's
+  // own WHERE clause intact.
+  const pageSize = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "500", 10) || 500, 1), 2000);
+  const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0", 10) || 0, 0);
+  let scanned = 0;
+  let hasMore = false;
+
   for (const t of targets) {
     const def = TABLES[t];
     if (!def) {
       return new Response(JSON.stringify({ error: `Unknown table: ${t}` }), { status: 400 });
     }
-    const rows = await env.DB.prepare(def.sql).all();
+    const rows = await env.DB.prepare(
+      `SELECT * FROM (${def.sql}) ORDER BY id LIMIT ?1 OFFSET ?2`
+    ).bind(pageSize, offset).all();
     const allRows = (rows.results as Record<string, unknown>[]);
+    scanned += allRows.length;
+    if (allRows.length === pageSize) hasMore = true;
+
     // Batch embed+upsert (50/req) so large tables stay within Cloudflare's
     // per-request subrequest limit -- a per-row loop fails on big tables.
     const BATCH = 50;
@@ -200,13 +219,13 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       try {
         count += await embedAndStoreBatch(env, items);
       } catch (err) {
-        console.error("[backfill] batch embed failed", { table: t, offset: i, err: String(err) });
+        console.error("[backfill] batch embed failed", { table: t, offset: offset + i, err: String(err) });
       }
     }
     results[t] = count;
   }
 
-  return new Response(JSON.stringify({ backfilled: results }), {
+  return new Response(JSON.stringify({ backfilled: results, scanned, offset, limit: pageSize, has_more: hasMore }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
