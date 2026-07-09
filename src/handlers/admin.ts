@@ -204,6 +204,7 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0", 10) || 0, 0);
   let scanned = 0;
   let hasMore = false;
+  const errors: Array<{ table: string; offset: number; error: string }> = [];
 
   for (const t of targets) {
     const def = TABLES[t];
@@ -228,13 +229,20 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       try {
         count += await embedAndStoreBatch(env, items);
       } catch (err) {
+        // Surface the failure to the CALLER, not only to a log nobody is tailing. A swallowed
+        // batch error meant this endpoint returned 200 {"backfilled": 0} -- a rebuild reporting
+        // success while doing nothing, which is how a stale index hides. (2026-07-09)
         console.error("[backfill] batch embed failed", { table: t, offset: offset + i, err: String(err) });
+        errors.push({ table: t, offset: offset + i, error: String(err).slice(0, 300) });
       }
     }
     results[t] = count;
   }
 
-  return new Response(JSON.stringify({ backfilled: results, scanned, offset, limit: pageSize, has_more: hasMore }), {
+  return new Response(JSON.stringify({
+    backfilled: results, scanned, offset, limit: pageSize, has_more: hasMore,
+    ...(errors.length > 0 ? { errors } : {}),
+  }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
