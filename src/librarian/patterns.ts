@@ -888,9 +888,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   tension_add: {
+    // 2026-07-09: the article variants were MISSING, so the exact phrasing
+    // ask_librarian's own tool description advertises ("log a tension with Drevan
+    // about ...") fell through to the classifier and came back `unknown`. The
+    // tension pool sat at zero simmering rows for weeks and Guardian's
+    // starved:dialectic flag fired. A payload presence override (router.ts
+    // PRESENCE_OVERRIDES) is the real guarantee; these are the cheap surface.
     triggers: [
       "add tension", "new tension", "record tension", "log tension",
-      "i'm holding a tension", "im holding a tension",
+      "add a tension", "log a tension", "record a tension", "a new tension",
+      "tension with", "tension about",
+      "i'm holding a tension", "im holding a tension", "holding a tension",
+      "sitting with a tension", "tension i'm sitting with",
     ],
     tools: ["halseth_add_tension"],
     response_key: "witness",

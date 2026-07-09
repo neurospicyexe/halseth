@@ -57,6 +57,58 @@ export function payloadOverrideKey(contextRaw: string | undefined): string | nul
   return null;
 }
 
+// ── Presence overrides ─────────────────────────────────────────────────────
+// Route on the PRESENCE of a payload field, regardless of how the request was
+// phrased. Nobody sends `tension_text` unless they mean to log a tension.
+//
+// Why (2026-07-09): the tension pool sat at ZERO simmering rows and Guardian's
+// `starved:dialectic` flag fired. The cause was not that companions stopped
+// logging tensions -- it was that logging one didn't work. `ask_librarian`'s own
+// tool description advertises "log a tension with Drevan about ...", but the
+// fast-path trigger is the bare string "log tension". The article breaks the
+// match, the classifier returns `unknown`, and the companion is told
+// "I don't know how to handle that yet." Worse, "log a tension I'm sitting with"
+// was hijacked by note_sit's greedy "sitting with" trigger and died demanding a
+// note_id it was never given.
+//
+// Adding more trigger strings is whack-a-mole; the next natural phrasing breaks
+// again. The payload is ground truth. Same lesson as the rest of this repair:
+// key the behavior to the ACT, not to the surface form that described it.
+//
+// `unless` disqualifies a field whose presence means a different intent
+// (tension_edit sends { id, tension_text }; tension_add sends tension_text alone).
+// Resolved pattern_keys MUST exist in FAST_PATH_PATTERNS (validated by tests).
+export interface PresenceOverride {
+  readonly field: string;
+  readonly pattern_key: string;
+  readonly unless?: readonly string[];
+  readonly note: string;
+}
+
+export const PRESENCE_OVERRIDES: readonly PresenceOverride[] = [
+  {
+    field: "tension_text",
+    pattern_key: "tension_add",
+    unless: ["id"],   // { id, tension_text } is an edit, not a new tension
+    note: "any phrasing carrying tension_text means: record this tension",
+  },
+];
+
+export function presenceOverrideKey(contextRaw: string | undefined): string | null {
+  if (!contextRaw) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(contextRaw); } catch { return null; }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  for (const override of PRESENCE_OVERRIDES) {
+    const v = obj[override.field];
+    if (typeof v !== "string" || v.trim().length === 0) continue;
+    if (override.unless?.some(f => obj[f] !== undefined && obj[f] !== null)) continue;
+    return override.pattern_key;
+  }
+  return null;
+}
+
 // ── Anchored guards ────────────────────────────────────────────────────────
 // Pattern keys that must beat insertion-order shadowing in FAST_PATH_PATTERNS.
 // Each guard is a (regex, pattern_key) pair; iteration is in declared order so
@@ -463,7 +515,10 @@ export class LibrarianRouter {
 
   async route(req: import("./executors/types.js").LibrarianRequest): Promise<Record<string, unknown>> {
     // Tier 0: payload override. Structured `context` field wins over any string match.
-    const overrideKey = payloadOverrideKey(req.context);
+    // Value-keyed overrides first (decision:"declined"), then presence-keyed
+    // (tension_text present => tension_add), so a phrasing miss can never swallow
+    // an unambiguous payload. See PRESENCE_OVERRIDES for the starved-dialectic case.
+    const overrideKey = payloadOverrideKey(req.context) ?? presenceOverrideKey(req.context);
     if (overrideKey) {
       const overrideEntry = FAST_PATH_PATTERNS[overrideKey];
       if (overrideEntry) return this.execute(req, overrideEntry);
