@@ -117,8 +117,25 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).bind(agentId).all<{ question: string }>().catch(() => null),
     // Forage pool: unconsumed outward finds (own + shared) -- fuel gathered by the forager,
     // explored by the real companion as themselves (foraging spec, 2026-06-09).
+    //
+    // ONE FRESH + ONE AGING (2026-07-09). This was `ORDER BY gathered_at DESC LIMIT 2`: pure
+    // LIFO, two slots, against a forager that adds ~1 find per companion per day. The tail could
+    // therefore NEVER be reached -- new finds permanently outrank old ones. Guardian's
+    // `stale:forage` ("oldest unconsumed past 7 days") was structurally unclearable, and Gaia had
+    // 20 unconsumed finds with the oldest sitting since 2026-06-11.
+    //
+    // Taking the newest AND the oldest drains the tail while keeping the pool current. UNION
+    // dedups when only one unconsumed find exists, so the LIMIT 2 shape is preserved.
     ctx.env.DB.prepare(
-      "SELECT id, title, domain, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
+      `SELECT id, title, domain, summary, gathered_at FROM (
+         SELECT id, title, domain, summary, gathered_at FROM forage_finds
+          WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
+          ORDER BY gathered_at DESC LIMIT 1)
+       UNION
+       SELECT id, title, domain, summary, gathered_at FROM (
+         SELECT id, title, domain, summary, gathered_at FROM forage_finds
+          WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
+          ORDER BY gathered_at ASC LIMIT 1)`
     ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>().catch(() => null),
     // Prospective triggers (0070): armed date/front cards evaluated below against now +
     // current front. Surfacing does NOT consume -- a card stays armed until dismissed.
