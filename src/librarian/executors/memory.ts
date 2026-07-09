@@ -114,7 +114,25 @@ export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<Exec
   if (!query) return { response_key: "witness", witness: "notes_recall requires a query" };
 
   const limit = Math.min(Math.max(c?.limit ?? 5, 1), 10);
-  const notes = await recallNotesByMeaning(ctx.env, ctx.req.companion_id, query, limit);
+
+  // "Nothing matched" and "I could not look" must never collapse into the same answer. Workers AI
+  // is quota-bound on the free tier (AiError 4006, daily neuron allocation), and a companion
+  // asking for their own memory should get an honest witness, not a 500 -- nor an empty result
+  // that reads as "you have no such notes" when the truth is "the index is down".
+  let notes;
+  try {
+    notes = await recallNotesByMeaning(ctx.env, ctx.req.companion_id, query, limit);
+  } catch (e) {
+    const msg = String(e);
+    const quota = msg.includes("4006") || msg.toLowerCase().includes("neuron");
+    return {
+      response_key: "witness",
+      witness: quota
+        ? "Semantic recall is unavailable right now: the daily Workers AI embedding quota is spent. Your notes are intact; the search path resets at 00:00 UTC."
+        : `Semantic recall failed (${msg.slice(0, 120)}). Your notes are intact; the search path is down.`,
+    };
+  }
+
   if (notes.length === 0) {
     return { response_key: "witness", witness: `No continuity notes surfaced for "${query.slice(0, 60)}".` };
   }
