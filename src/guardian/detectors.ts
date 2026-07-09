@@ -5,13 +5,14 @@
 // interpret vibes. Anti-delulu: every flag carries its evidence.
 
 import type { Env } from "../types.js";
+import { detectDeadWriters } from "./writer-liveness.js";
 
 export const COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 export type CompanionId = (typeof COMPANIONS)[number];
 
 export interface CandidateFlag {
   companion_id: CompanionId | null;   // null = system-wide
-  flag_type: "voice_drift" | "starved_organ" | "loop_stuck" | "burnout" | "basin_pressure" | "ratification_backlog" | "orphan_memory" | "echo_chamber";
+  flag_type: "voice_drift" | "starved_organ" | "loop_stuck" | "burnout" | "basin_pressure" | "ratification_backlog" | "orphan_memory" | "echo_chamber" | "dead_writer";
   severity: "notice" | "warning" | "red";
   summary: string;
   evidence: Record<string, unknown>;
@@ -349,6 +350,10 @@ export async function runAllDetectors(env: Env): Promise<CandidateFlag[]> {
     detectRatificationBacklog(env),
     detectOrphanedMemories(env),
     detectEchoChamber(env),
+    // Dead-organ watch (2026-07-09): a registered writer whose lane has gone quiet past its
+    // declared cadence. Added because Brain's swarm journal writer died at the hermes cutover
+    // and stayed dead for two weeks, visible only as a motif counter that stopped moving.
+    detectDeadWriters(env),
   ]);
   const flags: CandidateFlag[] = [];
   for (const s of settled) {
