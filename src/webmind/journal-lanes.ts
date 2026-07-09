@@ -19,8 +19,13 @@
 //
 // Rule: write-and-index, never write-and-surface.
 
-/** Sources whose entries are transcripts of speech, not authored reflection. */
-export const CHATTER_JOURNAL_SOURCES = ["discord_swarm"] as const;
+/**
+ * Sources whose entries are transcripts of speech, not authored reflection.
+ *
+ *  discord_swarm  -- legacy. Written by Brain's swarm evaluator until 2026-06-25.
+ *  discord_speech -- current. Written bot-side on send, under any inference mode.
+ */
+export const CHATTER_JOURNAL_SOURCES = ["discord_swarm", "discord_speech"] as const;
 
 /**
  * SQL predicate selecting the SUBSTANTIVE lane of companion_journal.
@@ -32,7 +37,7 @@ export const CHATTER_JOURNAL_SOURCES = ["discord_swarm"] as const;
  * NULL source = legacy/companion-authored entry -> substantive.
  */
 export const SUBSTANTIVE_JOURNAL_CLAUSE =
-  "(source IS NULL OR source NOT IN ('discord_swarm'))";
+  "(source IS NULL OR source NOT IN ('discord_swarm', 'discord_speech'))";
 
 /** True when an entry with this source belongs to the high-volume chatter lane. */
 export function isChatterSource(source: string | null | undefined): boolean {

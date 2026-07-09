@@ -12,8 +12,12 @@ import {
 } from "../webmind/journal-lanes.js";
 
 describe("journal lanes", () => {
-  it("treats discord_swarm as chatter", () => {
+  it("treats discord_swarm (legacy, Brain evaluator) as chatter", () => {
     expect(isChatterSource("discord_swarm")).toBe(true);
+  });
+
+  it("treats discord_speech (current, bot-side on send) as chatter", () => {
+    expect(isChatterSource("discord_speech")).toBe(true);
   });
 
   it("treats NULL/undefined source (companion-authored) as substantive", () => {
