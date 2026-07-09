@@ -15,6 +15,7 @@ import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql } from "./heat.js";
 import { takeUnsurfacedEvents } from "./home/store.js";
+import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 
 /** "While you were away" block. Null-safe: orient must never break on home error. */
 export async function buildHomeBlock(env: Env, agentId: WmAgentId): Promise<HomeEvent[]> {
@@ -113,9 +114,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
     ).bind(agentId, agentId).all<WmCompanionNote>(),
-    // Wide-window: recent journal entries written BY this companion (companion_journal table)
+    // Wide-window: recent journal entries written BY this companion (companion_journal table).
+    // SUBSTANTIVE lane only -- 3 recency slots, and chatter (discord_swarm) ran 24-61 rows/day
+    // against ~40/day of authored reflection, so an unfiltered LIMIT 3 surfaced transcript
+    // instead of thought. Chatter stays searchable/embedded; it just doesn't win these slots.
+    // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
     env.DB.prepare(
-      "SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 3"
+      `SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal
+       WHERE agent = ? AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(

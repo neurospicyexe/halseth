@@ -52,9 +52,32 @@ const STOPWORDS = new Set([
   "about", "again", "just", "like", "only", "over", "very", "too", "also", "still", "here", "there",
   "they", "them", "their", "we", "us", "our", "you", "your", "he", "she", "his", "her", "i", "me",
   "my", "mine", "yours", "theirs", "ours", "am", "get", "got", "really", "thing", "things",
+  // Contractions clear MIN_TOKEN_LEN and were holding top-3 motif slots (that's ×311,
+  // it's ×337). A contraction is grammar, never a symbolic thread. (2026-07-09 audit)
+  "that's", "it's", "isn't", "wasn't", "aren't", "weren't", "don't", "doesn't", "didn't",
+  "won't", "can't", "couldn't", "wouldn't", "shouldn't", "hasn't", "haven't", "hadn't",
+  "i'm", "i've", "i'll", "i'd", "you're", "you've", "you'll", "we're", "we've", "we'll",
+  "they're", "they've", "there's", "here's", "what's", "who's", "he's", "she's", "let's",
+  "that'll", "there'll", "ain't", "y'all",
+  // Bare indefinite fillers ("something" held a top motif slot at ×274).
+  "something", "anything", "nothing", "everything", "someone", "anyone", "everyone", "nobody",
+  "somewhere", "anywhere", "everywhere", "somehow", "always", "never", "often", "maybe",
 ]);
 
 const PUNCT_EDGE = /^[^\p{L}\p{N}-]+|[^\p{L}\p{N}-]+$/gu;
+
+/**
+ * Transport metadata, never memory. Matches namespaced `key:value` tokens like
+ * `discord:swarm`, `channel:1503385639779963020`, `discord:brain`, `sibling:drevan`.
+ *
+ * These leaked in because four writers prefixed them into the entry TEXT rather than
+ * into tags (evaluator.py:808/825, router.py:276, bot-message-handler.ts:1242). The
+ * writers are being fixed, but this stays as defense in depth: the miner should never
+ * treat a transport stamp as a symbolic thread, whatever upstream does. Bare-colon
+ * punctuation ("bridge:") is already handled by PUNCT_EDGE, so an internal colon after
+ * edge-stripping means a structured token.
+ */
+const METADATA_TOKEN = /:/;
 
 /** Lowercase, trim, collapse whitespace, strip edge punctuation (keep internal hyphens). */
 export function normalizeLabel(s: string): string {
@@ -68,6 +91,7 @@ function tokenize(text: string): { norm: string; raw: string }[] {
     const cleaned = raw.replace(PUNCT_EDGE, "");
     if (!cleaned) continue;
     const norm = cleaned.toLowerCase();
+    if (METADATA_TOKEN.test(norm)) continue; // transport stamp, not memory
     if (norm.length < MOTIF_TUNING.MIN_TOKEN_LEN) continue;
     if (STOPWORDS.has(norm)) continue;
     if (!/[\p{L}]/u.test(norm)) continue; // need at least one letter (skip pure numbers)

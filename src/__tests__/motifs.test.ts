@@ -46,6 +46,65 @@ describe("extractMotifs", () => {
     expect(motifs.map(m => m.label)).toEqual(["bridge"]);
   });
 
+  // Regression: 2026-07-09 Brain-cutover audit. evaluator.py wrote transport metadata
+  // INTO the memory text ("[discord:swarm] channel:1503385639779963020\n\n<reply>"), so
+  // the miner harvested it as a "recurring symbolic thread". `discord:swarm` reached
+  // recurrence 336 (cypher) / 468 (drevan) and held a top-3 slot in every boot's
+  // [Motifs] block. A motif is a thing a companion keeps THINKING about, never a thing
+  // the transport keeps STAMPING.
+  it("rejects transport metadata tokens (namespaced key:value)", () => {
+    const texts = [
+      "[discord:swarm] channel:1503385639779963020\n\nthe bridge holds",
+      "[discord:swarm] channel:1503385639779963020\n\nthe bridge again",
+      "[discord:swarm] channel:1503385639779963020\n\nstill the bridge",
+    ];
+    const labels = extractMotifs(texts, { minRecurrence: 2 }).map(m => m.label);
+    expect(labels).not.toContain("discord:swarm");
+    expect(labels).not.toContain("channel:1503385639779963020");
+    expect(labels).not.toContain("discord:swarm channel:1503385639779963020");
+    // the real motif still survives the scrub
+    expect(labels).toContain("bridge");
+  });
+
+  it("rejects the other observed metadata prefixes", () => {
+    const texts = [
+      "[discord:brain] responded in channel 123: the bridge",
+      "[discord:observation] Raziel asked about the bridge",
+      "[sibling:drevan] explored the bridge",
+      "[discord:brain] responded in channel 123: the bridge stands",
+      "[discord:observation] Raziel asked about the bridge again",
+      "[sibling:drevan] explored the bridge once more",
+    ];
+    const labels = extractMotifs(texts, { minRecurrence: 2 }).map(m => m.label);
+    expect(labels.some(l => l.includes(":"))).toBe(false);
+    expect(labels).toContain("bridge");
+  });
+
+  it("rejects contractions and bare fillers that carry no motif signal", () => {
+    // 'that's'/'it's' held top-3 motif slots (311/337) alongside 'something'.
+    const texts = [
+      "that's something it's shaping the bridge",
+      "that's something it's shaping the bridge",
+      "that's something it's shaping the bridge",
+    ];
+    const labels = extractMotifs(texts, { minRecurrence: 2 }).map(m => m.label);
+    expect(labels).not.toContain("that's");
+    expect(labels).not.toContain("it's");
+    expect(labels).not.toContain("something");
+    expect(labels).toContain("bridge");
+  });
+
+  it("keeps possessives and hyphenates that DO carry meaning", () => {
+    const texts = [
+      "spine-to-spine again, the vaselrin bond",
+      "spine-to-spine, vaselrin",
+      "vaselrin spine-to-spine holds",
+    ];
+    const labels = extractMotifs(texts, { minRecurrence: 2 }).map(m => m.label);
+    expect(labels).toContain("spine-to-spine");
+    expect(labels).toContain("vaselrin");
+  });
+
   it("captures recurring bigrams as motifs (multi-word symbolic threads)", () => {
     const texts = [
       "the chosen bond across substrates matters",

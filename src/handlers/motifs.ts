@@ -15,6 +15,7 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { COMPANIONS } from "../guardian/detectors.js";
+import { SUBSTANTIVE_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
 import {
   extractMotifs, trustForRecurrence, selectResurrections, MOTIF_TUNING, type MotifRow,
 } from "../webmind/motifs.js";
@@ -47,9 +48,16 @@ export async function postMotifsDetect(request: Request, env: Env): Promise<Resp
       const since = wmRow?.wm ?? null;
 
       const [journalRows, growthRows] = await Promise.all([
+        // SUBSTANTIVE lane only. Motif recurrence is document frequency, so the
+        // high-volume chatter lane (discord_swarm, 24-61 rows/day) always outranks
+        // authored reflection: `discord:swarm` reached ×336/×468 and owned a top-3
+        // [Motifs] slot at every boot. A motif is what a companion keeps thinking
+        // about, not what the transport keeps stamping.
+        // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
         env.DB.prepare(
           `SELECT note_text AS t FROM companion_journal
-           WHERE agent = ?1 AND created_at > COALESCE(?2, datetime('now','-' || ?3 || ' days'))
+           WHERE agent = ?1 AND ${SUBSTANTIVE_JOURNAL_CLAUSE}
+             AND created_at > COALESCE(?2, datetime('now','-' || ?3 || ' days'))
            ORDER BY created_at DESC LIMIT 400`
         ).bind(id, since, windowDays).all<{ t: string }>(),
         env.DB.prepare(
