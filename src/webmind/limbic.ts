@@ -36,14 +36,17 @@ async function routeLiveTensionsIntoSelfDefense(
   companionId: string | null,
   liveTensions: string[],
 ): Promise<void> {
+  // Detect addressing on the RAW text first -- "Add a tension for drevan: ..." carries the
+  // addressee inside the exact command-preamble span that gets stripped next, so stripping
+  // first would erase the addressee before it could ever be detected.
   const cleaned = liveTensions
-    .map(t => stripTensionCommandPreamble(t.trim()))
-    .filter(Boolean);
+    .map(t => ({ raw: t.trim(), text: stripTensionCommandPreamble(t.trim()) }))
+    .filter(t => t.text.length > 0);
   if (cleaned.length === 0) return;
 
   const byCompanion = new Map<string, Set<string>>();
-  for (const text of cleaned) {
-    const addressed = companionId ? null : detectAddressedCompanion(text);
+  for (const { raw, text } of cleaned) {
+    const addressed = companionId ? null : detectAddressedCompanion(raw);
     const targets: readonly string[] = companionId ? [companionId] : addressed ? [addressed] : ALL_COMPANIONS;
     for (const target of targets) {
       if (!byCompanion.has(target)) byCompanion.set(target, new Set());
