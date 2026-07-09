@@ -20,6 +20,13 @@
 //
 // ADDING A WRITER IS ONE LINE. That is the point -- if declaring a writer were expensive,
 // nobody would, and we'd be back where we started.
+//
+// KNOWN LIMIT: this detector runs inside a guardian tick, so it can only report on writers
+// OTHER than the guardian itself. A guardian that stops and stays stopped silences its own
+// watcher. The `guardian_runs` entry below is therefore a gap/recovery detector, not a
+// dead-guardian watch; see its comment. Watching the guardian for real needs an external
+// trigger. A monitor that can only run when its subject is healthy is theater, and naming it
+// "self-watch" would be worse than omitting it -- it would manufacture false assurance.
 
 import { Env } from "../types.js";
 import type { CandidateFlag } from "./detectors.js";
@@ -67,10 +74,22 @@ export const WRITER_REGISTRY: readonly WriterSpec[] = [
     sql: `SELECT MAX(created_at) AS ts FROM limbic_states`,
   },
   {
-    // The Guardian watching itself. If guardian_runs stops, every other flag here goes
-    // quiet too -- and silence would read as health. Daily cron, so 36h is one missed run.
+    // PARTIAL SELF-WATCH -- read this before trusting it.
+    //
+    // detectDeadWriters() runs INSIDE a guardian tick. So for this probe to fire, the guardian
+    // must be running *right now* while reporting that it hasn't run in 36h. That means it
+    // CANNOT catch the failure it most sounds like it catches: a guardian that stops and stays
+    // stopped takes its own watcher down with it, and the silence still reads as health.
+    //
+    // What it genuinely catches: a guardian that MISSED runs and then RECOVERED -- gaps,
+    // stalls, a cron that skipped a cycle. That is not hypothetical. Boot-audit round 2 read
+    // guardian_flags as 0 and called it an all-clear; the check simply hadn't fired that cycle.
+    // This flag makes that gap visible on the next successful run instead of being read as calm.
+    //
+    // A true dead-guardian watch needs an EXTERNAL trigger (an orient-time check, or a separate
+    // cron that watches the guardian). Deliberately not built here; tracked in the handoff doc.
     key: "guardian_runs",
-    label: "Guardian self-audit (guardian_runs)",
+    label: "Guardian cadence (guardian_runs -- gap detector, NOT a dead-guardian watch)",
     maxSilenceHours: 36,
     severity: "notice",
     sql: `SELECT MAX(ran_at) AS ts FROM guardian_runs`,

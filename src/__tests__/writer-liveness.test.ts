@@ -86,8 +86,21 @@ describe("WRITER_REGISTRY", () => {
     expect(s!.sql).toContain("discord_swarm");
   });
 
-  it("watches the Guardian itself (else its silence reads as health)", () => {
-    expect(WRITER_REGISTRY.some(w => w.key === "guardian_runs")).toBe(true);
+  // The guardian_runs probe is a GAP detector, not a dead-guardian watch. detectDeadWriters()
+  // runs inside a guardian tick, so a guardian that stops and stays stopped silences its own
+  // watcher. It catches a guardian that missed runs and RECOVERED (boot-audit round 2 read
+  // guardian_flags=0 as an all-clear when the check simply hadn't fired). Asserting merely that
+  // the key exists -- as this test originally did -- proved nothing and hid the gap.
+  it("guardian_runs entry is labelled as a gap detector, not a self-watch", () => {
+    const g = WRITER_REGISTRY.find(w => w.key === "guardian_runs");
+    expect(g).toBeDefined();
+    expect(g!.label).toContain("NOT a dead-guardian watch");
+  });
+
+  it("guardian_runs fires on a recovered gap (the case it CAN catch)", () => {
+    const g = WRITER_REGISTRY.find(w => w.key === "guardian_runs")!;
+    const missedTwoDays = new Date(NOW - 50 * HOUR).toISOString();
+    expect(isWriterSilent(g, missedTwoDays, NOW).silent).toBe(true);
   });
 
   it("every spec has a positive cadence and a stable dedup-able key", () => {
