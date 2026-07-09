@@ -20,7 +20,12 @@ type AgentId = CompanionId;
 // POST /companion-journal
 // Writes a companion note from an authenticated system process (e.g. synthesis gap detector).
 // Attribution via `agent` field is sacred -- callers must pass the correct companion name.
-// Body: { agent, note_text, session_id?, tags?, source? }
+// Body: { agent, note_text, session_id?, tags?, source?, external_id?, created_at? }
+//
+// `external_id` (mig 0098) makes the write idempotent: a repeat POST with the same key is a
+// no-op returning { skipped: true }. Used by bot-side journalSpeech (whose writeQueue retries
+// failures) and by the 2026-06-25 speech backfill (which must be re-runnable).
+// `created_at` lets the backfill preserve the true time the words were said.
 export async function postCompanionJournal(
   request: Request,
   env: Env,
@@ -38,7 +43,7 @@ export async function postCompanionJournal(
     });
   }
 
-  const { agent, note_text, session_id, tags, source } = body;
+  const { agent, note_text, session_id, tags, source, external_id } = body;
 
   if (typeof agent !== "string" || !VALID_AGENTS.includes(agent as AgentId)) {
     return new Response(JSON.stringify({ error: "agent must be drevan, cypher, or gaia" }), {
@@ -66,14 +71,39 @@ export async function postCompanionJournal(
   const safeTags = Array.isArray(tags) ? JSON.stringify(tags) : JSON.stringify(classifyDomainTags(trimmedText));
   const topicTags = JSON.stringify(classifyKeywordTags(trimmedText));
   const safeSource = typeof source === "string" ? source : null;
+  // Idempotency key (mig 0098). Speech writes pass `discord:<message_id>`: the bot's
+  // writeQueue retries failed writes, and the 06-25 backfill must be re-runnable. Absent
+  // for ordinary journal writes, which stay unconstrained (partial unique index on NOT NULL).
+  const safeExternalId =
+    typeof external_id === "string" && external_id.trim().length > 0 ? external_id.trim() : null;
 
   const id = generateId();
-  const now = new Date().toISOString();
+  // Speech rows carry the true time the words were said -- the backfill replays June history
+  // and must not stamp it all as today. Only an explicit, parseable ISO timestamp is honored;
+  // anything else falls back to now, so a malformed value can never rewrite chronology.
+  const parsedCreatedAt =
+    typeof body.created_at === "string" && Number.isFinite(Date.parse(body.created_at))
+      ? new Date(body.created_at).toISOString()
+      : null;
+  const now = parsedCreatedAt ?? new Date().toISOString();
 
-  await env.DB.prepare(`
-    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, now, agent, trimmedText, safeTags, safeSessionId, safeSource, topicTags).run();
+  // The unique index (mig 0098) is PARTIAL, so the conflict target must repeat its predicate
+  // or SQLite rejects it with "does not match any PRIMARY KEY or UNIQUE constraint".
+  const res = await env.DB.prepare(`
+    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags, external_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO NOTHING
+  `).bind(id, now, agent, trimmedText, safeTags, safeSessionId, safeSource, topicTags, safeExternalId).run();
+
+  // Conflict => this exact message was already journaled. Don't re-embed (Vectorize upsert is
+  // idempotent by deterministic id, but the embed call still costs a Workers AI invocation).
+  const inserted = (res.meta?.changes ?? 0) > 0;
+  if (!inserted) {
+    return new Response(JSON.stringify({ id: null, skipped: true, reason: "duplicate external_id" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   embedAndStore(env, note_text.trim(), "companion_journal", id, agent);
 
