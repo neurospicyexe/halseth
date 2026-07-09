@@ -537,7 +537,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     open_drifts: openDrifts,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
     meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
-    continuity: wmResult,
+    // 2026-07-09: dropped a raw `continuity: wmResult` field that used to sit here --
+    // continuityBlock (above) already renders the same object into ready_prompt's prose,
+    // and nothing downstream (Discord, Hearth, or anywhere else in this repo) ever read the
+    // raw field. buildResponse()'s ready_prompt branch (this executor's sibling for
+    // session_load) already discards it the same way after building its own prose block --
+    // this just brings session_orient in line with that pattern instead of double-shipping
+    // every handoff/note/thread as both prose and JSON.
   };
 }
 
