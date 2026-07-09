@@ -264,6 +264,7 @@ import {
 // ── Memory (Second Brain) executors ──────────────────────────────────────────
 import {
   execSbSearch, execSbSearchByTags, execSbFileChunks, execSbRecall, execSbRecentPatterns, execSbRead, execSbList, execBookRead,
+  execNotesRecallMeaning,
   execSbSaveDocument, execSbSaveNote, execSbLogObservation, execSbSynthesizeSession,
   execSbSaveStudy,
 } from "./executors/memory.js";
@@ -403,6 +404,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // Second Brain / memory
   sb_search: execSbSearch,
   sb_search_by_tags: execSbSearchByTags,
+  // Continuity notes by meaning -- warms on engagement (recallNotes), never on display.
+  notes_recall_meaning: execNotesRecallMeaning,
   sb_file_chunks: execSbFileChunks,
   sb_recall: execSbRecall,
   sb_recent_patterns: execSbRecentPatterns,

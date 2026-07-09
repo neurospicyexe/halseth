@@ -167,6 +167,15 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       getText:      (r) => r.note_text as string,
       getCompanion: (r) => r.agent as string,
     },
+    // 2026-07-09: continuity notes were never embedded, so they had NO meaning-weight retrieval
+    // path at all -- recallable only if something already knew the note_id. 4,202 of 4,441 had
+    // never been accessed, and Guardian's orphan_memory was right to say so. `note_id AS id`
+    // because the rebuild loop keys on `row.id`.
+    wm_continuity_notes: {
+      sql:          "SELECT note_id AS id, content, agent_id FROM wm_continuity_notes",
+      getText:      (r) => r.content as string,
+      getCompanion: (r) => r.agent_id as string,
+    },
     living_wounds: {
       sql:          "SELECT id, name, description FROM living_wounds",
       getText:      (r) => `${r.name}: ${r.description}`,

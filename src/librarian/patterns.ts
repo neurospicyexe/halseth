@@ -137,6 +137,19 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+  // Recall this companion's OWN continuity notes by meaning (2026-07-09). Distinct from
+  // sb_recall (Obsidian vault) -- a different substrate. This is the verb that closes the
+  // boot audit's core gap: before it, wm_continuity_notes had no meaning-weight retrieval
+  // path at all and 4,202 of 4,441 had never been recalled.
+  notes_recall_meaning: {
+    triggers: [
+      "what do i know about", "what have i carried about", "recall notes about",
+      "recall my notes about", "search my continuity notes", "search my notes for",
+      "what did i note about", "do i have notes on",
+    ],
+    tools: ["notes_recall_meaning"],
+    response_key: "data",
+  },
   sb_list: {
     triggers: ["list vault", "list notes", "vault contents", "what's in vault", "show vault"],
     tools: ["sb_list"],

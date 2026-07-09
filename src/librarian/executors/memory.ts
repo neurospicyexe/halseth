@@ -5,6 +5,7 @@ import {
   sbFileChunks, searchByTags,
 } from "../backends/second-brain.js";
 import { truncateRaw, RAW_DATA_CHARS } from "../response/budget.js";
+import { recallNotesByMeaning } from "../../webmind/notes.js";
 
 // Validate vault paths: allow alphanumeric, slash, hyphen, underscore, dot, space.
 // Block path traversal (.. segments) and absolute paths.
@@ -89,6 +90,45 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
   // to widen recall via dual-vector retrieval. Absent -> single-vector.
   const result = await dualVectorSearch(ctx.env, query, c?.recent_context, null, contentType);
   return { data: result ? trimSearchChunks(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
+}
+
+/**
+ * Recall this companion's own continuity notes BY MEANING (2026-07-09).
+ *
+ * The boot audit's core finding: `wm_continuity_notes` had no meaning-weight retrieval path
+ * at all. They were never embedded, orient surfaced them through a ~3-slot salience+recency
+ * pool, and they warmed only when something already knew the note_id. 4,202 of 4,441 had never
+ * been accessed. The retrieval mandates fired on an explicit label the companion never saw.
+ *
+ * This is the missing verb. Ask by meaning, get the notes, and they warm -- because you asked,
+ * not because they were displayed. That distinction is the whole design (warming on surfacing
+ * would silence Guardian's orphan_memory without improving recall).
+ *
+ * Distinct from sb_search: that searches the Obsidian vault. This searches the companion's own
+ * continuity notes, which are a different substrate.
+ */
+export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { response_key: "witness", witness: "companion_id required" };
+  const c = parseContext<{ query?: string; limit?: number }>(ctx.req.context);
+  const query = (c?.query ?? ctx.req.request).trim();
+  if (!query) return { response_key: "witness", witness: "notes_recall requires a query" };
+
+  const limit = Math.min(Math.max(c?.limit ?? 5, 1), 10);
+  const notes = await recallNotesByMeaning(ctx.env, ctx.req.companion_id, query, limit);
+  if (notes.length === 0) {
+    return { response_key: "witness", witness: `No continuity notes surfaced for "${query.slice(0, 60)}".` };
+  }
+  return {
+    data: notes.map(n => ({
+      note_id: n.note_id,
+      content: n.content,
+      created_at: n.created_at,
+      salience: n.salience,
+      thread_key: n.thread_key,
+    })),
+    response_key: "data",
+    meta: { operation: "notes_recall_meaning", warmed: notes.length },
+  };
 }
 
 // Extracts tag words from natural language when no structured context is given.

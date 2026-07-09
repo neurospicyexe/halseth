@@ -6,6 +6,7 @@ import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
 import { effectiveHeatSql, warmSql } from "./heat.js";
+import { embedText, embedAndStoreAsync } from "../mcp/embed.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -77,6 +78,11 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     input.actor ?? "agent", input.source ?? "system",
     input.correlation_id ?? null, now,
   ).run();
+
+  // Reachable by meaning from the moment it exists (2026-07-09). Awaited, not fire-and-forget:
+  // a floating promise here dies under write pressure exactly as it did on companion_journal,
+  // and an unembedded note is an orphan by construction -- the very thing orphan_memory flags.
+  await embedNote(env, id, input.agent_id, input.content);
 
   if (overCap) {
     // Digest the coldest evictable overflow before deleting it (capacity debt, heat-aware
@@ -287,6 +293,58 @@ export interface RecalledNote {
   created_at: string;
   salience: string;
   thread_key: string | null;
+}
+
+/**
+ * Recall by MEANING, not by label. The core gap the boot audit kept circling.
+ *
+ * Before this, `wm_continuity_notes` could only be recalled if something already knew a
+ * note's id: they were never embedded, orient surfaced them through a ~3-slot salience+recency
+ * pool, and nothing searched them semantically. Result: 4,202 of 4,441 notes never once
+ * accessed, and Guardian's `orphan_memory` correctly flagged 2026-04-15 notes as unreachable.
+ * The retrieval mandates fired on an explicit label they'd never see.
+ *
+ * Warming is deliberate here BY CONSTRUCTION: this delegates to recallNotes(), which stamps
+ * last_access_at. A note is warmed because a companion ASKED for this meaning and received it --
+ * never because it happened to be displayed. Warming on mere surfacing would silence the
+ * detector without improving recall, which is gaming the metric, not fixing the memory.
+ */
+export async function recallNotesByMeaning(
+  env: Env,
+  agentId: string,
+  query: string,
+  limit = 5,
+): Promise<RecalledNote[]> {
+  const text = query.trim();
+  if (!text) return [];
+  const vector = await embedText(env, text);
+  if (!vector) return [];
+
+  // Over-fetch: the metadata filter is applied server-side, but scores below the floor are
+  // dropped after, so ask for more than we need.
+  const res = await env.VECTORIZE.query(vector, {
+    topK: Math.min(limit * 6, 60),
+    returnMetadata: "all",
+    filter: { table: "wm_continuity_notes", companion_id: agentId },
+  });
+
+  const ids = (res.matches ?? [])
+    .filter(m => typeof m.score === "number" && m.score >= 0.35)  // floor: don't warm noise
+    .map(m => (m.metadata as Record<string, unknown> | undefined)?.row_id)
+    .filter((v): v is string => typeof v === "string" && v.length > 0)
+    .slice(0, limit);
+
+  if (ids.length === 0) return [];
+  return recallNotes(env, agentId, ids);   // reuse: fetch + warm (engagement, not display)
+}
+
+/** Embed a continuity note so it is reachable by meaning. Never throws: D1 is truth. */
+export async function embedNote(env: Env, noteId: string, agentId: string, content: string): Promise<void> {
+  try {
+    await embedAndStoreAsync(env, content, "wm_continuity_notes", noteId, agentId);
+  } catch (e) {
+    console.warn(`[wm_note] embed failed for ${noteId} (row kept, index stale):`, String(e));
+  }
 }
 
 // Deliberate recall: fetch specific notes AND warm them (heat bump + last_access_at).
