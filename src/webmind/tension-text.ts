@@ -6,9 +6,15 @@
 // raw command preambble text ("save tension: ...", "Add a tension for drevan: ...")
 // into stored tension_text -- one shared stripper means one fix covers both.
 
+// A command preamble ends in a COLON ("save tension: ...", "Add a tension for drevan: ..."),
+// never a dash. The previous pattern made every verb optional and accepted `-`/`—` as a
+// terminator, so it collapsed to `tension ... [:—-]` and amputated any authored sentence merely
+// beginning "The tension between ..." at its first hyphen -- turning two real 06-27 tensions into
+// the mid-sentence fragments that were then fanned across all three companions (2026-07-09).
+// The verb is now required (an article alone must not license a strip), and the gap is bounded.
 const TENSION_COMMAND_PREAMBLE_RE =
-  /^\s*(?:please\s+)?(?:add|new|record|note|log|save|write|leave|drop)?\s*(?:a|an|the)?\s*tension\b[^:：—-]*[:：—-]\s*/i;
-const HOLDING_A_TENSION_RE = /^\s*i'?m\s+holding\s+a\s+tension\b[^:：—-]*[:：—-]?\s*/i;
+  /^\s*(?:please\s+)?(?:(?:add|new|record|note|log|save|write|leave|drop)\s+(?:a|an|the)?\s*)?tension\b[^:：]{0,40}[:：]\s*/i;
+const HOLDING_A_TENSION_RE = /^\s*i'?m\s+holding\s+a\s+tension\b[^:：]{0,40}[:：]\s*/i;
 
 /** Strips a leading "add/save/new/... tension [for X]:" command preamble. Never empties a
  *  string down to nothing -- if stripping would leave blank, the original (trimmed) wins. */

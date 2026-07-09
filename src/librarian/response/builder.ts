@@ -108,6 +108,22 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
         }
       } catch { /* skip */ }
     }
+    // What the swarm senses, read-only. This is the field the 2026-07-08 audit found missing
+    // from boot. The first two attempts at closing that gap WROTE these strings into
+    // companion_tensions -- a per-companion, owned, aging table -- which forced an owner onto
+    // unowned synthesis text and gave one companion's first-person tension to all three.
+    // Surfacing it here keeps it what it is: a triad-wide sense, nobody's authored tension.
+    if (ls.live_tensions) {
+      try {
+        const tensions = typeof ls.live_tensions === "string"
+          ? JSON.parse(ls.live_tensions) as string[]
+          : ls.live_tensions as string[];
+        const named = tensions.filter(t => typeof t === "string" && t.trim()).slice(0, 3);
+        if (named.length > 0) {
+          parts.push(`[Swarm senses -- triad-wide, not yours to hold] ${named.map(t => `«${t}»`).join(" ")}`);
+        }
+      } catch { /* malformed JSON -- skip */ }
+    }
   }
 
   // 2. Active tensions -- identity-level, colors everything read after

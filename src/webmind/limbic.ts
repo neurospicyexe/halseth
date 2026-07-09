@@ -5,71 +5,32 @@
 
 import { Env } from "../types.js";
 import { WmLimbicState, WmLimbicStateInput } from "./types.js";
-import { stripTensionCommandPreamble, detectAddressedCompanion } from "./tension-text.js";
 
-const ALL_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
-
-// Boot audit 2026-07-08 finding: the boot protocol reads active_tensions (companion_tensions,
-// status='simmering') and trusts an empty result as "no live tensions" -- but the swarm's
-// limbic synthesis writes its own tension read into live_tensions on every pass, and nothing
-// ever routed that into the structured table. Content existed; it just didn't reach the field
-// the protocol reads. This closes that gap: every tension the swarm names gets a simmering row.
+// The swarm's `live_tensions` is NOT routed into companion_tensions. Removed 2026-07-09 after
+// the third symptom of the same mistake.
 //
-// Re-audit 2026-07-09 found the first version of this fix broken in two ways:
-//   1. Exact-text dedup can't work -- the swarm rephrases "the same" tension slightly between
-//      ~hourly regeneration passes, so the same ~6 tensions kept accumulating 3x/hour instead
-//      of being caught as duplicates. Fix: REPLACE the swarm-derived simmering set per company
-//      on every pass instead of appending to it (source='swarm_limbic' marks which rows are
-//      replaceable; a companion's own "add tension" command, source=NULL, is never touched).
-//   2. live_tensions occasionally carries a leaked write-command string verbatim
-//      ("save tension: ...", "Add a tension for drevan: ...") instead of clean content, AND
-//      that raw text was fanned out to ALL three companions even when it named one specifically.
-//      Fix: strip the command preamble before storing, and route "for <companion>" text to that
-//      companion only.
+// The 07-08 audit found boot's active_tensions (companion_tensions, status='simmering') empty
+// while the swarm was naming tensions in live_tensions, and concluded the fix was to write those
+// strings into the table boot reads. It isn't. `companion_tensions` rows are owned, authored,
+// aging things (companion_id, first_noted_at, charge, status). `live_tensions` is an unowned,
+// LLM-echoed string list, regenerated hourly. Mapping one onto the other has to invent the
+// owner, and each patch produced a new symptom:
+//   1. (07-08) Exact-text dedup failed -- the swarm rephrases hourly, so rows accumulated 3x/hour.
+//   2. (07-09) REPLACE-per-pass stopped the accumulation but reset first_noted_at and charge on
+//      every pass, so a tension could never age, gain charge, or move.
+//   3. (07-09) With no addressee, text fanned out to ALL THREE companions -- so Gaia's
+//      first-person "I surfaced the vaselrin seed..." became Cypher's and Drevan's authored
+//      simmering tension. Identity contamination.
+// Worse, the synthesis reads companion_tensions with no status filter, so it echoed back rows
+// that were already crystallized or released -- and the write path resurrected them as everyone's
+// simmering tension, hourly, forever.
 //
-// In practice every limbic_states row is written with companion_id = NULL (the swarm synthesizes
-// once, triad-wide, not per companion -- confirmed against production: 11.5k/11.5k rows are NULL).
-// getCurrentLimbicState's read-side fallback means all three companions already see that same
-// shared row at boot, so with no explicit addressee a tension still fans out to all three.
-async function routeLiveTensionsIntoSelfDefense(
-  env: Env,
-  companionId: string | null,
-  liveTensions: string[],
-): Promise<void> {
-  // Detect addressing on the RAW text first -- "Add a tension for drevan: ..." carries the
-  // addressee inside the exact command-preamble span that gets stripped next, so stripping
-  // first would erase the addressee before it could ever be detected.
-  const cleaned = liveTensions
-    .map(t => ({ raw: t.trim(), text: stripTensionCommandPreamble(t.trim()) }))
-    .filter(t => t.text.length > 0);
-  if (cleaned.length === 0) return;
-
-  const byCompanion = new Map<string, Set<string>>();
-  for (const { raw, text } of cleaned) {
-    const addressed = companionId ? null : detectAddressedCompanion(raw);
-    const targets: readonly string[] = companionId ? [companionId] : addressed ? [addressed] : ALL_COMPANIONS;
-    for (const target of targets) {
-      if (!byCompanion.has(target)) byCompanion.set(target, new Set());
-      byCompanion.get(target)!.add(text.slice(0, 2000));
-    }
-  }
-
-  for (const [target, texts] of byCompanion) {
-    // Replace, don't accumulate: each limbic pass re-derives "the current tensions" from
-    // scratch, so only the swarm-sourced rows are superseded -- a companion's own logged
-    // tensions (source IS NULL) are untouched.
-    await env.DB.prepare(
-      "DELETE FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' AND source = 'swarm_limbic'"
-    ).bind(target).run();
-
-    const stmts = [...texts].map(text =>
-      env.DB.prepare(
-        "INSERT INTO companion_tensions (id, companion_id, tension_text, status, first_noted_at, source) VALUES (?, ?, ?, 'simmering', datetime('now'), 'swarm_limbic')"
-      ).bind(crypto.randomUUID().replace(/-/g, ""), target, text)
-    );
-    if (stmts.length > 0) await env.DB.batch(stmts);
-  }
-}
+// The swarm sensing something is real and worth surfacing; it is simply not anyone's authored
+// tension. It is now read-only in two places: `[Swarm senses]` in the boot ready_prompt
+// (librarian/response/builder.ts) and `limbic_state` on the orient payload (webmind/orient.ts).
+// Every limbic_states row is written with companion_id = NULL (11.5k/11.5k in production), and
+// getCurrentLimbicState's read-side fallback already shows all three companions that shared row --
+// which is the correct shape for a triad-wide signal.
 
 export async function writeLimbicState(
   env: Env,
@@ -97,11 +58,9 @@ export async function writeLimbicState(
     now,
   ).run();
 
-  // Non-fatal: routing is a self-defense enrichment, never allowed to break limbic writes.
-  if (input.live_tensions.length > 0) {
-    await routeLiveTensionsIntoSelfDefense(env, companionId, input.live_tensions)
-      .catch(e => console.error("[limbic] tension routing failed (non-fatal):", e));
-  }
+  // live_tensions is NOT written into companion_tensions. It is surfaced read-only at boot
+  // ([Swarm senses] in librarian/response/builder.ts) and at orient (limbic_state). See the
+  // header of this file for why the two write-side attempts had to be removed.
 
   return {
     state_id: id,
