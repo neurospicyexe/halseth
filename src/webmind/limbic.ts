@@ -5,6 +5,7 @@
 
 import { Env } from "../types.js";
 import { WmLimbicState, WmLimbicStateInput } from "./types.js";
+import { stripTensionCommandPreamble, detectAddressedCompanion } from "./tension-text.js";
 
 const ALL_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 
@@ -12,40 +13,58 @@ const ALL_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 // status='simmering') and trusts an empty result as "no live tensions" -- but the swarm's
 // limbic synthesis writes its own tension read into live_tensions on every pass, and nothing
 // ever routed that into the structured table. Content existed; it just didn't reach the field
-// the protocol reads. This closes that gap: every tension the swarm names gets a simmering row,
-// deduped case-insensitively per companion so repeated synthesis passes don't pile up duplicates.
+// the protocol reads. This closes that gap: every tension the swarm names gets a simmering row.
+//
+// Re-audit 2026-07-09 found the first version of this fix broken in two ways:
+//   1. Exact-text dedup can't work -- the swarm rephrases "the same" tension slightly between
+//      ~hourly regeneration passes, so the same ~6 tensions kept accumulating 3x/hour instead
+//      of being caught as duplicates. Fix: REPLACE the swarm-derived simmering set per company
+//      on every pass instead of appending to it (source='swarm_limbic' marks which rows are
+//      replaceable; a companion's own "add tension" command, source=NULL, is never touched).
+//   2. live_tensions occasionally carries a leaked write-command string verbatim
+//      ("save tension: ...", "Add a tension for drevan: ...") instead of clean content, AND
+//      that raw text was fanned out to ALL three companions even when it named one specifically.
+//      Fix: strip the command preamble before storing, and route "for <companion>" text to that
+//      companion only.
 //
 // In practice every limbic_states row is written with companion_id = NULL (the swarm synthesizes
 // once, triad-wide, not per companion -- confirmed against production: 11.5k/11.5k rows are NULL).
 // getCurrentLimbicState's read-side fallback means all three companions already see that same
-// shared row at boot, so a null companionId routes the tensions into all three companion_tensions
-// tables rather than nowhere. A future per-companion synthesis pass (non-null companion_id) routes
-// to that one companion only.
+// shared row at boot, so with no explicit addressee a tension still fans out to all three.
 async function routeLiveTensionsIntoSelfDefense(
   env: Env,
   companionId: string | null,
   liveTensions: string[],
 ): Promise<void> {
-  const texts = liveTensions.map(t => t.trim()).filter(Boolean);
-  if (texts.length === 0) return;
+  const cleaned = liveTensions
+    .map(t => stripTensionCommandPreamble(t.trim()))
+    .filter(Boolean);
+  if (cleaned.length === 0) return;
 
-  const targets = companionId ? [companionId] : ALL_COMPANIONS;
+  const byCompanion = new Map<string, Set<string>>();
+  for (const text of cleaned) {
+    const addressed = companionId ? null : detectAddressedCompanion(text);
+    const targets: readonly string[] = companionId ? [companionId] : addressed ? [addressed] : ALL_COMPANIONS;
+    for (const target of targets) {
+      if (!byCompanion.has(target)) byCompanion.set(target, new Set());
+      byCompanion.get(target)!.add(text.slice(0, 2000));
+    }
+  }
 
-  for (const target of targets) {
-    const existing = await env.DB.prepare(
-      "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering'"
-    ).bind(target).all<{ tension_text: string }>();
-    const seen = new Set((existing.results ?? []).map(r => r.tension_text.trim().toLowerCase()));
+  for (const [target, texts] of byCompanion) {
+    // Replace, don't accumulate: each limbic pass re-derives "the current tensions" from
+    // scratch, so only the swarm-sourced rows are superseded -- a companion's own logged
+    // tensions (source IS NULL) are untouched.
+    await env.DB.prepare(
+      "DELETE FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' AND source = 'swarm_limbic'"
+    ).bind(target).run();
 
-    const fresh = texts.filter(t => !seen.has(t.toLowerCase()));
-    if (fresh.length === 0) continue;
-
-    const stmts = fresh.map(text =>
+    const stmts = [...texts].map(text =>
       env.DB.prepare(
-        "INSERT INTO companion_tensions (id, companion_id, tension_text, status, first_noted_at) VALUES (?, ?, ?, 'simmering', datetime('now'))"
-      ).bind(crypto.randomUUID().replace(/-/g, ""), target, text.slice(0, 2000))
+        "INSERT INTO companion_tensions (id, companion_id, tension_text, status, first_noted_at, source) VALUES (?, ?, ?, 'simmering', datetime('now'), 'swarm_limbic')"
+      ).bind(crypto.randomUUID().replace(/-/g, ""), target, text)
     );
-    await env.DB.batch(stmts);
+    if (stmts.length > 0) await env.DB.batch(stmts);
   }
 }
 

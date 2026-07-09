@@ -3,15 +3,16 @@ import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdenti
 import { getCurrentLimbicState } from "../../webmind/limbic.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { COMPANION_IDS } from "../../companions.js";
+import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
 
 const COMPANIONS = COMPANION_IDS;
 
 export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "add_tension_failed", reason: "companion_id required" };
-  const tensionText = ctx.req.request
-    .replace(/^(add|new|record|note|log)\s+tension[:\s]*/i, "")
-    .replace(/^i'?m holding a tension[:\s]*/i, "")
-    .trim();
+  // Re-audit 2026-07-09: the old regex only covered a few verbs and no addressee phrasing
+  // ("save tension: ...", "Add a tension for drevan: ..." both leaked through verbatim).
+  // Shared with the swarm-routing path (webmind/limbic.ts) so one fix covers both.
+  const tensionText = stripTensionCommandPreamble(ctx.req.request);
   if (!tensionText) return { error: "add_tension_failed", reason: "tension_text not found in request" };
   const id = crypto.randomUUID();
   await ctx.env.DB.prepare(
