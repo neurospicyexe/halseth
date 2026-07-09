@@ -142,10 +142,14 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // boot audit's core gap: before it, wm_continuity_notes had no meaning-weight retrieval
   // path at all and 4,202 of 4,441 had never been recalled.
   notes_recall_meaning: {
+    // Triggers must NOT overlap sb_search, which already owns the vault-facing phrasings
+    // ("what do i know about", "search my notes"). Those mean the Obsidian vault. These mean
+    // this companion's own continuity notes -- a different substrate. `tension-routing.test.ts`
+    // asserts the two trigger sets stay disjoint.
     triggers: [
-      "what do i know about", "what have i carried about", "recall notes about",
-      "recall my notes about", "search my continuity notes", "search my notes for",
-      "what did i note about", "do i have notes on",
+      "recall notes about", "recall my notes about", "recall continuity notes",
+      "search my continuity notes", "my continuity notes about",
+      "what did i note about", "do i have notes on", "what have i carried about",
     ],
     tools: ["notes_recall_meaning"],
     response_key: "data",

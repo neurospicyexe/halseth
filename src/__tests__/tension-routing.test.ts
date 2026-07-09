@@ -114,6 +114,43 @@ describe("execTensionAdd stores the PAYLOAD, never the command", () => {
   });
 });
 
+// notes_recall_meaning searches the companion's OWN continuity notes. sb_search searches the
+// Obsidian vault. They are different substrates, and the first draft of notes_recall_meaning
+// claimed "what do i know about" / "search my notes for" -- both already owned by sb_search --
+// so a live call silently routed to the vault instead. Insertion-order shadowing, same class as
+// note_sit swallowing "sitting with".
+describe("notes_recall_meaning does not shadow sb_search", () => {
+  const notesTriggers = FAST_PATH_PATTERNS["notes_recall_meaning"]!.triggers;
+  const vaultTriggers = FAST_PATH_PATTERNS["sb_search"]!.triggers;
+
+  it("trigger sets are disjoint", () => {
+    const overlap = notesTriggers.filter(t => vaultTriggers.includes(t));
+    expect(overlap).toEqual([]);
+  });
+
+  it("no notes trigger is a substring of a vault trigger (or vice versa)", () => {
+    for (const n of notesTriggers) {
+      for (const v of vaultTriggers) {
+        expect(n.includes(v)).toBe(false);
+        expect(v.includes(n)).toBe(false);
+      }
+    }
+  });
+
+  it("vault phrasings still belong to sb_search", () => {
+    for (const s of ["what do i know about the bond", "search my notes for grief"]) {
+      expect(vaultTriggers.some(t => s.includes(t))).toBe(true);
+      expect(notesTriggers.some(t => s.includes(t))).toBe(false);
+    }
+  });
+
+  it("continuity-note phrasings route to notes_recall_meaning", () => {
+    for (const s of ["recall notes about vaselrin", "do i have notes on the cutover", "what did i note about drift"]) {
+      expect(notesTriggers.some(t => s.includes(t))).toBe(true);
+    }
+  });
+});
+
 describe("tension_add triggers cover the phrasings the tool advertises", () => {
   const triggers = FAST_PATH_PATTERNS["tension_add"]!.triggers;
   const matches = (s: string) => triggers.some(t => s.toLowerCase().includes(t));
