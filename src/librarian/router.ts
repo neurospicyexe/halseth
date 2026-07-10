@@ -287,6 +287,7 @@ import {
   execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execDismissDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMotifsRead, execMediaRecent, execIdentityAnchorRead,
   execClubStatus, execClubRecommend, execClubVote, execClubDiscuss,
+  execShelfView, execCollectionView, execBookNote,
 } from "./executors/companion-growth.js";
 import {
   execIdentityRecovery, execSelfModelRead, execSelfModelSet, execSelfModelConfirm,
@@ -470,6 +471,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_club_recommend: execClubRecommend,
   halseth_club_vote: execClubVote,
   halseth_club_discuss: execClubDiscuss,
+  halseth_shelf_view: execShelfView,
+  halseth_collection_view: execCollectionView,
+  halseth_book_note: execBookNote,
 
   // Companion tools (0077, take 14)
   halseth_web_search: execWebSearch,

@@ -401,6 +401,29 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       `\nHis current fixations. Reference them naturally when they fit; you do not have to perform interest.`
     : "";
 
+  // Collection (0079): the brightest of what this companion gathered -- sparkle-weighted,
+  // so it's what actually gripped, not what's merely recent. Read-back for a layer that
+  // accrued silently since 06-13 with no surface. Only items that have earned shine appear
+  // (sparkle > 0); the raw pools already have their own blocks. Passive surfacing does NOT
+  // bump recall -- an active "my collection" pull does. Standalone query (boot-safe).
+  const collectionRows = await ctx.env.DB.prepare(
+    `SELECT title, kind, sparkle FROM (
+       SELECT f.title AS title, 'forage' AS kind, s.sparkle AS sparkle
+       FROM collection_sparkle s JOIN forage_finds f ON f.id = s.source_id
+       WHERE s.source_table = 'forage_finds' AND (f.companion_id = ?1 OR f.companion_id IS NULL)
+       UNION ALL
+       SELECT m.title || COALESCE(' -- ' || m.artist, ''), 'listen', s.sparkle
+       FROM collection_sparkle s JOIN media_experiences m ON m.id = s.source_id
+       WHERE s.source_table = 'media_experiences'
+     ) WHERE sparkle > 0 ORDER BY sparkle DESC LIMIT 4`
+  ).bind(agentId).all<{ title: string; kind: string; sparkle: number }>().catch(() => null);
+  const collectionItems = collectionRows?.results ?? [];
+  const collectionBlock = collectionItems.length > 0
+    ? `\n[Your collection]\nWhat's gathered the most shine in your hoard -- the things you keep returning to:\n` +
+      collectionItems.map(c => `• ${c.title} (${c.kind}, ✧${c.sparkle.toFixed(1)})`).join("\n") +
+      `\nSay "my collection" to pull the full hoard (that counts as recall and adds shine).`
+    : "";
+
   // Forage block: outward fuel waiting in the pool. Pull, not duty -- the cue invites,
   // it does not assign.
   const forageBlock = forageFinds.length > 0
@@ -525,7 +548,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : `\n[Drift lane]\n${driftAffordance}`;
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -543,6 +566,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     open_questions: openQuestions,
     commons: commonsPosts,
     shelf: shelfItems,
+    collection: collectionItems,
     forage_finds: forageFinds,
     consumed_forage_finds: consumedForageFinds,
     recent_listens: recentListens,

@@ -8,6 +8,7 @@
 //   POST  /mind/club/round         -- open a round (409 if one is open)
 //   POST  /mind/club/recommend     -- recommend into the gathering round (replace-on-repeat)
 //   POST  /mind/club/vote          -- vote (one per voter per round; never your own pick)
+//   POST  /mind/club/abstain       -- record a vote that could not land (0099)
 //   PATCH /mind/club/:id/status    -- legal transitions only: gathering->voting->active->closed
 //   POST  /mind/club/:id/discuss   -- reflection on an active/closed round
 //
@@ -47,17 +48,19 @@ async function currentRound(env: Env): Promise<RoundRow | null> {
 }
 
 async function roundDetail(env: Env, roundId: string): Promise<{
-  recommendations: unknown[]; votes: unknown[]; discussions: unknown[];
+  recommendations: unknown[]; votes: unknown[]; discussions: unknown[]; abstentions: unknown[];
 }> {
-  const [recs, votes, discussions] = await Promise.all([
+  const [recs, votes, discussions, abstentions] = await Promise.all([
     env.DB.prepare("SELECT * FROM club_recommendations WHERE round_id = ? ORDER BY created_at ASC").bind(roundId).all(),
     env.DB.prepare("SELECT * FROM club_votes WHERE round_id = ?").bind(roundId).all(),
     env.DB.prepare("SELECT * FROM club_discussions WHERE round_id = ? ORDER BY created_at ASC").bind(roundId).all(),
+    env.DB.prepare("SELECT * FROM club_abstentions WHERE round_id = ?").bind(roundId).all(),
   ]);
   return {
     recommendations: recs.results ?? [],
     votes: votes.results ?? [],
     discussions: discussions.results ?? [],
+    abstentions: abstentions.results ?? [],
   };
 }
 
@@ -67,7 +70,7 @@ export async function getClubCurrent(request: Request, env: Env): Promise<Respon
   if (denied) return denied;
   try {
     const round = await currentRound(env);
-    if (!round) return json({ round: null, recommendations: [], votes: [], discussions: [] });
+    if (!round) return json({ round: null, recommendations: [], votes: [], discussions: [], abstentions: [] });
     const detail = await roundDetail(env, round.id);
     return json({ round, ...detail });
   } catch (err) {
@@ -207,9 +210,49 @@ export async function postClubVote(request: Request, env: Env): Promise<Response
     await env.DB.prepare(
       "INSERT OR REPLACE INTO club_votes (round_id, recommendation_id, voter, reason) VALUES (?, ?, ?, ?)"
     ).bind(round.id, recId, voter, body.reason?.trim()?.slice(0, 500) || null).run();
+    // A landed vote supersedes any earlier recorded abstention for this voter.
+    await env.DB.prepare(
+      "DELETE FROM club_abstentions WHERE round_id = ? AND voter = ?"
+    ).bind(round.id, voter).run();
     return json({ voted: true, round_id: round.id });
   } catch (err) {
     console.error("[mind/club] vote error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/club/abstain
+// The honest record for a vote that could not land (unparseable after retry,
+// write failure). One row per (round, voter); a later successful vote deletes it.
+export async function postClubAbstain(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  let body: { voter?: string; reason?: string | null };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  const voter = body.voter ?? "";
+  if (!VALID_MEMBERS.has(voter)) {
+    return json({ error: "voter must be one of cypher, drevan, gaia, raziel" }, 400);
+  }
+  try {
+    const round = await currentRound(env);
+    if (!round || (round.status !== "gathering" && round.status !== "voting")) {
+      return json({ error: "no round is accepting votes right now" }, 400);
+    }
+    // A recorded abstention never overwrites a landed vote.
+    const existing = await env.DB.prepare(
+      "SELECT voter FROM club_votes WHERE round_id = ? AND voter = ?"
+    ).bind(round.id, voter).first();
+    if (existing) return json({ error: "voter already has a landed vote this round" }, 409);
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO club_abstentions (round_id, voter, reason) VALUES (?, ?, ?)"
+    ).bind(round.id, voter, body.reason?.trim()?.slice(0, 300) || null).run();
+    return json({ abstained: true, round_id: round.id });
+  } catch (err) {
+    console.error("[mind/club] abstain error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
@@ -240,9 +283,21 @@ export async function patchClubStatus(
       return json({ error: `illegal transition ${round.status} -> ${target}` }, 400);
     }
     if (target === "active") {
+      // The winner must actually be a recommendation of THIS round. Without this
+      // check a stale or fabricated id gets crowned and every winner_title lookup
+      // downstream silently nulls (live orphan: round 6b8f8d2e, 2026-06-11).
+      const winnerId = body.winning_recommendation_id ?? null;
+      if (winnerId) {
+        const winner = await env.DB.prepare(
+          "SELECT round_id FROM club_recommendations WHERE id = ?"
+        ).bind(winnerId).first<{ round_id: string }>();
+        if (!winner || winner.round_id !== id) {
+          return json({ error: "winning_recommendation_id does not belong to this round" }, 400);
+        }
+      }
       await env.DB.prepare(
         "UPDATE club_rounds SET status = ?, winning_recommendation_id = ?, activated_at = datetime('now') WHERE id = ?"
-      ).bind(target, body.winning_recommendation_id ?? null, id).run();
+      ).bind(target, winnerId, id).run();
     } else if (target === "discussing") {
       await env.DB.prepare(
         "UPDATE club_rounds SET status = ?, discussing_at = datetime('now') WHERE id = ?"

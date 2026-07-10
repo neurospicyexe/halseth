@@ -86,7 +86,8 @@ import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/fo
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
-import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
+import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
+import { postBook, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
@@ -339,8 +340,23 @@ const router = new Router()
   .on("POST",  "/mind/club/round",                 (request, env)         => postClubRound(request, env))
   .on("POST",  "/mind/club/recommend",             (request, env)         => postClubRecommend(request, env))
   .on("POST",  "/mind/club/vote",                  (request, env)         => postClubVote(request, env))
+  .on("POST",  "/mind/club/abstain",               (request, env)         => postClubAbstain(request, env))
   .on("PATCH", "/mind/club/:id/status",            (request, env, params) => patchClubStatus(request, env, params ?? {}))
   .on("POST",  "/mind/club/:id/discuss",           (request, env, params) => postClubDiscuss(request, env, params ?? {}))
+
+  // The Library (0099) -- epubs in R2, CFI progress, marginalia from anyone in the house
+  .on("POST",   "/mind/books",                          (request, env)         => postBook(request, env))
+  .on("GET",    "/mind/books",                          (request, env)         => getBooks(request, env))
+  .on("GET",    "/mind/books/:id",                      (request, env, params) => getBook(request, env, params ?? {}))
+  .on("GET",    "/mind/books/:id/file",                 (request, env, params) => getBookFile(request, env, params ?? {}))
+  .on("GET",    "/mind/books/:id/cover",                (request, env, params) => getBookCover(request, env, params ?? {}))
+  .on("PATCH",  "/mind/books/:id",                      (request, env, params) => patchBook(request, env, params ?? {}))
+  .on("DELETE", "/mind/books/:id",                      (request, env, params) => deleteBook(request, env, params ?? {}))
+  .on("GET",    "/mind/books/:id/progress",             (request, env, params) => getBookProgress(request, env, params ?? {}))
+  .on("PUT",    "/mind/books/:id/progress",             (request, env, params) => putBookProgress(request, env, params ?? {}))
+  .on("GET",    "/mind/books/:id/annotations",          (request, env, params) => getBookAnnotations(request, env, params ?? {}))
+  .on("POST",   "/mind/books/:id/annotations",          (request, env, params) => postBookAnnotation(request, env, params ?? {}))
+  .on("DELETE", "/mind/books/:id/annotations/:ann_id",  (request, env, params) => deleteBookAnnotation(request, env, params ?? {}))
 
   // Autonomous worker -- execution tracking
   .on("POST",  "/mind/autonomy/runs",                            (request, env)         => postAutonomyRun(request, env))

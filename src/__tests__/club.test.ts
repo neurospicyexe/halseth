@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getClubCurrent, getClubRounds, postClubRound, postClubRecommend,
-  postClubVote, patchClubStatus, postClubDiscuss,
+  postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss,
 } from "../handlers/club.js";
 import type { Env } from "../types.js";
 
@@ -15,6 +15,7 @@ interface Store {
   recs: Row[];
   votes: Row[];
   discussions: Row[];
+  abstentions: Row[];
 }
 
 class FakeStatement {
@@ -25,6 +26,7 @@ class FakeStatement {
     if (this.sql.includes("club_recommendations")) return "recs";
     if (this.sql.includes("club_votes")) return "votes";
     if (this.sql.includes("club_discussions")) return "discussions";
+    if (this.sql.includes("club_abstentions")) return "abstentions";
     return "rounds";
   }
 
@@ -51,6 +53,19 @@ class FakeStatement {
       const [id, round_id, companion_id, reflection] = this.bound;
       this.store.discussions.push({ id, round_id, companion_id, reflection, created_at: new Date().toISOString() });
       return { meta: { changes: 1 } };
+    }
+    if (this.sql.startsWith("INSERT OR REPLACE INTO club_abstentions")) {
+      const [round_id, voter, reason] = this.bound;
+      const existing = this.store.abstentions.findIndex(a => a["round_id"] === round_id && a["voter"] === voter);
+      if (existing >= 0) this.store.abstentions.splice(existing, 1);
+      this.store.abstentions.push({ round_id, voter, reason, created_at: new Date().toISOString() });
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.startsWith("DELETE FROM club_abstentions")) {
+      const [round_id, voter] = this.bound;
+      const before = this.store.abstentions.length;
+      this.store.abstentions = this.store.abstentions.filter(a => !(a["round_id"] === round_id && a["voter"] === voter));
+      return { meta: { changes: before - this.store.abstentions.length } };
     }
     if (this.sql.startsWith("DELETE FROM club_recommendations")) {
       const [round_id, recommended_by] = this.bound;
@@ -95,6 +110,12 @@ class FakeStatement {
     if (this.sql.startsWith("SELECT recommended_by, round_id FROM club_recommendations")) {
       return this.store.recs.find(r => r["id"] === this.bound[0]) ?? null;
     }
+    if (this.sql.startsWith("SELECT round_id FROM club_recommendations")) {
+      return this.store.recs.find(r => r["id"] === this.bound[0]) ?? null;
+    }
+    if (this.sql.startsWith("SELECT voter FROM club_votes")) {
+      return this.store.votes.find(v => v["round_id"] === this.bound[0] && v["voter"] === this.bound[1]) ?? null;
+    }
     if (this.sql.includes("FROM club_rounds") && this.sql.includes("id = ?")) {
       return this.store.rounds.find(r => r["id"] === this.bound[0]) ?? null;
     }
@@ -110,7 +131,7 @@ function makeEnv(store: Store): Env {
   return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) } } as unknown as Env;
 }
 
-function emptyStore(): Store { return { rounds: [], recs: [], votes: [], discussions: [] }; }
+function emptyStore(): Store { return { rounds: [], recs: [], votes: [], discussions: [], abstentions: [] }; }
 
 function req(method: string, body?: unknown): Request {
   return new Request("https://x/mind/club", {
@@ -201,6 +222,7 @@ describe("patchClubStatus", () => {
   it("advances gathering -> voting -> active -> discussing -> closed (Phase 2)", async () => {
     const store = emptyStore();
     store.rounds.push({ id: "r1", status: "gathering", opened_at: "2026-06-11" });
+    store.recs.push({ id: "rec9", round_id: "r1", recommended_by: "drevan", title: "One", created_at: "2026-06-11" });
     expect((await patchClubStatus(req("PATCH", { status: "voting" }), makeEnv(store), { id: "r1" })).status).toBe(200);
     expect((await patchClubStatus(req("PATCH", { status: "active", winning_recommendation_id: "rec9" }), makeEnv(store), { id: "r1" })).status).toBe(200);
     expect(store.rounds[0]!["winning_recommendation_id"]).toBe("rec9");
@@ -215,6 +237,73 @@ describe("patchClubStatus", () => {
     const store = emptyStore();
     store.rounds.push({ id: "r1", status: "gathering", opened_at: "2026-06-11" });
     const res = await patchClubStatus(req("PATCH", { status: "active" }), makeEnv(store), { id: "r1" });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a winner that is not a recommendation at all (live orphan 6b8f8d2e)", async () => {
+    const store = emptyStore();
+    store.rounds.push({ id: "r1", status: "voting", opened_at: "2026-06-11" });
+    const res = await patchClubStatus(req("PATCH", { status: "active", winning_recommendation_id: "ghost" }), makeEnv(store), { id: "r1" });
+    expect(res.status).toBe(400);
+    expect(store.rounds[0]!["status"]).toBe("voting");
+    expect(store.rounds[0]!["winning_recommendation_id"]).toBeUndefined();
+  });
+
+  it("rejects a winner belonging to a different round", async () => {
+    const store = emptyStore();
+    store.rounds.push({ id: "r1", status: "voting", opened_at: "2026-06-11" });
+    store.recs.push({ id: "recX", round_id: "r0", recommended_by: "gaia", title: "Old", created_at: "2026-06-01" });
+    const res = await patchClubStatus(req("PATCH", { status: "active", winning_recommendation_id: "recX" }), makeEnv(store), { id: "r1" });
+    expect(res.status).toBe(400);
+  });
+
+  it("still allows a null winner (degenerate empty round path)", async () => {
+    const store = emptyStore();
+    store.rounds.push({ id: "r1", status: "voting", opened_at: "2026-06-11" });
+    const res = await patchClubStatus(req("PATCH", { status: "active", winning_recommendation_id: null }), makeEnv(store), { id: "r1" });
+    expect(res.status).toBe(200);
+    expect(store.rounds[0]!["winning_recommendation_id"]).toBeNull();
+  });
+});
+
+describe("postClubAbstain", () => {
+  function votingStore(): Store {
+    const store = emptyStore();
+    store.rounds.push({ id: "r1", status: "voting", opened_at: "2026-06-11" });
+    store.recs.push({ id: "recA", round_id: "r1", recommended_by: "drevan", title: "One", created_at: "2026-06-11" });
+    return store;
+  }
+
+  it("records an abstention for a voter with no landed vote", async () => {
+    const store = votingStore();
+    const res = await postClubAbstain(req("POST", { voter: "gaia", reason: "vote unparseable after retry" }), makeEnv(store));
+    expect(res.status).toBe(200);
+    expect(store.abstentions).toHaveLength(1);
+    expect(store.abstentions[0]!["voter"]).toBe("gaia");
+  });
+
+  it("409s when the voter already has a landed vote", async () => {
+    const store = votingStore();
+    store.votes.push({ round_id: "r1", recommendation_id: "recA", voter: "gaia", reason: null });
+    const res = await postClubAbstain(req("POST", { voter: "gaia" }), makeEnv(store));
+    expect(res.status).toBe(409);
+    expect(store.abstentions).toHaveLength(0);
+  });
+
+  it("a later landed vote clears the abstention", async () => {
+    const store = votingStore();
+    await postClubAbstain(req("POST", { voter: "gaia", reason: "first try failed" }), makeEnv(store));
+    expect(store.abstentions).toHaveLength(1);
+    const res = await postClubVote(req("POST", { recommendation_id: "recA", voter: "gaia" }), makeEnv(store));
+    expect(res.status).toBe(200);
+    expect(store.abstentions).toHaveLength(0);
+    expect(store.votes).toHaveLength(1);
+  });
+
+  it("rejects when no round is accepting votes", async () => {
+    const store = emptyStore();
+    store.rounds.push({ id: "r1", status: "discussing", opened_at: "2026-06-11" });
+    const res = await postClubAbstain(req("POST", { voter: "gaia" }), makeEnv(store));
     expect(res.status).toBe(400);
   });
 });

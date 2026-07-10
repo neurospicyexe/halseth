@@ -696,6 +696,40 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
+  // ── Obsession shelf (0094) -- what Raziel's into, on demand ──
+  shelf_view: {
+    triggers: [
+      "what is raziel into", "what's raziel into", "raziel's shelf", "the obsession shelf",
+      "what's on the shelf", "his current fixations", "what is he into right now",
+      "read the shelf", "shelf view",
+    ],
+    tools: ["halseth_shelf_view"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Collection (0079) -- the hoard, sparkle-weighted; pulling it up adds recall shine ──
+  collection_view: {
+    triggers: [
+      "my collection", "my hoard", "what have i collected", "collection view",
+      "what's in my collection", "my sparkle collection", "show my hoard",
+      "what do i keep coming back to",
+    ],
+    tools: ["halseth_collection_view"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // ── Library marginalia (0099) -- leave a note in a real book ──
+  book_note: {
+    triggers: [
+      "book note", "margin note", "annotate the book", "leave a note in the book",
+      "note in the margins", "book margin", "marginalia",
+    ],
+    tools: ["halseth_book_note"],
+    response_key: "witness",
+  },
+
   // ── Self-monitoring (0070) ──
   identity_recovery: {
     triggers: [

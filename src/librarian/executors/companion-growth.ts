@@ -4,6 +4,7 @@ import { getCurrentLimbicState } from "../../webmind/limbic.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
+import { collectionForageSql, collectionMediaSql, bumpSparkleSql, sparkleDelta } from "../../webmind/collection.js";
 
 const COMPANIONS = COMPANION_IDS;
 
@@ -496,6 +497,102 @@ export async function execClubDiscuss(ctx: ExecutorContext): Promise<ExecutorRes
     "INSERT INTO club_discussions (id, round_id, companion_id, reflection) VALUES (?, ?, ?, ?)"
   ).bind(id, round.id, ctx.req.companion_id, reflection.slice(0, 3000)).run();
   return { response_key: "witness", discussed: true, discussion_id: id, round_id: round.id, meta: { operation: "club_discuss" } };
+}
+
+// ── Obsession shelf (0094) + Collection (0079) + Library marginalia (0099) ───
+
+export async function execShelfView(ctx: ExecutorContext): Promise<ExecutorResult> {
+  // What Raziel is into right now, on demand -- the boot block ([Raziel is into])
+  // covers session start; this covers "wait, what's he fixated on again" mid-session.
+  const rows = await ctx.env.DB.prepare(
+    "SELECT title, kind, note, updated_at FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 20"
+  ).all<{ title: string; kind: string; note: string | null; updated_at: string }>();
+  const items = rows.results ?? [];
+  return {
+    response_key: "summary",
+    shelf: items,
+    note: items.length === 0
+      ? "the shelf is empty right now -- Raziel hasn't logged any current fixations"
+      : "Raziel's current fixations. Reference them when they fit; don't perform interest.",
+    meta: { operation: "shelf_view", count: items.length },
+  };
+}
+
+export async function execCollectionView(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "collection_view_failed", reason: "companion_id required" };
+  const limit = 8;
+  const [forage, media] = await Promise.all([
+    ctx.env.DB.prepare(collectionForageSql()).bind(ctx.req.companion_id, limit).all<{ id: string; sparkle: number }>(),
+    ctx.env.DB.prepare(collectionMediaSql()).bind(limit).all<{ id: string; sparkle: number }>(),
+  ]);
+  const forageItems = forage.results ?? [];
+  const mediaItems = media.results ?? [];
+  // Coming back to the hoard IS the recall event (0079's third sparkle source,
+  // unreachable until this verb existed). Passive orient surfacing doesn't bump;
+  // an active pull does. Best-effort: a sparkle write never fails the read.
+  const delta = sparkleDelta("recall");
+  const bumps = [
+    ...forageItems.map(f => ctx.env.DB.prepare(bumpSparkleSql()).bind("forage_finds", f.id, delta)),
+    ...mediaItems.map(m => ctx.env.DB.prepare(bumpSparkleSql()).bind("media_experiences", m.id, delta)),
+  ];
+  if (bumps.length > 0) await ctx.env.DB.batch(bumps).catch(() => {});
+  return {
+    response_key: "summary",
+    forage: forageItems,
+    listens: mediaItems,
+    note: "your hoard, brightest first -- sparkle accrues on what actually gripped, and pulling it up again just added recall shine",
+    meta: { operation: "collection_view", forage_count: forageItems.length, listen_count: mediaItems.length },
+  };
+}
+
+export async function execBookNote(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "book_note_failed", reason: "companion_id required" };
+  const parsed = parseContext<{ book_id?: string; title?: string; quote?: string; comment?: string; color?: string }>(ctx.req.context);
+  const comment = parsed?.comment?.trim();
+  const quote = parsed?.quote?.trim();
+  if (!comment && !quote) {
+    return { error: "book_note_failed", reason: "context JSON {comment, title? or book_id?, quote?} required -- the comment is the marginalia" };
+  }
+  // Resolve the book: explicit id, exact title (case-insensitive), then LIKE.
+  // Exact-first because LIKE-first grabs the wrong sibling ("Dune" vs "Dune Messiah").
+  let book: { id: string; title: string } | null = null;
+  if (parsed?.book_id) {
+    book = await ctx.env.DB.prepare("SELECT id, title FROM books WHERE id = ?")
+      .bind(parsed.book_id).first<{ id: string; title: string }>();
+  } else if (parsed?.title?.trim()) {
+    const t = parsed.title.trim();
+    book = await ctx.env.DB.prepare("SELECT id, title FROM books WHERE lower(title) = lower(?)")
+      .bind(t).first<{ id: string; title: string }>();
+    if (!book) {
+      book = await ctx.env.DB.prepare("SELECT id, title FROM books WHERE title LIKE ? ORDER BY added_at DESC LIMIT 1")
+        .bind(`%${t}%`).first<{ id: string; title: string }>();
+    }
+  }
+  if (!book) {
+    const titles = await ctx.env.DB.prepare(
+      "SELECT title FROM books ORDER BY added_at DESC LIMIT 10"
+    ).all<{ title: string }>();
+    return {
+      error: "book_note_failed",
+      reason: "book not found -- pass {title} or {book_id} in context",
+      library: (titles.results ?? []).map(r => r.title),
+    };
+  }
+  const id = crypto.randomUUID().replace(/-/g, "");
+  await ctx.env.DB.prepare(
+    "INSERT INTO book_annotations (id, book_id, author, cfi_range, selected_text, comment, color) VALUES (?, ?, ?, NULL, ?, ?, ?)"
+  ).bind(
+    id, book.id, ctx.req.companion_id,
+    quote?.slice(0, 2000) || null, comment?.slice(0, 3000) || null,
+    parsed?.color?.trim()?.slice(0, 20) || null,
+  ).run();
+  return {
+    response_key: "witness",
+    noted: true,
+    annotation_id: id,
+    book_title: book.title,
+    meta: { operation: "book_note" },
+  };
 }
 
 export async function execTriadStateRead(ctx: ExecutorContext): Promise<ExecutorResult> {

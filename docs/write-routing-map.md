@@ -155,6 +155,9 @@ the traps below exist because names lie.
 | `halseth_club_recommend` | execClubRecommend | companion-growth.ts | club_recommendations (DELETE + INSERT) | |
 | `halseth_club_vote` | execClubVote | companion-growth.ts | club_votes | |
 | `halseth_club_discuss` | execClubDiscuss | companion-growth.ts | club_discussions | |
+| `halseth_shelf_view` | execShelfView | companion-growth.ts | READ | Raziel's active obsession shelf, on demand |
+| `halseth_collection_view` | execCollectionView | companion-growth.ts | collection_sparkle (recall bump) | active pull = recall; passive orient never bumps |
+| `halseth_book_note` | execBookNote | companion-growth.ts | book_annotations | companion marginalia, quote-anchored (no CFI) |
 | `halseth_web_search` | execWebSearch | tools.ts | external web-search provider (no D1 write) | |
 | `halseth_generate_image` | execGenerateImage | tools.ts | external image provider (no D1 write) | |
 | `halseth_tool_calls_read` | execToolCallsRead | tools.ts | READ | |
