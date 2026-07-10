@@ -720,6 +720,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Sol's nest (0100) -- what the crow keeps ──
+  nest_view: {
+    triggers: [
+      "sol's nest", "sols nest", "the nest", "what's in the nest", "whats in the nest",
+      "what has sol collected", "what is sol keeping", "sol's hoard", "sols hoard",
+      "check the nest",
+    ],
+    tools: ["halseth_nest_view"],
+    response_key: "summary",
+    raw: true,
+  },
+
   // ── Library marginalia (0099) -- leave a note in a real book ──
   book_note: {
     triggers: [

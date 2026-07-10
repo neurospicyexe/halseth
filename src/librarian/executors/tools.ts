@@ -10,10 +10,8 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { runWebSearch, runImageGen } from "../../tools/service.js";
 import { createProvider } from "../../tools/live-providers.js";
 import { accruedLevel, driveFired, selectModality, hoursSinceIso, readDrivesSql } from "../../webmind/drives.js";
-import {
-  isValidAction, trustDelta, actionMood,
-  listCreaturesSql, insertInteractionSql, interactBumpSql,
-} from "../../webmind/creatures.js";
+import { isValidAction, listCreaturesSql } from "../../webmind/creatures.js";
+import { performTend } from "../../webmind/creature-interact.js";
 import { insertQuestionSql } from "../../webmind/council.js";
 
 function stripTrigger(request: string, re: RegExp): string {
@@ -108,21 +106,24 @@ export async function execCreatureInteract(ctx: ExecutorContext): Promise<Execut
   if (!isValidAction(action)) return { error: "creature_interact_failed", reason: "action must be one of feed, play, talk, give" };
   const note = parsed?.note?.trim().slice(0, 500) ?? null;
 
-  const creature = (await ctx.env.DB.prepare("SELECT id, name FROM creatures WHERE name = ? COLLATE NOCASE").bind(name).first<{ id: string; name: string }>())
-    ?? (await ctx.env.DB.prepare("SELECT id, name FROM creatures WHERE name LIKE ? COLLATE NOCASE ORDER BY name ASC LIMIT 1").bind(`%${name}%`).first<{ id: string; name: string }>());
+  type Row = { id: string; name: string; kind: string; trust: number };
+  const creature = (await ctx.env.DB.prepare("SELECT id, name, kind, trust FROM creatures WHERE name = ? COLLATE NOCASE").bind(name).first<Row>())
+    ?? (await ctx.env.DB.prepare("SELECT id, name, kind, trust FROM creatures WHERE name LIKE ? COLLATE NOCASE ORDER BY name ASC LIMIT 1").bind(`%${name}%`).first<Row>());
   if (!creature) return { error: "creature_interact_failed", reason: `no creature matching "${name}"` };
 
-  const interactionId = crypto.randomUUID().replace(/-/g, "");
-  await ctx.env.DB.batch([
-    ctx.env.DB.prepare(insertInteractionSql()).bind(interactionId, creature.id, ctx.req.companion_id, action, note),
-    ctx.env.DB.prepare(interactBumpSql()).bind(trustDelta(action), actionMood(action), creature.id),
-  ]);
-  const updated = await ctx.env.DB.prepare("SELECT trust FROM creatures WHERE id = ?").bind(creature.id).first<{ trust: number }>();
+  // Shared write path (webmind/creature-interact.ts): ledger + trust bump +
+  // milestone firing + give-notes into the nest -- identical to the HTTP handler,
+  // so a companion tend can land a milestone exactly like an owner tend can.
+  const outcome = await performTend(ctx.env.DB, creature, ctx.req.companion_id, action, note);
+  const milestoneLine = outcome.milestones_fired.length > 0
+    ? ` ${outcome.milestones_fired.map(m => m.text).join(" ")}`
+    : "";
   return {
     response_key: "witness",
-    witness: `you ${action === "give" ? "gave something to" : action} ${creature.name}`,
+    witness: `you ${action === "give" ? "gave something to" : action} ${creature.name}.${milestoneLine}`,
     interacted: true,
-    meta: { operation: "creature_interact", creature: creature.name, action, trust: updated?.trust ?? null },
+    milestones_fired: outcome.milestones_fired,
+    meta: { operation: "creature_interact", creature: creature.name, action, trust: outcome.trust },
   };
 }
 

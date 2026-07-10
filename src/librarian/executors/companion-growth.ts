@@ -545,6 +545,39 @@ export async function execCollectionView(ctx: ExecutorContext): Promise<Executor
   };
 }
 
+// Sol's nest (0100): what the crow keeps. Read-only -- looking in the nest doesn't
+// disturb it (unlike collection_view, no sparkle bump; Sol's things are Sol's).
+export async function execNestView(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const pet = await ctx.env.DB.prepare(
+    "SELECT id, name, trust FROM creatures WHERE kind = 'companion_pet' LIMIT 1",
+  ).first<{ id: string; name: string; trust: number }>();
+  if (!pet) return { error: "nest_view_failed", reason: "no companion pet exists" };
+  const [active, given] = await Promise.all([
+    ctx.env.DB.prepare(
+      "SELECT content, source, given_by, sparkle, treasured, created_at FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL ORDER BY treasured DESC, sparkle DESC LIMIT 20",
+    ).bind(pet.id).all<{ content: string; source: string; given_by: string | null; sparkle: number; treasured: number; created_at: string }>(),
+    ctx.env.DB.prepare(
+      "SELECT content, gifted_to, gifted_at FROM creature_nest WHERE creature_id = ? AND gifted_to IS NOT NULL ORDER BY gifted_at DESC LIMIT 5",
+    ).bind(pet.id).all<{ content: string; gifted_to: string; gifted_at: string }>(),
+  ]);
+  const items = active.results ?? [];
+  return {
+    response_key: "summary",
+    creature: pet.name,
+    nest: items.map(i => ({
+      content: i.content,
+      treasured: i.treasured === 1,
+      sparkle: Number(i.sparkle.toFixed(2)),
+      from: i.given_by ?? i.source,
+    })),
+    given_away: given.results ?? [],
+    note: items.length === 0
+      ? `${pet.name}'s nest is empty right now -- he keeps what he overhears and what he's given ('give' him something with words)`
+      : `${pet.name}'s hoard, treasured first. He collected these himself; mention one and it means something.`,
+    meta: { operation: "nest_view", count: items.length },
+  };
+}
+
 export async function execBookNote(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "book_note_failed", reason: "companion_id required" };
   const parsed = parseContext<{ book_id?: string; title?: string; quote?: string; comment?: string; color?: string }>(ctx.req.context);

@@ -13,7 +13,7 @@ import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { warmSql } from "../../webmind/heat.js";
-import { buildSolBlock } from "../../webmind/creatures.js";
+import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -168,8 +168,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).bind(agentId).all<MotifRow>().catch(() => null),
     // Sol (0078): the companion corvid. Fetched by name so orient knows Sol's current disposition.
     ctx.env.DB.prepare(
-      "SELECT name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
-    ).first<{ name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string }>().catch(() => null),
+      "SELECT id, name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
+    ).first<{ id: string; name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string }>().catch(() => null),
     // Active forage: finds already picked up (consumed). The pool above is what's waiting;
     // this is what the companion is mid-chew on -- continuity across sessions.
     ctx.env.DB.prepare(
@@ -496,9 +496,40 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ).bind(...motifIds).run().catch(() => null);
   }
 
-  // Sol block (0078): corvid companion's current presence state. Fail-soft -- if the
-  // creatures table is empty or the fetch failed, solBlock is "" and orient proceeds.
-  const solBlock = solRow ? buildSolBlock(solRow) : "";
+  // Sol block (0078, inner life 0100): presence state + live drives, fresh milestones,
+  // nest counts, best-known tender. Fail-soft at every layer -- if the creatures table
+  // is empty or any inner-life query fails, the block degrades instead of breaking orient.
+  let solExtras: SolBlockExtras | undefined;
+  if (solRow) {
+    const [acted, freshMilestone, nestCounts, familiar] = await Promise.all([
+      ctx.env.DB.prepare(
+        "SELECT action, MAX(created_at) AS last FROM creature_interactions WHERE creature_id = ? AND actor != 'sol' GROUP BY action"
+      ).bind(solRow.id).all<{ action: string; last: string }>().catch(() => null),
+      ctx.env.DB.prepare(
+        "SELECT milestone_id, fired_at FROM creature_milestones WHERE creature_id = ? AND fired_at >= datetime('now','-7 days') ORDER BY fired_at DESC LIMIT 1"
+      ).bind(solRow.id).first<{ milestone_id: string; fired_at: string }>().catch(() => null),
+      ctx.env.DB.prepare(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(treasured), 0) AS t FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL"
+      ).bind(solRow.id).first<{ n: number; t: number }>().catch(() => null),
+      // Best-known among companions (raziel excluded -- he'd always dominate the count).
+      ctx.env.DB.prepare(
+        "SELECT actor, COUNT(*) AS n FROM creature_interactions WHERE creature_id = ? AND actor NOT IN ('sol','raziel') GROUP BY actor ORDER BY n DESC LIMIT 1"
+      ).bind(solRow.id).first<{ actor: string; n: number }>().catch(() => null),
+    ]);
+    const by = new Map((acted?.results ?? []).map(r => [r.action, r.last]));
+    const drives = deriveDrives(
+      { feed: by.get("feed") ?? null, play: by.get("play") ?? null, any: solRow.last_interaction_at },
+      solRow.created_at,
+    );
+    solExtras = {
+      state: dominantState(drives),
+      freshMilestone: freshMilestone ? { id: freshMilestone.milestone_id, fired_at: freshMilestone.fired_at } : null,
+      nestCount: nestCounts?.n ?? 0,
+      treasuredCount: nestCounts?.t ?? 0,
+      knownBest: familiar ? { actor: familiar.actor, count: familiar.n } : null,
+    };
+  }
+  const solBlock = solRow ? buildSolBlock(solRow, Date.now(), solExtras) : "";
 
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
