@@ -5,10 +5,13 @@
 #
 # Metadata (title/author/description/cover) is extracted server-side from each epub;
 # no per-file arguments needed. Duplicates (same title+author) are skipped with a
-# note unless -Replace is passed. Requires PowerShell 7 (Invoke-RestMethod -Form).
+# note unless -Replace is passed.
 #
-# Auth: reads HALSETH_URL and HALSETH_SECRET from the environment, falling back to
-# the halseth .dev.vars ADMIN_SECRET convention if HALSETH_SECRET is unset.
+# Transport is curl.exe (ships with Windows 10+), NOT Invoke-RestMethod -Form:
+# workerd's request.formData() rejects PowerShell 7's multipart encoding
+# (quoted boundary / part-header decoration) with a 400, verified 2026-07-10.
+#
+# Auth: reads HALSETH_URL and HALSETH_SECRET from the environment.
 
 param(
   [Parameter(Mandatory = $true)] [string]$Folder,
@@ -35,25 +38,31 @@ if ($books.Count -eq 0) {
 Write-Host "Uploading $($books.Count) book(s) to $HalsethUrl ..." -ForegroundColor Cyan
 
 $ok = 0; $skipped = 0; $failed = 0
+$bodyFile = Join-Path ([IO.Path]::GetTempPath()) "upload-books-response.json"
 foreach ($book in $books) {
-  $form = @{ file = $book }
-  if ($Replace) { $form["replace"] = "true" }
-  try {
-    $res = Invoke-RestMethod -Uri "$HalsethUrl/mind/books" -Method Post `
-      -Headers @{ Authorization = "Bearer $Secret" } -Form $form
-    Write-Host ("  + {0}  ->  '{1}'{2}" -f $book.Name, $res.book.title, $(if ($res.book.replaced) { " (replaced)" } else { "" })) -ForegroundColor Green
+  # curl -F: the @"..." quoting protects commas/semicolons in filenames (both are
+  # -F metacharacters, and book filenames are full of them).
+  $curlArgs = @(
+    "-s", "-o", $bodyFile, "-w", "%{http_code}",
+    "-X", "POST", "$HalsethUrl/mind/books",
+    "-H", "Authorization: Bearer $Secret",
+    "-F", ('file=@"{0}"' -f $book.FullName)
+  )
+  if ($Replace) { $curlArgs += @("-F", "replace=true") }
+  $status = [int](curl.exe @curlArgs)
+  $body = if (Test-Path $bodyFile) { Get-Content $bodyFile -Raw | ConvertFrom-Json } else { $null }
+  if ($status -eq 201) {
+    Write-Host ("  + {0}  ->  '{1}'{2}" -f $book.Name, $body.book.title, $(if ($body.book.replaced) { " (replaced)" } else { "" })) -ForegroundColor Green
     $ok++
-  } catch {
-    $status = $_.Exception.Response.StatusCode.value__
-    if ($status -eq 409) {
-      Write-Host ("  = {0}  already in the library (pass -Replace to overwrite)" -f $book.Name) -ForegroundColor Yellow
-      $skipped++
-    } else {
-      Write-Host ("  x {0}  FAILED ({1}): {2}" -f $book.Name, $status, $_.ErrorDetails.Message) -ForegroundColor Red
-      $failed++
-    }
+  } elseif ($status -eq 409) {
+    Write-Host ("  = {0}  already in the library (pass -Replace to overwrite)" -f $book.Name) -ForegroundColor Yellow
+    $skipped++
+  } else {
+    Write-Host ("  x {0}  FAILED ({1}): {2}" -f $book.Name, $status, ($body | ConvertTo-Json -Compress)) -ForegroundColor Red
+    $failed++
   }
 }
+Remove-Item $bodyFile -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host ("Done. {0} uploaded, {1} skipped as duplicates, {2} failed." -f $ok, $skipped, $failed) -ForegroundColor Cyan
 if ($failed -gt 0) { exit 1 }
