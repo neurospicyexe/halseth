@@ -9,7 +9,7 @@
 
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
-import { interoceptionLine, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
+import { interoceptionLine, parseOffSince, maxDaysOffBaseline, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
 import type { WmOrientResponse, WmJournalEntry, WmConclusion } from "../../webmind/types.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 
@@ -293,7 +293,10 @@ function interoceptionPrefix(companionId: CompanionId, s: CompanionState | null 
   const v2 = Number(s?.soma_float_2);
   const v3 = Number(s?.soma_float_3);
   if (!Number.isFinite(v1) || !Number.isFinite(v2) || !Number.isFinite(v3)) return "";
-  return interoceptionLine(companionId as FermentCompanionId, { f1: v1, f2: v2, f3: v3 }) + "\n";
+  // Trajectory: how long the longest-off float has been off its baseline (ferment tick maintains
+  // ferment_off_since, mig 0102). Surfaces as the "held Nd" clause once it crosses ~2 days.
+  const daysOffBaseline = maxDaysOffBaseline(parseOffSince(s?.ferment_off_since));
+  return interoceptionLine(companionId as FermentCompanionId, { f1: v1, f2: v2, f3: v3 }, { daysOffBaseline }) + "\n";
 }
 
 export function buildOrientPrompt(companionId: CompanionId, payload: OrientPayload): string {
@@ -374,6 +377,8 @@ interface CompanionState {
   surface_intensity?: number | null;
   undercurrent_emotion?: string | null;
   current_mood?: string | null;
+  // Fermentation (mig 0102): off-baseline tracking JSON, feeds the interoception trajectory clause
+  ferment_off_since?: string | null;
 }
 
 interface SessionPayload {

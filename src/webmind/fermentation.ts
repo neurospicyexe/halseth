@@ -32,6 +32,12 @@ export function clampFloat(n: number, fallback = 0): number {
 
 const HOURS_PER_DAY = 24;
 
+// The tick self-gates at 1h and treats anything longer than a day as a day: reaction/silence
+// deltas scale linearly with elapsed hours, so an unbounded gap (worker outage, cron death)
+// would land weeks of accumulated delta as one step-function write. Decay is overshoot-safe
+// either way; the cap trades a little lost decay after an outage for never slamming a float.
+export const TICK_MAX_HOURS = 24;
+
 // ── 1. Decay toward baseline ────────────────────────────────────────────────────
 
 /**
@@ -161,6 +167,54 @@ export function driftBaseline(baseline: number, seed: number, current: number, h
   const step = DRIFT_PER_DAY * dir * (Math.max(0, hours) / HOURS_PER_DAY);
   const next = b + step;
   return clampFloat(Math.min(s + DRIFT_CAP, Math.max(s - DRIFT_CAP, next)), s);
+}
+
+// ── Off-baseline tracking (feeds the interoception trajectory clause) ─────────────
+// companion_state.ferment_off_since (mig 0102) holds JSON {f1,f2,f3}: the moment each float
+// last LEFT its baseline deadzone (null = at home). The tick maintains it; orient reads it to
+// say "held 3d" -- a felt duration, not a log.
+
+export interface OffSince {
+  f1: string | null;
+  f2: string | null;
+  f3: string | null;
+}
+
+export function parseOffSince(raw: string | null | undefined): OffSince {
+  if (!raw) return { f1: null, f2: null, f3: null };
+  try {
+    const v = JSON.parse(raw) as Partial<OffSince>;
+    return {
+      f1: typeof v.f1 === "string" ? v.f1 : null,
+      f2: typeof v.f2 === "string" ? v.f2 : null,
+      f3: typeof v.f3 === "string" ? v.f3 : null,
+    };
+  } catch {
+    return { f1: null, f2: null, f3: null };
+  }
+}
+
+/** Same deadzone as baseline drift: a float within it is "home", outside it is "off". */
+export function updateOffSince(prev: OffSince, floats: Floats, baselines: Floats, nowIso: string): OffSince {
+  const one = (since: string | null, v: number, b: number): string | null =>
+    Math.abs(clampFloat(v) - clampFloat(b, 0.5)) >= DRIFT_DEADZONE ? (since ?? nowIso) : null;
+  return {
+    f1: one(prev.f1, floats.f1, baselines.f1),
+    f2: one(prev.f2, floats.f2, baselines.f2),
+    f3: one(prev.f3, floats.f3, baselines.f3),
+  };
+}
+
+/** Whole days the longest-off float has been off its baseline (0 when all home). */
+export function maxDaysOffBaseline(off: OffSince, nowMs = Date.now()): number {
+  let maxHours = 0;
+  for (const since of [off.f1, off.f2, off.f3]) {
+    if (!since) continue;
+    const ms = Date.parse(since.includes("T") ? since : since.replace(" ", "T") + "Z");
+    if (Number.isNaN(ms)) continue;
+    maxHours = Math.max(maxHours, (nowMs - ms) / 3_600_000);
+  }
+  return Math.max(0, Math.floor(maxHours / HOURS_PER_DAY));
 }
 
 // ── Drevan numeric -> native enum bands ──────────────────────────────────────────
@@ -345,7 +399,7 @@ export function readFermentStateSql(): string {
   return `SELECT companion_id, soma_float_1, soma_float_2, soma_float_3,
     soma_float_1_baseline, soma_float_2_baseline, soma_float_3_baseline,
     soma_float_1_baseline_seed, soma_float_2_baseline_seed, soma_float_3_baseline_seed,
-    heat, reach, weight, compound_state, updated_at, ferment_at
+    heat, reach, weight, compound_state, updated_at, ferment_at, ferment_off_since, version
     FROM companion_state WHERE companion_id IN ('cypher','drevan','gaia')`;
 }
 
@@ -354,22 +408,24 @@ export function readFermentStateOneSql(): string {
   return `SELECT companion_id, soma_float_1, soma_float_2, soma_float_3,
     soma_float_1_baseline, soma_float_2_baseline, soma_float_3_baseline,
     soma_float_1_baseline_seed, soma_float_2_baseline_seed, soma_float_3_baseline_seed,
-    heat, reach, weight, compound_state, updated_at, ferment_at
+    heat, reach, weight, compound_state, updated_at, ferment_at, ferment_off_since, version
     FROM companion_state WHERE companion_id = ?`;
 }
 
 /**
- * Persist a tick: fermented floats + drifted baselines + Drevan native enums + ferment stamp,
- * bumping the version counter. Bind:
- * [f1,f2,f3, b1,b2,b3, heat,reach,weight, companion_id].
+ * Persist a tick: fermented floats + drifted baselines + native enums + off-since tracking +
+ * ferment stamp, bumping the version counter. CAS-guarded on the version read at snapshot time:
+ * if a stimulus bumped the row between the tick's read and this write, changes=0 and the tick
+ * skips that companion (the next hourly tick reconciles from the fresher state). Bind:
+ * [f1,f2,f3, b1,b2,b3, heat,reach,weight, off_since_json, companion_id, version].
  */
 export function fermentTickUpdateSql(): string {
   return `UPDATE companion_state SET
     soma_float_1 = ?, soma_float_2 = ?, soma_float_3 = ?,
     soma_float_1_baseline = ?, soma_float_2_baseline = ?, soma_float_3_baseline = ?,
-    heat = ?, reach = ?, weight = ?,
+    heat = ?, reach = ?, weight = ?, ferment_off_since = ?,
     ferment_at = datetime('now'), updated_at = datetime('now'), version = COALESCE(version, 0) + 1
-    WHERE companion_id = ?`;
+    WHERE companion_id = ? AND COALESCE(version, 0) = ?`;
 }
 
 /**

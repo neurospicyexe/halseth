@@ -19,7 +19,6 @@ import {
   decayedLevel,
   hoursSinceIso,
   readDrivesSql,
-  upsertDriveAccrualSql,
   contactResetSql,
 } from "../webmind/drives.js";
 import {
@@ -31,7 +30,10 @@ import {
   weightBand,
   isKnownStimulus,
   stimulusFloatDelta,
+  parseOffSince,
+  updateOffSince,
   STIMULI,
+  TICK_MAX_HOURS,
   readFermentStateSql,
   readFermentStateOneSql,
   fermentTickUpdateSql,
@@ -69,6 +71,8 @@ interface FermentRow {
   compound_state: string | null;
   updated_at: string | null;
   ferment_at: string | null;
+  ferment_off_since: string | null;
+  version: number | null;
 }
 
 interface DriveRow {
@@ -89,7 +93,7 @@ async function logEvent(
   env: Env,
   companionId: string,
   kind: string,
-  opts: { stimulus?: string | null; floatDeltas?: Floats | null; driveDeltas?: Record<string, number> | null; detail?: string | null },
+  opts: { stimulus?: string | null; floatDeltas?: Partial<Floats> | null; driveDeltas?: Record<string, number> | null; detail?: string | null },
 ): Promise<void> {
   await env.DB.prepare(insertFermentEventSql())
     .bind(
@@ -97,15 +101,19 @@ async function logEvent(
       companionId,
       kind,
       opts.stimulus ?? null,
-      opts.floatDeltas ? JSON.stringify(round3(opts.floatDeltas)) : null,
+      opts.floatDeltas && Object.keys(opts.floatDeltas).length ? JSON.stringify(round3(opts.floatDeltas)) : null,
       opts.driveDeltas && Object.keys(opts.driveDeltas).length ? JSON.stringify(opts.driveDeltas) : null,
       opts.detail ?? null,
     )
     .run();
 }
 
-function round3(f: Floats): Floats {
-  return { f1: Number(f.f1.toFixed(3)), f2: Number(f.f2.toFixed(3)), f3: Number(f.f3.toFixed(3)) };
+function round3(f: Partial<Floats>): Partial<Floats> {
+  const out: Partial<Floats> = {};
+  if (f.f1 !== undefined) out.f1 = Number(f.f1.toFixed(3));
+  if (f.f2 !== undefined) out.f2 = Number(f.f2.toFixed(3));
+  if (f.f3 !== undefined) out.f3 = Number(f.f3.toFixed(3));
+  return out;
 }
 
 function floatsFrom(row: FermentRow): Floats {
@@ -132,8 +140,12 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     if (!row) continue;
 
     // Elapsed since the last ferment (fall back to updated_at on the first-ever tick).
-    const hours = hoursSinceIso(row.ferment_at ?? row.updated_at, now);
-    if (hours < 1) continue; // nothing meaningful accrues in under an hour
+    // Capped at TICK_MAX_HOURS: reaction/silence deltas scale linearly with hours, so an
+    // unbounded gap after a cron outage would land weeks of delta in one step-function write.
+    const rawHours = hoursSinceIso(row.ferment_at ?? row.updated_at, now);
+    if (rawHours < 1) continue; // nothing meaningful accrues in under an hour
+    const hours = Math.min(rawHours, TICK_MAX_HOURS);
+    const dayFrac = hours / 24;
 
     const before = floatsFrom(row);
     const baselines: Floats = {
@@ -150,7 +162,10 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     // 1+2: decay toward baseline, then cross-field reactions.
     const { floats: fermented, fired } = fermentFloats(companionId, before, baselines, hours);
 
-    // Silence: relational_need untended past the threshold trips long_silence on the floats.
+    // Silence: relational_need untended past the threshold cools the floats CONTINUOUSLY at the
+    // designed per-day rate (scaled to this tick's hours) until contact sheds the drive. The tick
+    // must never restamp relational_need.last_event_at itself -- only real contact moves it; a
+    // blanket restamp here is what killed silence detection the first time.
     const drives = (await env.DB.prepare(readDrivesSql()).bind(companionId).all<DriveRow>()).results ?? [];
     const rel = drives.find((d) => d.drive_key === "relational_need");
     const driveDeltas: Record<string, number> = {};
@@ -158,9 +173,9 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     if (rel && hoursSinceIso(rel.last_event_at, now) >= SILENCE_HOURS) {
       silence = true;
       const sd = stimulusFloatDelta("long_silence", companionId);
-      fermented.f1 = clampFloat(fermented.f1 + sd.f1);
-      fermented.f2 = clampFloat(fermented.f2 + sd.f2);
-      fermented.f3 = clampFloat(fermented.f3 + sd.f3);
+      fermented.f1 = clampFloat(fermented.f1 + sd.f1 * dayFrac);
+      fermented.f2 = clampFloat(fermented.f2 + sd.f2 * dayFrac);
+      fermented.f3 = clampFloat(fermented.f3 + sd.f3 * dayFrac);
     }
 
     // 3: baseline drift = growth (measured against the sustained fermented value).
@@ -170,13 +185,25 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
       f3: driftBaseline(baselines.f3, seeds.f3, fermented.f3, hours),
     };
 
-    // Drevan's floats render as his native enums; Cypher/Gaia keep their existing enum columns
-    // (they don't use heat/reach/weight semantically).
-    const heat = companionId === "drevan" ? heatBand(fermented.f1) : row.heat ?? "idling";
-    const reach = companionId === "drevan" ? reachBand(fermented.f2) : row.reach ?? "present";
-    const weight = companionId === "drevan" ? weightBand(fermented.f3) : row.weight ?? "clear";
+    // Off-baseline tracking for the interoception trajectory clause ("held 3d").
+    const offSince = updateOffSince(parseOffSince(row.ferment_off_since), fermented, newBaselines, new Date(now).toISOString());
 
-    await env.DB.prepare(fermentTickUpdateSql())
+    // Drevan's floats render as his native enum bands -- but only when the fermented float
+    // actually CROSSES a band boundary. Within a band his authored text stands, so a directional
+    // state he wrote at close (cooling, processing) survives ticks instead of being erased within
+    // the hour. Cypher/Gaia don't use these columns semantically: write theirs back untouched.
+    let heat = row.heat;
+    let reach = row.reach;
+    let weight = row.weight;
+    if (companionId === "drevan") {
+      heat = heatBand(before.f1) === heatBand(fermented.f1) && row.heat ? row.heat : heatBand(fermented.f1);
+      reach = reachBand(before.f2) === reachBand(fermented.f2) && row.reach ? row.reach : reachBand(fermented.f2);
+      weight = weightBand(before.f3) === weightBand(fermented.f3) && row.weight ? row.weight : weightBand(fermented.f3);
+    }
+
+    // CAS write: if a stimulus bumped the row since our snapshot, changes=0 -- skip this
+    // companion (no stale overwrite, no misleading event); the next hourly tick reconciles.
+    const res = await env.DB.prepare(fermentTickUpdateSql())
       .bind(
         Number(fermented.f1.toFixed(4)),
         Number(fermented.f2.toFixed(4)),
@@ -187,19 +214,26 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
         heat,
         reach,
         weight,
+        JSON.stringify(offSince),
         companionId,
+        row.version ?? 0,
       )
       .run();
+    if ((res.meta?.changes ?? 0) === 0) continue;
     ticked++;
 
-    // Persist lazy drive accrual so Hearth/orient read a fresh level, and shed rest_need on silence.
-    for (const d of drives) {
-      let level = accruedLevel(d.level, d.accumulate_per_day, hoursSinceIso(d.last_event_at, now));
-      if (silence && d.drive_key === "rest_need") {
-        level = decayedLevel(level, d.decay_on_contact); // quiet actually rests
-        driveDeltas["rest_need"] = -Number((accruedLevel(d.level, d.accumulate_per_day, hoursSinceIso(d.last_event_at, now)) - level).toFixed(3));
+    // Quiet actually rests: while silence holds, rest_need sheds at its contact fraction scaled
+    // to this tick's hours. This is the ONLY drive write the tick makes -- accrual stays lazy
+    // (every reader computes the effective level from last_event_at; persisting it here would
+    // restamp the anchor and double as a phantom contact).
+    if (silence) {
+      const rest = drives.find((d) => d.drive_key === "rest_need");
+      if (rest) {
+        const effective = accruedLevel(rest.level, rest.accumulate_per_day, hoursSinceIso(rest.last_event_at, now));
+        const shed = decayedLevel(effective, rest.decay_on_contact * Math.min(1, dayFrac));
+        await env.DB.prepare(contactResetSql()).bind(Number(shed.toFixed(4)), companionId, "rest_need").run();
+        driveDeltas["rest_need"] = -Number((effective - shed).toFixed(3));
       }
-      await env.DB.prepare(upsertDriveAccrualSql()).bind(Number(level.toFixed(4)), d.id).run();
     }
 
     const netFloat: Floats = { f1: fermented.f1 - before.f1, f2: fermented.f2 - before.f2, f3: fermented.f3 - before.f3 };
@@ -213,12 +247,12 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     });
 
     // Log a baseline_drift row only when a baseline actually moved (watchable growth).
-    const drift: Record<string, number> = {};
+    const drift: Partial<Floats> = {};
     if (Math.abs(newBaselines.f1 - baselines.f1) > 1e-6) drift.f1 = Number((newBaselines.f1 - baselines.f1).toFixed(4));
     if (Math.abs(newBaselines.f2 - baselines.f2) > 1e-6) drift.f2 = Number((newBaselines.f2 - baselines.f2).toFixed(4));
     if (Math.abs(newBaselines.f3 - baselines.f3) > 1e-6) drift.f3 = Number((newBaselines.f3 - baselines.f3).toFixed(4));
     if (Object.keys(drift).length) {
-      await logEvent(env, companionId, "baseline_drift", { driveDeltas: drift, detail: "growth" });
+      await logEvent(env, companionId, "baseline_drift", { floatDeltas: drift, detail: "growth" });
     }
   }
 

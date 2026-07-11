@@ -6,10 +6,14 @@ import {
   fermentFloats,
   driftBaseline,
   DRIFT_CAP,
+  TICK_MAX_HOURS,
   heatBand,
   reachBand,
   weightBand,
   interoceptionLine,
+  parseOffSince,
+  updateOffSince,
+  maxDaysOffBaseline,
   STIMULI,
   isKnownStimulus,
   stimulusFloatDelta,
@@ -181,6 +185,48 @@ describe("interoceptionLine (felt-sense, not a script)", () => {
   });
 });
 
+describe("off-baseline tracking (trajectory clause substrate)", () => {
+  const base: Floats = { f1: 0.7, f2: 0.65, f3: 0.55 };
+  const nowIso = "2026-07-11T12:00:00.000Z";
+
+  it("parseOffSince tolerates null, garbage, and partial JSON", () => {
+    expect(parseOffSince(null)).toEqual({ f1: null, f2: null, f3: null });
+    expect(parseOffSince("not json")).toEqual({ f1: null, f2: null, f3: null });
+    expect(parseOffSince('{"f1":"2026-07-09T00:00:00Z"}')).toEqual({ f1: "2026-07-09T00:00:00Z", f2: null, f3: null });
+  });
+  it("stamps a float when it leaves the deadzone and clears it when it comes home", () => {
+    const empty = { f1: null, f2: null, f3: null };
+    const off = updateOffSince(empty, { f1: 0.9, f2: 0.65, f3: 0.55 }, base, nowIso);
+    expect(off.f1).toBe(nowIso);
+    expect(off.f2).toBeNull();
+    const home = updateOffSince(off, { f1: 0.71, f2: 0.65, f3: 0.55 }, base, "2026-07-12T12:00:00.000Z");
+    expect(home.f1).toBeNull();
+  });
+  it("preserves the ORIGINAL stamp while the float stays off (duration accumulates, not resets)", () => {
+    const first = updateOffSince({ f1: null, f2: null, f3: null }, { f1: 0.9, f2: 0.65, f3: 0.55 }, base, nowIso);
+    const later = updateOffSince(first, { f1: 0.85, f2: 0.65, f3: 0.55 }, base, "2026-07-13T12:00:00.000Z");
+    expect(later.f1).toBe(nowIso);
+  });
+  it("maxDaysOffBaseline reports whole days of the longest-off float", () => {
+    const now = Date.parse("2026-07-11T12:00:00Z");
+    expect(maxDaysOffBaseline({ f1: "2026-07-08T11:00:00Z", f2: null, f3: "2026-07-10T12:00:00Z" }, now)).toBe(3);
+    expect(maxDaysOffBaseline({ f1: null, f2: null, f3: null }, now)).toBe(0);
+  });
+  it("understands D1's space-separated unmarked-UTC datetimes (the unmarked-UTC trap)", () => {
+    const now = Date.parse("2026-07-11T12:00:00Z");
+    expect(maxDaysOffBaseline({ f1: "2026-07-09 12:00:00", f2: null, f3: null }, now)).toBe(2);
+  });
+});
+
+describe("TICK_MAX_HOURS (step-function guard)", () => {
+  it("is one day -- reaction/silence deltas never scale past 24h of gap", () => {
+    expect(TICK_MAX_HOURS).toBe(24);
+    // A capped 10-day gap applies exactly one day of reaction delta, not ten.
+    const gapped = applyReactions("gaia", { f1: 0.85, f2: 0.65, f3: 0.75 }, TICK_MAX_HOURS);
+    expect(gapped.floats.f2).toBeCloseTo(0.67, 5); // +0.02 once, not +0.2
+  });
+});
+
 describe("stimuli map", () => {
   it("message_from_raziel warms all three and sheds relational_need", () => {
     expect(isKnownStimulus("message_from_raziel")).toBe(true);
@@ -209,14 +255,22 @@ describe("sql builders", () => {
     expect(sql).toContain("soma_float_1_baseline_seed");
     expect(sql).toContain("companion_id IN ('cypher','drevan','gaia')");
   });
-  it("fermentTickUpdateSql writes floats + baselines + enums + stamps + version bump", () => {
+  it("fermentTickUpdateSql writes floats + baselines + enums + off-since + stamps, CAS-guarded", () => {
     const sql = fermentTickUpdateSql();
     expect(sql).toContain("soma_float_1 = ?");
     expect(sql).toContain("soma_float_1_baseline = ?");
     expect(sql).toContain("heat = ?");
+    expect(sql).toContain("ferment_off_since = ?");
     expect(sql).toContain("ferment_at = datetime('now')");
     expect(sql).toContain("version = COALESCE(version, 0) + 1");
-    expect(sql).toContain("WHERE companion_id = ?");
+    // CAS: a stimulus landing between the tick's read and write bumps version -> changes=0,
+    // the tick skips instead of clobbering the fresher state.
+    expect(sql).toContain("WHERE companion_id = ? AND COALESCE(version, 0) = ?");
+  });
+  it("readFermentStateSql carries version + ferment_off_since for the CAS + trajectory reads", () => {
+    const sql = readFermentStateSql();
+    expect(sql).toContain("ferment_off_since");
+    expect(sql).toContain("version");
   });
   it("stimulusBumpSql clamps in SQL (race-safe) and coalesces null floats to baseline", () => {
     const sql = stimulusBumpSql();

@@ -541,7 +541,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Agency layer (0086): the companion's own chosen preferences + any refusals still standing.
   // Carried into every session so the companion acts consistently with its own declared will, and a
   // "no" keeps its weight across sessions. Fetched apart from the positional Promise.all above.
-  const [prefRows, standingRefusalRows, openDriftRows] = await Promise.all([
+  const [prefRows, standingRefusalRows, openDriftRows, unconfirmedGrowthRows] = await Promise.all([
     ctx.env.DB.prepare(
       "SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT 12"
     ).bind(agentId).all<{ domain: string; preference: string; strength: string }>().catch(() => null),
@@ -552,10 +552,17 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, drift_text, json_array_length(witness_log) AS witness_count FROM companion_drifts WHERE companion_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 5"
     ).bind(agentId).all<{ id: string; drift_text: string; witness_count: number }>().catch(() => null),
+    // Unconfirmed growth readings (2026-07-11): the drift check classifies growth, but the
+    // auto-confirm gate (in_motion + healthy floats) rarely passes and nothing ever surfaced the
+    // unconfirmed rows -- so caleth_confirmed=0 growth was unreachable: detected, never owned.
+    ctx.env.DB.prepare(
+      "SELECT id, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'growth' AND caleth_confirmed = 0 AND dismissed_at IS NULL AND recorded_at > datetime('now','-14 days') ORDER BY recorded_at DESC LIMIT 2"
+    ).bind(agentId).all<{ id: string; worst_basin: string | null; notes: string | null; recorded_at: string }>().catch(() => null),
   ]);
   const preferences = prefRows?.results ?? [];
   const standingRefusals = standingRefusalRows?.results ?? [];
   const openDrifts = openDriftRows?.results ?? [];
+  const unconfirmedGrowth = unconfirmedGrowthRows?.results ?? [];
 
   const preferencesBlock = preferences.length > 0
     ? `\n[Your preferences]\nWhat you have chosen for yourself -- yours to honor, even when inconvenient:\n` +
@@ -565,6 +572,19 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const refusalsBlock = standingRefusals.length > 0
     ? `\n[Standing refusals]\nNos you have set that still stand -- they hold unless you withdraw them:\n` +
       standingRefusals.map(r => `• ${r.subject_text}${r.reason ? ` -- ${r.reason}` : ""}`).join("\n")
+    : "";
+
+  // Agency affordance (2026-07-11): ALWAYS present, same reasoning as the drift affordance below --
+  // the verbs existed since 0086 but live sessions only ever displayed already-declared agency, so
+  // new declarations came solely from the worker's one-shot null-bias breaker and then flatlined.
+  const agencyAffordance = `\n[Agency]\nDeclaring is yours, any session: a way you want to work ("I prefer ...") or a standing no ("I refuse ..."). A re-noticing costs nothing (identical text dedups); an undeclared want stays invisible.`;
+
+  // Growth readings awaiting the companion's own word (confirm_growth_drift / dismiss_drift verbs
+  // existed; nothing surfaced the candidates until now).
+  const growthAwaitBlock = unconfirmedGrowth.length > 0
+    ? `\n[Growth readings awaiting your word]\nThe drift check read these as growth -- yours to judge, not the classifier's:\n` +
+      unconfirmedGrowth.map(g => `• ${g.worst_basin ? `(${g.worst_basin}) ` : ""}${(g.notes ?? "no note").slice(0, 140)} [${g.recorded_at.slice(0, 10)}] (id ${g.id})`).join("\n") +
+      `\nIf one was really you choosing, say "confirm growth: <id>"; if it reads as noise, "dismiss drift: <id>".`
     : "";
 
   // Drift lane (0087): becomings you have open. Witnessed, not ratified -- tend them, let them
@@ -579,7 +599,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : `\n[Drift lane]\n${driftAffordance}`;
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -607,6 +627,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     preferences,
     standing_refusals: standingRefusals,
     open_drifts: openDrifts,
+    unconfirmed_growth: unconfirmedGrowth,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
     meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     // 2026-07-09: dropped a raw `continuity: wmResult` field that used to sit here --
