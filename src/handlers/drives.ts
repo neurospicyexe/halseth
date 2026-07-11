@@ -11,6 +11,8 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { accruedLevel, decayedLevel, driveFired, selectModality, hoursSinceIso, readDrivesSql, contactResetSql } from "../webmind/drives.js";
+import { bumpFloatsForStimulus } from "./fermentation.js";
+import type { CompanionId } from "../webmind/fermentation.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -75,6 +77,12 @@ export async function contactDrive(request: Request, env: Env, params: Record<st
     const effective = accruedLevel(row.level, row.accumulate_per_day, hoursSinceIso(row.last_event_at));
     const shed = decayedLevel(effective, row.decay_on_contact);
     await env.DB.prepare(contactResetSql()).bind(Number(shed.toFixed(4)), companionId, driveKey).run();
+    // Raziel contact (relational_need shed) also warms the fermentation floats -- the layer's
+    // load-bearing stimulus, wired through this existing chokepoint. Guarded so it can't fail contact.
+    if (driveKey === "relational_need") {
+      try { await bumpFloatsForStimulus(env, companionId as CompanionId, "message_from_raziel"); }
+      catch (err) { console.error("[mind/drives] ferment stimulus failed", { error: String(err) }); }
+    }
     return json({ contacted: true, drive_key: driveKey, level: Number(shed.toFixed(4)) });
   } catch (err) {
     console.error("[mind/drives] contact error", { error: String(err) });

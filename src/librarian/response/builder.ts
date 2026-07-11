@@ -9,6 +9,7 @@
 
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
+import { interoceptionLine, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
 import type { WmOrientResponse, WmJournalEntry, WmConclusion } from "../../webmind/types.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 
@@ -284,13 +285,26 @@ interface OrientPayload {
   emotional_frequency?: string | null;
 }
 
+// The fermented felt-sense line -- dominant internal state x companion register, rendered as ONE
+// line the model INHABITS (never a float readout). Prepended above the state readout at orient.
+// Empty until the floats are set (avoids a synthetic line on a fresh companion).
+function interoceptionPrefix(companionId: CompanionId, s: CompanionState | null | undefined): string {
+  const v1 = Number(s?.soma_float_1);
+  const v2 = Number(s?.soma_float_2);
+  const v3 = Number(s?.soma_float_3);
+  if (!Number.isFinite(v1) || !Number.isFinite(v2) || !Number.isFinite(v3)) return "";
+  return interoceptionLine(companionId as FermentCompanionId, { f1: v1, f2: v2, f3: v3 }) + "\n";
+}
+
 export function buildOrientPrompt(companionId: CompanionId, payload: OrientPayload): string {
   const s = payload.state;
   const motionTag = payload.last_motion_state ? ` -- resuming: ${payload.last_motion_state}` : "";
   const anchorTag = payload.last_anchor ? `, ${payload.last_anchor} live` : "";
   const frontTag = payload.front_state && payload.front_state !== "unknown" ? ` | front: ${payload.front_state}` : "";
   const freqTag = payload.emotional_frequency ? ` | tone: ${payload.emotional_frequency}` : "";
+  const intero = interoceptionPrefix(companionId, s);
 
+  const stateLine = ((): string => {
   switch (companionId) {
     case "drevan": {
       const heat = s?.heat ?? "idling";
@@ -330,6 +344,9 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
       return truncate(`here. ${reg}${motionTag}${frontTag}${freqTag}.`, "ready_prompt");
     }
   }
+  })();
+
+  return intero + stateLine;
 }
 
 interface CompanionState {

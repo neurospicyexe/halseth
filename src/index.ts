@@ -78,6 +78,7 @@ import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
+import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
 import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
 import { associateDreamsHandler } from "./handlers/dream-associate.js";
@@ -294,6 +295,11 @@ const router = new Router()
   // Drives (0078) -- need-based proactive contact (take 9)
   .on("GET",   "/mind/drives/:companion_id",         (request, env, params) => getDrives(request, env, params ?? {}))
   .on("PATCH", "/mind/drives/:companion_id/contact", (request, env, params) => contactDrive(request, env, params ?? {}))
+
+  // Fermentation layer (0101) -- state that ferments between sessions (decay + reactions + growth)
+  .on("POST",  "/mind/ferment/tick",                 (request, env)         => tickFermentation(request, env))
+  .on("POST",  "/mind/ferment/stimulus",             (request, env)         => postFermentStimulus(request, env))
+  .on("GET",   "/mind/ferment/:companion_id",        (request, env, params) => getFermentation(request, env, params ?? {}))
 
   // Creatures (0078) -- corvid + Raziel's animals as named presences (take 10)
   .on("POST",  "/mind/creatures/tick",               (request, env)         => tickCreatures(request, env))
@@ -573,6 +579,15 @@ export default {
       (async () => {
         try { await runHomeTick(env); }
         catch (err) { console.error("home tick failed", err); }
+      })(),
+    );
+
+    // The fermentation tick rides the existing cron too (decay + cross-field reactions +
+    // baseline drift). Guarded so a failure never breaks the synthesis queue.
+    ctx.waitUntil(
+      (async () => {
+        try { await runFermentTick(env); }
+        catch (err) { console.error("ferment tick failed", err); }
       })(),
     );
   },
