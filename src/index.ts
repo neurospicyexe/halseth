@@ -3,7 +3,7 @@ import { Router } from "./router";
 import { listCompanions, createCompanion, getCompanion } from "./handlers/companions";
 import { listMemories, createMemory, getMemory } from "./handlers/memory";
 import { listDeltas, appendDelta } from "./handlers/relational";
-import { bootstrapConfig, backfillEmbeddings, seedRoutingVectors } from "./handlers/admin";
+import { bootstrapConfig, backfillEmbeddings, seedRoutingVectors, reindexExisting } from "./handlers/admin";
 import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
@@ -139,6 +139,9 @@ const router = new Router()
   // Idempotent full rebuild (deterministic upsert from D1 truth). Alias of backfill.
   .on("POST", "/admin/rebuild-embeddings",    (request, env) => backfillEmbeddings(request, env))
   .on("POST", "/admin/seed-routing-vectors",  (request, env) => seedRoutingVectors(request, env))
+  // Zero-neuron reindex: re-upsert existing vectors so they index under metadata indexes
+  // created after they were first inserted (fixes filtered recall without spending neurons).
+  .on("POST", "/admin/reindex-existing",      (request, env) => reindexExisting(request, env))
 
   // Presence (dashboard feed)
   .on("GET", "/presence", (request, env) => getPresence(request, env))
