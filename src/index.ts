@@ -123,7 +123,10 @@ const router = new Router()
   .on("OPTIONS", "/oauth/token",     async (request) => handleOAuthCors(request))
   .on("GET",  "/.well-known/oauth-protected-resource",   async (request) => getOAuthProtectedResource(request))
   .on("GET",  "/.well-known/oauth-authorization-server", async (request) => getOAuthAuthServerMetadata(request))
-  .on("POST", "/oauth/register",  (request, env) => postOAuthRegister(request, env))
+  .on("POST", "/oauth/register",  async (request, env) => {
+    const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    return (await checkRateLimit(env.RATE_LIMITER, `oauth-register:${ip}`)) ?? postOAuthRegister(request, env);
+  })
   .on("GET",  "/oauth/authorize", (request, env) => getOAuthAuthorize(request, env))
   .on("POST", "/oauth/authorize", (request, env) => postOAuthAuthorize(request, env))
   .on("POST", "/oauth/token", async (request, env) => {
