@@ -39,19 +39,23 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+
 function makeEnv(store: Row[]): Env {
-  // no ADMIN_SECRET -> authGuard skips (local-dev path)
-  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) } } as unknown as Env;
+  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) }, ADMIN_SECRET } as unknown as Env;
 }
 
 function post(body: unknown): Request {
   return new Request("http://local/mind/commons", {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
 function get(qs: string): Request {
-  return new Request(`http://local/mind/commons${qs}`);
+  return new Request(`http://local/mind/commons${qs}`, {
+    headers: { Authorization: `Bearer ${ADMIN_SECRET}` },
+  });
 }
 
 describe("commons handlers", () => {

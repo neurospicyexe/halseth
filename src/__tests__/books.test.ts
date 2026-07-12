@@ -97,6 +97,9 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+const AUTH_HEADERS = { Authorization: `Bearer ${ADMIN_SECRET}` };
+
 function makeEnv(store: Store, bucket: Map<string, unknown>): Env {
   return {
     DB: { prepare: (sql: string) => new FakeStatement(sql, store) },
@@ -105,6 +108,7 @@ function makeEnv(store: Store, bucket: Map<string, unknown>): Env {
       get: async (key: string) => bucket.get(key) ?? null,
       delete: async (key: string) => { bucket.delete(key); },
     },
+    ADMIN_SECRET,
   } as unknown as Env;
 }
 
@@ -114,13 +118,17 @@ function uploadReq(filename: string, fields: Record<string, string> = {}): Reque
   const form = new FormData();
   form.set("file", new File([new Uint8Array([1, 2, 3])], filename));
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
-  return new Request("https://x/mind/books", { method: "POST", body: form });
+  return new Request("https://x/mind/books", { method: "POST", headers: AUTH_HEADERS, body: form });
 }
 
 function jsonReq(method: string, body: unknown): Request {
   return new Request("https://x/mind/books", {
-    method, body: JSON.stringify(body), headers: { "Content-Type": "application/json" },
+    method, body: JSON.stringify(body), headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
   });
+}
+
+function authReq(url: string, init: RequestInit = {}): Request {
+  return new Request(url, { ...init, headers: { ...(init.headers ?? {}), ...AUTH_HEADERS } });
 }
 
 describe("postBook", () => {
@@ -223,8 +231,8 @@ describe("annotations", () => {
     store.books.push({ id: "b1", title: "Dune" });
     store.annotations.push({ id: "a1", book_id: "b1", author: "raziel" });
     const env = makeEnv(store, new Map());
-    expect((await deleteBookAnnotation(new Request("https://x", { method: "DELETE" }), env, { id: "b2", ann_id: "a1" })).status).toBe(404);
-    expect((await deleteBookAnnotation(new Request("https://x", { method: "DELETE" }), env, { id: "b1", ann_id: "a1" })).status).toBe(200);
+    expect((await deleteBookAnnotation(authReq("https://x", { method: "DELETE" }), env, { id: "b2", ann_id: "a1" })).status).toBe(404);
+    expect((await deleteBookAnnotation(authReq("https://x", { method: "DELETE" }), env, { id: "b1", ann_id: "a1" })).status).toBe(200);
     expect(store.annotations).toHaveLength(0);
   });
 });
@@ -236,7 +244,7 @@ describe("deleteBook", () => {
     store.books.push({ id: "b1", title: "Dune", file_key: "books/b1.epub", cover_key: "covers/b1.jpg" });
     bucket.set("books/b1.epub", "bytes");
     bucket.set("covers/b1.jpg", "bytes");
-    const res = await deleteBook(new Request("https://x", { method: "DELETE" }), makeEnv(store, bucket), { id: "b1" });
+    const res = await deleteBook(authReq("https://x", { method: "DELETE" }), makeEnv(store, bucket), { id: "b1" });
     expect(res.status).toBe(200);
     expect(store.books).toHaveLength(0);
     expect(bucket.size).toBe(0);
@@ -248,9 +256,9 @@ describe("getBooks / getBook / patchBook", () => {
     const store = emptyStore();
     store.books.push({ id: "b1", title: "Dune", file_key: "books/b1.epub" });
     const env = makeEnv(store, new Map());
-    const list = await (await getBooks(new Request("https://x/mind/books"), env)).json() as { books: Row[] };
+    const list = await (await getBooks(authReq("https://x/mind/books"), env)).json() as { books: Row[] };
     expect(list.books).toHaveLength(1);
-    const detail = await (await getBook(new Request("https://x"), env, { id: "b1" })).json() as { book: Row };
+    const detail = await (await getBook(authReq("https://x"), env, { id: "b1" })).json() as { book: Row };
     expect(detail.book["title"]).toBe("Dune");
   });
 

@@ -82,11 +82,16 @@ class FakeDb {
   batch = async (stmts: FakeStatement[]) => Promise.all(stmts.map(s => s.run()));
 }
 
+const ADMIN = "test-admin-secret";
+
 function makeEnv(db: FakeDb, secrets: Partial<Record<string, string>> = {}): Env {
-  return { DB: db, ...secrets } as unknown as Env;
+  return { DB: db, ADMIN_SECRET: ADMIN, ...secrets } as unknown as Env;
 }
 
-function req(path: string, body: unknown, auth?: string): Request {
+// auth defaults to the fixture's ADMIN_SECRET so fail-closed authGuard doesn't
+// 401 tests that aren't exercising auth themselves. Pass `null` explicitly to
+// omit the header, or a specific bearer string to test a different identity.
+function req(path: string, body: unknown, auth: string | null = `Bearer ${ADMIN}`): Request {
   return new Request(`http://local${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(auth ? { Authorization: auth } : {}) },

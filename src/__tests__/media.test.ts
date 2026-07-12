@@ -41,16 +41,17 @@ class FakeStatement {
   async first(): Promise<Row | null> { return this.store[0] ?? null; }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+
 function makeEnv(store: Row[]): Env {
-  // no ADMIN_SECRET set -> authGuard skips (local-dev path)
-  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) } } as unknown as Env;
+  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) }, ADMIN_SECRET } as unknown as Env;
 }
 
 function req(method: string, body?: unknown): Request {
   return new Request("https://x/mind/media", {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
   });
 }
 
@@ -89,7 +90,9 @@ describe("getRecentMedia", () => {
       { id: "a", title: "Old", created_at: "2026-06-01 00:00:00", reactions_json: '{"cypher":"sharp"}' },
       { id: "b", title: "New", created_at: "2026-06-11 00:00:00", reactions_json: "{}" },
     ];
-    const res = await getRecentMedia(new Request("https://x/mind/media/recent?limit=5"), makeEnv(store));
+    const res = await getRecentMedia(new Request("https://x/mind/media/recent?limit=5", {
+      headers: { Authorization: `Bearer ${ADMIN_SECRET}` },
+    }), makeEnv(store));
     expect(res.status).toBe(200);
     const body = await res.json() as { experiences: Array<{ id: string; reactions: Record<string, string> }> };
     expect(body.experiences[0]!.id).toBe("b");

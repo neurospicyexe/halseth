@@ -43,6 +43,8 @@ class FakeStatement {
   async all(): Promise<{ results: Row[] }> { return { results: this.tableFor().slice() }; }
 }
 
+const ADMIN = "test-admin-secret";
+
 function makeEnv(overrides: Partial<Record<string, string>> = {}): { env: Env; tables: Record<string, Row[]> } {
   const tables: Record<string, Row[]> = {};
   const env = {
@@ -52,12 +54,16 @@ function makeEnv(overrides: Partial<Record<string, string>> = {}): { env: Env; t
     },
     COORDINATION_ENABLED: "true",
     SYSTEM_NAME: "test",
+    ADMIN_SECRET: ADMIN,
     ...overrides,
   } as unknown as Env;
   return { env, tables };
 }
 
-function req(path: string, body: unknown, auth?: string): Request {
+// auth defaults to the fixture's ADMIN_SECRET so fail-closed authGuard doesn't
+// 401 tests that aren't exercising auth themselves. Pass `null` explicitly to
+// omit the header (used by the dedicated auth-rejection tests below).
+function req(path: string, body: unknown, auth: string | null = `Bearer ${ADMIN}`): Request {
   return new Request(`http://local${path}`, {
     method: "POST",
     headers: {
@@ -105,7 +111,7 @@ describe("postTask", () => {
 
   it("401s without the bearer when ADMIN_SECRET is set", async () => {
     const { env } = makeEnv({ ADMIN_SECRET: "s3cret" });
-    const res = await postTask(req("/tasks", { title: "x" }), env);
+    const res = await postTask(req("/tasks", { title: "x" }, null), env);
     expect(res.status).toBe(401);
   });
 });

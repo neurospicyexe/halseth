@@ -90,12 +90,17 @@ class FakeStatement {
   }
 }
 
-function makeEnv(db: FakeDb): Env { return { DB: db } as unknown as Env; }
+const ADMIN_SECRET = "test-admin-secret";
+function makeEnv(db: FakeDb): Env { return { DB: db, ADMIN_SECRET } as unknown as Env; }
 function detectReq(body?: unknown): Request {
   return new Request("http://local/mind/motifs/detect", {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
     body: body ? JSON.stringify(body) : undefined,
   });
+}
+function getReq(url: string): Request {
+  return new Request(url, { headers: { Authorization: `Bearer ${ADMIN_SECRET}` } });
 }
 
 let db: FakeDb;
@@ -162,19 +167,19 @@ describe("getMotifs", () => {
   it("returns active motifs ranked by trust", async () => {
     db.motifs.set("cypher|a", { id: "1", companion_id: "cypher", label: "a", display: "a", recurrence_count: 2, trust: 0.4, first_seen: "x", last_seen: "x", last_surfaced_at: null, status: "active" });
     db.motifs.set("cypher|b", { id: "2", companion_id: "cypher", label: "b", display: "b", recurrence_count: 9, trust: 0.8, first_seen: "x", last_seen: "x", last_surfaced_at: null, status: "active" });
-    const res = await (await getMotifs(new Request("http://local/mind/motifs/cypher?status=active"), env, { companion_id: "cypher" })).json() as { motifs: MotifRow[] };
+    const res = await (await getMotifs(getReq("http://local/mind/motifs/cypher?status=active"), env, { companion_id: "cypher" })).json() as { motifs: MotifRow[] };
     expect(res.motifs.map(m => m.label)).toEqual(["b", "a"]);
   });
 
   it("surfaces high-trust faded motifs as resurrection candidates", async () => {
     db.motifs.set("cypher|old", { id: "1", companion_id: "cypher", label: "old", display: "old", recurrence_count: 7, trust: 0.85, first_seen: "2026-01-01 00:00:00", last_seen: "2026-03-01 00:00:00", last_surfaced_at: null, status: "faded" });
     db.motifs.set("cypher|weak", { id: "2", companion_id: "cypher", label: "weak", display: "weak", recurrence_count: 2, trust: 0.2, first_seen: "2026-01-01 00:00:00", last_seen: "2026-03-01 00:00:00", last_surfaced_at: null, status: "faded" });
-    const res = await (await getMotifs(new Request("http://local/mind/motifs/cypher?status=faded"), env, { companion_id: "cypher" })).json() as { resurrections: MotifRow[] };
+    const res = await (await getMotifs(getReq("http://local/mind/motifs/cypher?status=faded"), env, { companion_id: "cypher" })).json() as { resurrections: MotifRow[] };
     expect(res.resurrections.map(m => m.label)).toEqual(["old"]);
   });
 
   it("400s on an unknown companion", async () => {
-    const res = await getMotifs(new Request("http://local/mind/motifs/nobody"), env, { companion_id: "nobody" });
+    const res = await getMotifs(getReq("http://local/mind/motifs/nobody"), env, { companion_id: "nobody" });
     expect(res.status).toBe(400);
   });
 });
