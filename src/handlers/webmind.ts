@@ -988,7 +988,7 @@ export async function postMindSpiralRun(request: Request, env: Env): Promise<Res
     return json(run, 201);
   } catch (err) {
     console.error('[mind/spiral/run] error', String(err));
-    return json({ error: 'spiral run failed', detail: String(err) }, 500);
+    return json({ error: 'spiral run failed' }, 500);
   }
 }
 
