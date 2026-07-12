@@ -55,14 +55,13 @@ export async function processQueue(env: Env): Promise<void> {
   // wm_thread_events is a pure audit log -- orient/ground never read it.
   // synthesis_queue 'done' rows are spent after processing.
   // Both use cheap indexed deletes; failure here is non-fatal.
-  await env.DB.batch([
-    env.DB.prepare(
-      "DELETE FROM wm_thread_events WHERE created_at < datetime('now', '-90 days')"
-    ),
-    env.DB.prepare(
-      "DELETE FROM synthesis_queue WHERE status = 'done' AND processed_at < datetime('now', '-30 days')"
-    ),
-  ]).catch((e: unknown) => console.warn("[synthesis] TTL cleanup failed:", String(e)));
+  await env.DB.prepare(
+    "DELETE FROM wm_thread_events WHERE created_at < datetime('now', '-90 days')"
+  ).run().catch((e: unknown) => console.warn("[synthesis] TTL cleanup (thread events) failed:", String(e)));
+
+  await env.DB.prepare(
+    "DELETE FROM synthesis_queue WHERE status = 'done' AND processed_at < datetime('now', '-30 days')"
+  ).run().catch((e: unknown) => console.warn("[synthesis] TTL cleanup (synthesis queue) failed:", String(e)));
 
   if (!pending.results?.length) return;
 

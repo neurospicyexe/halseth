@@ -90,15 +90,14 @@ export async function promoteToCanon(
   env: Env, id: CompanionId, eventId: string, noteText: string,
 ): Promise<string> {
   const journalId = crypto.randomUUID();
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO growth_journal (id, companion_id, entry_type, content, source, review_status)
-       VALUES (?, ?, 'reflection', ?, ?, ?)`,
-    ).bind(journalId, id, noteText, "home", "pending"),
-    env.DB.prepare(
-      "UPDATE home_events SET growth_journal_id = ? WHERE id = ?",
-    ).bind(journalId, eventId),
-  ]);
+  await env.DB.prepare(
+    `INSERT INTO growth_journal (id, companion_id, entry_type, content, source, review_status)
+     VALUES (?, ?, 'reflection', ?, ?, ?)`,
+  ).bind(journalId, id, noteText, "home", "pending").run();
+
+  await env.DB.prepare(
+    "UPDATE home_events SET growth_journal_id = ? WHERE id = ?",
+  ).bind(journalId, eventId).run();
   return journalId;
 }
 

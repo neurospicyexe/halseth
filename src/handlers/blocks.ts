@@ -37,7 +37,9 @@ async function writeBatch(
        VALUES (?, ?, ?, ?, ?)`,
     ).bind(id, companionId, channelId, b.block_type, b.content);
   });
-  await env.DB.batch(stmts);
+  for (const stmt of stmts) {
+    await stmt.run();
+  }
 }
 
 const VALID_COMPANIONS = COMPANION_ID_SET;

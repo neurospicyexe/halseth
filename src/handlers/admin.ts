@@ -122,7 +122,9 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
     });
   }
 
-  await env.DB.batch(statements);
+  for (const stmt of statements) {
+    await stmt.run();
+  }
 
   return new Response(
     JSON.stringify({ seeded: statements.length, at: now }),
