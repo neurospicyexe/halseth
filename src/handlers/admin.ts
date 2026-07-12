@@ -276,6 +276,11 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
   const url = new URL(request.url);
   const table = url.searchParams.get("table");
   const verify = url.searchParams.get("verify") === "1";
+  // fill=1 (2026-07-11): embed rows whose vector is MISSING (costs neurons for those rows only).
+  // Rows written while the Workers AI allocation gate is closed lose their fire-and-forget embed
+  // silently (embedAndStore never throws) -- two bulk-burn outages left orphans across tables.
+  // Re-upserting can't heal absence; this targets exactly the diffed gap and nothing else.
+  const fill = url.searchParams.get("fill") === "1";
 
   // id-selecting SQL per table; vector id is `${table}:${id}` (mirrors backfill-embeddings).
   const ID_SQL: Record<string, string> = {
@@ -288,13 +293,25 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     cypher_audit:        "SELECT id FROM cypher_audit",
   };
 
+  // Text per row id, for fill mode. Same content shaping as backfill-embeddings' TABLES map,
+  // pushed into SQL so one query per table serves any missing-id set.
+  const TEXT_SQL: Record<string, string> = {
+    wm_continuity_notes: "SELECT note_id AS id, content AS text, agent_id AS companion FROM wm_continuity_notes",
+    companion_journal:   "SELECT id, note_text AS text, agent AS companion FROM companion_journal",
+    relational_deltas:   "SELECT id, delta_text AS text, agent AS companion FROM relational_deltas WHERE delta_text IS NOT NULL",
+    feelings:            "SELECT id, CASE WHEN sub_emotion IS NOT NULL THEN emotion || ' — ' || sub_emotion ELSE emotion END AS text, companion_id AS companion FROM feelings",
+    dreams:              "SELECT id, dream_text AS text, companion_id AS companion FROM companion_dreams",
+    living_wounds:       "SELECT id, name || ': ' || description AS text, 'gaia' AS companion FROM living_wounds",
+    cypher_audit:        "SELECT id, content AS text, 'cypher' AS companion FROM cypher_audit",
+  };
+
   const targets = table ? [table] : Object.keys(ID_SQL);
   // Cap at 200: each page does ceil(limit/20) getByIds + upserts; 200 -> ~20 subrequests, safely
   // under the free-tier 50/request limit. Larger pages risk exceeded-subrequest failures.
   const pageSize = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 200);
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "0", 10) || 0, 0);
 
-  const results: Record<string, { reindexed: number; missing: number }> = {};
+  const results: Record<string, { reindexed: number; missing: number; filled?: number }> = {};
   let scanned = 0;
   let hasMore = false;
   let verifyResult: unknown = undefined;
@@ -312,11 +329,18 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
 
     let reindexed = 0;
     let missing = 0;
+    const missingRowIds: string[] = [];
     const BATCH = 20;  // Vectorize getByIds caps at 20 ids/call (VECTOR_GET_ERROR 40007)
     for (let i = 0; i < ids.length; i += BATCH) {
       const slice = ids.slice(i, i + BATCH);
       const existing = await env.VECTORIZE.getByIds(slice);
       const found = existing.filter(v => v.values && (v.values as ArrayLike<number>).length > 0);
+      if (fill) {
+        const foundIds = new Set(found.map(v => v.id));
+        for (const id of slice) {
+          if (!foundIds.has(id)) missingRowIds.push(id.slice(t.length + 1)); // strip `${t}:` prefix
+        }
+      }
       missing += slice.length - found.length;
       if (found.length > 0) {
         // Re-upsert unchanged -- the write is what gets it indexed under the new metadata index.
@@ -325,6 +349,22 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
       }
     }
     results[t] = { reindexed, missing };
+
+    if (fill && missingRowIds.length > 0) {
+      const placeholders = missingRowIds.map(() => "?").join(", ");
+      const rowsToEmbed = await env.DB.prepare(
+        `SELECT * FROM (${TEXT_SQL[t]}) WHERE id IN (${placeholders})`
+      ).bind(...missingRowIds).all<{ id: string; text: string | null; companion: string | null }>();
+      const items = (rowsToEmbed.results ?? [])
+        .filter(r => typeof r.text === "string" && r.text.length > 0)
+        .map(r => ({ text: r.text as string, table: t, rowId: String(r.id), companionId: r.companion ?? "" }));
+      let filled = 0;
+      const EMBED_BATCH = 50;
+      for (let i = 0; i < items.length; i += EMBED_BATCH) {
+        filled += await embedAndStoreBatch(env, items.slice(i, i + EMBED_BATCH));
+      }
+      results[t].filled = filled;
+    }
 
     // Zero-neuron proof the metadata filter now matches: query with a reindexed vector's OWN
     // values (no embedding) + the recall filter, and expect that same id back.
@@ -421,4 +461,40 @@ export async function seedRoutingVectors(request: Request, env: Env): Promise<Re
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/**
+ * Diagnostic: report exactly what env.AI.run returns (or throws) inside THIS deployed
+ * script. Added 2026-07-11 while isolating the "4006 quota spent with zero dashboard
+ * neurons" failure: REST calls and a fresh scratch worker on the same account embed
+ * fine, only halseth's binding fails -- this endpoint captures the raw shape/error.
+ */
+export async function debugAi(request: Request, env: Env): Promise<Response> {
+  if (!env.ADMIN_SECRET) return new Response("Service not configured: ADMIN_SECRET required", { status: 503 });
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!safeEqual(auth, `Bearer ${env.ADMIN_SECRET}`)) return new Response("Unauthorized", { status: 401 });
+
+  const report: Record<string, unknown> = { binding_present: Boolean(env.AI) };
+  try {
+    const res = await env.AI.run(EMBEDDING_MODEL, { text: ["halseth debug probe"] }) as Record<string, unknown>;
+    const data = res?.data as unknown[] | undefined;
+    report.run = {
+      ok: true,
+      keys: res ? Object.keys(res) : null,
+      data_type: Array.isArray(data) ? `array[${data.length}]` : typeof data,
+      first_len: Array.isArray(data) && Array.isArray(data[0]) ? (data[0] as unknown[]).length : null,
+      usage: res?.usage ?? null,
+    };
+  } catch (e) {
+    const err = e as Error & { code?: unknown; cause?: unknown };
+    report.run = {
+      ok: false,
+      name: err?.name,
+      message: String(e),
+      code: err?.code ?? null,
+      cause: err?.cause ? String(err.cause) : null,
+      own_props: err && typeof err === "object" ? JSON.stringify(Object.fromEntries(Object.entries(err))) : null,
+    };
+  }
+  return new Response(JSON.stringify(report), { status: 200, headers: { "Content-Type": "application/json" } });
 }
