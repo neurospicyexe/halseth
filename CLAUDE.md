@@ -150,7 +150,7 @@ Orient augmentation: `session_orient` now returns SOMA state + continuity block 
 
 ## Authentication Pattern
 
-All endpoints check `ADMIN_SECRET` via Bearer token. The pattern `if (!env.ADMIN_SECRET) return null` means auth is **skipped if the secret is unset** -- acceptable for local dev, but ensure both `ADMIN_SECRET` and `MCP_AUTH_SECRET` are set in production.
+All endpoints check `ADMIN_SECRET` via Bearer token. Auth **fails closed** (2026-07-12 hardening): if `ADMIN_SECRET` or `MCP_AUTH_SECRET` is unset, every request is denied (401) rather than allowed through. Both must be set for the worker to serve any authenticated request at all, in every environment including local dev.
 
 ## Security
 
