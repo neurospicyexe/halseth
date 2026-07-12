@@ -55,12 +55,12 @@ export async function upsertThread(
     status !== "open" ? now : null, now,
   );
 
-  let event: WmThreadEvent | null = null;
-  const stmts: Parameters<typeof env.DB.batch>[0] = [threadStmt];
+  await threadStmt.run();
 
+  let event: WmThreadEvent | null = null;
   if (input.event_type) {
     const eventId = generateId();
-    const eventStmt = env.DB.prepare(`
+    await env.DB.prepare(`
       INSERT INTO wm_thread_events (event_id, thread_key, agent_id, event_type, content, actor, source, correlation_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
@@ -68,8 +68,8 @@ export async function upsertThread(
       input.event_type, input.event_content ?? null,
       input.actor ?? "agent", input.source ?? "system",
       input.correlation_id ?? null, now,
-    );
-    stmts.push(eventStmt);
+    ).run();
+
     event = {
       event_id: eventId,
       thread_key: input.thread_key,
@@ -82,8 +82,6 @@ export async function upsertThread(
       created_at: now,
     };
   }
-
-  await env.DB.batch(stmts);
 
   const thread = await env.DB.prepare(
     "SELECT * FROM wm_mind_threads WHERE thread_key = ? AND agent_id = ?"

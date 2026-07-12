@@ -16,15 +16,14 @@ export async function sitNote(
   const id = generateId();
   const now = new Date().toISOString();
 
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE companion_journal SET processing_status = 'sitting' WHERE id = ?`,
-    ).bind(input.note_id),
-    env.DB.prepare(
-      `INSERT INTO companion_journal_sits (id, note_id, companion_id, sit_text, sat_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).bind(id, input.note_id, input.companion_id, input.sit_text ?? null, now),
-  ]);
+  await env.DB.prepare(
+    `UPDATE companion_journal SET processing_status = 'sitting' WHERE id = ?`,
+  ).bind(input.note_id).run();
+
+  await env.DB.prepare(
+    `INSERT INTO companion_journal_sits (id, note_id, companion_id, sit_text, sat_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).bind(id, input.note_id, input.companion_id, input.sit_text ?? null, now).run();
 
   return { id, sat_at: now };
 }

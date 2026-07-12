@@ -94,7 +94,9 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
     );
   }
 
-  await env.DB.batch(stmts);
+  for (const stmt of stmts) {
+    await stmt.run();
+  }
 
   return json({ id: newId, created_at: now, superseded: supersedesId ?? null });
 }

@@ -167,7 +167,9 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     ).bind(input.prior_handover_id));
   }
   if (stmts.length > 0) {
-    await env.DB.batch(stmts);
+    for (const stmt of stmts) {
+      await stmt.run();
+    }
     if (!skipInsert) {
       const check = await env.DB.prepare("SELECT id FROM sessions WHERE id = ?").bind(sessionId).first<{ id: string }>();
       if (!check) throw new Error(`session INSERT did not persist (companion: ${input.companion_id ?? "none"}, id: ${sessionId})`);
@@ -326,7 +328,9 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   }
 
   if (sessionStatements.length > 0) {
-    await env.DB.batch(sessionStatements);
+    for (const stmt of sessionStatements) {
+      await stmt.run();
+    }
     if (!skipInsert) {
       const check = await env.DB.prepare("SELECT id FROM sessions WHERE id = ?").bind(sessionId).first<{ id: string }>();
       if (!check) throw new Error(`session INSERT did not persist (companion: ${input.companion_id ?? "none"}, id: ${sessionId})`);

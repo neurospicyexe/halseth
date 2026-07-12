@@ -126,15 +126,14 @@ export async function logFrontEvent(
 ): Promise<string> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE front_events SET ended_at = ? WHERE member_id = ? AND ended_at IS NULL`
-    ).bind(now, memberId),
-    env.DB.prepare(
-      `INSERT INTO front_events (id, member_id, status, custom_status, session_id, started_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(id, memberId, status, customStatus, sessionId, now),
-  ]);
+  await env.DB.prepare(
+    `UPDATE front_events SET ended_at = ? WHERE member_id = ? AND ended_at IS NULL`
+  ).bind(now, memberId).run();
+
+  await env.DB.prepare(
+    `INSERT INTO front_events (id, member_id, status, custom_status, session_id, started_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(id, memberId, status, customStatus, sessionId, now).run();
   return id;
 }
 

@@ -365,7 +365,9 @@ export async function sessionClose(env: Env, params: {
     }
   }
 
-  await env.DB.batch(stmts);
+  for (const stmt of stmts) {
+    await stmt.run();
+  }
 
   // Enqueue synthesis jobs (non-blocking, mirrors MCP session_close behavior).
   // Failures are surfaced in the result (never swallowed): a dropped enqueue

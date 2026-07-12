@@ -47,27 +47,26 @@ export async function postStmEntry(request: Request, env: Env): Promise<Response
   const id = generateId();
   const now = new Date().toISOString();
 
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO stm_entries (id, companion_id, channel_id, role, content, author_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).bind(
-      id, companion_id, channel_id, role,
-      content.slice(0, STM_CONTENT_MAX),
-      typeof author_name === "string" ? author_name : null,
-      now,
-    ),
-    // Prune: keep last N per companion+channel
-    env.DB.prepare(`
-      DELETE FROM stm_entries
-      WHERE companion_id = ? AND channel_id = ?
-        AND id NOT IN (
-          SELECT id FROM stm_entries
-          WHERE companion_id = ? AND channel_id = ?
-          ORDER BY created_at DESC
-          LIMIT ?
-        )
-    `).bind(companion_id, channel_id, companion_id, channel_id, STM_PRUNE_LIMIT),
-  ]);
+  await env.DB.prepare(
+    "INSERT INTO stm_entries (id, companion_id, channel_id, role, content, author_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(
+    id, companion_id, channel_id, role,
+    content.slice(0, STM_CONTENT_MAX),
+    typeof author_name === "string" ? author_name : null,
+    now,
+  ).run();
+
+  // Prune: keep last N per companion+channel
+  await env.DB.prepare(`
+    DELETE FROM stm_entries
+    WHERE companion_id = ? AND channel_id = ?
+      AND id NOT IN (
+        SELECT id FROM stm_entries
+        WHERE companion_id = ? AND channel_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      )
+  `).bind(companion_id, channel_id, companion_id, channel_id, STM_PRUNE_LIMIT).run();
 
   return new Response(JSON.stringify({ ok: true, id }), {
     headers: { "Content-Type": "application/json" },

@@ -37,10 +37,12 @@ export async function performTend(
   note: string | null,
 ): Promise<TendOutcome> {
   const interactionId = crypto.randomUUID().replace(/-/g, "");
-  await db.batch([
-    db.prepare(insertInteractionSql()).bind(interactionId, creature.id, actor, action, note),
-    db.prepare(interactBumpSql()).bind(trustDelta(action), actionMood(action), creature.id),
-  ]);
+  await db.prepare(insertInteractionSql())
+    .bind(interactionId, creature.id, actor, action, note)
+    .run();
+  await db.prepare(interactBumpSql())
+    .bind(trustDelta(action), actionMood(action), creature.id)
+    .run();
   const updated = await db.prepare("SELECT trust, state_json FROM creatures WHERE id = ?").bind(creature.id)
     .first<{ trust: number; state_json: string | null }>();
 

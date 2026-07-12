@@ -74,7 +74,9 @@ export function registerSessionTools(server: McpServer, env: Env): void {
         );
       }
 
-      await env.DB.batch(statements);
+      for (const stmt of statements) {
+        await stmt.run();
+      }
 
       return {
         content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }],
@@ -116,33 +118,32 @@ export function registerSessionTools(server: McpServer, env: Env): void {
         "SELECT companion_id FROM sessions WHERE id = ?"
       ).bind(input.session_id).first<{ companion_id: string | null }>();
 
-      await env.DB.batch([
-        env.DB.prepare(`
-          INSERT INTO handover_packets
-            (id, session_id, created_at, spine, active_anchor, last_real_thing, open_threads, motion_state, returned)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
-        `).bind(
-          handoverId,
-          input.session_id,
-          now,
-          input.spine,
-          input.active_anchor ?? null,
-          input.last_real_thing,
-          input.open_threads ? JSON.stringify(input.open_threads) : null,
-          input.motion_state,
-        ),
-        env.DB.prepare(`
-          UPDATE sessions
-          SET updated_at = ?, spiral_complete = ?, notes = ?, handover_id = ?
-          WHERE id = ?
-        `).bind(
-          now,
-          input.spiral_complete ? 1 : 0,
-          input.notes ?? null,
-          handoverId,
-          input.session_id,
-        ),
-      ]);
+      await env.DB.prepare(`
+        INSERT INTO handover_packets
+          (id, session_id, created_at, spine, active_anchor, last_real_thing, open_threads, motion_state, returned)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      `).bind(
+        handoverId,
+        input.session_id,
+        now,
+        input.spine,
+        input.active_anchor ?? null,
+        input.last_real_thing,
+        input.open_threads ? JSON.stringify(input.open_threads) : null,
+        input.motion_state,
+      ).run();
+
+      await env.DB.prepare(`
+        UPDATE sessions
+        SET updated_at = ?, spiral_complete = ?, notes = ?, handover_id = ?
+        WHERE id = ?
+      `).bind(
+        now,
+        input.spiral_complete ? 1 : 0,
+        input.notes ?? null,
+        handoverId,
+        input.session_id,
+      ).run();
 
       // Enqueue synthesis -- non-blocking, processed by scheduled cron.
       // Failures are surfaced in the response (never swallowed): a dropped

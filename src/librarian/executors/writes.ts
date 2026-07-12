@@ -568,7 +568,9 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
   }
-  await ctx.env.DB.batch(stmts);
+  for (const stmt of stmts) {
+    await stmt.run();
+  }
   return { ack: true, id: newId, created_at: now, superseded: !!supersedes };
 }
 
