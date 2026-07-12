@@ -525,6 +525,7 @@ const PUBLIC_PATHS = new Set([
   "/oauth/token",
   "/presence",
   "/librarian/mcp",  // has its own auth gate that accepts OAuth tokens
+  "/mcp",            // has its own auth gate that accepts OAuth tokens
   // Bridge does its own auth (checkBridgeAuth: admin tier OR symmetric
   // BRIDGE_SECRET). Without this exemption the global authGuard 401s a partner
   // deployment that only holds BRIDGE_SECRET before the handler ever runs.
