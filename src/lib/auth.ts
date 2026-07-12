@@ -78,7 +78,7 @@ export function identifyCallerCompanion(request: Request, env: Env): AuthIdentit
  */
 export function authGuard(request: Request, env: Env): Response | null {
   if (!env.ADMIN_SECRET) {
-    return null;
+    return new Response("Unauthorized", { status: 401 });
   }
   const auth = request.headers.get("Authorization") ?? "";
 

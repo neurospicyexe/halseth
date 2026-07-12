@@ -26,9 +26,11 @@ function makeRequest(authHeader?: string): Request {
 }
 
 describe("authGuard", () => {
-  it("returns null (allow) when ADMIN_SECRET is unset", () => {
+  it("returns 401 (deny) when ADMIN_SECRET is unset", () => {
     const env = { ADMIN_SECRET: undefined } as any;
-    expect(authGuard(makeRequest(), env)).toBeNull();
+    const result = authGuard(makeRequest(), env);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe(401);
   });
 
   it("returns null on valid ADMIN_SECRET", () => {
