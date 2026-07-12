@@ -54,19 +54,25 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+
 function makeEnv(store: Row[]): Env {
   return {
-    // no ADMIN_SECRET set -> authGuard skips (local-dev path), which is what we want here
     DB: { prepare: (sql: string) => new FakeStatement(sql, store) },
+    ADMIN_SECRET,
   } as unknown as Env;
 }
 
 function req(method: string, body?: unknown): Request {
   return new Request("http://local/mind/forage", {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
     body: body ? JSON.stringify(body) : undefined,
   });
+}
+
+function getReq(url: string): Request {
+  return new Request(url, { headers: { Authorization: `Bearer ${ADMIN_SECRET}` } });
 }
 
 describe("forage handlers", () => {
@@ -110,14 +116,14 @@ describe("forage handlers", () => {
     await postForageFind(req("POST", { companion_id: "cypher", domain: "d1", title: "own", summary: "s" }), env);
     await postForageFind(req("POST", { companion_id: null, domain: "d2", title: "shared", summary: "s" }), env);
     await postForageFind(req("POST", { companion_id: "gaia", domain: "d3", title: "foreign", summary: "s" }), env);
-    const res = await getForageFinds(new Request("http://local/mind/forage/cypher"), env, { companion_id: "cypher" });
+    const res = await getForageFinds(getReq("http://local/mind/forage/cypher"), env, { companion_id: "cypher" });
     expect(res.status).toBe(200);
     const data = await res.json() as { finds: Array<{ title: string }> };
     expect(data.finds.map(f => f.title).sort()).toEqual(["own", "shared"]);
   });
 
   it("GET rejects unknown companion", async () => {
-    const res = await getForageFinds(new Request("http://local/mind/forage/raz"), env, { companion_id: "raz" });
+    const res = await getForageFinds(getReq("http://local/mind/forage/raz"), env, { companion_id: "raz" });
     expect(res.status).toBe(400);
   });
 

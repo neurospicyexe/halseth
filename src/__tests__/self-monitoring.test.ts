@@ -98,15 +98,17 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+const AUTH_HEADERS = { Authorization: `Bearer ${ADMIN_SECRET}` };
+
 function makeEnv(stores: { triggers: Row[]; selfModel: Row[]; voiceScores: Row[] }): Env {
-  // no ADMIN_SECRET -> authGuard skips (local-dev path)
-  return { DB: { prepare: (sql: string) => new FakeStatement(sql, stores) } } as unknown as Env;
+  return { DB: { prepare: (sql: string) => new FakeStatement(sql, stores) }, ADMIN_SECRET } as unknown as Env;
 }
 
 function req(body?: unknown): Request {
   return new Request("http://local/mind/x", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
@@ -144,7 +146,7 @@ describe("prospective triggers", () => {
     await postTrigger(req({ companion_id: "drevan", trigger_text: "rome", condition_type: "keyword", condition_value: "rome" }), env);
     const id = stores.triggers[0]!["id"] as string;
     const res = await patchTrigger(
-      new Request("http://local/mind/triggers/" + id, { method: "PATCH", body: JSON.stringify({ status: "fired", fire_note: "matched in #general" }) }),
+      new Request("http://local/mind/triggers/" + id, { method: "PATCH", headers: AUTH_HEADERS, body: JSON.stringify({ status: "fired", fire_note: "matched in #general" }) }),
       env, { id },
     );
     expect(res.status).toBe(200);
@@ -154,7 +156,7 @@ describe("prospective triggers", () => {
 
   it("GET returns a triggers envelope", async () => {
     await postTrigger(req({ companion_id: "cypher", trigger_text: "t", condition_type: "keyword", condition_value: "k" }), env);
-    const res = await getTriggers(new Request("http://local/mind/triggers/cypher"), env, { companion_id: "cypher" });
+    const res = await getTriggers(new Request("http://local/mind/triggers/cypher", { headers: AUTH_HEADERS }), env, { companion_id: "cypher" });
     const data = (await res.json()) as { triggers: unknown[] };
     expect(Array.isArray(data.triggers)).toBe(true);
     expect(data.triggers).toHaveLength(1);
@@ -168,7 +170,7 @@ describe("self-model confidence ladder", () => {
   }
   function patch(id: string, action: string) {
     return patchSelfModel(
-      new Request("http://local/mind/self-model/" + id, { method: "PATCH", body: JSON.stringify({ action }) }),
+      new Request("http://local/mind/self-model/" + id, { method: "PATCH", headers: AUTH_HEADERS, body: JSON.stringify({ action }) }),
       env, { id },
     );
   }

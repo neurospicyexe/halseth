@@ -127,8 +127,11 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+const AUTH_HEADERS = { Authorization: `Bearer ${ADMIN_SECRET}` };
+
 function makeEnv(store: Store): Env {
-  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) } } as unknown as Env;
+  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) }, ADMIN_SECRET } as unknown as Env;
 }
 
 function emptyStore(): Store { return { rounds: [], recs: [], votes: [], discussions: [], abstentions: [] }; }
@@ -137,7 +140,7 @@ function req(method: string, body?: unknown): Request {
   return new Request("https://x/mind/club", {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...AUTH_HEADERS },
   });
 }
 
@@ -327,7 +330,7 @@ describe("postClubDiscuss", () => {
 
 describe("getClubCurrent", () => {
   it("returns null round when none open", async () => {
-    const res = await getClubCurrent(new Request("https://x/mind/club/current"), makeEnv(emptyStore()));
+    const res = await getClubCurrent(new Request("https://x/mind/club/current", { headers: AUTH_HEADERS }), makeEnv(emptyStore()));
     const body = await res.json() as { round: unknown };
     expect(body.round).toBeNull();
   });
@@ -337,7 +340,7 @@ describe("getClubCurrent", () => {
     store.rounds.push({ id: "r1", status: "voting", opened_at: "2026-06-11" });
     store.recs.push({ id: "rec1", round_id: "r1", title: "A", recommended_by: "cypher", created_at: "2026-06-11" });
     store.votes.push({ round_id: "r1", recommendation_id: "rec1", voter: "gaia", reason: "yes", created_at: "2026-06-11" });
-    const res = await getClubCurrent(new Request("https://x/mind/club/current"), makeEnv(store));
+    const res = await getClubCurrent(new Request("https://x/mind/club/current", { headers: AUTH_HEADERS }), makeEnv(store));
     const body = await res.json() as { round: { id: string }; recommendations: unknown[]; votes: unknown[] };
     expect(body.round.id).toBe("r1");
     expect(body.recommendations).toHaveLength(1);
@@ -350,7 +353,7 @@ describe("getClubRounds", () => {
     const store = emptyStore();
     store.rounds.push({ id: "r1", status: "closed", opened_at: "2026-06-01", winning_recommendation_id: "rec1" });
     store.recs.push({ id: "rec1", round_id: "r1", title: "Winner", recommended_by: "drevan", created_at: "2026-06-01" });
-    const res = await getClubRounds(new Request("https://x/mind/club/rounds?limit=5"), makeEnv(store));
+    const res = await getClubRounds(new Request("https://x/mind/club/rounds?limit=5", { headers: AUTH_HEADERS }), makeEnv(store));
     const body = await res.json() as { rounds: Array<{ id: string; winner_title: string | null }> };
     expect(body.rounds).toHaveLength(1);
     expect(body.rounds[0]!.winner_title).toBe("Winner");

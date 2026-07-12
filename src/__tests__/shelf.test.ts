@@ -33,11 +33,17 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+
 function makeEnv(store: Row[]): Env {
-  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) } } as unknown as Env;
+  return { DB: { prepare: (sql: string) => new FakeStatement(sql, store) }, ADMIN_SECRET } as unknown as Env;
 }
 function req(method: string, body?: unknown, url = "http://local/mind/shelf"): Request {
-  return new Request(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  return new Request(url, {
+    method,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
 }
 
 describe("obsession shelf handlers", () => {

@@ -113,15 +113,16 @@ class FakeStatement {
   }
 }
 
+const ADMIN_SECRET = "test-admin-secret";
+
 function makeEnv(db: FakeDb): Env {
-  // no ADMIN_SECRET -> authGuard skips (local-dev path)
-  return { DB: db } as unknown as Env;
+  return { DB: db, ADMIN_SECRET } as unknown as Env;
 }
 
 function postReq(body?: unknown): Request {
   return new Request("http://local/mind/guardian/run", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
     body: body ? JSON.stringify(body) : undefined,
   });
 }
@@ -391,7 +392,7 @@ describe("flag lifecycle", () => {
   function patchReq(body: unknown): Request {
     return new Request("http://local/mind/guardian/flags/x", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ADMIN_SECRET}` },
       body: JSON.stringify(body),
     });
   }
@@ -413,7 +414,9 @@ describe("flag lifecycle", () => {
       { id: "gf_1", dedup_key: "a", status: "open", severity: "notice", summary: "s" },
       { id: "gf_2", dedup_key: "b", status: "resolved", severity: "notice", summary: "s" },
     );
-    const res = await (await getGuardianFlags(new Request("http://local/mind/guardian/flags?status=live"), env)).json() as { flags: Row[] };
+    const res = await (await getGuardianFlags(new Request("http://local/mind/guardian/flags?status=live", {
+      headers: { Authorization: `Bearer ${ADMIN_SECRET}` },
+    }), env)).json() as { flags: Row[] };
     expect(res.flags).toHaveLength(1);
     expect(res.flags[0]!["id"]).toBe("gf_1");
   });
