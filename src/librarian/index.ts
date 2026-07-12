@@ -6,7 +6,7 @@
 // carry this admin token as HALSETH_SECRET; omitting ADMIN_SECRET here silently 401'd
 // the autonomous bridge/NL pollers (bug found 2026-06-27 after varlock rotation).
 // A valid per-companion secret (CYPHER/DREVAN/GAIA_MCP_SECRET) is also accepted.
-// If no shared admin secret AND no per-companion secret is configured, endpoint is open.
+// Fail-closed: if no secret is configured at all, every request is rejected with 401.
 
 import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
@@ -54,11 +54,6 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
   if (hasPerCompanionSecrets) {
     authenticatedCompanionId = resolveCompanionFromToken(auth, env);
     if (authenticatedCompanionId) isAuthorized = true;
-  }
-  // If neither a shared admin secret nor a per-companion secret is configured, the
-  // endpoint is open (lean-phase parity with /mcp).
-  if (sharedAdminSecrets.length === 0 && !hasPerCompanionSecrets) {
-    isAuthorized = true;
   }
 
   if (!isAuthorized) {

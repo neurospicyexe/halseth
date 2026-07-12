@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { toReqRes, toFetchResponse } from "fetch-to-node";
 import { Env } from "../types.js";
-import { hashToken } from "../lib/auth.js";
+import { hashToken, safeEqual } from "../lib/auth.js";
 import { registerSessionTools } from "./tools/session.js";
 import { registerMemoryTools } from "./tools/memory.js";
 import { registerCoordinationTools } from "./tools/coordination.js";
@@ -16,16 +16,15 @@ import { registerHouseTools } from "./tools/house.js";
 import { registerCompanionStateTools } from "./tools/companion_state.js";
 import { registerSessionLoadTools } from "./tools/session_load.js";
 
-async function isAuthorized(request: Request, env: Env): Promise<boolean> {
-  // No secret set = local dev, allow all.
-  if (!env.MCP_AUTH_SECRET) return true;
+export async function isAuthorized(request: Request, env: Env): Promise<boolean> {
+  if (!env.MCP_AUTH_SECRET) return false;
 
   const auth = request.headers.get("Authorization") ?? "";
   if (!auth.startsWith("Bearer ")) return false;
   const token = auth.slice(7);
 
   // Static secret — Claude Desktop / direct use.
-  if (token === env.MCP_AUTH_SECRET) return true;
+  if (safeEqual(token, env.MCP_AUTH_SECRET)) return true;
 
   // OAuth-issued token — claude.ai web / Claude iOS. Reject expired tokens.
   const tokenHash = await hashToken(token);

@@ -48,10 +48,10 @@ describe("POST /librarian auth gate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("is open when neither shared admin nor per-companion secret is configured", async () => {
+  it("rejects with 401 when neither shared admin nor per-companion secret is configured", async () => {
     const env = {} as any;
     const res = await handleLibrarian(req("anything"), env);
-    expect(res.status).toBe(400); // open -> reached body validation
+    expect(res.status).toBe(401);
   });
 
   it("still accepts ADMIN_SECRET even if MCP_AUTH_SECRET is unset", async () => {
