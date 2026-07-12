@@ -233,7 +233,7 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
         // batch error meant this endpoint returned 200 {"backfilled": 0} -- a rebuild reporting
         // success while doing nothing, which is how a stale index hides. (2026-07-09)
         console.error("[backfill] batch embed failed", { table: t, offset: offset + i, err: String(err) });
-        errors.push({ table: t, offset: offset + i, error: String(err).slice(0, 300) });
+        errors.push({ table: t, offset: offset + i, error: "batch embed failed — see server logs" });
       }
     }
     results[t] = count;
