@@ -70,7 +70,7 @@ export function identifyCallerCompanion(request: Request, env: Env): AuthIdentit
  *   - CYPHER_MCP_SECRET      (companion tier; new in C.2a, no enforcement yet)
  *   - GAIA_MCP_SECRET        (companion tier; new in C.2a, no enforcement yet)
  *
- * If ADMIN_SECRET is unset, auth is skipped entirely (local dev convenience).
+ * If ADMIN_SECRET is unset, auth fails closed (denies all requests).
  *
  * NOT extended for admin-tier endpoints (admin.ts, oauth.ts) -- those keep
  * their inline ADMIN_SECRET-only checks. A leaked companion token must NOT
