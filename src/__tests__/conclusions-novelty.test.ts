@@ -100,6 +100,7 @@ describe("postConclusion -- novelty gate", () => {
     const body = await res.json() as any;
     expect(typeof body.id).toBe("string");
     expect(body.novelty).toMatchObject({ action: "supersede", match_id: "oldrow456", score: 0.90 });
+    expect(body.superseded).toBe("oldrow456"); // gate-driven supersede populates the top-level field too
     expect(insertCalls(captured)).toBe(1);
 
     const updateBind = supersedeUpdateFor(captured, "oldrow456");

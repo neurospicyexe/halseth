@@ -140,7 +140,9 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   return json({
     id: newId,
     created_at: now,
-    superseded: supersedesId ?? null,
+    // Caller-declared `supersedes` wins the display slot when both fire (rare: the gate
+    // matched the same row the caller already named); otherwise surface whichever one did.
+    superseded: supersedesId ?? (decision.action === "supersede" ? decision.matchRowId : null),
     novelty: decision.action === "supersede"
       ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
       : { action: "insert" },

@@ -614,7 +614,9 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     ack: true,
     id: newId,
     created_at: now,
-    superseded: !!supersedes,
+    // Caller-declared `supersedes` and the gate's own supersede decision are both
+    // reflected here -- either one firing means this conclusion superseded a prior belief.
+    superseded: !!supersedes || decision.action === "supersede",
     novelty: decision.action === "supersede"
       ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
       : { action: "insert" },
