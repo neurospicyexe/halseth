@@ -283,6 +283,8 @@ export interface WmOrientResponse {
   raziel_witness_entries: WmRelationalState[];  // recent witness observations about Raziel (not ROW_NUMBER collapsed)
   active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs, type-distributed
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
+  open_loops: WmOrientOpenLoop[];               // open loops (things carried from sessions, not yet resolved)
+  open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)
   soma_arc?: {
     note_id: string;
     content: string;
@@ -373,6 +375,22 @@ export interface WmBasinHistoryRow {
   drift_type: string;
   worst_basin: string | null;
   recorded_at: string;
+}
+
+// ── Orient Response Specializations ────────────────────────────────────────
+
+export interface WmOrientOpenLoop {
+  id: string;
+  loop_text: string;
+  weight: number;
+  opened_at: string;
+}
+
+export interface WmOrientOpenQuestion {
+  id: string;
+  question: string;
+  context: string | null;
+  created_at: string;
 }
 
 export interface WmGroundResponse {

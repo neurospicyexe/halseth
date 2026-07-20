@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, HomeEvent, CompanionId } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
@@ -51,7 +51,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, openLoopsRes, openQuestionsRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -144,6 +144,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT current_room, spoon_count, love_meter, companion_mood, companion_activity, updated_at FROM house_state LIMIT 1"
     ).first<WmHouseState>(),
+    // Open loops: unresolved things with weight (thinking quality fix)
+    env.DB.prepare(
+      "SELECT id, loop_text, weight, opened_at FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
+    ).bind(agentId).all<WmOrientOpenLoop>(),
+    // Open questions: queries awaiting synthesis/investigation (thinking quality fix)
+    env.DB.prepare(
+      "SELECT id, question, context, created_at FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<WmOrientOpenQuestion>(),
   ]);
 
   // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
@@ -255,6 +263,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     raziel_witness_entries: razielWitnessEntries.results ?? [],
     active_conclusions,
     flagged_beliefs,
+    open_loops: (openLoopsRes.results ?? []),
+    open_questions: (openQuestionsRes.results ?? []),
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
     recent_spiral_turn: recentSpiralTurnRow ?? null,
     latest_biometrics: latestBiometrics ?? null,

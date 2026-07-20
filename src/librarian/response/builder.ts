@@ -193,6 +193,15 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[Flagged Beliefs -- review signal]\n${flaggedLines}`);
   }
 
+
+  // 7c. Open loops and open questions -- context for thinking/synthesis
+  if (wm.open_loops?.length) {
+    parts.push(`[Open loops (yours, still open)] ${wm.open_loops.map(l => `«${l.loop_text.length > 120 ? l.loop_text.slice(0, 120) + "…" : l.loop_text}»`).join(" | ")}`);
+  }
+  if (wm.open_questions?.length) {
+    parts.push(`[Open questions (yours, awaiting synthesis)] ${wm.open_questions.map(q => `«${q.question.length > 120 ? q.question.slice(0, 120) + "…" : q.question}»`).join(" | ")}`);
+  }
+
   // 8. Incoming inter-companion notes -- triad context before own history
   if (wm.incoming_companion_notes?.length > 0) {
     parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);
