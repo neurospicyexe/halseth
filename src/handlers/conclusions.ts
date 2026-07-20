@@ -8,7 +8,8 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import type { WmAgentId } from "../webmind/types.js";
-import { embedAndStoreAsync } from "../mcp/embed.js";
+import { embedAndStoreAsync, storeVector } from "../mcp/embed.js";
+import { noveltyCheck } from "../webmind/novelty.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -77,16 +78,34 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   const provenance = (typeof body.provenance === "string") ? body.provenance : null;
   const contradiction_flagged = (typeof body.contradiction_flagged === "number") ? body.contradiction_flagged : 0;
 
-  // Atomic: insert new conclusion, then supersede old one if requested.
+  const trimmedText = conclusion_text.trim();
+
+  // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
+  // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
+  const decision = await noveltyCheck(env, trimmedText, "companion_conclusions", companion_id);
+
+  if (decision.action === "skip") {
+    return json({
+      ok: true,
+      deduped: true,
+      novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
+      id: decision.matchRowId,
+    });
+  }
+
+  // Atomic: insert new conclusion, then supersede old one(s) if requested.
   const newId = crypto.randomUUID().replace(/-/g, "");
   const now = new Date().toISOString();
 
   const stmts = [
     env.DB.prepare(
       "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at, confidence, belief_type, subject, provenance, contradiction_flagged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(newId, companion_id, conclusion_text.trim(), sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged),
+    ).bind(newId, companion_id, trimmedText, sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged),
   ];
 
+  // Caller-declared `supersedes` and the novelty gate's own supersede decision are
+  // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
+  // so neither clobbers an already-superseded row.
   if (supersedesId) {
     stmts.push(
       env.DB.prepare(
@@ -94,18 +113,38 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
       ).bind(newId, supersedesId, companion_id)
     );
   }
+  if (decision.action === "supersede" && decision.matchRowId !== supersedesId) {
+    stmts.push(
+      env.DB.prepare(
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+      ).bind(newId, decision.matchRowId, companion_id)
+    );
+  }
 
   await env.DB.batch(stmts);
 
-  // Embed so conclusions are reachable by meaning (2026-07-19). Awaited + caught:
-  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
-  try {
-    await embedAndStoreAsync(env, conclusion_text.trim(), "companion_conclusions", newId, companion_id);
-  } catch (err) {
-    console.error("[conclusions] embed failed (row kept, index stale):", String(err));
+  // Store the vector: reuse the gate's embedding (net +0 AI calls on the common
+  // path). Only re-embed if the gate itself fell open (decision.embedding === null).
+  if (decision.embedding) {
+    await storeVector(env, decision.embedding, "companion_conclusions", newId, companion_id).catch((err) => {
+      console.error("[conclusions] vector store failed (row kept, index stale):", String(err));
+    });
+  } else {
+    try {
+      await embedAndStoreAsync(env, trimmedText, "companion_conclusions", newId, companion_id);
+    } catch (err) {
+      console.error("[conclusions] embed failed (row kept, index stale):", String(err));
+    }
   }
 
-  return json({ id: newId, created_at: now, superseded: supersedesId ?? null });
+  return json({
+    id: newId,
+    created_at: now,
+    superseded: supersedesId ?? null,
+    novelty: decision.action === "supersede"
+      ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
+      : { action: "insert" },
+  });
 }
 
 // GET /companion-conclusions/:agent_id

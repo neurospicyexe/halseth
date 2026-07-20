@@ -1,5 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { embedAndStoreAsync } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector } from "../../mcp/embed.js";
+import { noveltyCheck } from "../../webmind/novelty.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
 import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
@@ -543,8 +544,6 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     .trim();
   if (!conclusionText) return { error: "conclusion_add_failed", reason: "missing required field: conclusion_text" };
   if (conclusionText.length > 8000) return { error: "conclusion_add_failed", reason: "conclusion_text exceeds maximum length of 8000 characters" };
-  const newId = crypto.randomUUID().replace(/-/g, "");
-  const now = new Date().toISOString();
   const sourceSessions = Array.isArray(p?.source_sessions) ? JSON.stringify(p.source_sessions) : null;
   const supersedes = p?.supersedes;
   // Worldview fields: companions write `type` in context; DB column is `belief_type`
@@ -557,11 +556,30 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   const subject = p?.subject ?? null;
   const provenance = p?.provenance ?? null;
   const contradictionFlagged = p?.contradiction_flagged === 1 ? 1 : 0;
+
+  // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
+  // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
+  const decision = await noveltyCheck(ctx.env, conclusionText, "companion_conclusions", ctx.req.companion_id);
+
+  if (decision.action === "skip") {
+    return {
+      ack: true,
+      deduped: true,
+      novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
+      id: decision.matchRowId,
+    };
+  }
+
+  const newId = crypto.randomUUID().replace(/-/g, "");
+  const now = new Date().toISOString();
   const stmts = [
     ctx.env.DB.prepare(
       "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, contradiction_flagged, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, contradictionFlagged, now),
   ];
+  // Caller-declared `supersedes` and the novelty gate's own supersede decision are
+  // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
+  // so neither clobbers an already-superseded row.
   if (supersedes) {
     stmts.push(
       ctx.env.DB.prepare(
@@ -569,15 +587,38 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
   }
-  await ctx.env.DB.batch(stmts);
-  // Embed so conclusions are reachable by meaning (2026-07-19). Awaited + caught:
-  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
-  try {
-    await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", newId, ctx.req.companion_id);
-  } catch (err) {
-    console.error("[conclusion_add] embed failed (row kept, index stale):", String(err));
+  if (decision.action === "supersede" && decision.matchRowId !== supersedes) {
+    stmts.push(
+      ctx.env.DB.prepare(
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+      ).bind(newId, decision.matchRowId, ctx.req.companion_id)
+    );
   }
-  return { ack: true, id: newId, created_at: now, superseded: !!supersedes };
+  await ctx.env.DB.batch(stmts);
+
+  // Store the vector: reuse the gate's embedding (net +0 AI calls on the common
+  // path). Only re-embed if the gate itself fell open (decision.embedding === null).
+  if (decision.embedding) {
+    await storeVector(ctx.env, decision.embedding, "companion_conclusions", newId, ctx.req.companion_id).catch((err) => {
+      console.error("[conclusion_add] vector store failed (row kept, index stale):", String(err));
+    });
+  } else {
+    try {
+      await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", newId, ctx.req.companion_id);
+    } catch (err) {
+      console.error("[conclusion_add] embed failed (row kept, index stale):", String(err));
+    }
+  }
+
+  return {
+    ack: true,
+    id: newId,
+    created_at: now,
+    superseded: !!supersedes,
+    novelty: decision.action === "supersede"
+      ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
+      : { action: "insert" },
+  };
 }
 
 export async function execJournalEdit(ctx: ExecutorContext): Promise<ExecutorResult> {

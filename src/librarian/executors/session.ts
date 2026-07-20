@@ -1,5 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { embedAndStoreAsync } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector } from "../../mcp/embed.js";
+import { noveltyCheck } from "../../webmind/novelty.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
@@ -843,25 +844,54 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   }
 
   if (p.conclusion) {
-    const cid = crypto.randomUUID();
     const conclusionText = p.conclusion;
     const conclusionCompanion = ctx.req.companion_id;
     fanoutWrites.push({
       label: "conclusion",
-      // Embed chained after the insert with its own catch: an embed failure must never
-      // read as a conclusion-write failure in the fanout report (D1 is truth; fill heals).
-      promise: ctx.env.DB.prepare(
-        "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-      ).bind(cid, conclusionCompanion, conclusionText,
-        JSON.stringify([resolvedSessionId]), now).run()
-        .then(async (r) => {
+      // Novelty gate (2026-07-20) runs before the insert: dedupe near-identical
+      // beliefs (skip -- no insert, resolves without counting as a fanout failure),
+      // supersede evolved ones, or insert plainly. Fails open on gate trouble.
+      promise: (async () => {
+        const decision = await noveltyCheck(ctx.env, conclusionText, "companion_conclusions", conclusionCompanion);
+        if (decision.action === "skip") {
+          console.log("[session_close] conclusion novelty-skip", {
+            companion: conclusionCompanion, match: decision.matchRowId, score: decision.score,
+          });
+          return { skipped: true, novelty: decision };
+        }
+
+        const cid = crypto.randomUUID();
+        const stmts = [
+          ctx.env.DB.prepare(
+            "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
+          ).bind(cid, conclusionCompanion, conclusionText, JSON.stringify([resolvedSessionId]), now),
+        ];
+        if (decision.action === "supersede") {
+          stmts.push(
+            ctx.env.DB.prepare(
+              "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+            ).bind(cid, decision.matchRowId, conclusionCompanion)
+          );
+        }
+        const results = await ctx.env.DB.batch(stmts);
+
+        // Store the vector: reuse the gate's embedding (net +0 AI calls on the
+        // common path). Only re-embed if the gate itself fell open (embedding null).
+        // Chained with its own catch: an embed/vector failure must never read as a
+        // conclusion-write failure in the fanout report (D1 is truth; fill heals).
+        if (decision.embedding) {
+          await storeVector(ctx.env, decision.embedding, "companion_conclusions", cid, conclusionCompanion).catch((err) => {
+            console.error("[session_close] conclusion vector store failed (row kept, index stale):", String(err));
+          });
+        } else {
           try {
             await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", cid, conclusionCompanion);
           } catch (err) {
             console.error("[session_close] conclusion embed failed (row kept, index stale):", String(err));
           }
-          return r;
-        }),
+        }
+        return results[0];
+      })(),
     });
   }
 
