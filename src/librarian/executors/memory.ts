@@ -109,11 +109,14 @@ export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult
  */
 export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { response_key: "witness", witness: "companion_id required" };
-  const c = parseContext<{ query?: string; limit?: number }>(ctx.req.context);
+  const c = parseContext<{ query?: string; limit?: number; source_class?: string }>(ctx.req.context);
   const query = (c?.query ?? ctx.req.request).trim();
   if (!query) return { response_key: "witness", witness: "notes_recall requires a query" };
 
   const limit = Math.min(Math.max(c?.limit ?? 5, 1), 10);
+  // "life" (default) human-weights the ranking -- the corpus is ~2/3 machine-written and
+  // life-queries drowned in swarm self-talk. "all" disables the re-rank (full corpus, raw scores).
+  const sourceClass = c?.source_class === "all" ? "all" as const : "life" as const;
 
   // "Nothing matched" and "I could not look" must never collapse into the same answer. Workers AI
   // is quota-bound on the free tier (AiError 4006, daily neuron allocation), and a companion
@@ -121,7 +124,7 @@ export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<Exec
   // that reads as "you have no such notes" when the truth is "the index is down".
   let notes;
   try {
-    notes = await recallNotesByMeaning(ctx.env, ctx.req.companion_id, query, limit);
+    notes = await recallNotesByMeaning(ctx.env, ctx.req.companion_id, query, limit, sourceClass);
   } catch (e) {
     const msg = String(e);
     const quota = msg.includes("4006") || msg.toLowerCase().includes("neuron");
@@ -134,7 +137,7 @@ export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<Exec
   }
 
   if (notes.length === 0) {
-    return { response_key: "witness", witness: `No continuity notes surfaced for "${query.slice(0, 60)}".` };
+    return { response_key: "witness", witness: `No continuity notes or handovers surfaced for "${query.slice(0, 60)}".` };
   }
   return {
     data: notes.map(n => ({
@@ -143,9 +146,15 @@ export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<Exec
       created_at: n.created_at,
       salience: n.salience,
       thread_key: n.thread_key,
+      kind: n.kind,
+      source: n.source,
     })),
     response_key: "data",
-    meta: { operation: "notes_recall_meaning", warmed: notes.length },
+    meta: {
+      operation: "notes_recall_meaning",
+      source_class: sourceClass,
+      warmed: notes.filter(n => n.kind === "note").length,
+    },
   };
 }
 

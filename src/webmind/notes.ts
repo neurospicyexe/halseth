@@ -6,7 +6,7 @@ import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
 import { effectiveHeatSql, warmSql } from "./heat.js";
-import { embedText, embedAndStoreAsync } from "../mcp/embed.js";
+import { embedText, embedAndStoreAsync, composeHandoverText } from "../mcp/embed.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -304,38 +304,173 @@ export interface RecalledNote {
  * accessed, and Guardian's `orphan_memory` correctly flagged 2026-04-15 notes as unreachable.
  * The retrieval mandates fired on an explicit label they'd never see.
  *
- * Warming is deliberate here BY CONSTRUCTION: this delegates to recallNotes(), which stamps
- * last_access_at. A note is warmed because a companion ASKED for this meaning and received it --
- * never because it happened to be displayed. Warming on mere surfacing would silence the
- * detector without improving recall, which is gaming the metric, not fixing the memory.
+ * Warming is deliberate here BY CONSTRUCTION: a note is warmed because a companion ASKED for
+ * this meaning and RECEIVED it -- only the final returned set warms, never every candidate
+ * fetched for ranking, and never anything merely displayed. Warming on surfacing would silence
+ * Guardian's orphan_memory without improving recall, which is gaming the metric.
+ *
+ * 2026-07-19 (coverage + composition fix): recall now also searches handover_packets -- the
+ * durable human-session surface (spine, last_real_thing, open_threads) that was never embedded --
+ * and companion_journal, source-classified since mig 0103.
+ * And because the embedded corpus is ~2/3 machine-written, life-queries (`source_class: "life"`,
+ * the default) soft re-rank by source class: human-session sources full weight, swarm/system/cron
+ * down-weighted, unknown/legacy in between. `source_class: "all"` disables the re-rank -- the
+ * full corpus stays reachable on demand. Soft re-rank, not a hard wall: a machine-written note
+ * that matches strongly still beats a weak human match.
  */
+export type SourceClass = "life" | "all";
+
+export interface RecalledMemory {
+  note_id: string;
+  content: string;
+  created_at: string;
+  salience: string;
+  thread_key: string | null;
+  kind: "note" | "handover" | "journal";
+  source: string | null;
+  score: number;
+}
+
+// Source classes observed in prod (2026-07-19 census). Unlisted sources score neutral --
+// new writers land at 0.85 until classified, never silently zeroed.
+const HUMAN_SOURCES = new Set([
+  "claude_code", "session_close", "session", "session-log", "cypher-session", "hearth_ritual_compost",
+]);
+const MACHINE_SOURCES = new Set([
+  "synthesis_loop", "system", "soma_update", "autonomous", "discord_swarm", "discord_speech",
+  "deploy-verified", "evaluator", "metronome", "pattern_worker", "synthesis-gap-detector",
+]);
+
+function sourceWeight(kind: RecalledMemory["kind"], source: string | null): number {
+  if (kind === "handover") return 1.0;             // human-session by construction
+  if (source && HUMAN_SOURCES.has(source)) return 1.0;
+  if (source && MACHINE_SOURCES.has(source)) return 0.6;
+  return 0.85;                                      // 'legacy' (mig 0103) / 'discord' (mixed) / unknown
+}
+
+const RECALL_SCORE_FLOOR = 0.35;  // don't warm noise; leave until A+B have data (fix set D)
+
 export async function recallNotesByMeaning(
   env: Env,
   agentId: string,
   query: string,
   limit = 5,
-): Promise<RecalledNote[]> {
+  sourceClass: SourceClass = "life",
+): Promise<RecalledMemory[]> {
   const text = query.trim();
   if (!text) return [];
   const vector = await embedText(env, text);
   if (!vector) return [];
 
-  // Over-fetch: the metadata filter is applied server-side, but scores below the floor are
-  // dropped after, so ask for more than we need.
-  const res = await env.VECTORIZE.query(vector, {
-    topK: Math.min(limit * 6, 60),
-    returnMetadata: "all",
-    filter: { table: "wm_continuity_notes", companion_id: agentId },
-  });
+  // One query per table (two $eq filters beat relying on $in support), in parallel.
+  // Over-fetch both: the floor and the re-rank both cut after the fact.
+  const topK = Math.min(limit * 6, 60);
+  const [noteRes, handoverRes, journalRes] = await Promise.all([
+    env.VECTORIZE.query(vector, {
+      topK, returnMetadata: "all",
+      filter: { table: "wm_continuity_notes", companion_id: agentId },
+    }),
+    env.VECTORIZE.query(vector, {
+      topK, returnMetadata: "all",
+      filter: { table: "handover_packets", companion_id: agentId },
+    }),
+    env.VECTORIZE.query(vector, {
+      topK, returnMetadata: "all",
+      filter: { table: "companion_journal", companion_id: agentId },
+    }),
+  ]);
 
-  const ids = (res.matches ?? [])
-    .filter(m => typeof m.score === "number" && m.score >= 0.35)  // floor: don't warm noise
-    .map(m => (m.metadata as Record<string, unknown> | undefined)?.row_id)
-    .filter((v): v is string => typeof v === "string" && v.length > 0)
-    .slice(0, limit);
+  const candidateIds = (res: { matches?: Array<{ score?: number; metadata?: unknown }> }, tbl: string) =>
+    (res.matches ?? [])
+      .filter(m => typeof m.score === "number" && m.score >= RECALL_SCORE_FLOOR)
+      .map(m => {
+        const rowId = (m.metadata as Record<string, unknown> | undefined)?.row_id;
+        return typeof rowId === "string" && rowId.length > 0
+          ? { rowId, score: m.score as number, table: tbl }
+          : null;
+      })
+      .filter((v): v is { rowId: string; score: number; table: string } => v !== null);
 
-  if (ids.length === 0) return [];
-  return recallNotes(env, agentId, ids);   // reuse: fetch + warm (engagement, not display)
+  const noteCands = candidateIds(noteRes, "wm_continuity_notes");
+  const handoverCands = candidateIds(handoverRes, "handover_packets");
+  const journalCands = candidateIds(journalRes, "companion_journal");
+  if (noteCands.length === 0 && handoverCands.length === 0 && journalCands.length === 0) return [];
+
+  // Fetch candidate rows WITHOUT warming -- ranking needs `source` from D1 (it is not in
+  // vector metadata), and only what is actually returned may warm.
+  const entries: Array<RecalledMemory & { effective: number }> = [];
+
+  if (noteCands.length > 0) {
+    const placeholders = noteCands.map(() => "?").join(", ");
+    const rows = await env.DB.prepare(
+      `SELECT note_id, content, created_at, salience, thread_key, source FROM wm_continuity_notes
+       WHERE agent_id = ? AND note_id IN (${placeholders})`
+    ).bind(agentId, ...noteCands.map(c => c.rowId))
+      .all<RecalledNote & { source: string | null }>();
+    const scoreById = new Map(noteCands.map(c => [c.rowId, c.score]));
+    for (const r of rows.results ?? []) {
+      const score = scoreById.get(r.note_id) ?? 0;
+      const weight = sourceClass === "life" ? sourceWeight("note", r.source) : 1;
+      entries.push({
+        note_id: r.note_id, content: r.content, created_at: r.created_at,
+        salience: r.salience, thread_key: r.thread_key,
+        kind: "note", source: r.source, score, effective: score * weight,
+      });
+    }
+  }
+
+  if (handoverCands.length > 0) {
+    const placeholders = handoverCands.map(() => "?").join(", ");
+    // No agent_id column here -- per-companion scoping came from the vector metadata filter
+    // (handovers of pre-0019 sessions embed with companion "" and never reach this query).
+    const rows = await env.DB.prepare(
+      `SELECT id, spine, last_real_thing, open_threads, created_at FROM handover_packets
+       WHERE id IN (${placeholders})`
+    ).bind(...handoverCands.map(c => c.rowId))
+      .all<{ id: string; spine: string; last_real_thing: string | null; open_threads: string | null; created_at: string }>();
+    const scoreById = new Map(handoverCands.map(c => [c.rowId, c.score]));
+    for (const r of rows.results ?? []) {
+      const score = scoreById.get(r.id) ?? 0;
+      entries.push({
+        note_id: r.id,
+        content: composeHandoverText(r.spine, r.last_real_thing, r.open_threads),
+        created_at: r.created_at,
+        salience: "handover", thread_key: null,
+        kind: "handover", source: "session_close", score, effective: score,
+      });
+    }
+  }
+
+  if (journalCands.length > 0) {
+    const placeholders = journalCands.map(() => "?").join(", ");
+    const rows = await env.DB.prepare(
+      `SELECT id, note_text, created_at, source FROM companion_journal
+       WHERE agent = ? AND id IN (${placeholders})`
+    ).bind(agentId, ...journalCands.map(c => c.rowId))
+      .all<{ id: string; note_text: string; created_at: string; source: string | null }>();
+    const scoreById = new Map(journalCands.map(c => [c.rowId, c.score]));
+    for (const r of rows.results ?? []) {
+      const score = scoreById.get(r.id) ?? 0;
+      const weight = sourceClass === "life" ? sourceWeight("journal", r.source) : 1;
+      entries.push({
+        note_id: r.id, content: r.note_text, created_at: r.created_at,
+        salience: "journal", thread_key: null,
+        kind: "journal", source: r.source, score, effective: score * weight,
+      });
+    }
+  }
+
+  entries.sort((a, b) => b.effective - a.effective);
+  const selected = entries.slice(0, limit);
+
+  // Warm ONLY the returned notes (handovers have no heat machinery).
+  const warmIds = selected.filter(e => e.kind === "note").map(e => e.note_id);
+  if (warmIds.length > 0) {
+    await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length))
+      .bind(...warmIds).run();
+  }
+
+  return selected.map(({ effective: _effective, ...rest }) => rest);
 }
 
 /** Embed a continuity note so it is reachable by meaning. Never throws: D1 is truth. */

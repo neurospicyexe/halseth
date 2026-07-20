@@ -1,6 +1,6 @@
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
-import { embedAndStoreBatch, EMBEDDING_MODEL } from "../mcp/embed.js";
+import { embedAndStoreBatch, composeHandoverText, EMBEDDING_MODEL } from "../mcp/embed.js";
 import { safeEqual } from "../lib/auth.js";
 import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
 
@@ -157,7 +157,11 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       getText:      (r) => r.sub_emotion ? `${r.emotion} — ${r.sub_emotion}` : r.emotion as string,
       getCompanion: (r) => r.companion_id as string,
     },
-    dreams: {
+    // Key renamed dreams -> companion_dreams (2026-07-19): write-path vectors always used
+    // "companion_dreams"; the old "dreams" key created duplicate vectors under a table name
+    // that pointed row fetches at the unrelated 0014 `dreams` table. Old "dreams:*" vectors
+    // linger until the next index recreate (legacy-cutover op) but are unreachable.
+    companion_dreams: {
       sql:          "SELECT id, dream_text AS content, companion_id FROM companion_dreams",
       getText:      (r) => r.content as string,
       getCompanion: (r) => r.companion_id as string,
@@ -185,6 +189,26 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       sql:          "SELECT id, content FROM cypher_audit",
       getText:      (r) => r.content as string,
       getCompanion: () => "cypher",
+    },
+    // 2026-07-19: the human-session surface. handover_packets (spine + last_real_thing +
+    // open_threads, append-only, uncapped) was never embedded -- life-queries could only
+    // surface machine-written rows. companion_id comes from the sessions join; pre-0019
+    // sessions have NULL companion_id, those handovers embed with "" and are invisible to
+    // per-companion filtered recall (unattributable; excluded rather than guessed).
+    handover_packets: {
+      sql:          "SELECT hp.id AS id, hp.spine, hp.last_real_thing, hp.open_threads, s.companion_id FROM handover_packets hp LEFT JOIN sessions s ON s.id = hp.session_id",
+      getText:      (r) => composeHandoverText(r.spine as string, r.last_real_thing as string | null, r.open_threads as string | null),
+      getCompanion: (r) => (r.companion_id as string) ?? "",
+    },
+    companion_conclusions: {
+      sql:          "SELECT id, conclusion_text, companion_id FROM companion_conclusions",
+      getText:      (r) => r.conclusion_text as string,
+      getCompanion: (r) => r.companion_id as string,
+    },
+    companion_tensions: {
+      sql:          "SELECT id, tension_text, companion_id FROM companion_tensions",
+      getText:      (r) => r.tension_text as string,
+      getCompanion: (r) => r.companion_id as string,
     },
   };
 
@@ -288,9 +312,12 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     companion_journal:   "SELECT id FROM companion_journal",
     relational_deltas:   "SELECT id FROM relational_deltas WHERE delta_text IS NOT NULL",
     feelings:            "SELECT id FROM feelings",
-    dreams:              "SELECT id FROM companion_dreams",
+    companion_dreams:    "SELECT id FROM companion_dreams",
     living_wounds:       "SELECT id FROM living_wounds",
     cypher_audit:        "SELECT id FROM cypher_audit",
+    handover_packets:    "SELECT id FROM handover_packets",
+    companion_conclusions: "SELECT id FROM companion_conclusions",
+    companion_tensions:  "SELECT id FROM companion_tensions",
   };
 
   // Text per row id, for fill mode. Same content shaping as backfill-embeddings' TABLES map,
@@ -300,9 +327,14 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     companion_journal:   "SELECT id, note_text AS text, agent AS companion FROM companion_journal",
     relational_deltas:   "SELECT id, delta_text AS text, agent AS companion FROM relational_deltas WHERE delta_text IS NOT NULL",
     feelings:            "SELECT id, CASE WHEN sub_emotion IS NOT NULL THEN emotion || ' — ' || sub_emotion ELSE emotion END AS text, companion_id AS companion FROM feelings",
-    dreams:              "SELECT id, dream_text AS text, companion_id AS companion FROM companion_dreams",
+    companion_dreams:    "SELECT id, dream_text AS text, companion_id AS companion FROM companion_dreams",
     living_wounds:       "SELECT id, name || ': ' || description AS text, 'gaia' AS companion FROM living_wounds",
     cypher_audit:        "SELECT id, content AS text, 'cypher' AS companion FROM cypher_audit",
+    // Mirrors composeHandoverText() in mcp/embed.ts -- keep the two in sync. open_threads is a
+    // JSON array of names; json_valid guards legacy non-JSON rows (composeHandoverText skips those).
+    handover_packets:    "SELECT hp.id AS id, hp.spine || CASE WHEN hp.last_real_thing IS NOT NULL AND hp.last_real_thing != '' THEN char(10) || char(10) || 'Last real thing: ' || hp.last_real_thing ELSE '' END || CASE WHEN hp.open_threads IS NOT NULL AND json_valid(hp.open_threads) AND json_array_length(hp.open_threads) > 0 THEN char(10) || 'Open threads: ' || (SELECT group_concat(value, '; ') FROM json_each(hp.open_threads)) ELSE '' END AS text, s.companion_id AS companion FROM handover_packets hp LEFT JOIN sessions s ON s.id = hp.session_id",
+    companion_conclusions: "SELECT id, conclusion_text AS text, companion_id AS companion FROM companion_conclusions",
+    companion_tensions:  "SELECT id, tension_text AS text, companion_id AS companion FROM companion_tensions",
   };
 
   const targets = table ? [table] : Object.keys(ID_SQL);

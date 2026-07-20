@@ -232,8 +232,8 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
     "Semantic search across Halseth memory tables by meaning. Covers feelings, relational deltas, companion notes, audit entries, dreams, and wounds. Use before writing to find related prior entries.",
     {
       query:        z.string().describe("Natural language search query."),
-      tables:       z.array(z.enum(["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams"])).optional()
-                     .describe("Filter to specific tables. Defaults to all six."),
+      tables:       z.array(z.enum(["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams", "wm_continuity_notes", "handover_packets", "companion_conclusions", "companion_tensions"])).optional()
+                     .describe("Filter to specific tables. Defaults to all. 'dreams' is an alias for companion_dreams."),
       companion_id: z.enum(COMPANION_IDS).optional().describe("Filter by companion."),
       limit:        z.number().int().min(1).max(20).default(5),
       after:        z.string().optional().describe("ISO datetime — only entries after this date."),
@@ -260,7 +260,11 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         return { content: [{ type: "text", text: JSON.stringify([]) }] };
       }
 
-      const allowedTables = input.tables ?? ["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams"];
+      // "dreams" was a legacy alias: write-path dream vectors carry metadata table
+      // "companion_dreams" (the real D1 table); the old "dreams" key pointed row fetches at
+      // the unrelated 0014 `dreams` table. Translate the alias to the real key (2026-07-19).
+      const requested = (input.tables ?? ["feelings", "relational_deltas", "companion_journal", "living_wounds", "cypher_audit", "dreams", "wm_continuity_notes", "handover_packets", "companion_conclusions", "companion_tensions"]);
+      const allowedTables = requested.map(t => t === "dreams" ? "companion_dreams" : t);
 
       // Filter by table and companion_id from Vectorize metadata
       const filtered = results.matches
@@ -298,12 +302,20 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
 
       // Table name mapping (hardcoded — inputs come from enum, not user strings)
       const TABLE_NAMES: Record<string, string> = {
-        feelings:          "feelings",
-        relational_deltas: "relational_deltas",
-        companion_journal: "companion_journal",
-        living_wounds:     "living_wounds",
-        cypher_audit:      "cypher_audit",
-        dreams:            "dreams",
+        feelings:              "feelings",
+        relational_deltas:     "relational_deltas",
+        companion_journal:     "companion_journal",
+        living_wounds:         "living_wounds",
+        cypher_audit:          "cypher_audit",
+        companion_dreams:      "companion_dreams",
+        wm_continuity_notes:   "wm_continuity_notes",
+        handover_packets:      "handover_packets",
+        companion_conclusions: "companion_conclusions",
+        companion_tensions:    "companion_tensions",
+      };
+      // Tables whose PK is not `id` (vector row_id metadata always holds the PK value).
+      const ID_COLUMNS: Record<string, string> = {
+        wm_continuity_notes: "note_id",
       };
 
       // Fetch full rows from D1, one query per table
@@ -311,12 +323,13 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       for (const [table, ids] of byTable.entries()) {
         const tableName = TABLE_NAMES[table];
         if (!tableName) continue;
+        const idCol = ID_COLUMNS[table] ?? "id";
         const placeholders = ids.map(() => "?").join(", ");
         const rows = await env.DB.prepare(
-          `SELECT * FROM ${tableName} WHERE id IN (${placeholders})`
+          `SELECT * FROM ${tableName} WHERE ${idCol} IN (${placeholders})`
         ).bind(...ids).all();
         for (const row of (rows.results as Record<string, unknown>[])) {
-          allRows.push({ table, ...row, score: scoreMap.get(row.id as string) ?? null });
+          allRows.push({ table, ...row, score: scoreMap.get(row[idCol] as string) ?? null });
         }
       }
 

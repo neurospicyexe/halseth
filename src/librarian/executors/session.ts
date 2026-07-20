@@ -1,4 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { embedAndStoreAsync } from "../../mcp/embed.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
@@ -843,12 +844,24 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
 
   if (p.conclusion) {
     const cid = crypto.randomUUID();
+    const conclusionText = p.conclusion;
+    const conclusionCompanion = ctx.req.companion_id;
     fanoutWrites.push({
       label: "conclusion",
+      // Embed chained after the insert with its own catch: an embed failure must never
+      // read as a conclusion-write failure in the fanout report (D1 is truth; fill heals).
       promise: ctx.env.DB.prepare(
         "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-      ).bind(cid, ctx.req.companion_id, p.conclusion,
-        JSON.stringify([resolvedSessionId]), now).run(),
+      ).bind(cid, conclusionCompanion, conclusionText,
+        JSON.stringify([resolvedSessionId]), now).run()
+        .then(async (r) => {
+          try {
+            await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", cid, conclusionCompanion);
+          } catch (err) {
+            console.error("[session_close] conclusion embed failed (row kept, index stale):", String(err));
+          }
+          return r;
+        }),
     });
   }
 

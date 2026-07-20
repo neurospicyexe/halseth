@@ -1,4 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { embedAndStoreAsync } from "../../mcp/embed.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
 import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
@@ -569,6 +570,13 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     );
   }
   await ctx.env.DB.batch(stmts);
+  // Embed so conclusions are reachable by meaning (2026-07-19). Awaited + caught:
+  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
+  try {
+    await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", newId, ctx.req.companion_id);
+  } catch (err) {
+    console.error("[conclusion_add] embed failed (row kept, index stale):", String(err));
+  }
   return { ack: true, id: newId, created_at: now, superseded: !!supersedes };
 }
 

@@ -18,6 +18,30 @@ export function vectorId(table: string, rowId: string): string {
   return `${table}:${rowId}`;
 }
 
+/**
+ * Content shaping for handover_packets embeddings. One canonical composition used by
+ * BOTH write paths (librarian sessionClose, MCP halseth_session_close) and mirrored in
+ * SQL by admin's TEXT_SQL fill map -- if this changes, change that SQL too, or fill-mode
+ * re-embeds will drift from write-path embeds.
+ */
+export function composeHandoverText(
+  spine: string,
+  lastRealThing: string | null | undefined,
+  openThreadsJson: string | null | undefined,
+): string {
+  let text = spine;
+  if (lastRealThing) text += `\n\nLast real thing: ${lastRealThing}`;
+  if (openThreadsJson) {
+    try {
+      const threads = JSON.parse(openThreadsJson) as unknown;
+      if (Array.isArray(threads) && threads.length > 0) {
+        text += `\nOpen threads: ${threads.join("; ")}`;
+      }
+    } catch { /* legacy non-JSON open_threads: skip rather than embed garbage */ }
+  }
+  return text;
+}
+
 export async function embedText(env: Env, text: string): Promise<number[] | null> {
   const embedding = await env.AI.run(EMBEDDING_MODEL, {
     text: [text],

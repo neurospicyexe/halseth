@@ -8,6 +8,7 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import type { WmAgentId } from "../webmind/types.js";
+import { embedAndStoreAsync } from "../mcp/embed.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -95,6 +96,14 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   }
 
   await env.DB.batch(stmts);
+
+  // Embed so conclusions are reachable by meaning (2026-07-19). Awaited + caught:
+  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
+  try {
+    await embedAndStoreAsync(env, conclusion_text.trim(), "companion_conclusions", newId, companion_id);
+  } catch (err) {
+    console.error("[conclusions] embed failed (row kept, index stale):", String(err));
+  }
 
   return json({ id: newId, created_at: now, superseded: supersedesId ?? null });
 }

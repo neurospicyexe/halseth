@@ -5,6 +5,7 @@ import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
 import { collectionForageSql, collectionMediaSql, bumpSparkleSql, sparkleDelta } from "../../webmind/collection.js";
+import { embedAndStoreAsync } from "../../mcp/embed.js";
 
 const COMPANIONS = COMPANION_IDS;
 
@@ -47,6 +48,13 @@ export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResu
   await ctx.env.DB.prepare(
     "INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, ?)"
   ).bind(id, ctx.req.companion_id, tensionText).run();
+  // Embed so tensions are reachable by meaning (2026-07-19). Awaited + caught:
+  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
+  try {
+    await embedAndStoreAsync(ctx.env, tensionText, "companion_tensions", id, ctx.req.companion_id);
+  } catch (err) {
+    console.error("[tension_add] embed failed (row kept, index stale):", String(err));
+  }
   return { data: { id, message: "tension recorded" } };
 }
 

@@ -4,7 +4,7 @@
 // No HTTP, no MCP protocol. Zero latency.
 
 import { Env } from "../../types.js";
-import { embedAndStore } from "../../mcp/embed.js";
+import { embedAndStore, embedAndStoreAsync, composeHandoverText } from "../../mcp/embed.js";
 import {
   loadSessionData, SessionLoadInput,
   loadOrientData, SessionOrientInput,
@@ -366,6 +366,20 @@ export async function sessionClose(env: Env, params: {
   }
 
   await env.DB.batch(stmts);
+
+  // Embed the handover so the human-session surface is reachable by meaning (2026-07-19).
+  // Awaited, not fire-and-forget -- a floating promise dies when the response returns
+  // (the 1,023-row zero-vector backfill). Caught so a Vectorize/quota failure never
+  // blocks session close; the row is already safe in D1 and fill-mode reindex heals gaps.
+  try {
+    await embedAndStoreAsync(
+      env,
+      composeHandoverText(params.spine, params.last_real_thing, params.open_threads ? JSON.stringify(params.open_threads) : null),
+      "handover_packets", handoverId, params.companionId ?? "",
+    );
+  } catch (err) {
+    console.error("[librarian/session_close] handover embed failed (row kept, index stale):", String(err));
+  }
 
   // Enqueue synthesis jobs (non-blocking, mirrors MCP session_close behavior).
   // Failures are surfaced in the result (never swallowed): a dropped enqueue

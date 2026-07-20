@@ -6,7 +6,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { embedText } from "../mcp/embed.js";
+import { embedText, embedAndStoreAsync } from "../mcp/embed.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const MAX_TEXT = 4000;
@@ -218,6 +218,14 @@ export async function postTension(request: Request, env: Env): Promise<Response>
   ).bind(id, b.companion_id, (b.tension_text as string).trim(),
     typeof b.notes === "string" ? b.notes : null
   ).run();
+
+  // Embed so tensions are reachable by meaning (2026-07-19). Awaited + caught:
+  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
+  try {
+    await embedAndStoreAsync(env, (b.tension_text as string).trim(), "companion_tensions", id, b.companion_id as string);
+  } catch (err) {
+    console.error("[tensions] embed failed (row kept, index stale):", String(err));
+  }
 
   return json({ id, message: "ok" }, 201);
 }

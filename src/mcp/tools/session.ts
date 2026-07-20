@@ -4,6 +4,7 @@ import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
+import { embedAndStoreAsync, composeHandoverText } from "../embed.js";
 
 export function registerSessionTools(server: McpServer, env: Env): void {
 
@@ -144,10 +145,24 @@ export function registerSessionTools(server: McpServer, env: Env): void {
         ),
       ]);
 
+      // Embed the handover so the human-session surface is reachable by meaning (2026-07-19).
+      // Awaited (floating promises die at response return); caught so embed failure never
+      // blocks close -- the row is in D1 and fill-mode reindex heals index gaps.
+      const warnings: string[] = [];
+      try {
+        await embedAndStoreAsync(
+          env,
+          composeHandoverText(input.spine, input.last_real_thing, input.open_threads ? JSON.stringify(input.open_threads) : null),
+          "handover_packets", handoverId, sessionRow?.companion_id ?? "",
+        );
+      } catch (err) {
+        console.error("[session_close] handover embed failed (row kept, index stale):", String(err));
+        warnings.push("handover embed failed -- recall index stale for this handover until next fill");
+      }
+
       // Enqueue synthesis -- non-blocking, processed by scheduled cron.
       // Failures are surfaced in the response (never swallowed): a dropped
       // enqueue is how the synthesis queue died invisibly for months.
-      const warnings: string[] = [];
       await enqueueSessionSummary(input.session_id, sessionRow?.companion_id ?? null, env)
         .catch(err => {
           console.error("[session_close] enqueue failed:", err);
