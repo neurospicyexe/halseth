@@ -4,7 +4,7 @@
 // No HTTP, no MCP protocol. Zero latency.
 
 import { Env } from "../../types.js";
-import { embedAndStore, embedAndStoreAsync, composeHandoverText } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, composeHandoverText } from "../../mcp/embed.js";
 import {
   loadSessionData, SessionLoadInput,
   loadOrientData, SessionOrientInput,
@@ -13,6 +13,8 @@ import {
 } from "../../mcp/tools/session_load.js";
 import { generateId } from "../../db/queries.js";
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
+import { MACHINE_SOURCES } from "../../webmind/notes.js";
+import { noveltyCheck } from "../../webmind/novelty.js";
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
@@ -574,7 +576,27 @@ export async function companionJournalAdd(
   note_text: string,
   tags?: string,
   source?: string,
-): Promise<{ id: string; created_at: string }> {
+): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; score: number } }> {
+  // Novelty gate (2026-07-20, Task 12): machine-source writers only -- skip-only, no supersede
+  // band (novelty.ts restricts supersede to companion_conclusions). Human sources bypass the
+  // gate entirely (attribution is sacred). Fails open on any embedding/Vectorize trouble.
+  const isMachineSource = MACHINE_SOURCES.has(source ?? "");
+  let reusableEmbedding: number[] | null = null;
+
+  if (isMachineSource) {
+    const decision = await noveltyCheck(env, note_text, "companion_journal", agent);
+    if (decision.action === "skip") {
+      console.log("[journal] novelty-skip", { agent, match: decision.matchRowId, score: decision.score });
+      return {
+        id: decision.matchRowId,
+        created_at: new Date().toISOString(),
+        deduped: true,
+        novelty: { action: "skip", score: decision.score },
+      };
+    }
+    reusableEmbedding = decision.embedding;
+  }
+
   const id = generateId();
   const now = new Date().toISOString();
   // 2026-07-08 vault-tagging fix: tags was write-once-if-caller-supplies-it, which in
@@ -586,7 +608,21 @@ export async function companionJournalAdd(
   await env.DB.prepare(
     "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).bind(id, now, agent, note_text, resolvedTags, null, source ?? null, topicTags).run();
-  embedAndStore(env, note_text, "companion_journal", id, agent);
+
+  // AWAIT the embed (2026-07-20, Task 12: fixed a known fire-and-forget hazard -- this writer
+  // used bare `embedAndStore()`, a floating promise Workers cancels once the response returns;
+  // see companion_journal.ts's own 2026-07-09 postmortem for the proven failure mode). Reuse the
+  // gate's embedding when available (net +0 AI.run on the common gated path).
+  if (reusableEmbedding) {
+    await storeVector(env, reusableEmbedding, "companion_journal", id, agent).catch((err) => {
+      console.error("[companionJournalAdd] vector store failed (row kept, index stale):", String(err));
+    });
+  } else {
+    await embedAndStoreAsync(env, note_text, "companion_journal", id, agent).catch((err) => {
+      console.error("[companionJournalAdd] embed failed (row kept, index stale):", String(err));
+    });
+  }
+
   return { id, created_at: now };
 }
 

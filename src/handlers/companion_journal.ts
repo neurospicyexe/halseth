@@ -1,9 +1,11 @@
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
-import { embedAndStoreAsync } from "../mcp/embed.js";
+import { embedAndStoreAsync, storeVector } from "../mcp/embed.js";
 import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions.js";
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
+import { MACHINE_SOURCES } from "../webmind/notes.js";
+import { noveltyCheck } from "../webmind/novelty.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -87,6 +89,31 @@ export async function postCompanionJournal(
       : null;
   const now = parsedCreatedAt ?? new Date().toISOString();
 
+  // Novelty gate (2026-07-20, Task 12): machine-source writers only -- skip-only, no supersede
+  // band (novelty.ts restricts supersede to companion_conclusions). Human sources (HUMAN_SOURCES,
+  // imported from webmind/notes.ts) bypass the gate entirely: attribution is sacred, and a human
+  // saying the same thing twice is never a duplicate. Fails open on any embedding/Vectorize
+  // trouble -- the gate must never eat a memory.
+  const isMachineSource = MACHINE_SOURCES.has(safeSource ?? "");
+  let reusableEmbedding: number[] | null = null;
+
+  if (isMachineSource) {
+    const decision = await noveltyCheck(env, trimmedText, "companion_journal", agent);
+    if (decision.action === "skip") {
+      console.log("[journal] novelty-skip", { agent, match: decision.matchRowId, score: decision.score });
+      return new Response(JSON.stringify({
+        ok: true,
+        deduped: true,
+        id: decision.matchRowId,
+        novelty: { action: "skip", score: decision.score },
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    reusableEmbedding = decision.embedding;
+  }
+
   // The unique index (mig 0098) is PARTIAL, so the conflict target must repeat its predicate
   // or SQLite rejects it with "does not match any PRIMARY KEY or UNIQUE constraint".
   const res = await env.DB.prepare(`
@@ -117,10 +144,21 @@ export async function postCompanionJournal(
   //
   // Awaiting costs ~100ms per write and never throws the write away: a Vectorize failure is logged,
   // not fatal (D1 is truth, the index is rebuildable -- `POST /admin/rebuild-embeddings`).
-  try {
-    await embedAndStoreAsync(env, trimmedText, "companion_journal", id, agent);
-  } catch (e) {
-    console.warn(`[companion_journal] embed failed for ${id} (row kept, index stale):`, String(e));
+  //
+  // If the novelty gate already embedded this text (machine-source path), reuse that vector
+  // instead of a second Workers AI call -- net +0 AI.run on the common gated path.
+  if (reusableEmbedding) {
+    try {
+      await storeVector(env, reusableEmbedding, "companion_journal", id, agent);
+    } catch (e) {
+      console.warn(`[companion_journal] vector store failed for ${id} (row kept, index stale):`, String(e));
+    }
+  } else {
+    try {
+      await embedAndStoreAsync(env, trimmedText, "companion_journal", id, agent);
+    } catch (e) {
+      console.warn(`[companion_journal] embed failed for ${id} (row kept, index stale):`, String(e));
+    }
   }
 
   return new Response(JSON.stringify({ id, created_at: now }), {
