@@ -74,6 +74,21 @@ export async function embedAndStoreAsync(
   }]);
 }
 
+/** Store a pre-computed vector (from noveltyCheck) -- avoids a second AI.run. */
+export async function storeVector(
+  env: Env,
+  values: number[],
+  table: string,
+  rowId: string,
+  companionId: string,
+): Promise<void> {
+  await env.VECTORIZE.upsert([{
+    id: vectorId(table, rowId),
+    values,
+    metadata: { table, row_id: rowId, companion_id: companionId },
+  }]);
+}
+
 export interface EmbedItem {
   text: string;
   table: string;

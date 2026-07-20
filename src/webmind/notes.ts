@@ -333,10 +333,10 @@ export interface RecalledMemory {
 
 // Source classes observed in prod (2026-07-19 census). Unlisted sources score neutral --
 // new writers land at 0.85 until classified, never silently zeroed.
-const HUMAN_SOURCES = new Set([
+export const HUMAN_SOURCES = new Set([
   "claude_code", "session_close", "session", "session-log", "cypher-session", "hearth_ritual_compost",
 ]);
-const MACHINE_SOURCES = new Set([
+export const MACHINE_SOURCES = new Set([
   "synthesis_loop", "system", "soma_update", "autonomous", "discord_swarm", "discord_speech",
   "deploy-verified", "evaluator", "metronome", "pattern_worker", "synthesis-gap-detector",
 ]);
