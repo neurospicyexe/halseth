@@ -372,7 +372,7 @@ describe("getInterCompanionNoteMoves", () => {
     expect(items[0]!.state_changed_after_note).toBe(true);
   });
 
-  it("council move: status='closed' AND closed_at > note.created_at required", async () => {
+  it("council NOT moved: closed_at BEFORE note.created_at (already closed when the note was written)", async () => {
     const noteCreatedAt = "2026-07-01T00:00:00.000Z";
     const env = fakeMovesEnv({
       totalNotes: 1,
@@ -387,6 +387,58 @@ describe("getInterCompanionNoteMoves", () => {
     const items = body.items as Array<Record<string, unknown>>;
     expect(items[0]!.state_changed_after_note).toBe(false);
     expect(items[0]!.object_state).toBe("closed");
+  });
+
+  it("council MOVED: status='closed' AND closed_at AFTER note.created_at", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 1,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: null, ref_type: "council", ref_id: "c2", reason: null, created_at: noteCreatedAt },
+      ],
+      councilRows: [{ id: "c2", status: "closed", closed_at: "2026-07-03T00:00:00.000Z" }], // closed AFTER note -> moved
+    });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.moved).toBe(1);
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items[0]!.state_changed_after_note).toBe(true);
+    expect(items[0]!.object_state).toBe("closed");
+  });
+
+  it("question NOT moved: status stays 'open' (never answered)", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 1,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: "drevan", ref_type: "question", ref_id: "q2", reason: null, created_at: noteCreatedAt },
+      ],
+      questionRows: [{ id: "q2", status: "open", answered_at: null }],
+    });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.moved).toBe(0);
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items[0]!.state_changed_after_note).toBe(false);
+    expect(items[0]!.object_state).toBe("open");
+  });
+
+  it("question NOT moved: answered BEFORE the note was written (stale answer predates this move)", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 1,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: "drevan", ref_type: "question", ref_id: "q3", reason: null, created_at: noteCreatedAt },
+      ],
+      // status != 'open' alone is not enough -- answered_at must also be AFTER note.created_at.
+      questionRows: [{ id: "q3", status: "answered", answered_at: "2026-06-15T00:00:00.000Z" }],
+    });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.moved).toBe(0);
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items[0]!.state_changed_after_note).toBe(false);
+    expect(items[0]!.object_state).toBe("answered");
   });
 
   it("days param defaults to 30 and clamps out-of-range values", async () => {
