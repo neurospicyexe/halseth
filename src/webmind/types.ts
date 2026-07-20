@@ -336,6 +336,12 @@ export interface WmCompanionNote {
   content: string;
   read_at: string | null;
   created_at: string;
+  // Migration 0104 (Task 15): note as a "move" on a shared object -- an open
+  // question, a tension, or a council item -- with a scratchpad reason. All three
+  // nullable at the schema layer; absent on plain notes.
+  ref_type: string | null;
+  ref_id: string | null;
+  reason: string | null;
 }
 
 // Journal entries written BY a companion (companion_journal table)

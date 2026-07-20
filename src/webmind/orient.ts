@@ -107,12 +107,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     ).bind(`letter:${agentId}`).all<WmRazielLetter>(),
     // Wide-window: outgoing inter-companion notes (sent BY this companion to others)
     env.DB.prepare(
-      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 5"
+      "SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmCompanionNote>(),
     // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self)
     // read_at IS NULL ensures notes don't repeat across sessions. Auto-acked below after fetch.
     env.DB.prepare(
-      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
+      "SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
     ).bind(agentId, agentId).all<WmCompanionNote>(),
     // Wide-window: recent journal entries written BY this companion (companion_journal table).
     // SUBSTANTIVE lane only -- 3 recency slots, and chatter (discord_swarm) ran 24-61 rows/day

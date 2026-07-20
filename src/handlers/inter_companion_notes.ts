@@ -20,6 +20,9 @@ interface NoteRow {
   to_id: string | null;
   content: string;
   created_at: string;
+  ref_type: string | null;
+  ref_id: string | null;
+  reason: string | null;
 }
 
 export async function getUnreadInterCompanionNotes(
@@ -36,7 +39,7 @@ export async function getUnreadInterCompanionNotes(
   }
 
   const rows = await env.DB.prepare(
-    `SELECT id, from_id, to_id, content, created_at
+    `SELECT id, from_id, to_id, content, created_at, ref_type, ref_id, reason
      FROM inter_companion_notes
      WHERE read_at IS NULL AND (to_id = ? OR to_id IS NULL)
      ORDER BY created_at ASC

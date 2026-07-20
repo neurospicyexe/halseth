@@ -554,18 +554,82 @@ export async function interNoteEdit(
   return { ok: true };
 }
 
+// Migration 0104: a note may reference an open question, a tension, or a council
+// item -- a "move" on a shared object, with a scratchpad reason attached. All three
+// fields are nullable at the schema layer; plain notes (no ref) stay fully legal.
+export const NOTE_REF_TYPES = ["question", "tension", "council"] as const;
+export type NoteRefType = (typeof NOTE_REF_TYPES)[number];
+
+// Polymorphic ref -- no FK (migration review: correct call, since the three target
+// tables are unrelated). This map is the single source of truth for which table an
+// existence check hits; keys are the literal union above, not free-form strings.
+const NOTE_REF_TABLES: Record<NoteRefType, string> = {
+  question: "companion_questions",
+  tension: "companion_tensions",
+  council: "council_questions",
+};
+
+export interface NoteRef {
+  ref_type: NoteRefType;
+  ref_id: string;
+  reason?: string;
+}
+
+/**
+ * Validates ref_type/ref_id from a PARSED context object (never a raw command
+ * string -- command-string-is-not-the-content). All-or-nothing: providing one
+ * without the other is invalid input, not a silent plain-note downgrade. Does NOT
+ * check that ref_id actually exists -- that happens in addCompanionNote, right next
+ * to the insert, to keep the existence check and the write on the same D1 round trip
+ * boundary rather than duplicating it in every caller.
+ *
+ * Returns `{}` for a plain note (both fields absent), `{ ref }` on valid input, or
+ * `{ error }` naming the problem.
+ */
+export function buildNoteRef(
+  ref_type: unknown,
+  ref_id: unknown,
+  reason: unknown,
+): { ref?: NoteRef; error?: string } {
+  const hasType = typeof ref_type === "string" && ref_type.length > 0;
+  const hasId = (typeof ref_id === "string" && ref_id.length > 0) || typeof ref_id === "number";
+  if (!hasType && !hasId) return {};
+  if (hasType !== hasId) {
+    return { error: "ref_type and ref_id must both be provided together (or both omitted)" };
+  }
+  if (!NOTE_REF_TYPES.includes(ref_type as NoteRefType)) {
+    return { error: `ref_type must be one of ${NOTE_REF_TYPES.join("|")} (got "${String(ref_type)}")` };
+  }
+  return {
+    ref: {
+      ref_type: ref_type as NoteRefType,
+      ref_id: String(ref_id),
+      reason: typeof reason === "string" ? reason.slice(0, 500) : undefined,
+    },
+  };
+}
+
 export async function addCompanionNote(
   env: Env,
   from_id: string,
   to_id: string | null,
   content: string,
-): Promise<{ id: string }> {
+  ref?: NoteRef,
+): Promise<{ id: string; error?: string }> {
+  if (ref?.ref_type) {
+    const table = NOTE_REF_TABLES[ref.ref_type];
+    if (!table) return { id: "", error: `unknown ref_type "${ref.ref_type}"` };
+    const found = await env.DB.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).bind(ref.ref_id).first();
+    if (!found) {
+      return { id: "", error: `ref_id "${ref.ref_id}" not found in ${table} (ref_type=${ref.ref_type})` };
+    }
+  }
   const id = generateId();
   await env.DB.prepare(
-    `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at)
-     VALUES (?, ?, ?, ?, datetime('now'))`,
+    `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at, ref_type, ref_id, reason)
+     VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5, ?6, ?7)`,
   )
-    .bind(id, from_id, to_id, content)
+    .bind(id, from_id, to_id, content, ref?.ref_type ?? null, ref?.ref_id ?? null, ref?.reason ?? null)
     .run();
   return { id };
 }

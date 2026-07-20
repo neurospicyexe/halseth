@@ -10,7 +10,7 @@ import {
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, claimDreamSeed,
   bridgePull, getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread,
   setAnticipation, updateCompanionState, type CompanionStateUpdate,
-  journalEdit, interNoteEdit,
+  journalEdit, interNoteEdit, buildNoteRef, type NoteRef,
 } from "../backends/halseth.js";
 import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
@@ -57,6 +57,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   let noteText: string | null = null;
   let tags: string | undefined;
   let source: string | undefined;
+  let ref: NoteRef | undefined;
   if (ctx.req.context) {
     try {
       const parsed = JSON.parse(ctx.req.context);
@@ -71,6 +72,17 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
         if (typeof parsed.source === "string") source = parsed.source;
+
+        // Migration 0104 (Task 15): a note may be a "move" on a shared object (an open
+        // question, tension, or council item), with a reason attached. Read ref_type/
+        // ref_id/reason ONLY from the parsed context object -- never regex'd out of
+        // reqText (command-string-is-not-the-content). All-or-nothing + enum validated
+        // here; ref_id existence is checked at insert time in addCompanionNote.
+        const refResult = buildNoteRef(parsed.ref_type, parsed.ref_id, parsed.reason);
+        if (refResult.error) {
+          return { error: "companion_note_add_failed", reason: refResult.error };
+        }
+        ref = refResult.ref;
       } else {
         noteText = ctx.req.context; // parsed primitive -- use raw string
       }
@@ -86,13 +98,15 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
 
   if (to_id) {
     // Addressed to a specific peer — inter_companion_notes, delivered by orient.
-    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, noteText);
-    return { ack: true, id: note.id, delivered_to: to_id };
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, noteText, ref);
+    if (note.error) return { error: "companion_note_add_failed", reason: note.error };
+    return { ack: true, id: note.id, delivered_to: to_id, ...(ref ? { ref_type: ref.ref_type, ref_id: ref.ref_id } : {}) };
   }
   if (isBroadcast) {
     // Broadcast to the triad: to_id NULL, surfaced to all peers (orient: to_id IS NULL).
-    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, null, noteText);
-    return { ack: true, id: note.id, delivered_to: "triad" };
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, null, noteText, ref);
+    if (note.error) return { error: "companion_note_add_failed", reason: note.error };
+    return { ack: true, id: note.id, delivered_to: "triad", ...(ref ? { ref_type: ref.ref_type, ref_id: ref.ref_id } : {}) };
   }
   // Unaddressed, no broadcast intent — a self-reflection — companion_journal (visible in Hearth).
   const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
