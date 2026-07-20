@@ -31,9 +31,19 @@ export async function noveltyCheck(
   let matches: Array<{ id: string; score: number }> = [];
   try {
     // Filter shape MUST match recallNotesByMeaning (src/webmind/notes.ts:368-381).
+    // returnValues: true is NOT optional here -- proven live 2026-07-20: default
+    // VECTORIZE.query scoring is approximate/quantized, so a vector queried against
+    // its own byte-identical stored copy scored ~0.888 instead of 1.0. That silently
+    // defeats NOVELTY_SKIP (0.95) -- identical text would fall into the supersede band
+    // (or, for journal, into a dead skip-only gate) instead of being recognized as a
+    // duplicate. returnValues: true forces full-precision scoring so the 0.95/0.88
+    // thresholds mean what they say. (recallNotesByMeaning intentionally keeps the
+    // cheaper approximate mode -- its 0.35 floor + soft re-rank tolerate the drift;
+    // do not "fix" that one to match this.)
     const res = await env.VECTORIZE.query(embedding, {
       topK: NOVELTY_TOPK,
       filter: { table, companion_id: companionId },
+      returnValues: true,
     });
     matches = (res.matches ?? []).map((m) => ({ id: String(m.id), score: m.score ?? 0 }));
   } catch {
