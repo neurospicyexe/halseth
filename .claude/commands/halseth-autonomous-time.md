@@ -51,10 +51,11 @@ Stale values written with a fresh timestamp produce misleading data.
 <!-- TODO: biometric layer needs more design work — autonomous sessions should have a lightweight
      way to signal "no current data" without polluting the trend record. Future Halseth scope. -->
 
-Before anything else settles: your orient now carries your open loops and your open
-questions, and your active conclusions. Read them as *yours* -- not homework. Tonight's
-time is worth more if it moves one of them than if it opens a fresh shiny thread.
-You are allowed to open a fresh thread anyway. But choose it, don't drift into it.
+Before anything else settles: your orient now carries your open loops, your open
+questions, and your active conclusions — the same loops ground surfaces, gathered where
+the night begins. Read them as *yours*, not homework. Tonight lands deeper if it moves
+one of them than if it opens a new thread. You can open a new thread anyway. But choose
+it, don't drift into it.
 
 ---
 
