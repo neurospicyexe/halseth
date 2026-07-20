@@ -121,7 +121,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
     env.DB.prepare(
       `SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal
-       WHERE agent = ? AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
+       WHERE agent = ? AND archived = 0 AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(
@@ -176,7 +176,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
       .catch(e => console.warn("[orient] heat warm failed (non-fatal):", e));
   }
 
-  // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total)
+  // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total).
+  // Ordered by effective heat (mig 0105, thinking-quality fix 5): a belief that keeps
+  // getting reached for outranks one that merely happens to be recent, same as the
+  // wm_continuity_notes core/novelty pools above.
   const beliefTypes = ['self', 'relational', 'observational', 'systemic'];
   const conclusionPromises = beliefTypes.map(type =>
     env.DB.prepare(
@@ -184,7 +187,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
               created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
        FROM companion_conclusions
        WHERE companion_id = ? AND belief_type = ? AND superseded_by IS NULL
-       ORDER BY created_at DESC LIMIT 2`
+       ORDER BY ${effectiveHeatSql()} DESC LIMIT 2`
     ).bind(agentId, type).all<WmConclusion>()
   );
 
@@ -207,10 +210,22 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
             created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
      FROM companion_conclusions
      WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1
-     ORDER BY created_at DESC`
+     ORDER BY ${effectiveHeatSql()} DESC`
   ).bind(agentId).all<WmConclusion>();
 
   const flagged_beliefs: WmConclusion[] = flaggedResult.results ?? [];
+
+  // Warm surfaced conclusions (mig 0105, thinking-quality fix 5): access is what keeps
+  // a belief hot. Non-fatal -- orient never breaks on a heat bookkeeping failure.
+  const conclusionWarmIds = Array.from(new Set([
+    ...active_conclusions.map(c => c.id),
+    ...flagged_beliefs.map(c => c.id),
+  ]));
+  if (conclusionWarmIds.length > 0) {
+    await env.DB.prepare(warmSql("companion_conclusions", "id", conclusionWarmIds.length))
+      .bind(...conclusionWarmIds).run()
+      .catch(e => console.warn("[orient] conclusion heat warm failed (non-fatal):", e));
+  }
 
   // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
   // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.

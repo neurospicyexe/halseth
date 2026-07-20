@@ -445,7 +445,7 @@ export async function recallNotesByMeaning(
     const placeholders = journalCands.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
       `SELECT id, note_text, created_at, source FROM companion_journal
-       WHERE agent = ? AND id IN (${placeholders})`
+       WHERE agent = ? AND archived = 0 AND id IN (${placeholders})`
     ).bind(agentId, ...journalCands.map(c => c.rowId))
       .all<{ id: string; note_text: string; created_at: string; source: string | null }>();
     const scoreById = new Map(journalCands.map(c => [c.rowId, c.score]));
@@ -468,6 +468,13 @@ export async function recallNotesByMeaning(
   if (warmIds.length > 0) {
     await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length))
       .bind(...warmIds).run();
+  }
+
+  // Warm ONLY the returned journal rows (mig 0105: journal earns salience the same way).
+  const journalWarmIds = selected.filter(e => e.kind === "journal").map(e => e.note_id);
+  if (journalWarmIds.length > 0) {
+    await env.DB.prepare(warmSql("companion_journal", "id", journalWarmIds.length))
+      .bind(...journalWarmIds).run();
   }
 
   return selected.map(({ effective: _effective, ...rest }) => rest);
