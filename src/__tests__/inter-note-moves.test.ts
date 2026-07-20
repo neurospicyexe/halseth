@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { addCompanionNote, buildNoteRef, NOTE_REF_TYPES } from "../librarian/backends/halseth.js";
 import { execCompanionNoteAdd } from "../librarian/executors/writes.js";
+import { getInterCompanionNoteMoves } from "../handlers/inter_companion_notes.js";
 import type { Env } from "../types.js";
 
 // ── fakeEnv: supports both .run() (INSERT) and .first() (existence-check SELECT) ──
@@ -245,5 +246,183 @@ describe("execCompanionNoteAdd: ref fields read ONLY from parsed context, never 
     expect((res as Record<string, unknown>).error).toBe("companion_note_add_failed");
     expect((res as Record<string, unknown>).reason).toMatch(/not found in companion_tensions/i);
     expect(calls.some(c => /INSERT INTO/i.test(c.sql))).toBe(false);
+  });
+});
+
+// ── Task 16: GET /inter-companion-notes/moves ────────────────────────────────
+// Measurability endpoint. A "move" is a note with ref_type set. moved% asks
+// whether the ref'd object's state changed AFTER the move (note.created_at).
+describe("getInterCompanionNoteMoves", () => {
+  const ADMIN = "test-admin-secret";
+
+  interface MoveRow {
+    id: string; from_id: string; to_id: string | null;
+    ref_type: string | null; ref_id: string | null; reason: string | null; created_at: string;
+  }
+
+  function fakeMovesEnv(opts: {
+    totalNotes: number;
+    movesRows: MoveRow[];
+    questionRows?: Array<{ id: string; status: string; answered_at: string | null }>;
+    tensionRows?: Array<{ id: string; status: string; last_surfaced_at: string | null }>;
+    councilRows?: Array<{ id: string; status: string; closed_at: string | null }>;
+  }): Env {
+    return {
+      ADMIN_SECRET: ADMIN,
+      DB: {
+        prepare(sql: string) {
+          return {
+            bind(..._bound: unknown[]) {
+              return {
+                async first() {
+                  if (/SELECT COUNT\(\*\) AS n FROM inter_companion_notes/i.test(sql)) {
+                    return { n: opts.totalNotes };
+                  }
+                  return null;
+                },
+                async all() {
+                  if (/FROM inter_companion_notes\s+WHERE ref_type IS NOT NULL/i.test(sql)) {
+                    return { results: opts.movesRows };
+                  }
+                  if (/FROM companion_questions WHERE id IN/i.test(sql)) {
+                    return { results: opts.questionRows ?? [] };
+                  }
+                  if (/FROM companion_tensions WHERE id IN/i.test(sql)) {
+                    return { results: opts.tensionRows ?? [] };
+                  }
+                  if (/FROM council_questions WHERE id IN/i.test(sql)) {
+                    return { results: opts.councilRows ?? [] };
+                  }
+                  return { results: [] };
+                },
+              };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+  }
+
+  function authedRequest(days?: number): Request {
+    const url = days != null
+      ? `https://x/inter-companion-notes/moves?days=${days}`
+      : "https://x/inter-companion-notes/moves";
+    return new Request(url, { headers: { Authorization: `Bearer ${ADMIN}` } });
+  }
+
+  it("denies unauthenticated requests", async () => {
+    const env = fakeMovesEnv({ totalNotes: 0, movesRows: [] });
+    const res = await getInterCompanionNoteMoves(new Request("https://x/inter-companion-notes/moves"), env);
+    expect(res.status).toBe(401);
+  });
+
+  it("one moved question-move, one unmoved tension-move, one plain note: moves=2, moved=1, plain note excluded from items", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 3, // 2 moves + 1 plain note in the window
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: "drevan", ref_type: "question", ref_id: "q1", reason: "asked", created_at: noteCreatedAt },
+        { id: "n2", from_id: "gaia", to_id: "cypher", ref_type: "tension", ref_id: "t1", reason: "flagged", created_at: noteCreatedAt },
+      ],
+      questionRows: [{ id: "q1", status: "answered", answered_at: "2026-07-02T00:00:00.000Z" }], // after note -> moved
+      tensionRows: [{ id: "t1", status: "simmering", last_surfaced_at: null }], // unchanged -> not moved
+    });
+
+    const res = await getInterCompanionNoteMoves(authedRequest(30), env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.window_days).toBe(30);
+    expect(body.total_notes).toBe(3);
+    expect(body.moves).toBe(2);
+    expect(body.moved).toBe(1);
+    expect(body.moved_pct).toBe(50);
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items).toHaveLength(2); // plain note never entered movesRows -> excluded
+    const q = items.find(i => i.ref_id === "q1")!;
+    expect(q.state_changed_after_note).toBe(true);
+    expect(q.object_state).toBe("answered");
+    const t = items.find(i => i.ref_id === "t1")!;
+    expect(t.state_changed_after_note).toBe(false);
+    expect(t.object_state).toBe("simmering");
+  });
+
+  it("zero moves in the window: moved_pct is 0, not NaN/Infinity (no div-by-zero)", async () => {
+    const env = fakeMovesEnv({ totalNotes: 0, movesRows: [] });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.moves).toBe(0);
+    expect(body.moved).toBe(0);
+    expect(body.moved_pct).toBe(0);
+    expect(body.items).toEqual([]);
+  });
+
+  it("tension moved via last_surfaced_at bump alone (status unchanged) -- the documented approximation", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 1,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: "drevan", ref_type: "tension", ref_id: "t2", reason: null, created_at: noteCreatedAt },
+      ],
+      tensionRows: [{ id: "t2", status: "simmering", last_surfaced_at: "2026-07-05T00:00:00.000Z" }],
+    });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.moved).toBe(1);
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items[0]!.state_changed_after_note).toBe(true);
+  });
+
+  it("council move: status='closed' AND closed_at > note.created_at required", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 1,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: null, ref_type: "council", ref_id: "c1", reason: null, created_at: noteCreatedAt },
+      ],
+      councilRows: [{ id: "c1", status: "closed", closed_at: "2026-06-30T00:00:00.000Z" }], // closed BEFORE note -> not moved
+    });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.moved).toBe(0);
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items[0]!.state_changed_after_note).toBe(false);
+    expect(items[0]!.object_state).toBe("closed");
+  });
+
+  it("days param defaults to 30 and clamps out-of-range values", async () => {
+    const env = fakeMovesEnv({ totalNotes: 0, movesRows: [] });
+    const resDefault = await getInterCompanionNoteMoves(authedRequest(), env);
+    expect((await resDefault.json() as Record<string, unknown>).window_days).toBe(30);
+
+    const resTooHigh = await getInterCompanionNoteMoves(authedRequest(99999), env);
+    expect((await resTooHigh.json() as Record<string, unknown>).window_days).toBe(365);
+
+    // 0 (and any non-positive value) falls back to the default, matching the
+    // `parseInt(...) || default` convention used by the sibling days-windowed
+    // handlers in this file (self-monitoring.ts, sessions.ts) -- not clamped to 1.
+    const resZero = await getInterCompanionNoteMoves(authedRequest(0), env);
+    expect((await resZero.json() as Record<string, unknown>).window_days).toBe(30);
+
+    const resGarbage = await getInterCompanionNoteMoves(
+      new Request("https://x/inter-companion-notes/moves?days=abc", { headers: { Authorization: `Bearer ${ADMIN}` } }),
+      env,
+    );
+    expect((await resGarbage.json() as Record<string, unknown>).window_days).toBe(30);
+  });
+
+  it("ref'd object not found (deleted after the note referenced it): object_state null, not moved", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 1,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: "drevan", ref_type: "question", ref_id: "gone", reason: null, created_at: noteCreatedAt },
+      ],
+      questionRows: [], // ref_id not found
+    });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    const items = body.items as Array<Record<string, unknown>>;
+    expect(items[0]!.object_state).toBeNull();
+    expect(items[0]!.state_changed_after_note).toBe(false);
   });
 });

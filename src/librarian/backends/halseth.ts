@@ -563,7 +563,7 @@ export type NoteRefType = (typeof NOTE_REF_TYPES)[number];
 // Polymorphic ref -- no FK (migration review: correct call, since the three target
 // tables are unrelated). This map is the single source of truth for which table an
 // existence check hits; keys are the literal union above, not free-form strings.
-const NOTE_REF_TABLES: Record<NoteRefType, string> = {
+export const NOTE_REF_TABLES: Record<NoteRefType, string> = {
   question: "companion_questions",
   tension: "companion_tensions",
   council: "council_questions",
