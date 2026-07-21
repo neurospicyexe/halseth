@@ -39,6 +39,7 @@ vi.mock("../synthesis/index.js", async (importOriginal) => {
 import { execConclusionAdd } from "../librarian/executors/writes.js";
 import { execSessionClose } from "../librarian/executors/session.js";
 import type { Env } from "../types.js";
+import { vectorId } from "../mcp/embed.js";
 
 // ---------------------------------------------------------------------------
 // Shared fake-env helper: generic D1 stub (captures every prepare+bind call),
@@ -56,7 +57,17 @@ function makeEnv(matches: Array<{ id: string; score: number }>, captured: Captur
           bind: (...args: unknown[]) => {
             captured.prepared.push(sql);
             captured.binds.push(args);
-            return stmt;
+            return {
+              ...stmt,
+              // noveltyCheck's dead-vector post-filter (2026-07-20 review): echo back
+              // every bound id as "active" -- these tests assert the gate matches a live
+              // row, not a superseded one, so the post-filter must be a no-op by default.
+              all: async () => (
+                sql.includes("SELECT id FROM companion_conclusions") && sql.includes("superseded_by IS NULL")
+                  ? { results: args.map((id) => ({ id })) }
+                  : { results: [] }
+              ),
+            };
           },
           // The session_id auto-resolve query in execSessionClose needs a hit here;
           // every other call site in this file uses .run()/.batch() instead.
@@ -72,6 +83,7 @@ function makeEnv(matches: Array<{ id: string; score: number }>, captured: Captur
     VECTORIZE: {
       query: vi.fn(async () => ({ matches })),
       upsert: vi.fn(async () => undefined),
+      deleteByIds: vi.fn(async () => undefined),
     },
   } as unknown as Env;
 }
@@ -153,6 +165,21 @@ describe("execConclusionAdd -- novelty gate", () => {
     expect(res.novelty).toEqual({ action: "insert" });
     expect(insertCalls(captured)).toBe(1);
     expect(captured.prepared.some((sql) => sql.includes("UPDATE companion_conclusions SET superseded_by"))).toBe(false);
+  });
+
+  it("supersede calls VECTORIZE.deleteByIds with the OLD row's vector id; a delete failure doesn't affect the response", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
+    (env.VECTORIZE.deleteByIds as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error("vectorize delete 500");
+    });
+
+    const res = await execConclusionAdd(ctx(env)) as Record<string, unknown>;
+
+    expect(env.VECTORIZE.deleteByIds).toHaveBeenCalledWith([vectorId("companion_conclusions", "oldrow456")]);
+    expect(res.novelty).toMatchObject({ action: "supersede", match_id: "oldrow456", score: 0.90 });
+    expect(res.superseded).toBe(true);
+    expect(insertCalls(captured)).toBe(1);
   });
 });
 
@@ -246,6 +273,21 @@ describe("execSessionClose -- conclusion fan-out novelty gate", () => {
     expect(captured.prepared.some((sql) => sql.includes("UPDATE companion_conclusions SET superseded_by"))).toBe(false);
     const fanout = res.fanout as { written: number; failed: number } | undefined;
     expect(fanout!.written).toBe(1);
+    expect(fanout!.failed).toBe(0);
+  });
+
+  it("supersede calls VECTORIZE.deleteByIds with the OLD row's vector id; a delete failure doesn't affect the fanout", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
+    (env.VECTORIZE.deleteByIds as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error("vectorize delete 500");
+    });
+
+    const res = await execSessionClose(ctx(env, "the architecture holds")) as Record<string, unknown>;
+
+    expect(env.VECTORIZE.deleteByIds).toHaveBeenCalledWith([vectorId("companion_conclusions", "oldrow456")]);
+    expect(res.ack).toBe(true);
+    const fanout = res.fanout as { written: number; failed: number } | undefined;
     expect(fanout!.failed).toBe(0);
   });
 });

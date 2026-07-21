@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { embedAndStoreAsync, storeVector } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
@@ -874,6 +874,19 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
           );
         }
         const results = await ctx.env.DB.batch(stmts);
+
+        // Best-effort delete of the superseded row's vector so a dead conclusion can
+        // never resurface as a novelty-gate match (2026-07-20 review). Mirrors
+        // salience-prune.ts's best-effort pattern: D1 is truth, the row is already
+        // committed, the index is disposable/rebuildable -- a failed delete must never
+        // affect the write or the fanout result.
+        if (decision.action === "supersede") {
+          try {
+            await ctx.env.VECTORIZE.deleteByIds([vectorId("companion_conclusions", decision.matchRowId)]);
+          } catch (err) {
+            console.error("[session_close] superseded vector delete failed (row kept, index stale):", String(err));
+          }
+        }
 
         // Store the vector: reuse the gate's embedding (net +0 AI calls on the
         // common path). Only re-embed if the gate itself fell open (embedding null).

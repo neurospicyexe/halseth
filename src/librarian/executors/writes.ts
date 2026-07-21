@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { embedAndStoreAsync, storeVector } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
@@ -594,12 +594,14 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   // Caller-declared `supersedes` and the novelty gate's own supersede decision are
   // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
   // so neither clobbers an already-superseded row.
+  const supersededIds: string[] = [];
   if (supersedes) {
     stmts.push(
       ctx.env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
+    supersededIds.push(supersedes);
   }
   if (decision.action === "supersede" && decision.matchRowId !== supersedes) {
     stmts.push(
@@ -607,8 +609,21 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
       ).bind(newId, decision.matchRowId, ctx.req.companion_id)
     );
+    supersededIds.push(decision.matchRowId);
   }
   await ctx.env.DB.batch(stmts);
+
+  // Best-effort delete of the superseded row's vector so a dead conclusion can never
+  // resurface as a novelty-gate match (2026-07-20 review). Mirrors salience-prune.ts's
+  // best-effort pattern: D1 is truth, the row is already committed, the index is
+  // disposable/rebuildable -- a failed delete must never affect the write or response.
+  if (supersededIds.length > 0) {
+    try {
+      await ctx.env.VECTORIZE.deleteByIds(supersededIds.map((id) => vectorId("companion_conclusions", id)));
+    } catch (err) {
+      console.error("[conclusion_add] superseded vector delete failed (row kept, index stale):", String(err));
+    }
+  }
 
   // Store the vector: reuse the gate's embedding (net +0 AI calls on the common
   // path). Only re-embed if the gate itself fell open (decision.embedding === null).

@@ -83,7 +83,7 @@ describe("postCompanionJournal -- novelty gate (machine sources only)", () => {
     const body = await res.json() as any;
     expect(body.deduped).toBe(true);
     expect(body.id).toBe("existing123");
-    expect(body.novelty).toEqual({ action: "skip", score: 0.96 });
+    expect(body.novelty).toEqual({ action: "skip", match_id: "existing123", score: 0.96 });
     expect(insertCalls(captured)).toBe(0);
   });
 
@@ -168,6 +168,9 @@ describe("companionJournalAdd (librarian backend) -- novelty gate + awaited embe
 
     expect(result.deduped).toBe(true);
     expect(result.id).toBe("existing456");
+    // Consistency fix (2026-07-20 review): journal dedupe now carries novelty.match_id,
+    // matching the shape companion_conclusions has always returned.
+    expect(result.novelty).toEqual({ action: "skip", match_id: "existing456", score: 0.97 });
     expect(insertCalls(captured)).toBe(0);
   });
 

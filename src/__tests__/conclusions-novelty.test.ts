@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { postConclusion } from "../handlers/conclusions.js";
+import { vectorId } from "../mcp/embed.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,7 +39,17 @@ function makeEnv(matches: Array<{ id: string; score: number }>, captured: Captur
           bind: (...args: unknown[]) => {
             captured.prepared.push(sql);
             captured.binds.push(args);
-            return stmt;
+            return {
+              ...stmt,
+              // noveltyCheck's dead-vector post-filter (2026-07-20 review): echo back every
+              // bound id as "active" -- these tests assert the gate matches a live row, not
+              // a superseded one, so the post-filter must be a no-op by default here.
+              all: async () => (
+                sql.includes("SELECT id FROM companion_conclusions") && sql.includes("superseded_by IS NULL")
+                  ? { results: args.map((id) => ({ id })) }
+                  : { results: [] }
+              ),
+            };
           },
           run: async () => ({ meta: { changes: 1 } }),
           all: async () => ({ results: [] }),
@@ -51,6 +62,7 @@ function makeEnv(matches: Array<{ id: string; score: number }>, captured: Captur
     VECTORIZE: {
       query: vi.fn(async () => ({ matches })),
       upsert: vi.fn(async () => undefined),
+      deleteByIds: vi.fn(async () => undefined),
     },
   };
 }
@@ -136,5 +148,53 @@ describe("postConclusion -- novelty gate", () => {
     const body = await res.json() as any;
     expect(body.novelty).toEqual({ action: "insert" });
     expect(insertCalls(captured)).toBe(1);
+  });
+});
+
+// Source-side vector cleanup (2026-07-20 review): when a supersede fires, the OLD row's
+// vector must be best-effort deleted so it can never resurface as a future novelty-gate
+// match. Mirrors salience-prune.ts's pattern: a delete failure must never affect the write.
+describe("postConclusion -- supersede deletes the OLD row's vector", () => {
+  it("gate-driven supersede calls VECTORIZE.deleteByIds with the OLD row's vector id", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
+
+    const res = await postConclusion(makeRequest(BASE_BODY), env);
+
+    expect(res.status).toBe(200);
+    expect(env.VECTORIZE.deleteByIds).toHaveBeenCalledWith([vectorId("companion_conclusions", "oldrow456")]);
+  });
+
+  it("caller-declared `supersedes` also calls VECTORIZE.deleteByIds with that OLD row's vector id", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([], captured); // no gate match -- purely caller-declared
+
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, supersedes: "caller-old-1" }), env);
+
+    expect(res.status).toBe(200);
+    expect(env.VECTORIZE.deleteByIds).toHaveBeenCalledWith([vectorId("companion_conclusions", "caller-old-1")]);
+  });
+
+  it("a deleteByIds failure never affects the write or the response", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
+    env.VECTORIZE.deleteByIds = vi.fn(async () => { throw new Error("vectorize delete 500"); });
+
+    const res = await postConclusion(makeRequest(BASE_BODY), env);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.novelty).toMatchObject({ action: "supersede", match_id: "oldrow456", score: 0.90 });
+    expect(body.superseded).toBe("oldrow456");
+    expect(insertCalls(captured)).toBe(1);
+  });
+
+  it("plain insert (no supersede) never calls deleteByIds", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:unrelated", score: 0.5 }], captured);
+
+    await postConclusion(makeRequest(BASE_BODY), env);
+
+    expect(env.VECTORIZE.deleteByIds).not.toHaveBeenCalled();
   });
 });

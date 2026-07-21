@@ -640,7 +640,7 @@ export async function companionJournalAdd(
   note_text: string,
   tags?: string,
   source?: string,
-): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; score: number } }> {
+): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; match_id?: string; score: number } }> {
   // Novelty gate (2026-07-20, Task 12): machine-source writers only -- skip-only, no supersede
   // band (novelty.ts restricts supersede to companion_conclusions). Human sources bypass the
   // gate entirely (attribution is sacred). Fails open on any embedding/Vectorize trouble.
@@ -655,7 +655,7 @@ export async function companionJournalAdd(
         id: decision.matchRowId,
         created_at: new Date().toISOString(),
         deduped: true,
-        novelty: { action: "skip", score: decision.score },
+        novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
       };
     }
     reusableEmbedding = decision.embedding;

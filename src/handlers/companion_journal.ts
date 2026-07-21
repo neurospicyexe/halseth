@@ -105,7 +105,7 @@ export async function postCompanionJournal(
         ok: true,
         deduped: true,
         id: decision.matchRowId,
-        novelty: { action: "skip", score: decision.score },
+        novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
