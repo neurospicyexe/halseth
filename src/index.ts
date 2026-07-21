@@ -36,6 +36,7 @@ import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, p
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
 import { getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -213,6 +214,13 @@ const router = new Router()
   .on("POST",  "/mind/thread",                        (request, env)         => postMindThread(request, env))
   .on("POST",  "/mind/threads/sweep",                 (request, env)         => postThreadsSweep(request, env))
   .on("PATCH", "/mind/thread/:thread_key/status",     (request, env, params) => patchMindThreadStatus(request, env, params ?? {}))
+
+  // Thread spine — durable conversation threads (migration 0106)
+  .on("POST", "/mind/conversations",                 (request, env)         => postConversation(request, env))
+  .on("GET",  "/mind/conversations/active",          (request, env)         => getConversationActive(request, env))
+  .on("GET",  "/mind/conversations",                 (request, env)         => listConversationsHandler(request, env))
+  .on("POST", "/mind/conversations/:id/turns",       (request, env, params) => postConversationTurn(request, env, params ?? {}))
+  .on("POST", "/mind/conversations/:id/land",        (request, env, params) => postConversationLand(request, env, params ?? {}))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
   .on("GET",  "/mind/search",                        (request, env)         => getMindSearch(request, env))
   .on("GET",  "/mind/sb-search-log/:agent_id",       (request, env, params) => getMindSbSearchLog(request, env, params ?? {}))
