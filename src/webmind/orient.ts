@@ -16,6 +16,7 @@ import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql } from "./heat.js";
 import { takeUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
+import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
 
 /** "While you were away" block. Null-safe: orient must never break on home error. */
 export async function buildHomeBlock(env: Env, agentId: WmAgentId): Promise<HomeEvent[]> {
@@ -51,7 +52,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, openLoopsRes, openQuestionsRes, activeConvosRes] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -152,6 +153,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     env.DB.prepare(
       "SELECT id, question, context, created_at FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmOrientOpenQuestion>(),
+    // Answered questions: Raziel's answers, surfaced for 7 days regardless of delivered_at
+    // (questions-lifecycle fix, mig 0107) -- the dedup/mutuality gap where answers never
+    // reached companions because every orient path only ever read status = 'open'.
+    fetchRecentAnswers(env, agentId, 3),
     // Active conversations: live thread spine (Task 4, mig 0106). Threads are shared
     // across the triad, not per-agent -- no agent_id filter.
     env.DB.prepare(
@@ -248,6 +253,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     });
   }
 
+  // Stamp delivered_at on surfaced answers (mig 0107, questions-lifecycle fix). Awaited +
+  // caught -- a throw here must never null out wmResult upstream (session.ts wraps wmOrient
+  // in .catch(() => null), which would blank the entire continuity block over a bookkeeping
+  // failure). Read stays unfiltered by delivered_at above; only the write is guarded.
+  await markAnswersDelivered(env, answeredQuestions.map(a => a.id)).catch((e: unknown) => {
+    console.error("[orient] markAnswersDelivered failed:", String(e));
+  });
+
   // Cross-reference: annotate simmering tensions that may already be closed by a conclusion.
   // If a tension's last_surfaced_at predates the oldest active conclusion by > 3 days,
   // mark it possibly_resolved so synthesis workers don't loop on stale content.
@@ -288,6 +301,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     flagged_beliefs,
     open_loops: (openLoopsRes.results ?? []),
     open_questions: (openQuestionsRes.results ?? []),
+    answered_questions: answeredQuestions,
     active_conversations: activeConvosRes.results ?? [],
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
     recent_spiral_turn: recentSpiralTurnRow ?? null,

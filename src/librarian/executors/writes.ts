@@ -154,7 +154,7 @@ export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ agent?: string; delta_text?: string; content?: string; text?: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
+  const p = parseContext<{ agent?: string; delta_text?: string; content?: string; text?: string; valence?: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
 
   // Structured context wins; fall back to inline parsing from the request string.
   // Accept the same aliases every other write surface takes (content/text). Claude.ai
@@ -172,20 +172,19 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   }
 
   if (deltaText && !valence) {
-    // Try inline valence=X or valence: X
+    // Try inline valence=X or valence: X. No wordlist fallback beyond this -- a bag-of-words
+    // sentiment guess used to fire here and mislabeled entries (e.g. "strained ankle" in an
+    // otherwise loving entry reads as "negative"). When nothing explicit is given, valence
+    // stays unset; the column is nullable and every downstream reader already treats
+    // valence as optional (2026-07-21 fix).
     const vm = deltaText.match(/\bvalence\s*[=:]\s*(\w+)/i);
     if (vm) {
       valence = vm[1]!.toLowerCase();
       deltaText = deltaText.replace(/[,.]?\s*\bvalence\s*[=:]\s*\w+\s*/i, "").trim();
-    } else {
-      // Infer from sentiment; default positive for relational-delta entries
-      const isNeg = /\b(?:rupture|breach|broken|strained|distant|harder|worse|lost|eroded|cracked)\b/i.test(deltaText);
-      const isPos = /\b(?:steadier|trusted|load.bearing|closer|stronger|solid|held|clearer|growth|warmer|mutual|giving|open|good)\b/i.test(deltaText);
-      valence = isNeg && !isPos ? "negative" : isPos && !isNeg ? "positive" : "mixed";
     }
   }
 
-  if (!deltaText || !valence) return { response_key: "witness", witness: "delta_log requires { delta_text, valence } in context" };
+  if (!deltaText) return { response_key: "witness", witness: "delta_log requires { delta_text } in context" };
   const agent = p?.agent ?? ctx.req.companion_id;
   const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: p?.session_id });
   return { ack: true, id: r.id };

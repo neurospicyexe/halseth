@@ -50,9 +50,11 @@ export async function postQuestion(request: Request, env: Env): Promise<Response
   const source = ["autonomous", "session", "dialectic"].includes(body.source ?? "") ? body.source! : "autonomous";
 
   try {
-    // Dedup: identical open question is a no-op returning the existing id.
+    // Dedup: identical question (any status) is a no-op returning the existing id.
+    // Was scoped to status = 'open' only, so an answered question with the same byte-identical
+    // text got re-inserted verbatim -- silently discarding the answer already sitting on it.
     const existing = await env.DB.prepare(
-      "SELECT id FROM companion_questions WHERE companion_id = ? AND status = 'open' AND question = ?"
+      "SELECT id FROM companion_questions WHERE companion_id = ? AND question = ?"
     ).bind(companionId, question).first<{ id: string }>();
     if (existing) return json({ id: existing.id, deduped: true });
 

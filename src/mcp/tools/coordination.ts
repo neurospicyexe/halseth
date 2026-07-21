@@ -44,7 +44,7 @@ export function registerCoordinationTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_task_list",
-    "List tasks with optional filters by status or assignee.",
+    "List tasks with optional filters by status or assignee. Defaults to non-done tasks when status is omitted (pass status: 'done' explicitly to see completed tasks).",
     {
       status:      z.enum(["open", "in_progress", "done"]).optional(),
       assigned_to: z.string().optional(),
@@ -55,6 +55,7 @@ export function registerCoordinationTools(server: McpServer, env: Env): void {
       const bindings: unknown[] = [];
 
       if (input.status)      { conditions.push("status = ?");      bindings.push(input.status); }
+      else                   { conditions.push("status != 'done'"); }
       if (input.assigned_to) { conditions.push("assigned_to = ?"); bindings.push(input.assigned_to); }
 
       const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

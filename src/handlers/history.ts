@@ -34,12 +34,12 @@ export async function getHandovers(request: Request, env: Env): Promise<Response
   const offset = isNaN(rawOff) ? 0 : Math.max(0, rawOff);
 
   const result = await env.DB.prepare(`
-    SELECT hp.*, s.session_type, s.front_state AS session_front_state
+    SELECT hp.*, s.session_type, s.front_state AS session_front_state, s.companion_id AS companion_id
     FROM handover_packets hp
     LEFT JOIN sessions s ON hp.session_id = s.id
     ORDER BY hp.created_at DESC
     LIMIT ? OFFSET ?
-  `).bind(limit, offset).all<HandoverPacket & { session_type: string | null; session_front_state: string | null }>();
+  `).bind(limit, offset).all<HandoverPacket & { session_type: string | null; session_front_state: string | null; companion_id: string | null }>();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },

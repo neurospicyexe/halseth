@@ -266,13 +266,13 @@ export async function woundAdd(env: Env, params: {
 }
 
 export async function deltaLog(env: Env, params: {
-  agent: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string;
+  agent: string; delta_text: string; valence?: string; initiated_by?: string; session_id?: string;
 }): Promise<{ id: string; created_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
   await env.DB.prepare(
     "INSERT INTO relational_deltas (id, companion_id, subject_id, delta_type, payload_json, session_id, created_at, agent, delta_text, valence, initiated_by) VALUES (?, '', 'mcp', 'mcp_delta', '{}', ?, ?, ?, ?, ?, ?)"
-  ).bind(id, params.session_id ?? null, now, params.agent, params.delta_text, params.valence, params.initiated_by ?? null).run();
+  ).bind(id, params.session_id ?? null, now, params.agent, params.delta_text, params.valence ?? null, params.initiated_by ?? null).run();
   return { id, created_at: now };
 }
 

@@ -285,6 +285,7 @@ export interface WmOrientResponse {
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
   open_loops: WmOrientOpenLoop[];               // open loops (things carried from sessions, not yet resolved)
   open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)
+  answered_questions: WmAnsweredQuestion[];     // answers Raziel left, surfaced for 7 days (mig 0107)
   active_conversations: WmActiveConversation[]; // live conversation threads (conversation_threads, mig 0106)
   soma_arc?: {
     note_id: string;
@@ -398,6 +399,17 @@ export interface WmOrientOpenQuestion {
   question: string;
   context: string | null;
   created_at: string;
+}
+
+// Answered questions surfaced at orient (companion_questions, status = 'answered').
+// delivered_at is stamped by markAnswersDelivered the first time an orient surfaces
+// the row -- optional here since the SELECT can return it before it's ever been set.
+export interface WmAnsweredQuestion {
+  id: string;
+  question: string;
+  answer: string;
+  answered_at: string;
+  delivered_at?: string | null;
 }
 
 // Active conversation threads (conversation_threads table, migration 0106 thread spine).
