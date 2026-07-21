@@ -161,6 +161,21 @@ describe("postMotifsDetect", () => {
       expect(hasAnonymous && hasNumbered).toBe(false); // never both in one statement
     }
   });
+
+  // Task 20: archived rows (self-pruned by the salience-prune tick, mig 0105)
+  // must never resurface as motif corpus material.
+  it("scopes the companion_journal corpus SELECT to archived = 0", async () => {
+    const captured: string[] = [];
+    const realPrepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => { captured.push(sql); return realPrepare(sql); };
+
+    db.setCorpus(["bridge here", "bridge there", "bridge again"]);
+    await postMotifsDetect(detectReq({ companion_id: "cypher" }), env);
+
+    const journalSql = captured.find(s => s.includes("FROM companion_journal"));
+    expect(journalSql).toBeDefined();
+    expect(journalSql).toContain("archived = 0");
+  });
 });
 
 describe("getMotifs", () => {

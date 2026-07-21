@@ -79,6 +79,7 @@ import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
+import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
 import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
 import { associateDreamsHandler } from "./handlers/dream-associate.js";
@@ -305,6 +306,9 @@ const router = new Router()
   .on("POST",  "/mind/ferment/tick",                 (request, env)         => tickFermentation(request, env))
   .on("POST",  "/mind/ferment/stimulus",             (request, env)         => postFermentStimulus(request, env))
   .on("GET",   "/mind/ferment/:companion_id",        (request, env, params) => getFermentation(request, env, params ?? {}))
+
+  // Salience prune (0105, task 20) -- cold machine-source journal rows self-archive; manual/test trigger
+  .on("POST",  "/mind/salience/prune",               (request, env)         => postSaliencePrune(request, env))
 
   // Creatures (0078) -- corvid + Raziel's animals as named presences (take 10)
   .on("POST",  "/mind/creatures/tick",               (request, env)         => tickCreatures(request, env))
@@ -594,6 +598,17 @@ export default {
       (async () => {
         try { await runFermentTick(env); }
         catch (err) { console.error("ferment tick failed", err); }
+      })(),
+    );
+
+    // The salience-prune tick rides the existing cron too (cold machine journal rows
+    // self-archive). No timestamp gate of its own -- idempotent (already-archived rows
+    // drop out of the next SELECT) and cheap (bounded LIMIT). Guarded so a failure
+    // never breaks the synthesis queue or any other scheduled work.
+    ctx.waitUntil(
+      (async () => {
+        try { await runSaliencePrune(env); }
+        catch (err) { console.error("salience prune failed", err); }
       })(),
     );
   },
