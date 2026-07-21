@@ -1,6 +1,7 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmReviewLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
+import { listConversations, landConversation, getActiveConversation } from "../../webmind/conversations.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
@@ -43,6 +44,49 @@ export async function execWmThreadUpsert(ctx: ExecutorContext): Promise<Executor
   };
   const r = await wmUpsertThread(ctx.env, input);
   return { ack: true, thread: r.thread, event: r.event ?? null };
+}
+
+// ── Conversation spine (migration 0106, Task 5) ──────────────────────────────
+// Thin Librarian wrappers over src/webmind/conversations.ts (Task 2). Distinct
+// substrate from wm_mind_threads/wm_thread_upsert above -- conversation_threads
+// tracks live Discord/Raziel dialogue turns, not companion continuity threads.
+// Anchored guards in router.ts keep "thread"/"conversation" trigger words from
+// crossing between the two constructs.
+
+export async function execConversationList(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ state?: string; days?: number; limit?: number }>(ctx.req.context);
+  const conversations = await listConversations(ctx.env, {
+    ...(p?.state !== undefined && { state: p.state }),
+    ...(p?.days !== undefined && { days: p.days }),
+    ...(p?.limit !== undefined && { limit: p.limit }),
+  });
+  return { ack: true, conversations };
+}
+
+export async function execConversationLand(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ thread_id?: string; channel_id?: string; resolution?: string }>(ctx.req.context);
+  if (!p?.resolution) {
+    return { error: "conversation_land_failed", reason: "missing required field: resolution" };
+  }
+
+  let threadId = p.thread_id;
+  if (!threadId) {
+    if (!p.channel_id) {
+      return { error: "conversation_land_failed", reason: "missing required fields: thread_id or channel_id" };
+    }
+    const active = await getActiveConversation(ctx.env, p.channel_id);
+    if (!active) {
+      return { error: "conversation_land_failed", reason: "no active conversation in that channel" };
+    }
+    threadId = active.thread.id;
+  }
+
+  const r = await landConversation(ctx.env, threadId, {
+    resolution: p.resolution,
+    landed_by: ctx.req.companion_id,
+  });
+  if (!r.ok) return { error: "conversation_land_failed", reason: r.reason ?? "unknown" };
+  return { ack: true };
 }
 
 export async function execWmNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {

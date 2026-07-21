@@ -111,6 +111,8 @@ the traps below exist because names lie.
 | `wm_orient` | execWmOrient | webmind.ts | READ | |
 | `wm_ground` | execWmGround | webmind.ts | READ | |
 | `wm_thread_upsert` | execWmThreadUpsert | webmind.ts | wm_mind_threads, wm_thread_events | |
+| `conversation_list` | execConversationList | webmind.ts | READ | reads conversation_threads (mig 0106 thread spine); distinct from wm_mind_threads |
+| `conversation_land` | execConversationLand | webmind.ts | conversation_threads (UPDATE) | resolves thread_id via channel_id when only channel given |
 | `wm_note_add` | execWmNoteAdd | webmind.ts | wm_continuity_notes (+ wm_archive_notes on archive) | trap cluster 2 |
 | `wm_handoff_write` | execWmHandoffWrite | webmind.ts | wm_session_handoffs | |
 | `wm_dream_write` | execWmDreamWrite | webmind.ts | companion_dreams | |
