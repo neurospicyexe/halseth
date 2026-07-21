@@ -602,9 +602,11 @@ export default {
     );
 
     // The salience-prune tick rides the existing cron too (cold machine journal rows
-    // self-archive). No timestamp gate of its own -- idempotent (already-archived rows
-    // drop out of the next SELECT) and cheap (bounded LIMIT). Guarded so a failure
-    // never breaks the synthesis queue or any other scheduled work.
+    // self-archive). This cron fires every MINUTE (see wrangler.toml), so the prune
+    // self-gates to a 24h cadence internally (its own companion_settings stamp --
+    // see src/webmind/salience-prune.ts) rather than relying on the cron interval to
+    // already be daily; unforced here, so the gate always applies on this path.
+    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
     ctx.waitUntil(
       (async () => {
         try { await runSaliencePrune(env); }
