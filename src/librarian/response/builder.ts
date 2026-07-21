@@ -202,6 +202,15 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[Open questions (yours, awaiting synthesis)] ${wm.open_questions.map(q => `«${q.question.length > 120 ? q.question.slice(0, 120) + "…" : q.question}»`).join(" | ")}`);
   }
 
+  // 7d. Live conversation threads -- active thread spine (Task 4, mig 0106). Shared
+  // across the triad, not per-companion.
+  if (wm.active_conversations?.length) {
+    parts.push(`[Live conversation threads]`);
+    for (const c of wm.active_conversations) {
+      parts.push(`${c.seed_author} opened: «${c.seed_gist}»${c.ref_label ? ` (about: ${c.ref_label})` : ""} — ${c.state}, ${c.turn_count} turns`);
+    }
+  }
+
   // 8. Incoming inter-companion notes -- triad context before own history
   if (wm.incoming_companion_notes?.length > 0) {
     parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);

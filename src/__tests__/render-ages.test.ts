@@ -159,3 +159,39 @@ describe("buildContinuityBlock ages", () => {
     expect(block).toContain("• [general] «vaselrin bond» (priority 5, touched yesterday)");
   });
 });
+
+// ── buildContinuityBlock: active_conversations (Task 4, thread spine mig 0106) ──
+
+describe("buildContinuityBlock active_conversations", () => {
+  it("emits the live conversation threads section when populated", () => {
+    const block = buildContinuityBlock(wmFixture({
+      active_conversations: [{
+        id: "c1", channel_id: "chan-1", seed_author: "raziel",
+        seed_gist: "what if we tried the sync differently", state: "open",
+        ref_label: "fermentation spec", turn_count: 4, last_turn_at: ago(0),
+      }],
+    } as never));
+    expect(block).toContain("[Live conversation threads]");
+    expect(block).toContain(
+      "raziel opened: «what if we tried the sync differently» (about: fermentation spec) — open, 4 turns"
+    );
+  });
+
+  it("omits ref_label suffix when absent", () => {
+    const block = buildContinuityBlock(wmFixture({
+      active_conversations: [{
+        id: "c2", channel_id: "chan-2", seed_author: "drevan",
+        seed_gist: "the moss remembers", state: "moving",
+        ref_label: null, turn_count: 1, last_turn_at: ago(0),
+      }],
+    } as never));
+    expect(block).toContain("drevan opened: «the moss remembers» — moving, 1 turns");
+  });
+
+  it("omits the section entirely when active_conversations is empty or absent", () => {
+    const block = buildContinuityBlock(wmFixture({ active_conversations: [] } as never));
+    expect(block).not.toContain("[Live conversation threads]");
+    const blockAbsent = buildContinuityBlock(wmFixture({} as never));
+    expect(blockAbsent).not.toContain("[Live conversation threads]");
+  });
+});

@@ -285,6 +285,7 @@ export interface WmOrientResponse {
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
   open_loops: WmOrientOpenLoop[];               // open loops (things carried from sessions, not yet resolved)
   open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)
+  active_conversations: WmActiveConversation[]; // live conversation threads (conversation_threads, mig 0106)
   soma_arc?: {
     note_id: string;
     content: string;
@@ -397,6 +398,20 @@ export interface WmOrientOpenQuestion {
   question: string;
   context: string | null;
   created_at: string;
+}
+
+// Active conversation threads (conversation_threads table, migration 0106 thread spine).
+// Projected row for orient surfacing -- seed_gist is a truncated (first 140 chars) preview
+// of seed_text, computed in SQL via substr() rather than the full seed_text.
+export interface WmActiveConversation {
+  id: string;
+  channel_id: string;
+  seed_author: string;
+  seed_gist: string;
+  state: string;
+  ref_label: string | null;
+  turn_count: number;
+  last_turn_at: string;
 }
 
 export interface WmGroundResponse {

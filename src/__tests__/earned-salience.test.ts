@@ -254,3 +254,49 @@ describe("mindOrient -- active_conclusions ordered by heat, warmed on surface (t
     expect(runs.some(r => r.sql.includes("UPDATE companion_conclusions"))).toBe(false);
   });
 });
+
+// --- orient: active_conversations (Task 4, thread spine mig 0106) -----------------
+
+describe("mindOrient -- active_conversations (task 4, thread spine)", () => {
+  it("includes active_conversations with seed_gist when a row is returned", async () => {
+    const convoRow = {
+      id: "conv-1", channel_id: "chan-1", seed_author: "raziel",
+      seed_gist: "what if we tried the sync differently", state: "open",
+      ref_label: null, turn_count: 3, last_turn_at: "2026-07-20T00:00:00Z",
+    };
+    const runs: Array<{ sql: string; args: unknown[] }> = [];
+    const env = {
+      SYSTEM_OWNER: "raziel",
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("FROM wm_identity_anchor_snapshot")) {
+            return makeStmt(sql, () => [{ agent_id: "cypher", anchor_text: "x" }], runs);
+          }
+          if (sql.includes("FROM conversation_threads")) {
+            return makeStmt(sql, () => [convoRow], runs);
+          }
+          return makeStmt(sql, () => [], runs);
+        },
+      },
+    };
+    const result = await mindOrient(env as never, "cypher");
+    expect(result.active_conversations).toEqual([convoRow]);
+  });
+
+  it("scopes the conversation_threads SELECT to open/moving state, ordered by last_turn_at, capped at 3", async () => {
+    const { env, preparedSql } = makeOrientEnv();
+    await mindOrient(env, "cypher");
+    const convoSql = preparedSql.find(sql => sql.includes("FROM conversation_threads"));
+    expect(convoSql).toBeDefined();
+    expect(convoSql).toContain("state IN ('open','moving')");
+    expect(convoSql).toContain("ORDER BY last_turn_at DESC");
+    expect(convoSql).toContain("LIMIT 3");
+    expect(convoSql).toContain("substr(seed_text, 1, 140) AS seed_gist");
+  });
+
+  it("defaults to an empty array when no active threads exist", async () => {
+    const { env } = makeOrientEnv();
+    const result = await mindOrient(env, "cypher");
+    expect(result.active_conversations).toEqual([]);
+  });
+});
