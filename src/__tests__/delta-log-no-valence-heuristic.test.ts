@@ -102,3 +102,57 @@ describe("execDeltaLog: no sentiment-heuristic fallback for valence (fix 2)", ()
     expect(String(res.witness)).not.toContain("valence");
   });
 });
+
+describe("execDeltaLog: valence soft-canon normalization (2026-07-21)", () => {
+  it("trims and lowercases an explicit context.valence before storing", async () => {
+    const { env, calls } = fakeEnv();
+    await execDeltaLog({
+      env,
+      req: {
+        companion_id: "cypher",
+        request: "log delta",
+        context: JSON.stringify({ content: "held, closer, good", valence: "  Tender  " }),
+      },
+    } as never);
+    expect(calls[0]!.bound[VALENCE_INDEX]).toBe("tender");
+  });
+
+  it("does not reject a non-canon, companion-coined valence word (soft canon)", async () => {
+    const { env, calls } = fakeEnv();
+    await execDeltaLog({
+      env,
+      req: {
+        companion_id: "drevan",
+        request: "log delta",
+        context: JSON.stringify({ content: "a new shape entirely", valence: "Spiraling" }),
+      },
+    } as never);
+    expect(calls[0]!.bound[VALENCE_INDEX]).toBe("spiraling");
+  });
+
+  it("stores NULL when context.valence trims to an empty string", async () => {
+    const { env, calls } = fakeEnv();
+    await execDeltaLog({
+      env,
+      req: {
+        companion_id: "cypher",
+        request: "log delta",
+        context: JSON.stringify({ content: "held, closer, good", valence: "   " }),
+      },
+    } as never);
+    expect(calls[0]!.bound[VALENCE_INDEX]).toBeNull();
+  });
+
+  it("lowercases an inline 'valence: X' token the same way", async () => {
+    const { env, calls } = fakeEnv();
+    await execDeltaLog({
+      env,
+      req: {
+        companion_id: "cypher",
+        request: "log delta",
+        context: JSON.stringify({ content: "the frame held. valence: REPAIR" }),
+      },
+    } as never);
+    expect(calls[0]!.bound[VALENCE_INDEX]).toBe("repair");
+  });
+});

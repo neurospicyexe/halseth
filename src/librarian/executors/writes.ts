@@ -163,7 +163,11 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   // stored the bare request string ("Log a relational delta for cypher") as the delta.
   // (2026-06-24 Hermes/OpenClaw delta-misfield bug.)
   let deltaText = (p?.delta_text ?? p?.content ?? p?.text)?.trim();
-  let valence = p?.valence?.trim();
+  // Soft-canon normalization (2026-07-21): trim + lowercase the explicit valence so
+  // "Toward" / " tender " / "TENDER" all land as the same stored value. Canon words are
+  // toward/neutral/tender/rupture/repair, but this is NOT an allowlist -- companions may
+  // coin others, and non-canon words are never rejected here.
+  let valence = p?.valence?.trim().toLowerCase();
 
   if (!deltaText) {
     deltaText = ctx.req.request
@@ -185,6 +189,9 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   }
 
   if (!deltaText) return { response_key: "witness", witness: "delta_log requires { delta_text } in context" };
+  // An explicit valence that trims to empty (whitespace-only) stores as NULL, same as
+  // never having supplied one -- an empty string is not a value.
+  if (valence === "") valence = undefined;
   const agent = p?.agent ?? ctx.req.companion_id;
   const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: p?.session_id });
   return { ack: true, id: r.id };

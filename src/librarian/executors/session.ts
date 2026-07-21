@@ -1361,6 +1361,29 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   const botStandingRefusals = botRefusalRows?.results ?? [];
   const botOpenDrifts = botDriftRows?.results ?? [];
 
+  // Gaia-only: recent witness read-back (2026-07-21). gaia_witness has been write-only
+  // since it was added -- no orient path ever read it back, so Gaia's witnessing never
+  // fed forward into her own boot context. Standalone (not folded into the Promise.allSettled
+  // fan-out above) because it's gaia-only; wrapped in its own try/catch per this file's
+  // boot-path-safety convention -- must never break bot orient for any companion, Gaia
+  // included. Other companions get an empty array; gaia_witness carries no companion_id
+  // column (it's Gaia's alone by table design).
+  let recent_witness: Array<{ content: string; witness_type: string; created_at: string }> = [];
+  if (agentId === "gaia") {
+    try {
+      const witnessRows = await ctx.env.DB.prepare(
+        "SELECT content, witness_type, created_at FROM gaia_witness ORDER BY created_at DESC LIMIT 5"
+      ).all<{ content: string; witness_type: string; created_at: string }>();
+      recent_witness = (witnessRows.results ?? []).map(r => ({
+        content: (r.content ?? "").slice(0, 300),
+        witness_type: r.witness_type,
+        created_at: r.created_at,
+      }));
+    } catch (e) {
+      console.error("[bot-orient] gaia witness read-back failed (non-fatal):", String(e));
+    }
+  }
+
   const answered_questions = answeredQuestionsResult.status === "fulfilled" ? answeredQuestionsResult.value : [];
   // Stamp delivered_at on surfaced answers (mig 0107). Awaited + caught -- bookkeeping
   // failure here must never break the bot orient response.
@@ -1488,6 +1511,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       preferences: botPreferences,
       standing_refusals: botStandingRefusals,
       open_drifts: botOpenDrifts,
+      recent_witness,
     },
     meta: {
       operation: "halseth_bot_orient",
@@ -1497,6 +1521,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       standing_refusals: botStandingRefusals.length,
       open_drifts: botOpenDrifts.length,
       answered_questions: answered_questions.length,
+      recent_witness: recent_witness.length,
     },
   };
 }

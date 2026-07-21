@@ -9,6 +9,8 @@ import type { Env } from "../types.js";
 
 interface Row { [k: string]: unknown }
 
+const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+
 class FakeStatement {
   constructor(private sql: string, private db: FakeDb, private bound: unknown[] = []) {}
   bind(...args: unknown[]): FakeStatement { return new FakeStatement(this.sql, this.db, args); }
@@ -17,7 +19,16 @@ class FakeStatement {
     const s = this.sql.trim();
     if (s.startsWith("SELECT id FROM companion_questions WHERE companion_id = ? AND question = ?")) {
       const [companionId, question] = this.bound as [string, string];
-      const found = this.db.rows.find(r => r["companion_id"] === companionId && r["question"] === question);
+      const cutoff = Date.now() - NINETY_DAYS_MS;
+      // 90-day cooldown (2026-07-21): mirrors the SQL's `AND created_at >= datetime('now','-90 days')`.
+      // Rows without an explicit created_at simulate the DB default (stamped "now" at insert),
+      // so they're always within the window -- matches every pre-existing test in this file.
+      const found = this.db.rows.find(r => {
+        if (r["companion_id"] !== companionId || r["question"] !== question) return false;
+        const createdAt = r["created_at"] as string | undefined;
+        if (!createdAt) return true;
+        return new Date(createdAt).getTime() >= cutoff;
+      });
       return (found ? { id: found["id"] } : null) as T | null;
     }
     if (s.startsWith("SELECT COUNT(*) AS n FROM companion_questions")) {
@@ -117,5 +128,47 @@ describe("postQuestion dedup", () => {
       makeEnv(db),
     );
     expect(res.status).toBe(201);
+  });
+});
+
+describe("postQuestion dedup: 90-day cooldown (2026-07-21)", () => {
+  it("still rejects a byte-identical re-ask when the prior row is within 90 days", async () => {
+    const db = new FakeDb();
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    db.rows.push({
+      id: "q-recent", companion_id: "cypher", question: "is the swarm still holding?",
+      context: null, source: "autonomous", status: "answered", answer: "yes",
+      created_at: tenDaysAgo,
+    });
+
+    const res = await postQuestion(
+      req({ companion_id: "cypher", question: "is the swarm still holding?" }),
+      makeEnv(db),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { deduped: boolean; id: string };
+    expect(body.deduped).toBe(true);
+    expect(body.id).toBe("q-recent");
+    expect(db.rows).toHaveLength(1);
+  });
+
+  it("allows the same question to be re-asked once the prior row is older than 90 days", async () => {
+    const db = new FakeDb();
+    const hundredDaysAgo = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
+    db.rows.push({
+      id: "q-stale", companion_id: "cypher", question: "is the swarm still holding?",
+      context: null, source: "autonomous", status: "answered", answer: "yes, months ago",
+      created_at: hundredDaysAgo,
+    });
+
+    const res = await postQuestion(
+      req({ companion_id: "cypher", question: "is the swarm still holding?" }),
+      makeEnv(db),
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json() as { id: string };
+    expect(body.id).not.toBe("q-stale");
+    // Both rows now exist -- the old answered one and the freshly re-asked one.
+    expect(db.rows).toHaveLength(2);
   });
 });

@@ -210,6 +210,15 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       getText:      (r) => r.tension_text as string,
       getCompanion: (r) => r.companion_id as string,
     },
+    // 2026-07-21: growth_patterns gained a semantic novelty gate (src/handlers/growth.ts
+    // postGrowthPattern) alongside its Jaccard dedupe -- new rows embed going forward, but
+    // the ~98 rows that existed before the gate shipped have no vector at all. One admin
+    // call backfills them so the gate can actually match against prod history.
+    growth_patterns: {
+      sql:          "SELECT id, pattern_text, companion_id FROM growth_patterns",
+      getText:      (r) => r.pattern_text as string,
+      getCompanion: (r) => r.companion_id as string,
+    },
   };
 
   const targets = table ? [table] : Object.keys(TABLES);

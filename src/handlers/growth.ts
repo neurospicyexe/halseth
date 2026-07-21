@@ -21,6 +21,8 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { nextPhase, phaseAdvances, advanceChargeSql, type ChargeSignal } from "../webmind/charge.js";
+import { noveltyCheck } from "../webmind/novelty.js";
+import { storeVector, embedAndStoreAsync } from "../mcp/embed.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const MAX_TEXT = 8000;
@@ -415,6 +417,31 @@ async function findSimilarPattern(
   return best ? best.row : null;
 }
 
+/**
+ * Merge incoming evidence/prehensions into an existing growth_patterns row and
+ * bump its strength -- the shared UPSERT tail for BOTH match paths (Jaccard and
+ * semantic). One code path, so a semantic-gate match strengthens a row exactly
+ * the way a Jaccard match always has.
+ */
+async function mergeIntoExistingPattern(
+  env: Env,
+  existing: { id: string; strength: number; evidence_json: string; prehended_ids: string },
+  incomingEvidence: unknown[],
+  incomingPrehended: string[],
+): Promise<{ id: string; strength: number }> {
+  const mergedEvidence  = mergeJsonArrays(existing.evidence_json,  incomingEvidence,  16);
+  const mergedPrehended = mergeJsonArrays(existing.prehended_ids,  incomingPrehended, 32);
+  const newStrength = Math.min(10, (existing.strength ?? 1) + 1);
+
+  await env.DB.prepare(
+    `UPDATE growth_patterns
+       SET strength = ?, evidence_json = ?, prehended_ids = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+  ).bind(newStrength, mergedEvidence, mergedPrehended, existing.id).run();
+
+  return { id: existing.id, strength: newStrength };
+}
+
 // POST /mind/growth/patterns
 export async function postGrowthPattern(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
@@ -435,24 +462,54 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
     : 1;
   const run_id = optStr(body.run_id, 64);
 
-  // Try UPSERT path first.
+  // Semantic novelty gate (Wave 2, 2026-07-21) -- runs BEFORE the Jaccard check below.
+  // Live paraphrase pairs of the same pattern scored only 0.077-0.375 Jaccard token
+  // overlap (nowhere near PATTERN_DEDUP_THRESHOLD) while embedding at >=0.95 cosine
+  // similarity -- restatements the Jaccard check alone was structurally blind to.
+  // Fails open to the Jaccard fallback on ANY trouble: noveltyCheck's own internals
+  // already fail open to {action:"insert"} on an embed/Vectorize error, and the
+  // try/catch here is defense in depth -- this write path must never be blocked by
+  // the gate. Reuses the gate's embedding on insert (net +0 AI.run on the common path).
+  let noveltyEmbedding: number[] | null = null;
+  try {
+    const decision = await noveltyCheck(env, pattern_text, "growth_patterns", companion_id);
+    if (decision.action === "skip") {
+      // Fetch the matched row's mergeable fields fresh -- noveltyCheck only returns an id.
+      // Scoped to companion_id as belt-and-suspenders (the vector filter already scopes it).
+      const semanticMatch = await env.DB.prepare(
+        "SELECT id, strength, evidence_json, prehended_ids FROM growth_patterns WHERE id = ? AND companion_id = ?",
+      ).bind(decision.matchRowId, companion_id).first<{ id: string; strength: number; evidence_json: string; prehended_ids: string }>();
+
+      if (semanticMatch) {
+        const merged = await mergeIntoExistingPattern(env, semanticMatch, incomingEvidence, incomingPrehended);
+        return json({
+          id: merged.id,
+          message: "merged",
+          action: "upsert",
+          strength: merged.strength,
+          matched_via: "semantic",
+        }, 200);
+      }
+      // Defensive (mirrors novelty.ts's own dead-row handling for conclusions): the vector
+      // pointed at a row that no longer exists in D1. Fall through to Jaccard/insert rather
+      // than ever blocking the write.
+      console.warn("[growth patterns] semantic match row missing, falling through", { matchRowId: decision.matchRowId });
+    } else {
+      noveltyEmbedding = decision.embedding;
+    }
+  } catch (err) {
+    console.warn("[growth patterns] novelty gate error, falling back to Jaccard:", String(err));
+  }
+
+  // Jaccard UPSERT path (unchanged, now the fallback for what the semantic gate missed).
   const existing = await findSimilarPattern(env, companion_id, pattern_text);
   if (existing) {
-    const mergedEvidence  = mergeJsonArrays(existing.evidence_json,  incomingEvidence,  16);
-    const mergedPrehended = mergeJsonArrays(existing.prehended_ids,  incomingPrehended, 32);
-    const newStrength = Math.min(10, (existing.strength ?? 1) + 1);
-
-    await env.DB.prepare(
-      `UPDATE growth_patterns
-         SET strength = ?, evidence_json = ?, prehended_ids = ?, updated_at = datetime('now')
-       WHERE id = ?`,
-    ).bind(newStrength, mergedEvidence, mergedPrehended, existing.id).run();
-
+    const merged = await mergeIntoExistingPattern(env, existing, incomingEvidence, incomingPrehended);
     return json({
-      id: existing.id,
+      id: merged.id,
       message: "merged",
       action: "upsert",
-      strength: newStrength,
+      strength: merged.strength,
     }, 200);
   }
 
@@ -473,6 +530,23 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
     run_id,
     JSON.stringify(incomingPrehended),
   ).run();
+
+  // Store the vector for future novelty checks. Reuse the gate's embedding when we have
+  // one (net +0 AI.run on the common gated path); otherwise embed fresh. Never fatal --
+  // D1 is truth, Vectorize is rebuildable (POST /admin/backfill-embeddings?table=growth_patterns).
+  if (noveltyEmbedding) {
+    try {
+      await storeVector(env, noveltyEmbedding, "growth_patterns", id, companion_id);
+    } catch (e) {
+      console.warn(`[growth patterns] vector store failed for ${id} (row kept, index stale):`, String(e));
+    }
+  } else {
+    try {
+      await embedAndStoreAsync(env, pattern_text, "growth_patterns", id, companion_id);
+    } catch (e) {
+      console.warn(`[growth patterns] embed failed for ${id} (row kept, index stale):`, String(e));
+    }
+  }
 
   return json({ id, message: "ok", action: "insert", strength: incomingStrength }, 201);
 }

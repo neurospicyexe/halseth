@@ -50,11 +50,14 @@ export async function postQuestion(request: Request, env: Env): Promise<Response
   const source = ["autonomous", "session", "dialectic"].includes(body.source ?? "") ? body.source! : "autonomous";
 
   try {
-    // Dedup: identical question (any status) is a no-op returning the existing id.
-    // Was scoped to status = 'open' only, so an answered question with the same byte-identical
-    // text got re-inserted verbatim -- silently discarding the answer already sitting on it.
+    // Dedup: identical question (any status) is a no-op returning the existing id, but only
+    // within a 90-day cooldown window. Was scoped to status = 'open' only, so an answered
+    // question with the same byte-identical text got re-inserted verbatim -- silently
+    // discarding the answer already sitting on it. Un-scoping to all statuses then blocked
+    // re-asks FOREVER; a question worth re-asking after months (context has changed, an old
+    // answer went stale) needs to be askable again, so the block only holds for 90 days.
     const existing = await env.DB.prepare(
-      "SELECT id FROM companion_questions WHERE companion_id = ? AND question = ?"
+      "SELECT id FROM companion_questions WHERE companion_id = ? AND question = ? AND created_at >= datetime('now','-90 days')"
     ).bind(companionId, question).first<{ id: string }>();
     if (existing) return json({ id: existing.id, deduped: true });
 
