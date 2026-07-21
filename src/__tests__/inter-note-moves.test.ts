@@ -260,12 +260,19 @@ describe("getInterCompanionNoteMoves", () => {
     ref_type: string | null; ref_id: string | null; reason: string | null; created_at: string;
   }
 
+  interface LandedRow {
+    id: string; channel_id: string; seed_author: string;
+    ref_type: string; ref_id: string; ref_label: string | null;
+    resolution: string | null; landed_by: string | null; landed_at: string;
+  }
+
   function fakeMovesEnv(opts: {
     totalNotes: number;
     movesRows: MoveRow[];
     questionRows?: Array<{ id: string; status: string; answered_at: string | null }>;
     tensionRows?: Array<{ id: string; status: string; last_surfaced_at: string | null }>;
     councilRows?: Array<{ id: string; status: string; closed_at: string | null }>;
+    landedRows?: LandedRow[];
   }): Env {
     return {
       ADMIN_SECRET: ADMIN,
@@ -292,6 +299,9 @@ describe("getInterCompanionNoteMoves", () => {
                   }
                   if (/FROM council_questions WHERE id IN/i.test(sql)) {
                     return { results: opts.councilRows ?? [] };
+                  }
+                  if (/FROM conversation_threads\s+WHERE state = 'landed'/i.test(sql)) {
+                    return { results: opts.landedRows ?? [] };
                   }
                   return { results: [] };
                 },
@@ -476,5 +486,77 @@ describe("getInterCompanionNoteMoves", () => {
     const items = body.items as Array<Record<string, unknown>>;
     expect(items[0]!.object_state).toBeNull();
     expect(items[0]!.state_changed_after_note).toBe(false);
+  });
+
+  // ── Task 6 (thread-spine plan): landed_conversations section ──────────────
+  it("landed_conversations: one landed ref-carrying thread -> count=1, item fields populated", async () => {
+    const env = fakeMovesEnv({
+      totalNotes: 0,
+      movesRows: [],
+      landedRows: [{
+        id: "thread-1",
+        channel_id: "chan-1",
+        seed_author: "cypher",
+        ref_type: "tension",
+        ref_id: "t1",
+        ref_label: "the recurring thing",
+        resolution: "resolved",
+        landed_by: "drevan",
+        landed_at: "2026-07-15T00:00:00.000Z",
+      }],
+    });
+
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    const landed = body.landed_conversations as { count: number; items: Array<Record<string, unknown>> };
+    expect(landed.count).toBe(1);
+    expect(landed.items).toHaveLength(1);
+    const item = landed.items[0]!;
+    expect(item.id).toBe("thread-1");
+    expect(item.channel_id).toBe("chan-1");
+    expect(item.seed_author).toBe("cypher");
+    expect(item.ref_type).toBe("tension");
+    expect(item.ref_id).toBe("t1");
+    expect(item.ref_label).toBe("the recurring thing");
+    expect(item.resolution).toBe("resolved");
+    expect(item.landed_by).toBe("drevan");
+    expect(item.landed_at).toBe("2026-07-15T00:00:00.000Z");
+  });
+
+  it("landed_conversations: no landed threads in window -> count=0, items=[] (no div-by-zero/crash)", async () => {
+    const env = fakeMovesEnv({ totalNotes: 0, movesRows: [], landedRows: [] });
+    const res = await getInterCompanionNoteMoves(authedRequest(), env);
+    const body = await res.json() as Record<string, unknown>;
+    const landed = body.landed_conversations as { count: number; items: unknown[] };
+    expect(landed.count).toBe(0);
+    expect(landed.items).toEqual([]);
+  });
+
+  it("existing moved_pct response shape is unchanged by the landed_conversations addition", async () => {
+    const noteCreatedAt = "2026-07-01T00:00:00.000Z";
+    const env = fakeMovesEnv({
+      totalNotes: 3,
+      movesRows: [
+        { id: "n1", from_id: "cypher", to_id: "drevan", ref_type: "question", ref_id: "q1", reason: "asked", created_at: noteCreatedAt },
+        { id: "n2", from_id: "gaia", to_id: "cypher", ref_type: "tension", ref_id: "t1", reason: "flagged", created_at: noteCreatedAt },
+      ],
+      questionRows: [{ id: "q1", status: "answered", answered_at: "2026-07-02T00:00:00.000Z" }],
+      tensionRows: [{ id: "t1", status: "simmering", last_surfaced_at: null }],
+      landedRows: [],
+    });
+
+    const res = await getInterCompanionNoteMoves(authedRequest(30), env);
+    const body = await res.json() as Record<string, unknown>;
+    // All pre-existing fields/keys survive untouched, with the same values as before.
+    expect(body.window_days).toBe(30);
+    expect(body.total_notes).toBe(3);
+    expect(body.moves).toBe(2);
+    expect(body.moved).toBe(1);
+    expect(body.moved_pct).toBe(50);
+    expect(Array.isArray(body.items)).toBe(true);
+    expect((body.items as unknown[])).toHaveLength(2);
+    // New section is additive, not a replacement of any existing key.
+    expect(body).toHaveProperty("landed_conversations");
   });
 });

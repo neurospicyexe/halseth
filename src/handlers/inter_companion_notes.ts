@@ -8,6 +8,8 @@
 // Used by Discord bots to poll for notes left by Claude.ai companions.
 // GET /inter-companion-notes/moves
 // Task 16 (2026-07-20) measurability endpoint -- see getInterCompanionNoteMoves below.
+// Task 6 of the thread-spine plan (2026-07-21) added a `landed_conversations` section
+// to this same endpoint -- resolved conversation_threads (mig 0106) carrying a ref_type.
 
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
@@ -129,6 +131,21 @@ interface RefObjectRow {
   closed_at?: string | null;
 }
 
+// Task 6 (thread-spine plan, 2026-07-21): landed_conversations section on the moves
+// endpoint. A landed conversation_threads row (mig 0106) that carries a ref_type is a
+// resolved thread on a shared object -- report it alongside note-moves, read-only.
+interface LandedConversationRow {
+  id: string;
+  channel_id: string;
+  seed_author: string;
+  ref_type: NoteRefType;
+  ref_id: string;
+  ref_label: string | null;
+  resolution: string | null;
+  landed_by: string | null;
+  landed_at: string;
+}
+
 const REF_OBJECT_COLUMNS: Record<NoteRefType, string> = {
   question: "id, status, answered_at",
   tension: "id, status, last_surfaced_at",
@@ -232,6 +249,14 @@ export async function getInterCompanionNoteMoves(
   const movesCount = moves.length;
   const movedPct = movesCount > 0 ? Math.round((moved / movesCount) * 100) : 0;
 
+  const landedRows = await env.DB.prepare(
+    `SELECT id, channel_id, seed_author, ref_type, ref_id, ref_label, resolution, landed_by, landed_at
+     FROM conversation_threads
+     WHERE state = 'landed' AND ref_type IS NOT NULL
+       AND datetime(landed_at) >= datetime('now', ?1)`,
+  ).bind(since).all<LandedConversationRow>();
+  const landedItems = landedRows.results ?? [];
+
   return new Response(JSON.stringify({
     window_days: days,
     total_notes: totalRow?.n ?? 0,
@@ -239,5 +264,9 @@ export async function getInterCompanionNoteMoves(
     moved,
     moved_pct: movedPct,
     items,
+    landed_conversations: {
+      count: landedItems.length,
+      items: landedItems,
+    },
   }), { headers: { "Content-Type": "application/json" } });
 }
