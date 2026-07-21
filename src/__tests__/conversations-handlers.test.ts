@@ -19,7 +19,7 @@ class FakeStatement {
   constructor(private sql: string, private db: FakeDb, private bound: unknown[] = []) {}
   bind(...args: unknown[]): FakeStatement { return new FakeStatement(this.sql, this.db, args); }
 
-  async run(): Promise<{ meta: { changes: number } }> {
+  async run(): Promise<{ meta: { changes: number }; results?: Row[] }> {
     const s = this.sql.trim();
 
     if (s.startsWith("INSERT INTO conversation_threads")) {
@@ -47,35 +47,23 @@ class FakeStatement {
       return { meta: { changes: 1 } };
     }
 
-    if (s.startsWith("UPDATE conversation_threads SET turn_count")) {
-      const [last_turn_at, participants, state, id] = this.bound as [string, string, string, string];
-      const t = this.db.threads.find((row) => row["id"] === id);
-      if (t) {
-        t["turn_count"] = (t["turn_count"] as number) + 1;
-        t["last_turn_at"] = last_turn_at;
-        t["participants"] = participants;
-        t["state"] = state;
-      }
-      return { meta: { changes: t ? 1 : 0 } };
-    }
-
     if (s.startsWith("UPDATE conversation_threads SET state = 'landed'")) {
       const [resolution, landed_by, landed_at, id] = this.bound as [string, string, string, string];
       const t = this.db.threads.find((row) => row["id"] === id);
-      if (t) {
-        t["state"] = "landed";
-        t["resolution"] = resolution;
-        t["landed_by"] = landed_by;
-        t["landed_at"] = landed_at;
-      }
-      return { meta: { changes: t ? 1 : 0 } };
+      if (!t || !(t["state"] === "open" || t["state"] === "moving")) return { meta: { changes: 0 } };
+      t["state"] = "landed";
+      t["resolution"] = resolution;
+      t["landed_by"] = landed_by;
+      t["landed_at"] = landed_at;
+      return { meta: { changes: 1 } };
     }
 
     if (s.startsWith("UPDATE conversation_threads SET state = 'faded'")) {
       const [id] = this.bound as [string];
       const t = this.db.threads.find((row) => row["id"] === id);
-      if (t) t["state"] = "faded";
-      return { meta: { changes: t ? 1 : 0 } };
+      if (!t || !(t["state"] === "open" || t["state"] === "moving")) return { meta: { changes: 0 } };
+      t["state"] = "faded";
+      return { meta: { changes: 1 } };
     }
 
     if (s.startsWith("INSERT OR IGNORE INTO thread_ledger") || s.startsWith("INSERT INTO thread_ledger")) {
@@ -112,8 +100,31 @@ class FakeStatement {
     return null;
   }
 
-  async all<T = Row>(): Promise<{ results: T[] }> {
+  async all<T = Row>(): Promise<{ results: T[]; meta?: { changes: number } }> {
     const s = this.sql.trim();
+
+    // Combined turn_count/participants/state UPDATE...RETURNING (appendTurn, 2026-07-21
+    // review fix). Uses .all(), not .run() -- both return the same D1Result<T> shape, but
+    // .all() is unambiguous about surfacing RETURNING rows. Bind order matches the real
+    // SQL: last_turn_at, author (participants EXISTS), author (json_insert value), author
+    // (state EXISTS), id.
+    if (s.startsWith("UPDATE conversation_threads SET turn_count")) {
+      const [last_turn_at, author, , , id] = this.bound as [string, string, string, string, string];
+      const t = this.db.threads.find((row) => row["id"] === id);
+      if (!t || !(t["state"] === "open" || t["state"] === "moving")) return { meta: { changes: 0 }, results: [] };
+      const participants: string[] = JSON.parse(t["participants"] as string);
+      const hasAuthor = participants.includes(author);
+      const newParticipants = hasAuthor ? participants : [...participants, author];
+      const newState = t["state"] === "open" && newParticipants.length >= 2 ? "moving" : t["state"] as string;
+      t["turn_count"] = (t["turn_count"] as number) + 1;
+      t["last_turn_at"] = last_turn_at;
+      t["participants"] = JSON.stringify(newParticipants);
+      t["state"] = newState;
+      return {
+        meta: { changes: 1 },
+        results: [{ state: newState, participants: JSON.stringify(newParticipants) }] as unknown as T[],
+      };
+    }
 
     if (s.includes("FROM thread_ledger WHERE thread_id")) {
       const [thread_id] = this.bound as [string];

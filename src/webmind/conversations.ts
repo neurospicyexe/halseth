@@ -9,6 +9,17 @@
 // per Discord message (three bot processes can witness the same message) via
 // INSERT OR IGNORE against the unique (thread_id, message_id) index. Active threads that
 // go quiet longer than FADE_HOURS are lazily faded on next read rather than swept by a cron.
+//
+// CAS discipline (2026-07-21 review fix): three bot processes hit these functions on the
+// SAME thread concurrently, by design. Every writer that transitions state guards its
+// UPDATE with `WHERE id = ? AND state IN ('open','moving')` so a late writer can never
+// clobber a land/fade another process already committed between that writer's read and
+// its write. appendTurn additionally mutates `participants` SQL-side (json_each/
+// json_insert, deduped by author) instead of read-modify-write in JS -- the old path read
+// participants in JS, pushed, and wrote the whole blob back, so two concurrent appends by
+// different authors could drop one, and the open->moving transition rode the same stale
+// snapshot. The transition is now computed from the POST-mutation array length inside the
+// same guarded statement.
 
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
@@ -19,6 +30,17 @@ export const GIST_MAX = 140;
 export const SEED_MAX = 1000;
 
 const REF_TYPES = ["question", "tension", "council"] as const;
+
+// Ref-existence check table map -- mirrors the mig-0104 convention in
+// src/librarian/backends/halseth.ts (NOTE_REF_TABLES / addCompanionNote, ~L619): validate
+// enum + pairing first, then confirm the referenced row actually exists before writing.
+// Declared locally rather than imported -- a webmind module importing from
+// src/librarian/backends would be the wrong dependency direction.
+const REF_TABLES: Record<(typeof REF_TYPES)[number], string> = {
+  question: "companion_questions",
+  tension: "companion_tensions",
+  council: "council_questions",
+};
 
 export interface ConvoThread {
   id: string; channel_id: string; surface: string;
@@ -47,6 +69,13 @@ export async function openConversation(env: Env, input: {
   }
   if (hasRefType && !REF_TYPES.includes(input.ref_type as (typeof REF_TYPES)[number])) {
     return { error: `ref_type must be one of ${REF_TYPES.join("|")}` };
+  }
+  if (hasRefType) {
+    const table = REF_TABLES[input.ref_type as (typeof REF_TYPES)[number]];
+    const found = await env.DB.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).bind(input.ref_id).first();
+    if (!found) {
+      return { error: `ref_id "${input.ref_id}" not found in ${table}` };
+    }
   }
 
   const now = new Date().toISOString();
@@ -119,22 +148,43 @@ export async function appendTurn(env: Env, threadId: string, input: {
     return { ok: true, deduped: true };
   }
 
-  let participants: string[];
-  try {
-    const parsed = JSON.parse(thread.participants);
-    participants = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    participants = [];
+  // Finding 1 + 2 (2026-07-21 review): single CAS-guarded, SQL-side mutation. participants
+  // is deduped and appended against the CURRENT row via json_each/json_insert (not the
+  // `thread` snapshot read above, which two concurrent callers could both be holding
+  // stale), the open->moving transition is computed from the POST-mutation participant
+  // count in the same statement, and the WHERE guard means a thread landed/faded by
+  // another process between our SELECT and this write is never clobbered.
+  const updateResult = await env.DB.prepare(`
+    UPDATE conversation_threads SET turn_count = turn_count + 1, last_turn_at = ?,
+      participants = CASE
+        WHEN EXISTS (SELECT 1 FROM json_each(participants) WHERE value = ?) THEN participants
+        ELSE json_insert(participants, '$[#]', ?)
+      END,
+      state = CASE
+        WHEN state = 'open'
+          AND json_array_length(participants)
+            + (CASE WHEN EXISTS (SELECT 1 FROM json_each(participants) WHERE value = ?) THEN 0 ELSE 1 END)
+            >= 2
+        THEN 'moving'
+        ELSE state
+      END
+    WHERE id = ? AND state IN ('open','moving')
+    RETURNING state, participants
+  `).bind(now, input.author, input.author, input.author, threadId)
+    // .all() rather than .run() -- both return the same D1Result<T> shape (docs call
+    // run() "functionally equivalent to all(), can be treated as an alias"), but .all()
+    // is the unambiguous choice for a statement whose whole point is reading back
+    // RETURNING rows, not just meta.changes.
+    .all<{ state: string; participants: string }>();
+
+  if (updateResult.meta.changes === 0) {
+    // Thread transitioned (land/fade) between our initial SELECT and this write. The turn
+    // is already durably recorded in thread_ledger above -- report success, but this call
+    // did not cause (and must not claim) a state transition.
+    return { ok: true };
   }
-  if (!participants.includes(input.author)) participants.push(input.author);
 
-  const nextState = thread.state === "open" && participants.length >= 2 ? "moving" : thread.state;
-
-  await env.DB.prepare(
-    "UPDATE conversation_threads SET turn_count = turn_count + 1, last_turn_at = ?, participants = ?, state = ? WHERE id = ?"
-  ).bind(now, JSON.stringify(participants), nextState, threadId).run();
-
-  return { ok: true, state: nextState };
+  return { ok: true, state: updateResult.results[0]?.state };
 }
 
 export async function landConversation(env: Env, threadId: string, input: {
@@ -148,9 +198,20 @@ export async function landConversation(env: Env, threadId: string, input: {
   if (isTerminal(thread.state)) return { ok: false, reason: "terminal" };
 
   const now = new Date().toISOString();
-  await env.DB.prepare(
-    "UPDATE conversation_threads SET state = 'landed', resolution = ?, landed_by = ?, landed_at = ? WHERE id = ?"
+  // Finding 1 (2026-07-21 review): compare-and-set. WHERE guard means this can never
+  // overwrite a concurrent land/fade that landed between our SELECT above and this write.
+  const updateResult = await env.DB.prepare(
+    "UPDATE conversation_threads SET state = 'landed', resolution = ?, landed_by = ?, landed_at = ? WHERE id = ? AND state IN ('open','moving')"
   ).bind(input.resolution, input.landed_by, now, threadId).run();
+
+  if (updateResult.meta.changes === 0) {
+    // CAS lost the race -- another process already landed or faded it. Re-check so the
+    // reason reflects reality instead of silently reporting an ok that didn't happen.
+    const recheck = await env.DB.prepare(
+      "SELECT * FROM conversation_threads WHERE id = ?"
+    ).bind(threadId).first<ConvoThread>();
+    return recheck ? { ok: false, reason: "terminal" } : { ok: false, reason: "not_found" };
+  }
 
   return { ok: true };
 }
@@ -165,8 +226,10 @@ export async function getActiveConversation(env: Env, channelId: string):
 
   const elapsedMs = Date.now() - Date.parse(thread.last_turn_at);
   if (elapsedMs > FADE_HOURS * 3_600_000) {
+    // Finding 1 (2026-07-21 review): CAS-guarded so this can never clobber a concurrent
+    // land that landed the thread between our SELECT above and this write.
     await env.DB.prepare(
-      "UPDATE conversation_threads SET state = 'faded' WHERE id = ?"
+      "UPDATE conversation_threads SET state = 'faded' WHERE id = ? AND state IN ('open','moving')"
     ).bind(thread.id).run();
     return null;
   }
