@@ -112,6 +112,7 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0062` | `prehended_ids` + `vault_path` on growth_journal/patterns/markers, `evidence_json` + `novelty` on growth_journal -- triad layer + vault materialization. Adds `thoughtform` marker_type. New endpoints: `/mind/triad/recent/:companion_id`, `/mind/growth/thoughtforms/detect`, `/mind/growth/unmaterialized/:companion_id`, `PATCH /mind/growth/:kind/:id/vault`. See `docs/private/triad-thoughtforms.md`. |
 | -- | `0104` | `ref_type`/`ref_id`/`reason` on `inter_companion_notes` -- notes become moves on shared objects (question/tension/council); `idx_inter_notes_ref`. Measured via `GET /inter-companion-notes/moves` (moved_pct). |
 | -- | `0105` | Earned salience: `heat`/`last_access_at` on `companion_journal` + `companion_conclusions`, `archived` on journal only; `idx_companion_journal_archived`. Extends mig 0074 heat mechanic; recall/orient warm what they surface; nightly salience-prune archives cold machine rows (24h self-gate, manual trigger `POST /mind/salience/prune`). |
+| -- | `0106` | 0106_conversation_threads.sql — thread spine: conversation_threads + thread_ledger (live-conversation spine: seed/ledger/state/ref, one active per channel, idempotent ledger). |
 
 ## BBH Companion State Tables (migration 0020+)
 
