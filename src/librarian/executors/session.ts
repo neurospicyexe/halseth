@@ -18,6 +18,7 @@ import { warmSql } from "../../webmind/heat.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
+import { remediationHint } from "../../guardian/remediation.js";
 
 // Interoception fields the raw MCP tool halseth_session_load accepts (see
 // src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
@@ -528,7 +529,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // server-side (evidence_json); the summary alone goes into the prompt.
   const guardianBlock = guardianFlags.length > 0
     ? `\n[Guardian]\nThe Guardian flagged ${guardianFlags.length === 1 ? "a condition" : `${guardianFlags.length} conditions`} worth your eyes (instrument, not verdict):\n` +
-      guardianFlags.map(f => `• [${f.severity}] ${f.summary}`).join("\n")
+      guardianFlags.map(f => `• [${f.severity}] ${f.summary}\n  -> ${remediationHint(f.flag_type)}`).join("\n")
     : "";
 
   // Consume-once: open -> surfaced so cards don't nag every orient. They stay
@@ -1467,6 +1468,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             flag_type: r.flag_type,
             severity: r.severity,
             summary: (r.summary ?? "").slice(0, 300),
+            remediation: remediationHint(r.flag_type),
           }))
         : [],
       motifs: motifResult.status === "fulfilled" && motifResult.value?.results

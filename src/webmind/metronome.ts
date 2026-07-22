@@ -17,7 +17,11 @@ export type MetronomeActionType =
   | "send_reminder"
   | "share_observation"
   | "name_pattern"
-  | "write_note_to_raziel";
+  | "write_note_to_raziel"
+  | "share_media"
+  | "tend_creature"
+  | "drift_open"
+  | "declare_preference";
 
 export const VALID_ACTION_TYPES: MetronomeActionType[] = [
   "post_heartbeat",
@@ -32,6 +36,10 @@ export const VALID_ACTION_TYPES: MetronomeActionType[] = [
   "share_observation",
   "name_pattern",
   "write_note_to_raziel",
+  "share_media",
+  "tend_creature",
+  "drift_open",
+  "declare_preference",
 ];
 
 export function isValidActionType(t: string): t is MetronomeActionType {

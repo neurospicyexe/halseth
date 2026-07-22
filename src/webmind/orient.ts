@@ -17,6 +17,7 @@ import { effectiveHeatSql, warmSql } from "./heat.js";
 import { takeUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
+import { remediationHint } from "../guardian/remediation.js";
 
 /** "While you were away" block. Null-safe: orient must never break on home error. */
 export async function buildHomeBlock(env: Env, agentId: WmAgentId): Promise<HomeEvent[]> {
@@ -52,7 +53,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, guardianFlagsRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -165,6 +166,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
        FROM conversation_threads WHERE state IN ('open','moving')
        ORDER BY last_turn_at DESC LIMIT 3`
     ).all<WmActiveConversation>(),
+    // Guardian red-flag cards (Wave 3 starvation fix, 2026-07-21): the raw mindOrient path
+    // had NO guardian source at all, unlike execSessionOrient/execBotOrient -- so a companion
+    // whose only continuity read is the Halseth /mind/orient HTTP route (not the Librarian
+    // session-orient path) never saw a flag. Read-only here, same as the bot path: the open ->
+    // surfaced transition stays session-orient's job (see session.ts:536-541).
+    env.DB.prepare(
+      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>(),
   ]);
 
   // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
@@ -303,6 +312,13 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
     open_questions: (openQuestionsRes.results ?? []),
     answered_questions: answeredQuestions,
     active_conversations: activeConvosRes.results ?? [],
+    guardian_flags: (guardianFlagsRes.results ?? []).map(f => ({
+      id: f.id,
+      flag_type: f.flag_type,
+      severity: f.severity,
+      summary: (f.summary ?? "").slice(0, 300),
+      remediation: remediationHint(f.flag_type),
+    })),
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
     recent_spiral_turn: recentSpiralTurnRow ?? null,
     latest_biometrics: latestBiometrics ?? null,

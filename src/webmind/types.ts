@@ -287,6 +287,7 @@ export interface WmOrientResponse {
   open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)
   answered_questions: WmAnsweredQuestion[];     // answers Raziel left, surfaced for 7 days (mig 0107)
   active_conversations: WmActiveConversation[]; // live conversation threads (conversation_threads, mig 0106)
+  guardian_flags: WmOrientGuardianFlag[];       // open/surfaced guardian red-flag cards, with a remediation hint (Wave 3 starvation fix)
   soma_arc?: {
     note_id: string;
     content: string;
@@ -399,6 +400,16 @@ export interface WmOrientOpenQuestion {
   question: string;
   context: string | null;
   created_at: string;
+}
+
+// Guardian red-flag cards, surfaced at the raw mindOrient path (Wave 3 starvation fix,
+// 2026-07-21). Mirrors the shape execSessionOrient/execBotOrient already build.
+export interface WmOrientGuardianFlag {
+  id: string;
+  flag_type: string;
+  severity: string;
+  summary: string;
+  remediation: string;
 }
 
 // Answered questions surfaced at orient (companion_questions, status = 'answered').

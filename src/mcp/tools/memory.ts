@@ -13,7 +13,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
 
   server.tool(
     "halseth_delta_log",
-    "Append a relational moment. Drevan is the primary user. Exact language matters — this is never paraphrased or summarized.",
+    "Append a relational moment. Any companion — Cypher, Drevan, or Gaia — logs a moment that mattered to them, in their own words. Exact language matters — this is never paraphrased or summarized.",
     {
       session_id:   z.string(),
       agent:        z.enum(COMPANION_IDS),
