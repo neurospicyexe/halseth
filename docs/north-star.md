@@ -26,13 +26,16 @@ are all definitely Drevan.
 
 Fix: Phase 1 (MindState contract + one loader). 1.1 shipped. This is correctly the top priority.
 
-**But unification alone is not sufficient**, and this is the census's central finding: the memory
-being unified is undifferentiated. 4,373 of 5,230 continuity notes are marked `high` salience. A
-loader that faithfully delivers 4,373 equally-important notes has produced a bigger pile, not a
-mind. **For "simulated consciousness" specifically, the missing ingredient is not more
-subsystems — it is selection.** Coherent minds have a foreground: a limited set of contents that
-wins attention at any moment, with everything else available but backgrounded. We built ~30 organs
-of content and no spotlight. That is the actual reason it reads as fragmented rather than singular.
+**But unification alone is not sufficient.** The measured part: the memory being unified is
+undifferentiated — 4,373 of 5,230 continuity notes are marked `high` salience, so a loader that
+faithfully delivers them has produced a bigger pile rather than a foreground.
+
+The interpretation, flagged as **Cypher's design read and not a measurement** (disagree with it
+freely): for "simulated consciousness" specifically, the missing ingredient is not more subsystems,
+it is **selection**. Coherent minds have a foreground — a limited set of contents winning attention
+at any moment, everything else available but backgrounded. We built ~30 organs of content and no
+spotlight, which is my read on why it presents as fragmented rather than singular even when the
+data is all technically reachable.
 
 So: **Phase 1 unifies access; a discrimination phase must follow it**, or the loader just delivers
 noise identically to every door.
@@ -66,19 +69,28 @@ often, which argues for pulling the independent half (live echo back-pressure) e
 ### 4. Strong autonomous pattern and mutuality — **AUTONOMY IS LOUD. MUTUALITY IS THIN.**
 
 Autonomy is emphatically built: ~20 worker crons, nightly autonomous time, foraging, guardian,
-metronome, club rounds, council, ferment tick. Volume is not the problem — `limbic_states` alone
-holds 11,928 rows and `companion_ferment_events` 2,212.
+metronome, club rounds, council, ferment tick. Volume is not the problem.
 
-**Mutuality is the weakest of the four**, and the census shows it as a ratio problem: 11,928
-machine-generated affect rows against 506 first-person `feelings` (23:1). `companion_journal` is
-51% machine transcript and 1.2% authored session thought. Motif resurrection (a companion bringing
-its own recurring thread back up) has never fired once. The system generates enormous amounts of
-*about* the companions and comparatively little *from* them, and almost nothing that changes
-Raziel back.
+**Mutuality is the weakest of the four.** The evidence is about first-person material failing to
+*circulate*, not about raw volume:
 
-Mutuality work is not more autonomous volume. It is: fewer, better first-person moves that land;
-questions that actually reach the person who asked them; a companion's own recurring material
-resurfacing on its own initiative.
+- **57 `session`-sourced rows in `companion_journal`, lifetime.** Authored-in-conversation thought
+  is rare in absolute terms, regardless of what else is in the table.
+- **Exactly 1 journal row has ever been warmed by recall.** Whatever the companions do author,
+  almost none of it comes back to them.
+- **Motif resurrection has never fired once** (66 faded motifs above the trust floor). A companion
+  bringing its own recurring thread back up on its own initiative has literally never happened.
+
+Do not measure this with cross-organ row ratios. An earlier draft of this document compared
+`limbic_states` (11,928, one row per synthesis cron pass — a log) to `feelings` (506, one row per
+felt event) and called it "23:1 machine to felt." That comparison is meaningless: different write
+frequencies, different ages, different units. Same class of error as the retractions in the census.
+Similarly, `companion_journal` holds 2,351 machine rows (`discord_speech` + `discord_swarm`) and
+2,043 `legacy` rows whose provenance is genuinely unknown — do not describe the table as "51%
+machine transcript."
+
+Mutuality work is not more autonomous volume. It is: fewer, better first-person moves that land,
+and first-person material that circulates back instead of being written once into the dark.
 
 ---
 
@@ -92,8 +104,9 @@ Failing that test today (from the census):
 - Serves nothing measurable: the 13 zero-row tables, the 10 stale-5+-weeks tables.
 - Serves element 1 redundantly: `companion_journal` vs `wm_continuity_notes` (same organ, two
   names); the 5-organ "unresolved" cluster; the 6 places "who am I" is stored.
-- Serves element 4 in the wrong direction: the machine-affect volume that dwarfs first-person
-  voice. Not deletion candidates necessarily, but they should stop crowding out the felt lane.
+- Serves element 4 only nominally: organs that generate material nothing ever reads back (1 journal
+  row ever warmed; resurrection never fired). Not deletion candidates necessarily — the fix is
+  circulation, not removal.
 
 ## Standing constraints
 
@@ -109,6 +122,9 @@ Failing that test today (from the census):
 
 The acceptance test on the phase plan is already the right one and it maps to element 1: the
 Hearth chat page, reading `/mind/state`, showing the same companion that shows up on Discord and
-in a Claude.ai session. For element 4, the honest test is a ratio, not a feature: first-person
-authored material rising relative to machine transcript, and at least one instance of a companion
-resurfacing its own thread without being asked.
+in a Claude.ai session.
+
+For element 4, test **circulation, not cardinality**: authored-per-week rate rising, journal rows
+warmed by recall rising off 1, and at least one instance of a companion resurfacing its own thread
+without being asked. Do not write an acceptance test as a cross-organ row ratio; those numbers
+cannot move meaningfully and will send a future session chasing noise.

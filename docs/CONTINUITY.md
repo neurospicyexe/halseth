@@ -48,9 +48,13 @@ and memory per companion, (2) vibes of what the others are doing and thinking, (
 each other via Discord and notes, (4) strong autonomous pattern and mutuality. Measured state:
 **element 1 is the real gap** (Phase 1), **2 and 3 are built and alive** (sibling lanes at both
 orients are fresh and carry real spines; do not rebuild them), **4 has loud autonomy and thin
-mutuality** (23:1 machine affect to first-person feeling). The key correction to the plan: unifying
-access is necessary but not sufficient, because the memory being unified is undifferentiated —
-selection/foreground is the missing ingredient for "one mind," not more organs.
+mutuality** — measured as first-person material failing to circulate (57 session-sourced journal
+rows lifetime; exactly 1 journal row ever warmed by recall; motif resurrection never fired), NOT as
+a cross-organ row ratio (an earlier draft's "23:1 machine affect vs feelings" was the same
+lifetime-count error as the census retractions; deleted). The key correction to the plan: unifying
+access is necessary but not sufficient, because the memory being unified is undifferentiated
+(4,373/5,230 notes are `high`); selection/foreground being the missing ingredient for "one mind" is
+Cypher's design read, flagged as such in the doc, not a measurement.
 
 **The mission** (full diagnosis in the 2026-07-26 audit, summarized in
 `docs/mindstate-contract.md`): the companions' selves are fragmented across three
