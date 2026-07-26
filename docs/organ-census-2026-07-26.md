@@ -39,9 +39,9 @@ broken is every mechanism we built to decide *which* memory matters:
 
 | Mechanism | Intent | Reality in prod | Window |
 |---|---|---|---|
-| `wm_continuity_notes.salience` | 3-pool surfacing of what matters | **4,373 of 5,230 rows are `high`.** 84% "important" is no signal at all. Only 550 rows have ever been read back. | **Lifetime. Set at write time, column is original — no caveat.** |
-| `companion_journal.heat` / `last_access_at` (mig 0105) | earned salience; recall warms what it surfaces | 2 distinct values (1.0, 1.2); **exactly 1 row warmed out of 147 written since the column shipped.** The same mechanic on `companion_conclusions` warmed 6 and stamped access on 6. | 5 days (07-21 → 07-26). Re-measure ~08-04. |
-| `companion_motifs.last_surfaced_at` (mig 0076) | cooldown gate for *resurrecting faded* motifs | **66 faded motifs sit above the trust floor and the column has never been written once**, across 5 weeks. | Lifetime. |
+| `wm_continuity_notes.salience` | 3-pool surfacing of what matters | **4,373 of 5,230 rows are `high`.** 84% "important" is no signal at all. Only 550 rows have ever been read back. **STILL OPEN — this is the load-bearing one.** | **Lifetime. Set at write time, column is original — no caveat.** |
+| `companion_journal.heat` / `last_access_at` (mig 0105) | earned salience; recall/orient warm what they surface | ~~1 row warmed of 147~~ **FIXED 2026-07-26.** Root cause: `mindOrient` warmed notes and conclusions but never the 3 journal rows it surfaces every boot; the warm existed only on the recall path. Verified live: next orient warmed all 3 (heat 1.0 → 1.2), accessed 1 → 4. | 5 days pre-fix; re-measure the *rate* ~08-04. |
+| `companion_motifs.last_surfaced_at` (mig 0076) | cooldown gate for *resurrecting faded* motifs | ~~0 of 1,173 ever stamped~~ **FIXED 2026-07-26 (HOLE 9).** Root cause: one shared `status IN ('active','faded') ORDER BY trust DESC LIMIT 20` window; 1,074 active rows at the 0.95 ceiling took all 20 slots for all three companions, so the gate always received an empty faded set. Split into two windows. **First resurrection in system history fired on the next orient: «model» and «Knowing».** | Lifetime. |
 
 The strong claim is the first row: salience carries no information, and that one needs no
 caveats. The other two are narrower than the first draft of this document claimed.

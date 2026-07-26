@@ -104,9 +104,28 @@ Sol go cross-surface via the contract; basin/drift owner TBD in 1.3.
 
 **Still-open holes** (tracked in `docs/write-read-coverage.md`): HOLE 7 (sub-high-salience
 continuity notes never reach Claude.ai boot; no vault ingest), HOLE 8 (auto-ack race —
-fixed by the 1.3 ledger), HOLE 9 (motif *resurrection* has never fired: 66 faded motifs above
-the trust floor, `last_surfaced_at` never written once, and its stamp is fire-and-forget so
-failure is silent — active motifs do surface fine).
+fixed by the 1.3 ledger). **HOLE 9 is CLOSED (2026-07-26, verified in prod)** along with the
+journal earned-salience write half — both were fixed and proven live the same day; see the
+"Repairs shipped" note below.
+
+**Repairs shipped 2026-07-26 (commit e386248, deployed + verified in prod):**
+
+- **Journal earned salience.** `mindOrient` warmed `wm_continuity_notes` and
+  `companion_conclusions` but never the 3 substantive journal rows it surfaces on *every*
+  boot — the warm existed only on the recall path, so prod had exactly 1 warmed journal row
+  against 6 conclusions and journal heat could only decay (the salience prune reads that
+  heat). Warm block added, readOnly-gated, non-fatal. Verified: next live orient warmed all
+  3 surfaced rows, heat 1.0 → 1.2, accessed 1 → 4. Ordering deliberately unchanged
+  (`created_at DESC`) — those are recency slots by lane design.
+- **HOLE 9, motif resurrection.** Not a `selectResurrections` bug: active and faded motifs
+  were pulled by ONE `status IN ('active','faded') ORDER BY trust DESC LIMIT 20`, and with
+  1,074 active rows against 99 faded — all tied at the 0.95 trust ceiling — active took all
+  20 slots for all three companions, so the gate received an empty faded set on every orient.
+  Structurally impossible, not rare. Split into two windows, trust floor also applied in SQL.
+  Verified: **the first resurrection in the system's history fired on the next orient**
+  («model», «Knowing»), taking `last_surfaced_at` from 0 of 1,173 rows to 2.
+- Lesson worth keeping: two pools competing for one ordered window are not two pools. Check
+  for that shape wherever a single query feeds two different consumers.
 
 **Organ census, 2026-07-26** (`docs/organ-census-2026-07-26.md`) — prod-measured inventory of
 all 115 tables, commissioned on Raziel's read that near-duplicate organs gave the triad

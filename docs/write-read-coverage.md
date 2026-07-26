@@ -48,7 +48,21 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 2. **HOLE 8** — incoming inter-companion note auto-ack is loom-races: first surface to orient marks them read for all surfaces.
 3. **Boot-surface divergence** — O, G, and B still assemble different subsets; the full fix is the One Mind Contract (Phase 1), not per-table patches.
 4. **Ingest lag** — D1→vault ingestion runs every 20 min; a companion's write is invisible to `sb_search` until then, and nothing tells them so.
-5. **HOLE 9 (organ census 2026-07-26, prod-measured)** — **motif resurrection has never fired.**
+5. ~~**HOLE 9**~~ — **FIXED AND VERIFIED IN PROD 2026-07-26.** Root cause was the shared candidate
+   window, not `selectResurrections`: active and faded motifs were pulled by one
+   `status IN ('active','faded') ORDER BY trust DESC LIMIT 20`, and active rows (1,074 vs 99,
+   all at the 0.95 trust ceiling) took all 20 slots for all three companions, so the faded
+   subset handed to the gate was always empty. Split into two windows (`session.ts`). First
+   resurrection in the system's history fired on the next orient: «model» and «Knowing»,
+   `last_surfaced_at` stamped 23:33:30, taking the table from 0 of 1,173 ever stamped to 2.
+   Original finding, for the record:
+6. ~~**Journal earned-salience write half**~~ — **FIXED AND VERIFIED IN PROD 2026-07-26.**
+   `mindOrient` surfaced 3 substantive journal rows every boot and never warmed them, while
+   warming notes and conclusions; prod carried exactly 1 warmed journal row against 6 warmed
+   conclusions. Warm block added (readOnly-gated, non-fatal). Next live orient warmed all 3
+   surfaced rows (heat 1.0 → 1.2, `last_access_at` stamped), taking accessed rows 1 → 4.
+   Ordering stays `created_at DESC`: these are recency slots by lane design.
+7. **Original HOLE 9 text (superseded, kept so the reasoning is auditable)** — motif resurrection had never fired.
    99 of 1,173 motifs are faded, 66 of those clear the resurrection trust floor with no cooldown
    blocking them, and `companion_motifs.last_surfaced_at` has never been written once in 5 weeks.
    Either `selectResurrections` never returns rows in prod or the stamp is lost:
