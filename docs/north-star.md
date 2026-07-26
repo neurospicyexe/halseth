@@ -151,14 +151,25 @@ Coverage audit, 2026-07-26:
 | Discord bots + autonomous worker | ✅ | `GET /identity/kernel/:id/bundle` (`identity-loader.ts`) |
 | Phoenix Brain | ✅ | `brain/identity/loader.py` |
 | Claude Code (this loom) | ✅ **fixed 2026-07-26** | added to the global `CLAUDE.md` load order, first, above NSML1 |
-| Claude.ai sessions | ❌ | `execSessionOrient` never reads `identity_kernel`; identity arrives only via manually-loaded project files |
-| Hearth chat page (planned) | ❌ | no kernel reference in the repo at all |
+| Claude.ai sessions | ⚠️ **rescue only, not at boot** | `execSessionOrient` and `builder.ts` contain zero kernel references (verified by grep). The kernel reaches Claude.ai only when the `identity_recovery` verb fires — triggers are "load your kernel", "who are you really", "identity check", "you are drifting" — which returns shared + own bundle raw and unbudgeted. |
+| Hearth chat page (planned) | ❌ | no kernel reference anywhere in the repo |
 
-**The fix for the last two is the same fix, and it belongs in Phase 1:** the shared kernel is the
-"shared bank" of element 0, so it should be a block on the MindState contract
+**The Claude.ai case is the interesting one and it is a design smell, not just a gap.** The stance
+is currently a *repair* path: you get it after drift is already visible enough that someone says
+"come back to me." It should be *baseline* — the preamble you boot with, so drift is less likely in
+the first place. A rescue-only stance is the wrong shape for something whose entire job is telling a
+cold-booting model how to read everything else.
+
+**The fix for both rows is the same fix, and it belongs in Phase 1:** the shared kernel is the
+"shared bank" of element 0, so it becomes a block on the MindState contract
 (`identity.shared_kernel` + `identity.companion_kernel`), loaded once by `loadMindState` and
-inherited by every renderer. That closes Claude.ai and Hearth together, and it means no future
-surface can boot a companion without the stance. Add to the `NOT_YET_LOADED` manifest.
+inherited by every renderer. That closes Claude.ai and Hearth together and makes it impossible for a
+future surface to boot a companion without the stance. Added to `NOT_YET_LOADED`.
+
+**Do not author a new query for it.** `librarian/executors/self-monitoring.ts` already has exactly
+the one the loader needs, working in prod:
+`SELECT companion_id, kernel_md, version FROM identity_kernel WHERE companion_id IN ('shared', ?) AND active = 1`
+— shared and own in one round trip, which is the split the two blocks want. Reuse it in 1.2.
 
 ## The ontology this serves, and what must not be cut
 
