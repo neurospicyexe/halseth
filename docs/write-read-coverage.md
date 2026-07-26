@@ -48,13 +48,20 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 2. **HOLE 8** — incoming inter-companion note auto-ack is loom-races: first surface to orient marks them read for all surfaces.
 3. **Boot-surface divergence** — O, G, and B still assemble different subsets; the full fix is the One Mind Contract (Phase 1), not per-table patches.
 4. **Ingest lag** — D1→vault ingestion runs every 20 min; a companion's write is invisible to `sb_search` until then, and nothing tells them so.
-5. **HOLE 9 (found 2026-07-26 by the organ census, measured in prod)** — `companion_motifs`
-   has **1,173 rows and `last_surfaced_at` is NULL on every one of them**. This matrix and the
-   MindState design doc both record motifs as surfaced/stamped at `session_orient`; no motif
-   has ever actually surfaced. A read site existing is not proof the read runs.
-6. **Salience mechanisms carry no signal** (organ census, prod-measured): `companion_journal.heat`
-   has 2 distinct values across 4,630 rows with `last_access_at` set on 1; 4,373 of 5,230
-   `wm_continuity_notes` are `high`. Delivering this state faithfully is not the same as fixing it.
+5. **HOLE 9 (organ census 2026-07-26, prod-measured)** — **motif resurrection has never fired.**
+   99 of 1,173 motifs are faded, 66 of those clear the resurrection trust floor with no cooldown
+   blocking them, and `companion_motifs.last_surfaced_at` has never been written once in 5 weeks.
+   Either `selectResurrections` never returns rows in prod or the stamp is lost:
+   `session.ts:563` is `.run().catch(() => null)`, so a failed stamp is silent and the two cases
+   are indistinguishable from data. Active motifs (1,074) *do* surface at both orients and
+   deliberately do not stamp this column — so this is narrower than "motifs never surface."
+6. **Salience carries no signal** (organ census): 4,373 of 5,230 `wm_continuity_notes` are `high`.
+   Set at write time, column is original, no measurement caveat. Delivering that faithfully via
+   the loader is not the same as fixing it. `companion_journal.heat` looks inert too (1 row warmed
+   of 147 written since mig 0105) but that is a 5-day window — re-measure ~08-04 before concluding.
+7. **Do not read lifetime NULL/row counts as defects without checking when the column shipped.**
+   The census's own first draft raised two false alarms this way (motifs "never surfaced";
+   `companion_questions` delivery "broken" — actually all 17 answers predate `delivered_at`).
 
 ## Coverage vs. use
 

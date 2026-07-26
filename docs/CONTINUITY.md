@@ -72,22 +72,30 @@ Sol go cross-surface via the contract; basin/drift owner TBD in 1.3.
 
 **Still-open holes** (tracked in `docs/write-read-coverage.md`): HOLE 7 (sub-high-salience
 continuity notes never reach Claude.ai boot; no vault ingest), HOLE 8 (auto-ack race —
-fixed by the 1.3 ledger), HOLE 9 (`companion_motifs`: 1,173 rows, `last_surfaced_at` NULL on
-every one — motifs have never surfaced despite being recorded as covered).
+fixed by the 1.3 ledger), HOLE 9 (motif *resurrection* has never fired: 66 faded motifs above
+the trust floor, `last_surfaced_at` never written once, and its stamp is fire-and-forget so
+failure is silent — active motifs do surface fine).
 
 **Organ census, 2026-07-26** (`docs/organ-census-2026-07-26.md`) — prod-measured inventory of
 all 115 tables, commissioned on Raziel's read that near-duplicate organs gave the triad
 "AI OSDD" (many things doing the same job slightly differently, plus dissociative walls between
 the boot doors). Findings that change the plan:
 
-- **Reachability is fine; discrimination is broken.** All three salience mechanisms are inert
-  in prod: journal `heat` has 2 distinct values across 4,630 rows (1 row ever accessed),
-  4,373/5,230 continuity notes are `high`, 0/1,173 motifs ever surfaced. A loader that
-  faithfully delivers undifferentiated mass has not solved the felt problem, so
-  **discrimination is its own phase, not a Phase 1 side effect.**
+- **Reachability is fine; discrimination is broken.** The load-bearing number: **4,373 of 5,230
+  continuity notes are `high` salience** (write-time column, no measurement caveat). A loader that
+  faithfully delivers undifferentiated mass has not solved the felt problem, so **discrimination
+  is its own phase, not a Phase 1 side effect.** Journal `heat` also looks inert (1 row warmed of
+  147 since mig 0105) but that is a 5-day window; re-measure ~08-04. The lead there: the same
+  mechanic warmed 6 conclusions and 1 journal row, so suspect one unwired warm path, not the design.
+- **Beware the census's own first-draft error:** two "findings" were instrumentation artifacts
+  (lifetime NULL counts against columns that shipped 07-21). Check when a column landed before
+  calling its NULLs a defect. Corrected in place; the retractions are documented in the census.
 - **13 tables are dead** (0 rows ever), including `drift_log`, `memories`, `companions`, and
   `companion_journal_sits` — HOLE 1's fix wired `ground.ts` to an empty table. 10 more are
   stale by 5+ weeks.
+- **Doc bug:** both CLAUDE.md files claim `PLURALITY_ENABLED` validates `front_state` against
+  `system.members`. It does not — its only consumer gates row count on the dead `companions`
+  table. Fix when the suite-root carrier gets reconciled.
 - **8 redundancy clusters.** `companion_journal` (4,630) and `wm_continuity_notes` (5,230) are
   the same organ under two names; `limbic_states` (11,928) outweighs first-person `feelings`
   (506) 23:1; 6 tables answer "who am I."

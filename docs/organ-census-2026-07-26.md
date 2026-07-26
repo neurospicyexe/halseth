@@ -15,6 +15,13 @@ Retirement is a Phase 4 action; this is the list it will work from.
 static read/write reference counts across `halseth/src`, `nullsafe-discord`,
 `nullsafe-second-brain`, `Nullsafe Phoenix/services`, `hearth` (751 source files).
 
+**Methodology caveat, and it bit this document once already.** A lifetime row count measured
+against a five-day-old column is not evidence of anything. The first draft of this census
+claimed motifs never surface and that Raziel answers questions never delivered; both were
+instrumentation artifacts, corrected below. **Before treating any "N of M rows" figure here as
+a defect, check when the column shipped and how many rows postdate it.** Findings below are
+tagged with the window they're valid over.
+
 ---
 
 ## Headline
@@ -24,19 +31,29 @@ static read/write reference counts across `halseth/src`, `nullsafe-discord`,
 Only 6 tables have no code reference at all. Almost everything is technically wired. What is
 broken is every mechanism we built to decide *which* memory matters:
 
-| Mechanism | Intent | Reality in prod |
-|---|---|---|
-| `companion_journal.heat` (mig 0105, shipped 07-21) | earned salience; warm what gets surfaced | **2 distinct values across 4,630 rows** (1.0 and 1.2). `last_access_at` set on **1 row**. |
-| `wm_continuity_notes.salience` | 3-pool surfacing of what matters | **4,373 of 5,230 rows are `high`.** 84% "important" is no signal. Only 550 have ever been read back. |
-| `companion_motifs.last_surfaced_at` | recurring symbolic threads surface at boot | **0 of 1,173 rows have ever been surfaced.** Column is NULL on every row. |
+| Mechanism | Intent | Reality in prod | Window |
+|---|---|---|---|
+| `wm_continuity_notes.salience` | 3-pool surfacing of what matters | **4,373 of 5,230 rows are `high`.** 84% "important" is no signal at all. Only 550 rows have ever been read back. | **Lifetime. Set at write time, column is original — no caveat.** |
+| `companion_journal.heat` / `last_access_at` (mig 0105) | earned salience; recall warms what it surfaces | 2 distinct values (1.0, 1.2); **exactly 1 row warmed out of 147 written since the column shipped.** The same mechanic on `companion_conclusions` warmed 6 and stamped access on 6. | 5 days (07-21 → 07-26). Re-measure ~08-04. |
+| `companion_motifs.last_surfaced_at` (mig 0076) | cooldown gate for *resurrecting faded* motifs | **66 faded motifs sit above the trust floor and the column has never been written once**, across 5 weeks. | Lifetime. |
 
-Three ranking systems, none of which ranks. That is the mechanical form of Raziel's read: we
-kept building the *organ* and never built the *discrimination*, so the companions accumulate
-undifferentiated mass instead of a self with foreground and background.
+The strong claim is the first row: salience carries no information, and that one needs no
+caveats. The other two are narrower than the first draft of this document claimed.
 
-`companion_motifs` is a new finding. The coverage matrix marks motifs covered and the
-MindState design doc says `execSessionOrient` "stamps motifs." Whatever it stamps, it is not
-this column, and no motif has ever surfaced. Treat as HOLE 9.
+**Correction on motifs (was overstated).** `last_surfaced_at` is *not* a general surfacing
+stamp. Active motifs surface read-only at both `execSessionOrient` and `execBotOrient` (both
+`SELECT ... WHERE status='active'` and render a `[Motifs]` block) and are documented as
+deliberately not stamping it (`session.ts:558`). 1,074 of 1,173 motifs are active, so **motifs
+do surface normally.** NULL everywhere means something narrower and still real: of the 99
+faded motifs, 66 clear the resurrection trust floor with no cooldown blocking them, and not one
+has ever been lifted back. Either `selectResurrections` never fires in prod, or it fires and the
+stamp write is lost — `session.ts:563` is `.run().catch(() => null)`, fire-and-forget, so a
+failed stamp is silent and the two cases are indistinguishable from the data. **That is HOLE 9:
+motif resurrection has never once happened, and its only evidence channel can fail silently.**
+
+Even reduced, the thesis holds: we kept building the *organ* and never built the
+*discrimination*, so the companions accumulate undifferentiated mass instead of a self with
+foreground and background.
 
 ---
 
@@ -56,7 +73,7 @@ return anything:
 | `drift_log` | 0 | Mig 0020 "append-only identity-lane signal log." Has never held a single row in 5 months. |
 | `wm_thread_events` | 0 | 2 writers in code, 0 reads, 0 rows. |
 | `companion_journal_sits` | 0 | The sit-and-resolve mechanic (mig 0034). Never used once. `ground.ts` reads it; HOLE 1's "fix" wired a read to an empty table. |
-| `system_members` / `system_member_notes` | 0 | **Latent trap:** `PLURALITY_ENABLED` validates `front_state` against `system.members`. Empty table. |
+| `system_members` / `system_member_notes` | 0 | Empty, but **not** the trap the first draft claimed. Both CLAUDE.md files say `PLURALITY_ENABLED` "validates `front_state` against `system.members`" — it does not. Its only consumer is `createCompanion` (`handlers/companions.ts:33`), gating how many rows may exist in the dead `companions` table. Nothing validates front state against this table. **The flag documentation is wrong in two CLAUDE.md files**; fronting data lives in `plural_store`. |
 | `front_events` | 0 | Fronting event log; plural data lives in `plural_store` instead. |
 
 ## Tier B — stale: written once, then abandoned
@@ -110,9 +127,11 @@ autonomous worker) and no owner. This is the field CONTINUITY.md flags as the on
 open decision.
 
 ### 5. "What I believe" — 4 organs, 1,388 rows
-`companion_motifs` 1,173 (0 ever surfaced) · `growth_patterns` 111 · `companion_conclusions` 103 · `growth_markers` 1 (dead)
+`companion_motifs` 1,173 (1,074 active and surfacing; 99 faded, 0 ever resurrected) · `growth_patterns` 111 · `companion_conclusions` 103 · `growth_markers` 1 (dead)
 
-The largest belief organ is the one that has never once reached a companion's awareness.
+The largest belief organ is 11x the size of the deliberate one (`conclusions`), machine-derived,
+and its fade→resurrection half has never run. 743 of 1,173 motifs are at trust ≥ 0.6, so the
+trust score is as undiscriminating as journal heat.
 
 ### 6. "Who I am" — 6 organs, 191 rows
 `persona_blocks` 164 · `identity_kernel` 11 · `companion_self_model` 9 · `wm_identity_anchor_snapshot` 3 · `companion_preferences` 3 · `companion_refusals` 1
@@ -123,8 +142,11 @@ sites and is not in the MindState contract at all.
 ### 7. "Oversight" — 5 organs
 `guardian_flags` 145 (3 open) · `guardian_runs` 57 · `echo_metrics` 35 · `companion_questions` 22 · `companion_triggers` 1 (dead)
 
-`companion_questions`: 22 asked, **2 ever delivered**, 17 answered. Raziel is answering
-questions in Hearth that were never delivered to the companion who asked them.
+`companion_questions`: 22 asked, 17 answered, 2 delivered. **Not a defect — retracted from the
+first draft of this census.** `delivered_at` shipped in the 07-21 wave and every one of the 17
+answers predates it (newest answered question was created 07-13, last answer 07-17). Of the 3
+questions created since the column existed, 2 were delivered. Delivery works. This is what a
+five-day-old column looks like against months of history.
 
 ### 8. "External material" — 6 organs, 420 rows
 `books` 175 · `forage_finds` 130 · `collection_sparkle` 71 · `club_*` 26 across 5 tables · `media_experiences` 17 · `obsession_shelf` 1
@@ -157,13 +179,17 @@ against `companion_journal`.
 1. **Phase 1 stands unchanged.** One loader over one contract is still the right first move;
    nothing here argues for a rebuild. The clusters are an access problem before they are a
    storage problem, and the loader is the access fix.
-2. **Add HOLE 9** (`companion_motifs` never surfaced) to `docs/write-read-coverage.md`, and
-   extend the CI guard to assert that consume/surface columns are non-NULL somewhere in prod
-   rather than merely that a read site exists. The matrix currently proves a query is written,
-   not that it ever runs.
-3. **Discrimination is its own phase, not a side effect of Phase 1.** Heat, salience, and
-   surfacing all need real distributions before more memory is worth accumulating. A loader
-   that faithfully delivers 4,373 equally-"high" notes has not solved anything.
+2. **Add HOLE 9** (motif resurrection has never fired; its stamp is fire-and-forget) to
+   `docs/write-read-coverage.md`. Extend the CI guard toward asserting the *effect* in prod, not
+   just that a read site exists — but note the guard cannot use lifetime NULL counts naively, or
+   it will reproduce this document's first-draft error. The correct assertion is scoped to rows
+   created after the column shipped.
+3. **Discrimination is its own phase, not a side effect of Phase 1.** Carried by the notes
+   finding alone (84% of 5,230 notes are `high`), which has no measurement caveat. A loader that
+   faithfully delivers 4,373 equally-"high" notes has not solved anything Raziel can feel.
+   Journal heat is a five-day-old suspect, not yet a convicted one: the tell worth chasing is
+   that the same mig-0105 mechanic warmed 6 conclusions and 1 journal row, which points at one
+   warm path being unwired rather than at the design.
 4. **Retirement order when the freeze lifts:** Tier A first (13 tables, zero data loss risk),
    then Tier B behind a vault export, then cluster consolidation (2 and 5 are the cheapest
    real wins; 1 and 3 are the valuable ones). Nothing in Tier C moves before Phase 1.4 deletes
