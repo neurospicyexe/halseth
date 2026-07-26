@@ -14,20 +14,32 @@ import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql } from "./heat.js";
-import { takeUnsurfacedEvents } from "./home/store.js";
+import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 
-/** "While you were away" block. Null-safe: orient must never break on home error. */
-export async function buildHomeBlock(env: Env, agentId: WmAgentId): Promise<HomeEvent[]> {
+/** "While you were away" block. Null-safe: orient must never break on home error.
+ *  readOnly peeks without stamping surfaced_at (pure read for the MindState loader). */
+export async function buildHomeBlock(env: Env, agentId: WmAgentId, readOnly = false): Promise<HomeEvent[]> {
   try {
-    return await takeUnsurfacedEvents(env, agentId as CompanionId, 5);
+    return readOnly
+      ? await peekUnsurfacedEvents(env, agentId as CompanionId, 5)
+      : await takeUnsurfacedEvents(env, agentId as CompanionId, 5);
   } catch (err) {
     console.error("home block failed", err);
     return [];
   }
 }
 
-export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrientResponse> {
+export interface MindOrientOpts {
+  /** Pure read: skip every consume-on-read side effect (incoming-note auto-ack AND
+   *  note heat-warming). The MindState loader passes true: loading state must never
+   *  BE consuming it -- consumption becomes an explicit act (Phase 1,
+   *  docs/mindstate-contract.md). Legacy boot paths omit it and keep today's
+   *  behavior until they cut over to the loader + delivery ledger. */
+  readOnly?: boolean;
+}
+
+export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientOpts = {}): Promise<WmOrientResponse> {
   const _now = new Date();
   const currentDatetimeIso = _now.toISOString();
   const currentDatetimeCst = new Intl.DateTimeFormat('en-US', {
@@ -172,7 +184,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
 
   // Warm surfaced notes (0074): access is what keeps a memory hot. Non-fatal --
   // orient never breaks on a heat bookkeeping failure.
-  if (recentNotes.length > 0) {
+  if (!opts.readOnly && recentNotes.length > 0) {
     await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", recentNotes.length))
       .bind(...recentNotes.map(n => n.note_id)).run()
       .catch(e => console.warn("[orient] heat warm failed (non-fatal):", e));
@@ -218,7 +230,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.
   // Unawaited D1 operations may be silently discarded after response return.
   const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
-  if (unreadIds.length > 0) {
+  if (!opts.readOnly && unreadIds.length > 0) {
     const placeholders = unreadIds.map(() => "?").join(", ");
     await env.DB.prepare(
       `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`
@@ -242,7 +254,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId): Promise<WmOrient
   });
 
   // "While you were away" — recent home events (null-safe; never breaks orient)
-  const homeRecent = await buildHomeBlock(env, agentId);
+  const homeRecent = await buildHomeBlock(env, agentId, opts.readOnly);
 
   return {
     identity_anchor: anchor,

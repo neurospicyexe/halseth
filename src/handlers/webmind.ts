@@ -7,6 +7,8 @@ import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
+import { loadMindState } from "../mind/loader.js";
+import { isValidLoom, VALID_LOOMS } from "../mind/contract.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
@@ -87,6 +89,48 @@ export async function getMindOrientDebug(
     return json({ agent_id, debug });
   } catch (err) {
     console.error("[mind/orient-debug] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/state/:agent_id?loom=claude|discord|worker|hearth|raw[&parity=1]
+//
+// The MindState loader endpoint (Phase 1, docs/mindstate-contract.md). Pure read:
+// unlike /mind/orient it acks nothing, warms nothing, stamps nothing -- safe to poll.
+// ?parity=1 additionally returns the legacy orient+ground responses so the parity
+// harness can diff block-by-block during the strangler cutover.
+export async function getMindState(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { agent_id } = params;
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: `Invalid agent_id: must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  const url = new URL(request.url);
+  const loomParam = url.searchParams.get("loom") ?? "raw";
+  if (!isValidLoom(loomParam)) {
+    return json({ error: `Invalid loom: must be one of ${VALID_LOOMS.join(", ")}` }, 400);
+  }
+
+  try {
+    const mindstate = await loadMindState(env, agent_id, loomParam);
+    if (url.searchParams.get("parity") === "1") {
+      // Legacy aggregators run in readOnly too -- a parity diff must not consume state.
+      const [legacy_orient, legacy_ground] = await Promise.all([
+        mindOrient(env, agent_id, { readOnly: true }),
+        mindGround(env, agent_id),
+      ]);
+      return json({ mindstate, legacy_orient, legacy_ground });
+    }
+    return json(mindstate);
+  } catch (err) {
+    console.error("[mind/state] error", { agent_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

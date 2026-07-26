@@ -40,12 +40,18 @@ export async function appendEvent(
 }
 
 /** Unsurfaced events for orient's "while you were away" block. Marks them surfaced. */
-export async function takeUnsurfacedEvents(env: Env, id: CompanionId, limit = 5): Promise<HomeEvent[]> {
+/** Read unsurfaced events WITHOUT stamping surfaced_at -- for pure-read consumers
+ *  (the MindState loader). takeUnsurfacedEvents remains the consuming variant. */
+export async function peekUnsurfacedEvents(env: Env, id: CompanionId, limit = 5): Promise<HomeEvent[]> {
   const rows = await env.DB.prepare(
     `SELECT * FROM home_events WHERE companion_id = ? AND surfaced_at IS NULL
      ORDER BY created_at DESC LIMIT ?`,
   ).bind(id, limit).all<HomeEvent>();
-  const events = rows.results ?? [];
+  return rows.results ?? [];
+}
+
+export async function takeUnsurfacedEvents(env: Env, id: CompanionId, limit = 5): Promise<HomeEvent[]> {
+  const events = await peekUnsurfacedEvents(env, id, limit);
   if (events.length > 0) {
     const now = new Date().toISOString();
     const ids = events.map(e => e.id);
