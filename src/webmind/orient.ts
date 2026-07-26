@@ -215,6 +215,24 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       .catch(e => console.warn("[orient] heat warm failed (non-fatal):", e));
   }
 
+  // Warm surfaced journal rows (mig 0105). Same contract as the notes and conclusions
+  // warms above -- "recall/orient warm what they surface" -- but the journal half was
+  // only ever wired on the recall path (webmind/notes.ts), never here, so in prod 4,630
+  // journal rows carried exactly ONE last_access_at against 6 warmed conclusions and the
+  // heat column could only decay. Found by the 2026-07-26 organ census.
+  //
+  // WRITE half only, deliberately: these three slots are a RECENCY lane by design
+  // (journal-lanes.ts, 2026-07-09 Brain-cutover audit) so the ORDER BY stays created_at
+  // DESC and chatter still never wins a slot. Heat earned here is read by the salience
+  // prune, which is the point -- a row orient keeps showing should stop looking cold.
+  // readOnly skips it for the loader's pure-read covenant; non-fatal like its siblings.
+  const journalWarmIds = (recentJournal.results ?? []).map(j => j.id).filter(Boolean);
+  if (!opts.readOnly && journalWarmIds.length > 0) {
+    await env.DB.prepare(warmSql("companion_journal", "id", journalWarmIds.length))
+      .bind(...journalWarmIds).run()
+      .catch(e => console.warn("[orient] journal heat warm failed (non-fatal):", e));
+  }
+
   // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total).
   // Ordered by effective heat (mig 0105, thinking-quality fix 5): a belief that keeps
   // getting reached for outranks one that merely happens to be recent, same as the

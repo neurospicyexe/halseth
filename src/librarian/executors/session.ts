@@ -12,7 +12,7 @@ import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../respo
 import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
-import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
+import { selectResurrections, MOTIF_TUNING, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { warmSql } from "../../webmind/heat.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
@@ -213,9 +213,27 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     // Motifs (0076): recurring symbolic threads (active) + faded high-trust ones
     // eligible for resurrection. Active surfaces read-only; resurrection is
     // consume-once via last_surfaced_at cooldown (selectResurrections owns the gate).
-    ctx.env.DB.prepare(
-      "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status IN ('active','faded') ORDER BY trust DESC, recurrence_count DESC LIMIT 20"
-    ).bind(agentId).all<MotifRow>().catch(() => null),
+    //
+    // TWO windows, not one (HOLE 9, fixed 2026-07-26). This was a single
+    // `status IN ('active','faded') ORDER BY trust DESC LIMIT 20`, and active motifs
+    // outnumber faded ~11:1 while saturating the trust ceiling -- in prod all 20 slots
+    // went to active rows for all three companions, so the faded subset handed to
+    // selectResurrections was ALWAYS empty and resurrection had never fired once in five
+    // weeks (0 of 1,173 rows ever stamped, 66 of them eligible). Pools that compete for
+    // one ordered window are not two pools. The trust floor is applied in SQL as well so
+    // the faded window is spent only on genuine candidates; selectResurrections still
+    // owns the cooldown gate and the final cut.
+    (async () => {
+      const [act, fad] = await Promise.all([
+        ctx.env.DB.prepare(
+          "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY trust DESC, recurrence_count DESC LIMIT 10"
+        ).bind(agentId).all<MotifRow>(),
+        ctx.env.DB.prepare(
+          `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'faded' AND trust >= ${MOTIF_TUNING.RESURRECT_TRUST_FLOOR} ORDER BY trust DESC, recurrence_count DESC LIMIT 10`
+        ).bind(agentId).all<MotifRow>(),
+      ]);
+      return { active: act?.results ?? [], faded: fad?.results ?? [] };
+    })().catch(() => null),
     // Sol (0078): the companion corvid. Fetched by name so orient knows Sol's current disposition.
     ctx.env.DB.prepare(
       "SELECT id, name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
@@ -277,11 +295,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     severity: f.severity,
     summary: (f.summary ?? "").slice(0, 400),
   }));
-  // Motifs (0076): split the active recurring threads from the faded ones, then run
-  // resurrection selection (trust floor + cooldown) over the faded subset.
-  const allMotifs = motifRows?.results ?? [];
-  const activeMotifs = allMotifs.filter(m => m.status === "active").slice(0, 3);
-  const resurrectedMotifs = selectResurrections(allMotifs.filter(m => m.status === "faded"), Date.now(), { limit: 2 });
+  // Motifs (0076): the two pools arrive already separated (see the query above -- one
+  // shared trust-ordered window starved resurrection completely). selectResurrections
+  // still applies the cooldown gate and the final cut over the faded pool.
+  const activeMotifs = (motifRows?.active ?? []).slice(0, 3);
+  const resurrectedMotifs = selectResurrections(motifRows?.faded ?? [], Date.now(), { limit: 2 });
   const recentListens = (mediaRows?.results ?? []).map(r => {
     let reactions: Record<string, string> = {};
     try { reactions = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>; } catch { /* malformed -> empty */ }
