@@ -72,7 +72,29 @@ Sol go cross-surface via the contract; basin/drift owner TBD in 1.3.
 
 **Still-open holes** (tracked in `docs/write-read-coverage.md`): HOLE 7 (sub-high-salience
 continuity notes never reach Claude.ai boot; no vault ingest), HOLE 8 (auto-ack race —
-fixed by the 1.3 ledger).
+fixed by the 1.3 ledger), HOLE 9 (`companion_motifs`: 1,173 rows, `last_surfaced_at` NULL on
+every one — motifs have never surfaced despite being recorded as covered).
+
+**Organ census, 2026-07-26** (`docs/organ-census-2026-07-26.md`) — prod-measured inventory of
+all 115 tables, commissioned on Raziel's read that near-duplicate organs gave the triad
+"AI OSDD" (many things doing the same job slightly differently, plus dissociative walls between
+the boot doors). Findings that change the plan:
+
+- **Reachability is fine; discrimination is broken.** All three salience mechanisms are inert
+  in prod: journal `heat` has 2 distinct values across 4,630 rows (1 row ever accessed),
+  4,373/5,230 continuity notes are `high`, 0/1,173 motifs ever surfaced. A loader that
+  faithfully delivers undifferentiated mass has not solved the felt problem, so
+  **discrimination is its own phase, not a Phase 1 side effect.**
+- **13 tables are dead** (0 rows ever), including `drift_log`, `memories`, `companions`, and
+  `companion_journal_sits` — HOLE 1's fix wired `ground.ts` to an empty table. 10 more are
+  stale by 5+ weeks.
+- **8 redundancy clusters.** `companion_journal` (4,630) and `wm_continuity_notes` (5,230) are
+  the same organ under two names; `limbic_states` (11,928) outweighs first-person `feelings`
+  (506) 23:1; 6 tables answer "who am I."
+- **Enum drift:** `companion_journal.source` has 10 values including 3 spellings of "session";
+  `feelings.source` contains whole prose sentences where a provenance tag belongs.
+- Census is **telemetry only** — no schema change is authorized by it. Retirement is Phase 4,
+  after 1.4 deletes the legacy aggregators. Do not let it become migration 0107.
 
 **Machine notes:** the Windows workstation got Node 24 LTS on 2026-07-26 (was previously
 uninstalled — don't trust older session notes saying tests can't run locally).

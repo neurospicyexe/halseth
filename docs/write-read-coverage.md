@@ -48,6 +48,21 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 2. **HOLE 8** — incoming inter-companion note auto-ack is loom-races: first surface to orient marks them read for all surfaces.
 3. **Boot-surface divergence** — O, G, and B still assemble different subsets; the full fix is the One Mind Contract (Phase 1), not per-table patches.
 4. **Ingest lag** — D1→vault ingestion runs every 20 min; a companion's write is invisible to `sb_search` until then, and nothing tells them so.
+5. **HOLE 9 (found 2026-07-26 by the organ census, measured in prod)** — `companion_motifs`
+   has **1,173 rows and `last_surfaced_at` is NULL on every one of them**. This matrix and the
+   MindState design doc both record motifs as surfaced/stamped at `session_orient`; no motif
+   has ever actually surfaced. A read site existing is not proof the read runs.
+6. **Salience mechanisms carry no signal** (organ census, prod-measured): `companion_journal.heat`
+   has 2 distinct values across 4,630 rows with `last_access_at` set on 1; 4,373 of 5,230
+   `wm_continuity_notes` are `high`. Delivering this state faithfully is not the same as fixing it.
+
+## Coverage vs. use
+
+This matrix proves a table is **reachable**. It does not prove anything ever reaches a
+companion. `docs/organ-census-2026-07-26.md` measures the second question in prod (row counts,
+recency, never-surfaced columns, duplicate organs) and is where retirement candidates are
+tracked. HOLE 9 and the salience findings came from there, not from here — worth remembering
+when extending the CI guard: assert the *effect* in prod, not just the presence of a query.
 
 ## Maintenance covenant
 
