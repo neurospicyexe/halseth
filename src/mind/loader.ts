@@ -54,7 +54,17 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
 
     carried: {
       dreams_unexamined: orient.unexamined_dreams,
-      open_loops: orient.open_loops ?? ground.open_loops ?? [],
+      // orient exposes the projected WmOrientOpenLoop rows (id/loop_text/weight/opened_at,
+      // post-merge with the thinking-quality wave); rehydrate the WmOpenLoop contract shape.
+      // companion_id is the loaded companion and closed_at is null by the query's filter.
+      open_loops: (orient.open_loops ?? ground.open_loops ?? []).map((l) => ({
+        id: l.id,
+        companion_id: companionId,
+        loop_text: l.loop_text,
+        weight: l.weight,
+        opened_at: l.opened_at,
+        closed_at: null,
+      })),
       tensions: orient.active_tensions,
       sits: ground.sitting_notes,
       feelings_recent: orient.recent_feelings ?? [],

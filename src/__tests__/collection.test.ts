@@ -29,9 +29,16 @@ describe("sql builders", () => {
   });
   it("collection reads LEFT JOIN sparkle and order by it brightest-first", () => {
     expect(collectionForageSql()).toContain("LEFT JOIN collection_sparkle");
-    expect(collectionForageSql()).toContain("ORDER BY sparkle DESC");
+    expect(collectionForageSql()).toContain("sparkle DESC");
     expect(collectionForageSql()).toContain("f.companion_id = ? OR f.companion_id IS NULL");
     expect(collectionMediaSql()).toContain("LEFT JOIN collection_sparkle");
     expect(collectionMediaSql()).toContain("ORDER BY sparkle DESC");
+  });
+
+  it("forage sort puts unconsumed finds first, ahead of sparkle (2026-07-21 starvation fix)", () => {
+    const sql = collectionForageSql();
+    expect(sql).toContain("ORDER BY (f.consumed_at IS NULL) DESC, sparkle DESC, f.gathered_at DESC");
+    // media_experiences has no consumed/explored marker column -- left untouched, sparkle-only.
+    expect(collectionMediaSql()).not.toContain("consumed_at IS NULL");
   });
 });

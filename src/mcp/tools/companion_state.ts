@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { generateId } from "../../db/queries.js";
 import { Env } from "../../types.js";
-import { updateCompanionState, type CompanionStateUpdate } from "../../librarian/backends/halseth.js";
+import { updateCompanionState, type CompanionStateUpdate, addCompanionNote, buildNoteRef, NOTE_REF_TYPES } from "../../librarian/backends/halseth.js";
 
 const COMPANION_IDS = ["cypher", "drevan", "gaia"] as const;
 type CompanionId = (typeof COMPANION_IDS)[number];
@@ -163,26 +163,39 @@ export function registerCompanionStateTools(server: McpServer, env: Env): void {
   // Write an addressed note from one companion to another (or broadcast).
   server.tool(
     "halseth_companion_note",
-    "Write an addressed note from one companion to another, or broadcast to all companions.",
+    "Write an addressed note from one companion to another, or broadcast to all companions. Optionally pass ref_type + ref_id (+ reason) to mark the note as a move on a shared object -- an open question, a tension, or a council item.",
     {
       from_id: z.enum(COMPANION_IDS),
       to_id: z.enum(COMPANION_IDS).optional(),
       content: z.string().min(1),
+      ref_type: z.enum(NOTE_REF_TYPES).optional().describe("What kind of shared object this note moves: question|tension|council. Must be paired with ref_id."),
+      ref_id: z.string().optional().describe("id of the referenced question/tension/council row. Must be paired with ref_type."),
+      reason: z.string().max(500).optional().describe("Scratchpad reason for the move. Only meaningful alongside ref_type/ref_id."),
     },
     async (args) => {
-      const id = generateId();
-      await env.DB.prepare(
-        `INSERT INTO inter_companion_notes (id, from_id, to_id, content) VALUES (?, ?, ?, ?)`
-      )
-        .bind(id, args.from_id, args.to_id ?? null, args.content)
-        .run();
+      const refResult = buildNoteRef(args.ref_type, args.ref_id, args.reason);
+      if (refResult.error) {
+        return {
+          content: [{ type: "text", text: `companion_note_add_failed: ${refResult.error}` }],
+          isError: true,
+        };
+      }
+
+      const note = await addCompanionNote(env, args.from_id, args.to_id ?? null, args.content, refResult.ref);
+      if (note.error) {
+        return {
+          content: [{ type: "text", text: `companion_note_add_failed: ${note.error}` }],
+          isError: true,
+        };
+      }
 
       const dest = args.to_id ?? "all companions";
+      const refSuffix = refResult.ref ? ` (move on ${refResult.ref.ref_type} ${refResult.ref.ref_id})` : "";
       return {
         content: [
           {
             type: "text",
-            text: `Note from ${args.from_id} to ${dest} logged. id=${id}`,
+            text: `Note from ${args.from_id} to ${dest} logged. id=${note.id}${refSuffix}`,
           },
         ],
       };

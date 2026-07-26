@@ -34,14 +34,17 @@ export function bumpSparkleSql(): string {
             last_sparked_at = datetime('now')`;
 }
 
-/** Forage finds for a companion (own + shared pool) with their sparkle weight, brightest first. Bind: [companion_id, limit]. */
+/** Forage finds for a companion (own + shared pool) with their sparkle weight, unconsumed
+ *  first (2026-07-21 starvation fix: sparkle-first pinned already-explored finds above fresh
+ *  unconsumed ones -- the collection page read as frozen because a well-loved old find always
+ *  outranked something new nobody had touched yet). Bind: [companion_id, limit]. */
 export function collectionForageSql(): string {
   return `SELECT f.id, f.title, f.domain, f.summary, f.source_url, f.consumed_at, f.gathered_at,
                  COALESCE(s.sparkle, 0) AS sparkle
           FROM forage_finds f
           LEFT JOIN collection_sparkle s ON s.source_table = 'forage_finds' AND s.source_id = f.id
           WHERE f.companion_id = ? OR f.companion_id IS NULL
-          ORDER BY sparkle DESC, f.gathered_at DESC LIMIT ?`;
+          ORDER BY (f.consumed_at IS NULL) DESC, sparkle DESC, f.gathered_at DESC LIMIT ?`;
 }
 
 /** Recent listens with their sparkle weight, brightest first (shared table -- no companion filter). Bind: [limit]. */

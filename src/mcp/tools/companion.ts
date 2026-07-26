@@ -53,13 +53,13 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
       limit:      z.number().int().min(1).max(100).default(20),
     },
     async (input) => {
-      const conditions: string[] = [];
+      const conditions: string[] = ["archived = 0"];
       const bindings: unknown[]  = [];
 
       if (input.agent)      { conditions.push("agent = ?");      bindings.push(input.agent); }
       if (input.session_id) { conditions.push("session_id = ?"); bindings.push(input.session_id); }
 
-      const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+      const where = `WHERE ${conditions.join(" AND ")}`;
       bindings.push(input.limit);
 
       const result = await env.DB.prepare(

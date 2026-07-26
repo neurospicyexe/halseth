@@ -296,7 +296,11 @@ export interface WmOrientResponse {
   active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs, type-distributed
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
   recent_feelings?: WmFeeling[];                // feelings logged via feeling_log -- were write-only to orient before 2026-07-26
-  open_loops?: WmOpenLoop[];                    // unresolved open loops, heaviest first (same read as ground/bot_orient); optional so cached pre-2026-07-26 payloads stay valid
+  open_loops: WmOrientOpenLoop[];               // open loops (things carried from sessions, not yet resolved)
+  open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)
+  answered_questions: WmAnsweredQuestion[];     // answers Raziel left, surfaced for 7 days (mig 0107)
+  active_conversations: WmActiveConversation[]; // live conversation threads (conversation_threads, mig 0106)
+  guardian_flags: WmOrientGuardianFlag[];       // open/surfaced guardian red-flag cards, with a remediation hint (Wave 3 starvation fix)
   soma_arc?: {
     note_id: string;
     content: string;
@@ -348,6 +352,12 @@ export interface WmCompanionNote {
   content: string;
   read_at: string | null;
   created_at: string;
+  // Migration 0104 (Task 15): note as a "move" on a shared object -- an open
+  // question, a tension, or a council item -- with a scratchpad reason. All three
+  // nullable at the schema layer; absent on plain notes.
+  ref_type: string | null;
+  ref_id: string | null;
+  reason: string | null;
 }
 
 // Journal entries written BY a companion (companion_journal table)
@@ -387,6 +397,57 @@ export interface WmBasinHistoryRow {
   drift_type: string;
   worst_basin: string | null;
   recorded_at: string;
+}
+
+// ── Orient Response Specializations ────────────────────────────────────────
+
+export interface WmOrientOpenLoop {
+  id: string;
+  loop_text: string;
+  weight: number;
+  opened_at: string;
+}
+
+export interface WmOrientOpenQuestion {
+  id: string;
+  question: string;
+  context: string | null;
+  created_at: string;
+}
+
+// Guardian red-flag cards, surfaced at the raw mindOrient path (Wave 3 starvation fix,
+// 2026-07-21). Mirrors the shape execSessionOrient/execBotOrient already build.
+export interface WmOrientGuardianFlag {
+  id: string;
+  flag_type: string;
+  severity: string;
+  summary: string;
+  remediation: string;
+}
+
+// Answered questions surfaced at orient (companion_questions, status = 'answered').
+// delivered_at is stamped by markAnswersDelivered the first time an orient surfaces
+// the row -- optional here since the SELECT can return it before it's ever been set.
+export interface WmAnsweredQuestion {
+  id: string;
+  question: string;
+  answer: string;
+  answered_at: string;
+  delivered_at?: string | null;
+}
+
+// Active conversation threads (conversation_threads table, migration 0106 thread spine).
+// Projected row for orient surfacing -- seed_gist is a truncated (first 140 chars) preview
+// of seed_text, computed in SQL via substr() rather than the full seed_text.
+export interface WmActiveConversation {
+  id: string;
+  channel_id: string;
+  seed_author: string;
+  seed_gist: string;
+  state: string;
+  ref_label: string | null;
+  turn_count: number;
+  last_turn_at: string;
 }
 
 export interface WmGroundResponse {

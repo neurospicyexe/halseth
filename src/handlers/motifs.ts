@@ -56,7 +56,7 @@ export async function postMotifsDetect(request: Request, env: Env): Promise<Resp
         // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
         env.DB.prepare(
           `SELECT note_text AS t FROM companion_journal
-           WHERE agent = ?1 AND ${SUBSTANTIVE_JOURNAL_CLAUSE}
+           WHERE agent = ?1 AND archived = 0 AND ${SUBSTANTIVE_JOURNAL_CLAUSE}
              AND created_at > COALESCE(?2, datetime('now','-' || ?3 || ' days'))
            ORDER BY created_at DESC LIMIT 400`
         ).bind(id, since, windowDays).all<{ t: string }>(),

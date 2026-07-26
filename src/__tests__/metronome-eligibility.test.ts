@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isEligible, type MetronomeAction, type EligibilityContext } from "../webmind/metronome.js";
+import { isEligible, isValidActionType, VALID_ACTION_TYPES, type MetronomeAction, type EligibilityContext } from "../webmind/metronome.js";
 
 // Minimal factory: a fully-populated row with sane defaults, overridable per test.
 function action(overrides: Partial<MetronomeAction> = {}): MetronomeAction {
@@ -83,5 +83,28 @@ describe("metronome isEligible -- silence floor null semantics (2026-06-17 heart
       fire_count_reset_at: "2026-06-17",
     });
     expect(isEligible(a, ctx({ silenceHours: null }))).toBe(false);
+  });
+});
+
+describe("VALID_ACTION_TYPES -- declare_preference metronome affordance (mig 0108, Wave 3 starvation fix)", () => {
+  it("includes declare_preference", () => {
+    expect(VALID_ACTION_TYPES).toContain("declare_preference");
+    expect(isValidActionType("declare_preference")).toBe(true);
+  });
+
+  it("does NOT include declare_refusal (deliberate: refusals must come from genuine friction, not a metronome prompt)", () => {
+    expect(VALID_ACTION_TYPES).not.toContain("declare_refusal");
+    expect(isValidActionType("declare_refusal")).toBe(false);
+  });
+
+  it("also validates the action types the DB CHECK (mig 0093/0090/0072) already allowed but this guard had never caught up to", () => {
+    // Pre-existing gap found while fixing this: share_media (0072), tend_creature (0090), and
+    // drift_open (0093) were all valid in the D1 CHECK but missing from this TS type guard --
+    // any admin-API attempt to create/patch a metronome_actions row with one of these types
+    // would have failed client-side validation despite being perfectly valid in the DB.
+    for (const t of ["share_media", "tend_creature", "drift_open"]) {
+      expect(VALID_ACTION_TYPES).toContain(t);
+      expect(isValidActionType(t)).toBe(true);
+    }
   });
 });

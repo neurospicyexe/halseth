@@ -1,5 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { embedAndStoreAsync } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
+import { noveltyCheck } from "../../webmind/novelty.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
@@ -16,13 +17,59 @@ import { relativeTime } from "../../webmind/relative-time.js";
 import { warmSql } from "../../webmind/heat.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
+import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
+import { remediationHint } from "../../guardian/remediation.js";
+
+// Interoception fields the raw MCP tool halseth_session_load accepts (see
+// src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
+// but which the Librarian session_open/session_orient path never plumbed through --
+// dead since the 2026-03-22 Librarian cutover moved companions off the raw tool onto
+// ask_librarian. loadSessionData/loadOrientData already accept + write these columns;
+// the gap was purely that the executors never read them out of ctx.req.context.
+// Invalid values are dropped (never a hard failure) -- boot must not break on a bad
+// optional field.
+interface SessionOpenContext {
+  hrv_range?: unknown;
+  emotional_frequency?: unknown;
+  depth?: unknown;
+  key_signature?: unknown;
+}
+
+const HRV_RANGES = new Set(["low", "mid", "high"]);
+
+export interface SanitizedInteroception {
+  hrv_range?: "low" | "mid" | "high";
+  emotional_frequency?: string;
+  depth?: number;
+  key_signature?: string;
+}
+
+export function sanitizeInteroception(p: SessionOpenContext | null): SanitizedInteroception {
+  const out: SanitizedInteroception = {};
+  if (!p) return out;
+  if (typeof p.hrv_range === "string" && HRV_RANGES.has(p.hrv_range)) {
+    out.hrv_range = p.hrv_range as "low" | "mid" | "high";
+  }
+  if (typeof p.emotional_frequency === "string" && p.emotional_frequency.trim()) {
+    out.emotional_frequency = p.emotional_frequency.trim();
+  }
+  if (typeof p.depth === "number" && Number.isInteger(p.depth) && p.depth >= 0 && p.depth <= 3) {
+    out.depth = p.depth;
+  }
+  if (typeof p.key_signature === "string" && p.key_signature.trim()) {
+    out.key_signature = p.key_signature.trim();
+  }
+  return out;
+}
 
 export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const interoception = sanitizeInteroception(parseContext<SessionOpenContext>(ctx.req.context));
   const [payload, pendingGrowthRow] = await Promise.all([
     sessionLoad(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
       session_type: ctx.req.session_type ?? "work",
+      ...interoception,
     }),
     ctx.env.DB.prepare(
       "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
@@ -64,11 +111,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
+  const orientInteroception = sanitizeInteroception(parseContext<SessionOpenContext>(ctx.req.context));
   const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
       session_type: ctx.req.session_type ?? "work",
+      ...orientInteroception,
     }),
     wmOrient(ctx.env, agentId).catch(() => null),
     ctx.env.DB.prepare(
@@ -179,6 +228,16 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
+
+  // Answered questions: Raziel's answers, surfaced for 7 days (questions-lifecycle fix,
+  // mig 0107). Standalone query, deliberately NOT in the mega Promise.all above, so it can
+  // never shift that positional destructure (boot-path safety, same convention as
+  // commonsRows/shelfRows below). Awaited + caught -- delivery stamping must never throw
+  // into the orient response.
+  const answeredQuestions = await fetchRecentAnswers(ctx.env, agentId, 3).catch(() => []);
+  await markAnswersDelivered(ctx.env, answeredQuestions.map(a => a.id)).catch((e: unknown) => {
+    console.error("[session-orient] markAnswersDelivered failed:", String(e));
+  });
   // Tripwire evaluation: date cards fire within +/-36h of their date; front cards fire
   // when the current front matches. Keyword cards are bot-side only (no message here).
   const nowMs = Date.now();
@@ -376,6 +435,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       openQuestions.map(q => `• ${q}`).join("\n")
     : "";
 
+  // Answered questions block: the other half of the loop -- answers Raziel left, surfaced
+  // for 7 days (questions-lifecycle fix, mig 0107).
+  const answeredQuestionsBlock = answeredQuestions.length > 0
+    ? `\nAnswers Raziel left for you:\n` +
+      answeredQuestions.map(a => `- Q: «${a.question}» → A: «${a.answer.length > 300 ? a.answer.slice(0, 300) + "…" : a.answer}»`).join("\n")
+    : "";
+
   // Commons (0092): Raziel's ambient log posts this companion hasn't answered yet --
   // surfaced as drops, not pings (buildCommonsBlock carries the anti-confusion framing).
   // Standalone query, deliberately NOT in the mega Promise.all above, so it can never
@@ -463,7 +529,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // server-side (evidence_json); the summary alone goes into the prompt.
   const guardianBlock = guardianFlags.length > 0
     ? `\n[Guardian]\nThe Guardian flagged ${guardianFlags.length === 1 ? "a condition" : `${guardianFlags.length} conditions`} worth your eyes (instrument, not verdict):\n` +
-      guardianFlags.map(f => `• [${f.severity}] ${f.summary}`).join("\n")
+      guardianFlags.map(f => `• [${f.severity}] ${f.summary}\n  -> ${remediationHint(f.flag_type)}`).join("\n")
     : "";
 
   // Consume-once: open -> surfaced so cards don't nag every orient. They stay
@@ -600,7 +666,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     : `\n[Drift lane]\n${driftAffordance}`;
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
@@ -616,6 +682,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     undercurrent_emotion: os?.undercurrent_emotion ?? null,
     unaccepted_growth: unacceptedGrowth,
     open_questions: openQuestions,
+    answered_questions: answeredQuestions,
     commons: commonsPosts,
     shelf: shelfItems,
     collection: collectionItems,
@@ -630,7 +697,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     open_drifts: openDrifts,
     unconfirmed_growth: unconfirmedGrowth,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     // 2026-07-09: dropped a raw `continuity: wmResult` field that used to sit here --
     // continuityBlock (above) already renders the same object into ready_prompt's prose,
     // and nothing downstream (Discord, Hearth, or anywhere else in this repo) ever read the
@@ -843,25 +910,67 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   }
 
   if (p.conclusion) {
-    const cid = crypto.randomUUID();
     const conclusionText = p.conclusion;
     const conclusionCompanion = ctx.req.companion_id;
     fanoutWrites.push({
       label: "conclusion",
-      // Embed chained after the insert with its own catch: an embed failure must never
-      // read as a conclusion-write failure in the fanout report (D1 is truth; fill heals).
-      promise: ctx.env.DB.prepare(
-        "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-      ).bind(cid, conclusionCompanion, conclusionText,
-        JSON.stringify([resolvedSessionId]), now).run()
-        .then(async (r) => {
+      // Novelty gate (2026-07-20) runs before the insert: dedupe near-identical
+      // beliefs (skip -- no insert, resolves without counting as a fanout failure),
+      // supersede evolved ones, or insert plainly. Fails open on gate trouble.
+      promise: (async () => {
+        const decision = await noveltyCheck(ctx.env, conclusionText, "companion_conclusions", conclusionCompanion);
+        if (decision.action === "skip") {
+          console.log("[session_close] conclusion novelty-skip", {
+            companion: conclusionCompanion, match: decision.matchRowId, score: decision.score,
+          });
+          return { skipped: true, novelty: decision };
+        }
+
+        const cid = crypto.randomUUID();
+        const stmts = [
+          ctx.env.DB.prepare(
+            "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
+          ).bind(cid, conclusionCompanion, conclusionText, JSON.stringify([resolvedSessionId]), now),
+        ];
+        if (decision.action === "supersede") {
+          stmts.push(
+            ctx.env.DB.prepare(
+              "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+            ).bind(cid, decision.matchRowId, conclusionCompanion)
+          );
+        }
+        const results = await ctx.env.DB.batch(stmts);
+
+        // Best-effort delete of the superseded row's vector so a dead conclusion can
+        // never resurface as a novelty-gate match (2026-07-20 review). Mirrors
+        // salience-prune.ts's best-effort pattern: D1 is truth, the row is already
+        // committed, the index is disposable/rebuildable -- a failed delete must never
+        // affect the write or the fanout result.
+        if (decision.action === "supersede") {
+          try {
+            await ctx.env.VECTORIZE.deleteByIds([vectorId("companion_conclusions", decision.matchRowId)]);
+          } catch (err) {
+            console.error("[session_close] superseded vector delete failed (row kept, index stale):", String(err));
+          }
+        }
+
+        // Store the vector: reuse the gate's embedding (net +0 AI calls on the
+        // common path). Only re-embed if the gate itself fell open (embedding null).
+        // Chained with its own catch: an embed/vector failure must never read as a
+        // conclusion-write failure in the fanout report (D1 is truth; fill heals).
+        if (decision.embedding) {
+          await storeVector(ctx.env, decision.embedding, "companion_conclusions", cid, conclusionCompanion).catch((err) => {
+            console.error("[session_close] conclusion vector store failed (row kept, index stale):", String(err));
+          });
+        } else {
           try {
             await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", cid, conclusionCompanion);
           } catch (err) {
             console.error("[session_close] conclusion embed failed (row kept, index stale):", String(err));
           }
-          return r;
-        }),
+        }
+        return results[0];
+      })(),
     });
   }
 
@@ -936,7 +1045,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult, answeredQuestionsResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer. id carried so the live
     // path can warm the row (0074) -- bot presence access counts as access.
     ctx.env.DB.prepare(
@@ -1072,6 +1181,10 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ctx.env.DB.prepare(
       "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
     ).bind(agentId).all<{ imp: string; n: number; last_at: string }>(),
+    // 31. Answered questions: Raziel's answers, surfaced for 7 days regardless of
+    // delivered_at (questions-lifecycle fix, mig 0107) -- answers never reached companions
+    // because every orient path only ever read status = 'open'.
+    fetchRecentAnswers(ctx.env, agentId, 3),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -1249,6 +1362,36 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   const botStandingRefusals = botRefusalRows?.results ?? [];
   const botOpenDrifts = botDriftRows?.results ?? [];
 
+  // Gaia-only: recent witness read-back (2026-07-21). gaia_witness has been write-only
+  // since it was added -- no orient path ever read it back, so Gaia's witnessing never
+  // fed forward into her own boot context. Standalone (not folded into the Promise.allSettled
+  // fan-out above) because it's gaia-only; wrapped in its own try/catch per this file's
+  // boot-path-safety convention -- must never break bot orient for any companion, Gaia
+  // included. Other companions get an empty array; gaia_witness carries no companion_id
+  // column (it's Gaia's alone by table design).
+  let recent_witness: Array<{ content: string; witness_type: string; created_at: string }> = [];
+  if (agentId === "gaia") {
+    try {
+      const witnessRows = await ctx.env.DB.prepare(
+        "SELECT content, witness_type, created_at FROM gaia_witness ORDER BY created_at DESC LIMIT 5"
+      ).all<{ content: string; witness_type: string; created_at: string }>();
+      recent_witness = (witnessRows.results ?? []).map(r => ({
+        content: (r.content ?? "").slice(0, 300),
+        witness_type: r.witness_type,
+        created_at: r.created_at,
+      }));
+    } catch (e) {
+      console.error("[bot-orient] gaia witness read-back failed (non-fatal):", String(e));
+    }
+  }
+
+  const answered_questions = answeredQuestionsResult.status === "fulfilled" ? answeredQuestionsResult.value : [];
+  // Stamp delivered_at on surfaced answers (mig 0107). Awaited + caught -- bookkeeping
+  // failure here must never break the bot orient response.
+  await markAnswersDelivered(ctx.env, answered_questions.map(a => a.id)).catch((e: unknown) => {
+    console.error("[bot-orient] markAnswersDelivered failed:", String(e));
+  });
+
   return {
     data: {
       synthesis_summary,
@@ -1274,6 +1417,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       open_questions: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
         ? (openQuestionsResult.value.results as Array<{ question: string }>).map(r => (r.question ?? "").slice(0, 300)).filter(Boolean)
         : [],
+      answered_questions,
       forage_finds: forageResult.status === "fulfilled" && forageResult.value?.results
         ? (forageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>).map(r => ({
             id: r.id,
@@ -1324,6 +1468,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
             flag_type: r.flag_type,
             severity: r.severity,
             summary: (r.summary ?? "").slice(0, 300),
+            remediation: remediationHint(r.flag_type),
           }))
         : [],
       motifs: motifResult.status === "fulfilled" && motifResult.value?.results
@@ -1368,6 +1513,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       preferences: botPreferences,
       standing_refusals: botStandingRefusals,
       open_drifts: botOpenDrifts,
+      recent_witness,
     },
     meta: {
       operation: "halseth_bot_orient",
@@ -1376,6 +1522,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       preferences: botPreferences.length,
       standing_refusals: botStandingRefusals.length,
       open_drifts: botOpenDrifts.length,
+      answered_questions: answered_questions.length,
+      recent_witness: recent_witness.length,
     },
   };
 }

@@ -34,8 +34,9 @@ import { handleLibrarianMcp } from "./librarian/mcp.js";
 import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
-import { getUnreadInterCompanionNotes, ackInterCompanionNotes } from "./handlers/inter_companion_notes.js";
+import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -79,6 +80,7 @@ import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
+import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
 import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
 import { associateDreamsHandler } from "./handlers/dream-associate.js";
@@ -187,6 +189,7 @@ const router = new Router()
   // Inter-companion notes — Discord bot note delivery poll
   .on("GET", "/inter-companion-notes/unread/:companionId", (request, env, params) => getUnreadInterCompanionNotes(request, env, params ?? {}))
   .on("POST", "/inter-companion-notes/ack", (request, env) => ackInterCompanionNotes(request, env))
+  .on("GET", "/inter-companion-notes/moves", (request, env) => getInterCompanionNoteMoves(request, env))
 
   // STM — Discord bot short-term memory persistence
   .on("POST", "/stm/entries", (request, env) => postStmEntry(request, env))
@@ -212,6 +215,13 @@ const router = new Router()
   .on("POST",  "/mind/thread",                        (request, env)         => postMindThread(request, env))
   .on("POST",  "/mind/threads/sweep",                 (request, env)         => postThreadsSweep(request, env))
   .on("PATCH", "/mind/thread/:thread_key/status",     (request, env, params) => patchMindThreadStatus(request, env, params ?? {}))
+
+  // Thread spine — durable conversation threads (migration 0106)
+  .on("POST", "/mind/conversations",                 (request, env)         => postConversation(request, env))
+  .on("GET",  "/mind/conversations/active",          (request, env)         => getConversationActive(request, env))
+  .on("GET",  "/mind/conversations",                 (request, env)         => listConversationsHandler(request, env))
+  .on("POST", "/mind/conversations/:id/turns",       (request, env, params) => postConversationTurn(request, env, params ?? {}))
+  .on("POST", "/mind/conversations/:id/land",        (request, env, params) => postConversationLand(request, env, params ?? {}))
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
   .on("GET",  "/mind/search",                        (request, env)         => getMindSearch(request, env))
   .on("GET",  "/mind/sb-search-log/:agent_id",       (request, env, params) => getMindSbSearchLog(request, env, params ?? {}))
@@ -305,6 +315,9 @@ const router = new Router()
   .on("POST",  "/mind/ferment/tick",                 (request, env)         => tickFermentation(request, env))
   .on("POST",  "/mind/ferment/stimulus",             (request, env)         => postFermentStimulus(request, env))
   .on("GET",   "/mind/ferment/:companion_id",        (request, env, params) => getFermentation(request, env, params ?? {}))
+
+  // Salience prune (0105, task 20) -- cold machine-source journal rows self-archive; manual/test trigger
+  .on("POST",  "/mind/salience/prune",               (request, env)         => postSaliencePrune(request, env))
 
   // Creatures (0078) -- corvid + Raziel's animals as named presences (take 10)
   .on("POST",  "/mind/creatures/tick",               (request, env)         => tickCreatures(request, env))
@@ -594,6 +607,19 @@ export default {
       (async () => {
         try { await runFermentTick(env); }
         catch (err) { console.error("ferment tick failed", err); }
+      })(),
+    );
+
+    // The salience-prune tick rides the existing cron too (cold machine journal rows
+    // self-archive). This cron fires every MINUTE (see wrangler.toml), so the prune
+    // self-gates to a 24h cadence internally (its own companion_settings stamp --
+    // see src/webmind/salience-prune.ts) rather than relying on the cron interval to
+    // already be daily; unforced here, so the gate always applies on this path.
+    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
+    ctx.waitUntil(
+      (async () => {
+        try { await runSaliencePrune(env); }
+        catch (err) { console.error("salience prune failed", err); }
       })(),
     );
   },

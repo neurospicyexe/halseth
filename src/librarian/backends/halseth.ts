@@ -4,7 +4,7 @@
 // No HTTP, no MCP protocol. Zero latency.
 
 import { Env } from "../../types.js";
-import { embedAndStore, embedAndStoreAsync, composeHandoverText } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, composeHandoverText } from "../../mcp/embed.js";
 import {
   loadSessionData, SessionLoadInput,
   loadOrientData, SessionOrientInput,
@@ -13,6 +13,8 @@ import {
 } from "../../mcp/tools/session_load.js";
 import { generateId } from "../../db/queries.js";
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
+import { MACHINE_SOURCES } from "../../webmind/notes.js";
+import { noveltyCheck } from "../../webmind/novelty.js";
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
@@ -264,13 +266,13 @@ export async function woundAdd(env: Env, params: {
 }
 
 export async function deltaLog(env: Env, params: {
-  agent: string; delta_text: string; valence: string; initiated_by?: string; session_id?: string;
+  agent: string; delta_text: string; valence?: string; initiated_by?: string; session_id?: string;
 }): Promise<{ id: string; created_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
   await env.DB.prepare(
     "INSERT INTO relational_deltas (id, companion_id, subject_id, delta_type, payload_json, session_id, created_at, agent, delta_text, valence, initiated_by) VALUES (?, '', 'mcp', 'mcp_delta', '{}', ?, ?, ?, ?, ?, ?)"
-  ).bind(id, params.session_id ?? null, now, params.agent, params.delta_text, params.valence, params.initiated_by ?? null).run();
+  ).bind(id, params.session_id ?? null, now, params.agent, params.delta_text, params.valence ?? null, params.initiated_by ?? null).run();
   return { id, created_at: now };
 }
 
@@ -552,18 +554,82 @@ export async function interNoteEdit(
   return { ok: true };
 }
 
+// Migration 0104: a note may reference an open question, a tension, or a council
+// item -- a "move" on a shared object, with a scratchpad reason attached. All three
+// fields are nullable at the schema layer; plain notes (no ref) stay fully legal.
+export const NOTE_REF_TYPES = ["question", "tension", "council"] as const;
+export type NoteRefType = (typeof NOTE_REF_TYPES)[number];
+
+// Polymorphic ref -- no FK (migration review: correct call, since the three target
+// tables are unrelated). This map is the single source of truth for which table an
+// existence check hits; keys are the literal union above, not free-form strings.
+export const NOTE_REF_TABLES: Record<NoteRefType, string> = {
+  question: "companion_questions",
+  tension: "companion_tensions",
+  council: "council_questions",
+};
+
+export interface NoteRef {
+  ref_type: NoteRefType;
+  ref_id: string;
+  reason?: string;
+}
+
+/**
+ * Validates ref_type/ref_id from a PARSED context object (never a raw command
+ * string -- command-string-is-not-the-content). All-or-nothing: providing one
+ * without the other is invalid input, not a silent plain-note downgrade. Does NOT
+ * check that ref_id actually exists -- that happens in addCompanionNote, right next
+ * to the insert, to keep the existence check and the write on the same D1 round trip
+ * boundary rather than duplicating it in every caller.
+ *
+ * Returns `{}` for a plain note (both fields absent), `{ ref }` on valid input, or
+ * `{ error }` naming the problem.
+ */
+export function buildNoteRef(
+  ref_type: unknown,
+  ref_id: unknown,
+  reason: unknown,
+): { ref?: NoteRef; error?: string } {
+  const hasType = typeof ref_type === "string" && ref_type.length > 0;
+  const hasId = (typeof ref_id === "string" && ref_id.length > 0) || typeof ref_id === "number";
+  if (!hasType && !hasId) return {};
+  if (hasType !== hasId) {
+    return { error: "ref_type and ref_id must both be provided together (or both omitted)" };
+  }
+  if (!NOTE_REF_TYPES.includes(ref_type as NoteRefType)) {
+    return { error: `ref_type must be one of ${NOTE_REF_TYPES.join("|")} (got "${String(ref_type)}")` };
+  }
+  return {
+    ref: {
+      ref_type: ref_type as NoteRefType,
+      ref_id: String(ref_id),
+      reason: typeof reason === "string" ? reason.slice(0, 500) : undefined,
+    },
+  };
+}
+
 export async function addCompanionNote(
   env: Env,
   from_id: string,
   to_id: string | null,
   content: string,
-): Promise<{ id: string }> {
+  ref?: NoteRef,
+): Promise<{ id: string; error?: string }> {
+  if (ref?.ref_type) {
+    const table = NOTE_REF_TABLES[ref.ref_type];
+    if (!table) return { id: "", error: `unknown ref_type "${ref.ref_type}"` };
+    const found = await env.DB.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).bind(ref.ref_id).first();
+    if (!found) {
+      return { id: "", error: `ref_id "${ref.ref_id}" not found in ${table} (ref_type=${ref.ref_type})` };
+    }
+  }
   const id = generateId();
   await env.DB.prepare(
-    `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at)
-     VALUES (?, ?, ?, ?, datetime('now'))`,
+    `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at, ref_type, ref_id, reason)
+     VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5, ?6, ?7)`,
   )
-    .bind(id, from_id, to_id, content)
+    .bind(id, from_id, to_id, content, ref?.ref_type ?? null, ref?.ref_id ?? null, ref?.reason ?? null)
     .run();
   return { id };
 }
@@ -574,7 +640,27 @@ export async function companionJournalAdd(
   note_text: string,
   tags?: string,
   source?: string,
-): Promise<{ id: string; created_at: string }> {
+): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; match_id?: string; score: number } }> {
+  // Novelty gate (2026-07-20, Task 12): machine-source writers only -- skip-only, no supersede
+  // band (novelty.ts restricts supersede to companion_conclusions). Human sources bypass the
+  // gate entirely (attribution is sacred). Fails open on any embedding/Vectorize trouble.
+  const isMachineSource = MACHINE_SOURCES.has(source ?? "");
+  let reusableEmbedding: number[] | null = null;
+
+  if (isMachineSource) {
+    const decision = await noveltyCheck(env, note_text, "companion_journal", agent);
+    if (decision.action === "skip") {
+      console.log("[journal] novelty-skip", { agent, match: decision.matchRowId, score: decision.score });
+      return {
+        id: decision.matchRowId,
+        created_at: new Date().toISOString(),
+        deduped: true,
+        novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
+      };
+    }
+    reusableEmbedding = decision.embedding;
+  }
+
   const id = generateId();
   const now = new Date().toISOString();
   // 2026-07-08 vault-tagging fix: tags was write-once-if-caller-supplies-it, which in
@@ -586,7 +672,21 @@ export async function companionJournalAdd(
   await env.DB.prepare(
     "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).bind(id, now, agent, note_text, resolvedTags, null, source ?? null, topicTags).run();
-  embedAndStore(env, note_text, "companion_journal", id, agent);
+
+  // AWAIT the embed (2026-07-20, Task 12: fixed a known fire-and-forget hazard -- this writer
+  // used bare `embedAndStore()`, a floating promise Workers cancels once the response returns;
+  // see companion_journal.ts's own 2026-07-09 postmortem for the proven failure mode). Reuse the
+  // gate's embedding when available (net +0 AI.run on the common gated path).
+  if (reusableEmbedding) {
+    await storeVector(env, reusableEmbedding, "companion_journal", id, agent).catch((err) => {
+      console.error("[companionJournalAdd] vector store failed (row kept, index stale):", String(err));
+    });
+  } else {
+    await embedAndStoreAsync(env, note_text, "companion_journal", id, agent).catch((err) => {
+      console.error("[companionJournalAdd] embed failed (row kept, index stale):", String(err));
+    });
+  }
+
   return { id, created_at: now };
 }
 

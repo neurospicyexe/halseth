@@ -202,6 +202,36 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[Flagged Beliefs -- review signal]\n${flaggedLines}`);
   }
 
+
+  // 7c. Open loops and open questions -- context for thinking/synthesis
+  if (wm.open_loops?.length) {
+    parts.push(`[Open loops (yours, still open)] ${wm.open_loops.map(l => `«${l.loop_text.length > 120 ? l.loop_text.slice(0, 120) + "…" : l.loop_text}»`).join(" | ")}`);
+  }
+  if (wm.open_questions?.length) {
+    parts.push(`[Open questions (yours, awaiting synthesis)] ${wm.open_questions.map(q => `«${q.question.length > 120 ? q.question.slice(0, 120) + "…" : q.question}»`).join(" | ")}`);
+  }
+
+  // 7c-2. Answers Raziel left -- the other half of the questions loop (mig 0107). Surfaced
+  // for 7 days regardless of delivered_at so the answer can't be eaten by an early orient
+  // before the moment it's actually needed.
+  if (wm.answered_questions?.length) {
+    parts.push(`Answers Raziel left for you:`);
+    for (const a of wm.answered_questions) {
+      const q = a.question.length > 120 ? a.question.slice(0, 120) + "…" : a.question;
+      const ans = a.answer.length > 300 ? a.answer.slice(0, 300) + "…" : a.answer;
+      parts.push(`- Q: «${q}» → A: «${ans}»`);
+    }
+  }
+
+  // 7d. Live conversation threads -- active thread spine (Task 4, mig 0106). Shared
+  // across the triad, not per-companion.
+  if (wm.active_conversations?.length) {
+    parts.push(`[Live conversation threads]`);
+    for (const c of wm.active_conversations) {
+      parts.push(`${c.seed_author} opened: «${c.seed_gist}»${c.ref_label ? ` (about: ${c.ref_label})` : ""} — ${c.state}, ${c.turn_count} turns`);
+    }
+  }
+
   // 8. Incoming inter-companion notes -- triad context before own history
   if (wm.incoming_companion_notes?.length > 0) {
     parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);
@@ -240,16 +270,6 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     for (const t of wm.top_threads) {
       const age = t.last_touched_at ? `, touched ${relativeTime(t.last_touched_at)}` : "";
       parts.push(`  • [${t.lane ?? "general"}] «${t.title}» (priority ${t.priority}${age})`);
-    }
-  }
-
-  // 11b. Open loops -- unresolved carried things, heaviest first. Same read
-  // ground/bot_orient already had; Claude.ai boot gets it as of 2026-07-26.
-  if (wm.open_loops && wm.open_loops.length > 0) {
-    parts.push(`[Open loops: ${wm.open_loops.length}]`);
-    for (const l of wm.open_loops) {
-      const snippet = l.loop_text.length > 150 ? l.loop_text.slice(0, 150) + "…" : l.loop_text;
-      parts.push(`  • [weight ${l.weight}, opened ${l.opened_at?.slice(0, 10) ?? "?"}] «${snippet}»`);
     }
   }
 

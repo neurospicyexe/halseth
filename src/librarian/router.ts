@@ -173,6 +173,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "wm_thread_upsert",
     regex: /^(?:track\s+(?:a\s+|the\s+)?(?:mind\s+)?thread|mind\s+thread\s+upsert|upsert\s+(?:mind\s+)?thread|continuity\s+thread|webmind\s+thread)\b/i,
     note: "Thread-upsert anchored so trailing 'for cypher' can't steal it via companion_note_add" },
+  { pattern_key: "conversation_list",
+    regex: /^(?:open|live|what)\s+conversations?\b|^conversation\s+threads\b/i,
+    note: "Conversation-spine list; anchored so 'thread' can't be stolen by wm_thread_upsert" },
+  { pattern_key: "conversation_land",
+    regex: /^land\s+(?:the\s+|this\s+)?(?:conversation|thread)\b|^conversation\s+landed\b/i,
+    note: "Conversation-spine land verb" },
   { pattern_key: "journal_review",
     regex: /^(?:review\s+(?:my\s+|growth\s+)?journal\b|journal\s+review\b|unaccepted\s+journal\b|journal\s+entries\s+to\s+accept\b|autonomous\s+journal\s+entries\b|my\s+unreviewed\s+entries\b|what\s+have\s+i\s+written\s+autonomously\b)/i,
     note: "H3: journal_review forms must beat journal_read's 'my journal' / 'journal entries'" },
@@ -278,6 +284,7 @@ import {
   execRazielWitness, execContinuityNotesRead,
   execNoteSit, execNoteMetabolize, execSittingRead,
   execWmNoteEdit,
+  execConversationList, execConversationLand,
 } from "./executors/webmind.js";
 
 // ── Companion growth executors ───────────────────────────────────────────────
@@ -423,6 +430,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   wm_orient: execWmOrient,
   wm_ground: execWmGround,
   wm_thread_upsert: execWmThreadUpsert,
+  conversation_list: execConversationList,
+  conversation_land: execConversationLand,
   wm_note_add: execWmNoteAdd,
   wm_handoff_write: execWmHandoffWrite,
   wm_dream_write: execWmDreamWrite,

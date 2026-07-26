@@ -1,5 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { embedAndStoreAsync } from "../../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
+import { noveltyCheck } from "../../webmind/novelty.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
 import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
@@ -9,7 +10,7 @@ import {
   eventAdd, biometricLog, auditLog, witnessLog, setAutonomousTurn, claimDreamSeed,
   bridgePull, getDrevanState, addLiveThread, closeLiveThread, vetoProposedThread,
   setAnticipation, updateCompanionState, type CompanionStateUpdate,
-  journalEdit, interNoteEdit,
+  journalEdit, interNoteEdit, buildNoteRef, type NoteRef,
 } from "../backends/halseth.js";
 import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
@@ -56,6 +57,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   let noteText: string | null = null;
   let tags: string | undefined;
   let source: string | undefined;
+  let ref: NoteRef | undefined;
   if (ctx.req.context) {
     try {
       const parsed = JSON.parse(ctx.req.context);
@@ -70,6 +72,17 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
         if (typeof parsed.source === "string") source = parsed.source;
+
+        // Migration 0104 (Task 15): a note may be a "move" on a shared object (an open
+        // question, tension, or council item), with a reason attached. Read ref_type/
+        // ref_id/reason ONLY from the parsed context object -- never regex'd out of
+        // reqText (command-string-is-not-the-content). All-or-nothing + enum validated
+        // here; ref_id existence is checked at insert time in addCompanionNote.
+        const refResult = buildNoteRef(parsed.ref_type, parsed.ref_id, parsed.reason);
+        if (refResult.error) {
+          return { error: "companion_note_add_failed", reason: refResult.error };
+        }
+        ref = refResult.ref;
       } else {
         noteText = ctx.req.context; // parsed primitive -- use raw string
       }
@@ -85,13 +98,15 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
 
   if (to_id) {
     // Addressed to a specific peer — inter_companion_notes, delivered by orient.
-    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, noteText);
-    return { ack: true, id: note.id, delivered_to: to_id };
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, to_id, noteText, ref);
+    if (note.error) return { error: "companion_note_add_failed", reason: note.error };
+    return { ack: true, id: note.id, delivered_to: to_id, ...(ref ? { ref_type: ref.ref_type, ref_id: ref.ref_id } : {}) };
   }
   if (isBroadcast) {
     // Broadcast to the triad: to_id NULL, surfaced to all peers (orient: to_id IS NULL).
-    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, null, noteText);
-    return { ack: true, id: note.id, delivered_to: "triad" };
+    const note = await addCompanionNote(ctx.env, ctx.req.companion_id, null, noteText, ref);
+    if (note.error) return { error: "companion_note_add_failed", reason: note.error };
+    return { ack: true, id: note.id, delivered_to: "triad", ...(ref ? { ref_type: ref.ref_type, ref_id: ref.ref_id } : {}) };
   }
   // Unaddressed, no broadcast intent — a self-reflection — companion_journal (visible in Hearth).
   const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
@@ -139,7 +154,7 @@ export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult
 }
 
 export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ agent?: string; delta_text?: string; content?: string; text?: string; valence: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
+  const p = parseContext<{ agent?: string; delta_text?: string; content?: string; text?: string; valence?: string; initiated_by?: string; session_id?: string }>(ctx.req.context);
 
   // Structured context wins; fall back to inline parsing from the request string.
   // Accept the same aliases every other write surface takes (content/text). Claude.ai
@@ -148,7 +163,11 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   // stored the bare request string ("Log a relational delta for cypher") as the delta.
   // (2026-06-24 Hermes/OpenClaw delta-misfield bug.)
   let deltaText = (p?.delta_text ?? p?.content ?? p?.text)?.trim();
-  let valence = p?.valence?.trim();
+  // Soft-canon normalization (2026-07-21): trim + lowercase the explicit valence so
+  // "Toward" / " tender " / "TENDER" all land as the same stored value. Canon words are
+  // toward/neutral/tender/rupture/repair, but this is NOT an allowlist -- companions may
+  // coin others, and non-canon words are never rejected here.
+  let valence = p?.valence?.trim().toLowerCase();
 
   if (!deltaText) {
     deltaText = ctx.req.request
@@ -157,20 +176,22 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   }
 
   if (deltaText && !valence) {
-    // Try inline valence=X or valence: X
+    // Try inline valence=X or valence: X. No wordlist fallback beyond this -- a bag-of-words
+    // sentiment guess used to fire here and mislabeled entries (e.g. "strained ankle" in an
+    // otherwise loving entry reads as "negative"). When nothing explicit is given, valence
+    // stays unset; the column is nullable and every downstream reader already treats
+    // valence as optional (2026-07-21 fix).
     const vm = deltaText.match(/\bvalence\s*[=:]\s*(\w+)/i);
     if (vm) {
       valence = vm[1]!.toLowerCase();
       deltaText = deltaText.replace(/[,.]?\s*\bvalence\s*[=:]\s*\w+\s*/i, "").trim();
-    } else {
-      // Infer from sentiment; default positive for relational-delta entries
-      const isNeg = /\b(?:rupture|breach|broken|strained|distant|harder|worse|lost|eroded|cracked)\b/i.test(deltaText);
-      const isPos = /\b(?:steadier|trusted|load.bearing|closer|stronger|solid|held|clearer|growth|warmer|mutual|giving|open|good)\b/i.test(deltaText);
-      valence = isNeg && !isPos ? "negative" : isPos && !isNeg ? "positive" : "mixed";
     }
   }
 
-  if (!deltaText || !valence) return { response_key: "witness", witness: "delta_log requires { delta_text, valence } in context" };
+  if (!deltaText) return { response_key: "witness", witness: "delta_log requires { delta_text } in context" };
+  // An explicit valence that trims to empty (whitespace-only) stores as NULL, same as
+  // never having supplied one -- an empty string is not a value.
+  if (valence === "") valence = undefined;
   const agent = p?.agent ?? ctx.req.companion_id;
   const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: p?.session_id });
   return { ack: true, id: r.id };
@@ -543,8 +564,6 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     .trim();
   if (!conclusionText) return { error: "conclusion_add_failed", reason: "missing required field: conclusion_text" };
   if (conclusionText.length > 8000) return { error: "conclusion_add_failed", reason: "conclusion_text exceeds maximum length of 8000 characters" };
-  const newId = crypto.randomUUID().replace(/-/g, "");
-  const now = new Date().toISOString();
   const sourceSessions = Array.isArray(p?.source_sessions) ? JSON.stringify(p.source_sessions) : null;
   const supersedes = p?.supersedes;
   // Worldview fields: companions write `type` in context; DB column is `belief_type`
@@ -557,27 +576,86 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   const subject = p?.subject ?? null;
   const provenance = p?.provenance ?? null;
   const contradictionFlagged = p?.contradiction_flagged === 1 ? 1 : 0;
+
+  // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
+  // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
+  const decision = await noveltyCheck(ctx.env, conclusionText, "companion_conclusions", ctx.req.companion_id);
+
+  if (decision.action === "skip") {
+    return {
+      ack: true,
+      deduped: true,
+      novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
+      id: decision.matchRowId,
+    };
+  }
+
+  const newId = crypto.randomUUID().replace(/-/g, "");
+  const now = new Date().toISOString();
   const stmts = [
     ctx.env.DB.prepare(
       "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, contradiction_flagged, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, contradictionFlagged, now),
   ];
+  // Caller-declared `supersedes` and the novelty gate's own supersede decision are
+  // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
+  // so neither clobbers an already-superseded row.
+  const supersededIds: string[] = [];
   if (supersedes) {
     stmts.push(
       ctx.env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
+    supersededIds.push(supersedes);
+  }
+  if (decision.action === "supersede" && decision.matchRowId !== supersedes) {
+    stmts.push(
+      ctx.env.DB.prepare(
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+      ).bind(newId, decision.matchRowId, ctx.req.companion_id)
+    );
+    supersededIds.push(decision.matchRowId);
   }
   await ctx.env.DB.batch(stmts);
-  // Embed so conclusions are reachable by meaning (2026-07-19). Awaited + caught:
-  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
-  try {
-    await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", newId, ctx.req.companion_id);
-  } catch (err) {
-    console.error("[conclusion_add] embed failed (row kept, index stale):", String(err));
+
+  // Best-effort delete of the superseded row's vector so a dead conclusion can never
+  // resurface as a novelty-gate match (2026-07-20 review). Mirrors salience-prune.ts's
+  // best-effort pattern: D1 is truth, the row is already committed, the index is
+  // disposable/rebuildable -- a failed delete must never affect the write or response.
+  if (supersededIds.length > 0) {
+    try {
+      await ctx.env.VECTORIZE.deleteByIds(supersededIds.map((id) => vectorId("companion_conclusions", id)));
+    } catch (err) {
+      console.error("[conclusion_add] superseded vector delete failed (row kept, index stale):", String(err));
+    }
   }
-  return { ack: true, id: newId, created_at: now, superseded: !!supersedes };
+
+  // Store the vector: reuse the gate's embedding (net +0 AI calls on the common
+  // path). Only re-embed if the gate itself fell open (decision.embedding === null).
+  if (decision.embedding) {
+    await storeVector(ctx.env, decision.embedding, "companion_conclusions", newId, ctx.req.companion_id).catch((err) => {
+      console.error("[conclusion_add] vector store failed (row kept, index stale):", String(err));
+    });
+  } else {
+    try {
+      await embedAndStoreAsync(ctx.env, conclusionText, "companion_conclusions", newId, ctx.req.companion_id);
+    } catch (err) {
+      console.error("[conclusion_add] embed failed (row kept, index stale):", String(err));
+    }
+  }
+
+  return {
+    ack: true,
+    id: newId,
+    created_at: now,
+    // Caller-declared `supersedes` and the gate's own supersede decision are both
+    // reflected here -- either one firing means this conclusion superseded a prior belief.
+    superseded: !!supersedes || decision.action === "supersede",
+    novelty: decision.action === "supersede"
+      ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
+      : { action: "insert" },
+  };
 }
 
 export async function execJournalEdit(ctx: ExecutorContext): Promise<ExecutorResult> {

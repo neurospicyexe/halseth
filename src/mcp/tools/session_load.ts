@@ -103,6 +103,9 @@ interface InterCompanionNote {
   content: string;
   read_at: string | null;
   created_at: string;
+  ref_type?: string | null;
+  ref_id?: string | null;
+  reason?: string | null;
 }
 
 export interface SessionLoadInput {
@@ -230,9 +233,9 @@ export async function loadGroundData(env: Env, input: SessionGroundInput) {
       .first<{ count: number }>(),
     // Cross-session: last 20 notes involving this companion (not scoped to any session)
     env.DB.prepare(
-      "SELECT id, from_id, to_id, content, created_at FROM inter_companion_notes WHERE to_id = ? OR from_id = ? OR to_id IS NULL ORDER BY created_at DESC LIMIT 20"
+      "SELECT id, from_id, to_id, content, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE to_id = ? OR from_id = ? OR to_id IS NULL ORDER BY created_at DESC LIMIT 20"
     ).bind(input.companion_id, input.companion_id)
-      .all<{ id: string; from_id: string; to_id: string | null; content: string; created_at: string }>(),
+      .all<{ id: string; from_id: string; to_id: string | null; content: string; created_at: string; ref_type: string | null; ref_id: string | null; reason: string | null }>(),
     // Cross-session: last 20 relational deltas for this companion
     env.DB.prepare(
       "SELECT delta_text, valence, initiated_by, agent, created_at FROM relational_deltas WHERE delta_text IS NOT NULL AND (companion_id = ? OR agent = ?) ORDER BY created_at DESC LIMIT 20"

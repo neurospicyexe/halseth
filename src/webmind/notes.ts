@@ -333,10 +333,10 @@ export interface RecalledMemory {
 
 // Source classes observed in prod (2026-07-19 census). Unlisted sources score neutral --
 // new writers land at 0.85 until classified, never silently zeroed.
-const HUMAN_SOURCES = new Set([
+export const HUMAN_SOURCES = new Set([
   "claude_code", "session_close", "session", "session-log", "cypher-session", "hearth_ritual_compost",
 ]);
-const MACHINE_SOURCES = new Set([
+export const MACHINE_SOURCES = new Set([
   "synthesis_loop", "system", "soma_update", "autonomous", "discord_swarm", "discord_speech",
   "deploy-verified", "evaluator", "metronome", "pattern_worker", "synthesis-gap-detector",
 ]);
@@ -445,7 +445,7 @@ export async function recallNotesByMeaning(
     const placeholders = journalCands.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
       `SELECT id, note_text, created_at, source FROM companion_journal
-       WHERE agent = ? AND id IN (${placeholders})`
+       WHERE agent = ? AND archived = 0 AND id IN (${placeholders})`
     ).bind(agentId, ...journalCands.map(c => c.rowId))
       .all<{ id: string; note_text: string; created_at: string; source: string | null }>();
     const scoreById = new Map(journalCands.map(c => [c.rowId, c.score]));
@@ -468,6 +468,13 @@ export async function recallNotesByMeaning(
   if (warmIds.length > 0) {
     await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length))
       .bind(...warmIds).run();
+  }
+
+  // Warm ONLY the returned journal rows (mig 0105: journal earns salience the same way).
+  const journalWarmIds = selected.filter(e => e.kind === "journal").map(e => e.note_id);
+  if (journalWarmIds.length > 0) {
+    await env.DB.prepare(warmSql("companion_journal", "id", journalWarmIds.length))
+      .bind(...journalWarmIds).run();
   }
 
   return selected.map(({ effective: _effective, ...rest }) => rest);

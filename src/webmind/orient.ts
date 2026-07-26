@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, WmOpenLoop, HomeEvent, CompanionId } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
@@ -16,6 +16,8 @@ import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql } from "./heat.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
+import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
+import { remediationHint } from "../guardian/remediation.js";
 
 /** "While you were away" block. Null-safe: orient must never break on home error.
  *  readOnly peeks without stamping surfaced_at (pure read for the MindState loader). */
@@ -63,7 +65,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoops] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, guardianFlagsRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -119,12 +121,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     ).bind(`letter:${agentId}`).all<WmRazielLetter>(),
     // Wide-window: outgoing inter-companion notes (sent BY this companion to others)
     env.DB.prepare(
-      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 5"
+      "SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmCompanionNote>(),
     // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self)
     // read_at IS NULL ensures notes don't repeat across sessions. Auto-acked below after fetch.
     env.DB.prepare(
-      "SELECT id, from_id, to_id, content, read_at, created_at FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
+      "SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
     ).bind(agentId, agentId).all<WmCompanionNote>(),
     // Wide-window: recent journal entries written BY this companion (companion_journal table).
     // SUBSTANTIVE lane only -- 3 recency slots, and chatter (discord_swarm) ran 24-61 rows/day
@@ -133,7 +135,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
     env.DB.prepare(
       `SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal
-       WHERE agent = ? AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
+       WHERE agent = ? AND archived = 0 AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(
@@ -161,11 +163,34 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     env.DB.prepare(
       "SELECT id, companion_id, session_id, emotion, sub_emotion, intensity, source, created_at FROM feelings WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmFeeling>(),
-    // Open loops: unresolved things with weight, heaviest first -- same read ground/bot_orient use,
-    // so all three boot surfaces now agree on what's still open.
+    // Open loops: unresolved things with weight (thinking quality fix)
     env.DB.prepare(
-      "SELECT * FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC LIMIT 5"
-    ).bind(agentId).all<WmOpenLoop>(),
+      "SELECT id, loop_text, weight, opened_at FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
+    ).bind(agentId).all<WmOrientOpenLoop>(),
+    // Open questions: queries awaiting synthesis/investigation (thinking quality fix)
+    env.DB.prepare(
+      "SELECT id, question, context, created_at FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 5"
+    ).bind(agentId).all<WmOrientOpenQuestion>(),
+    // Answered questions: Raziel's answers, surfaced for 7 days regardless of delivered_at
+    // (questions-lifecycle fix, mig 0107) -- the dedup/mutuality gap where answers never
+    // reached companions because every orient path only ever read status = 'open'.
+    fetchRecentAnswers(env, agentId, 3),
+    // Active conversations: live thread spine (Task 4, mig 0106). Threads are shared
+    // across the triad, not per-agent -- no agent_id filter.
+    env.DB.prepare(
+      `SELECT id, channel_id, seed_author, substr(seed_text, 1, 140) AS seed_gist,
+              state, ref_label, turn_count, last_turn_at
+       FROM conversation_threads WHERE state IN ('open','moving')
+       ORDER BY last_turn_at DESC LIMIT 3`
+    ).all<WmActiveConversation>(),
+    // Guardian red-flag cards (Wave 3 starvation fix, 2026-07-21): the raw mindOrient path
+    // had NO guardian source at all, unlike execSessionOrient/execBotOrient -- so a companion
+    // whose only continuity read is the Halseth /mind/orient HTTP route (not the Librarian
+    // session-orient path) never saw a flag. Read-only here, same as the bot path: the open ->
+    // surfaced transition stays session-orient's job (see session.ts:536-541).
+    env.DB.prepare(
+      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>(),
   ]);
 
   // Merge 3-pool results: Core first, then Novelty, then Edge; dedup by note_id
@@ -190,7 +215,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       .catch(e => console.warn("[orient] heat warm failed (non-fatal):", e));
   }
 
-  // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total)
+  // Active conclusions: type-distributed loading (top-2 per belief_type, cap 6 total).
+  // Ordered by effective heat (mig 0105, thinking-quality fix 5): a belief that keeps
+  // getting reached for outranks one that merely happens to be recent, same as the
+  // wm_continuity_notes core/novelty pools above.
   const beliefTypes = ['self', 'relational', 'observational', 'systemic'];
   const conclusionPromises = beliefTypes.map(type =>
     env.DB.prepare(
@@ -198,7 +226,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
               created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
        FROM companion_conclusions
        WHERE companion_id = ? AND belief_type = ? AND superseded_by IS NULL
-       ORDER BY created_at DESC LIMIT 2`
+       ORDER BY ${effectiveHeatSql()} DESC LIMIT 2`
     ).bind(agentId, type).all<WmConclusion>()
   );
 
@@ -221,10 +249,24 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
             created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
      FROM companion_conclusions
      WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1
-     ORDER BY created_at DESC`
+     ORDER BY ${effectiveHeatSql()} DESC`
   ).bind(agentId).all<WmConclusion>();
 
   const flagged_beliefs: WmConclusion[] = flaggedResult.results ?? [];
+
+  // Warm surfaced conclusions (mig 0105, thinking-quality fix 5): access is what keeps
+  // a belief hot. Non-fatal -- orient never breaks on a heat bookkeeping failure.
+  // readOnly skips it: earned-salience warming is a consume-on-read side effect, and
+  // the MindState loader's pure-read covenant forbids those (docs/mindstate-contract.md).
+  const conclusionWarmIds = Array.from(new Set([
+    ...active_conclusions.map(c => c.id),
+    ...flagged_beliefs.map(c => c.id),
+  ]));
+  if (!opts.readOnly && conclusionWarmIds.length > 0) {
+    await env.DB.prepare(warmSql("companion_conclusions", "id", conclusionWarmIds.length))
+      .bind(...conclusionWarmIds).run()
+      .catch(e => console.warn("[orient] conclusion heat warm failed (non-fatal):", e));
+  }
 
   // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
   // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.
@@ -236,6 +278,18 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`
     ).bind(new Date().toISOString(), ...unreadIds).run().catch((e: unknown) => {
       console.error("[orient] auto-ack failed:", String(e));
+    });
+  }
+
+  // Stamp delivered_at on surfaced answers (mig 0107, questions-lifecycle fix). Awaited +
+  // caught -- a throw here must never null out wmResult upstream (session.ts wraps wmOrient
+  // in .catch(() => null), which would blank the entire continuity block over a bookkeeping
+  // failure). Read stays unfiltered by delivered_at above; only the write is guarded.
+  // readOnly skips it: stamping delivered_at is a consume-on-read side effect (pure-read
+  // covenant) -- the MindState loader surfaces answers without marking them delivered.
+  if (!opts.readOnly) {
+    await markAnswersDelivered(env, answeredQuestions.map(a => a.id)).catch((e: unknown) => {
+      console.error("[orient] markAnswersDelivered failed:", String(e));
     });
   }
 
@@ -278,7 +332,17 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     active_conclusions,
     flagged_beliefs,
     recent_feelings: recentFeelings.results ?? [],
-    open_loops: openLoops.results ?? [],
+    open_loops: (openLoopsRes.results ?? []),
+    open_questions: (openQuestionsRes.results ?? []),
+    answered_questions: answeredQuestions,
+    active_conversations: activeConvosRes.results ?? [],
+    guardian_flags: (guardianFlagsRes.results ?? []).map(f => ({
+      id: f.id,
+      flag_type: f.flag_type,
+      severity: f.severity,
+      summary: (f.summary ?? "").slice(0, 300),
+      remediation: remediationHint(f.flag_type),
+    })),
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],
     recent_spiral_turn: recentSpiralTurnRow ?? null,
     latest_biometrics: latestBiometrics ?? null,

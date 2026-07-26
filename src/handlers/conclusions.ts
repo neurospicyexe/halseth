@@ -8,7 +8,8 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import type { WmAgentId } from "../webmind/types.js";
-import { embedAndStoreAsync } from "../mcp/embed.js";
+import { embedAndStoreAsync, storeVector, vectorId } from "../mcp/embed.js";
+import { noveltyCheck } from "../webmind/novelty.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -77,35 +78,92 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   const provenance = (typeof body.provenance === "string") ? body.provenance : null;
   const contradiction_flagged = (typeof body.contradiction_flagged === "number") ? body.contradiction_flagged : 0;
 
-  // Atomic: insert new conclusion, then supersede old one if requested.
+  const trimmedText = conclusion_text.trim();
+
+  // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
+  // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
+  const decision = await noveltyCheck(env, trimmedText, "companion_conclusions", companion_id);
+
+  if (decision.action === "skip") {
+    return json({
+      ok: true,
+      deduped: true,
+      novelty: { action: "skip", match_id: decision.matchRowId, score: decision.score },
+      id: decision.matchRowId,
+    });
+  }
+
+  // Atomic: insert new conclusion, then supersede old one(s) if requested.
   const newId = crypto.randomUUID().replace(/-/g, "");
   const now = new Date().toISOString();
 
   const stmts = [
     env.DB.prepare(
       "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at, confidence, belief_type, subject, provenance, contradiction_flagged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(newId, companion_id, conclusion_text.trim(), sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged),
+    ).bind(newId, companion_id, trimmedText, sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged),
   ];
 
+  // Caller-declared `supersedes` and the novelty gate's own supersede decision are
+  // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
+  // so neither clobbers an already-superseded row.
+  const supersededIds: string[] = [];
   if (supersedesId) {
     stmts.push(
       env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
       ).bind(newId, supersedesId, companion_id)
     );
+    supersededIds.push(supersedesId);
+  }
+  if (decision.action === "supersede" && decision.matchRowId !== supersedesId) {
+    stmts.push(
+      env.DB.prepare(
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+      ).bind(newId, decision.matchRowId, companion_id)
+    );
+    supersededIds.push(decision.matchRowId);
   }
 
   await env.DB.batch(stmts);
 
-  // Embed so conclusions are reachable by meaning (2026-07-19). Awaited + caught:
-  // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
-  try {
-    await embedAndStoreAsync(env, conclusion_text.trim(), "companion_conclusions", newId, companion_id);
-  } catch (err) {
-    console.error("[conclusions] embed failed (row kept, index stale):", String(err));
+  // Best-effort delete of the superseded row's vector so a dead conclusion can never
+  // resurface as a novelty-gate match (2026-07-20 review: noveltyCheck's D1 post-filter
+  // is the safety net; this is the source-side fix that stops new dead vectors from
+  // accumulating in the first place). Mirrors salience-prune.ts's best-effort pattern
+  // exactly: D1 is truth, the row is already committed, the index is disposable and
+  // rebuildable -- a failed delete must never affect the write or the response.
+  if (supersededIds.length > 0) {
+    try {
+      await env.VECTORIZE.deleteByIds(supersededIds.map((id) => vectorId("companion_conclusions", id)));
+    } catch (err) {
+      console.error("[conclusions] superseded vector delete failed (row kept, index stale):", String(err));
+    }
   }
 
-  return json({ id: newId, created_at: now, superseded: supersedesId ?? null });
+  // Store the vector: reuse the gate's embedding (net +0 AI calls on the common
+  // path). Only re-embed if the gate itself fell open (decision.embedding === null).
+  if (decision.embedding) {
+    await storeVector(env, decision.embedding, "companion_conclusions", newId, companion_id).catch((err) => {
+      console.error("[conclusions] vector store failed (row kept, index stale):", String(err));
+    });
+  } else {
+    try {
+      await embedAndStoreAsync(env, trimmedText, "companion_conclusions", newId, companion_id);
+    } catch (err) {
+      console.error("[conclusions] embed failed (row kept, index stale):", String(err));
+    }
+  }
+
+  return json({
+    id: newId,
+    created_at: now,
+    // Caller-declared `supersedes` wins the display slot when both fire (rare: the gate
+    // matched the same row the caller already named); otherwise surface whichever one did.
+    superseded: supersedesId ?? (decision.action === "supersede" ? decision.matchRowId : null),
+    novelty: decision.action === "supersede"
+      ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
+      : { action: "insert" },
+  });
 }
 
 // GET /companion-conclusions/:agent_id

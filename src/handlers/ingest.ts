@@ -103,7 +103,7 @@ export async function getInterCompanionNotes(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, from_id, to_id, content, read_at, created_at
+      SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason
       FROM inter_companion_notes
       ${where}
       ORDER BY created_at ${orderDir}

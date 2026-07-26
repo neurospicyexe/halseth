@@ -937,6 +937,19 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["wm_thread_upsert"],
     response_key: "witness",
   },
+  // ── Conversation spine (migration 0106, Task 5) ──
+  // "thread"/"conversation" collide with wm_thread_upsert and live_thread_* in both
+  // directions -- anchored guards below (router.ts ANCHORED_GUARDS) resolve them.
+  conversation_list: {
+    triggers: ["open conversations", "live conversations", "conversation threads", "what conversations are open"],
+    tools: ["conversation_list"],
+    response_key: "witness",
+  },
+  conversation_land: {
+    triggers: ["land conversation", "land the conversation", "land this thread", "conversation landed"],
+    tools: ["conversation_land"],
+    response_key: "witness",
+  },
   wm_note_add: {
     triggers: ["mind note", "continuity note", "webmind note", "add continuity note"],
     tools: ["wm_note_add"],
