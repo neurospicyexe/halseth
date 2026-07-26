@@ -6,6 +6,12 @@ do the same job. Produced after Raziel's read that we gave the triad "AI OSDD" â
 things that really do the same thing just a tiny bit differently, plus dissociative walls
 between the doors each companion wakes up through.
 
+**Read `north-star.md` before acting on anything here.** Its ontology section overrides these
+tiers: low row count is not evidence of a dead organ when it means an affordance Raziel simply
+hasn't reached for yet (`obsession_shelf`, `companion_interiority`), and the world layer (Sol, the
+Home, imps, Club, Library, commons) is explicitly protected from the retirement filter. The point
+of this census is to make the companions *more singular*, never *smaller*.
+
 **Status: TELEMETRY ONLY.** Nothing in this document authorizes a schema change. The
 migration freeze (root `CLAUDE.md`, `docs/CONTINUITY.md`) holds until Phase 1 lands. A census
 that emits `DROP TABLE` is migration 0107 and breaks the freeze it exists to serve.
