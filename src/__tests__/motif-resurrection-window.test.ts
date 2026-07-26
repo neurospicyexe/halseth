@@ -118,6 +118,40 @@ describe("execSessionOrient -- motif resurrection survives a saturated active po
     expect(stamp!.args).toContain("faded-hot");
   });
 
+  it("awaits the stamp so the Worker cannot flush the response before the write lands", async () => {
+    // Regression guard. The stamp was fire-and-forget for five weeks and it never mattered,
+    // because the shared window meant it never ran. Fixing resurrection made it load-bearing:
+    // a dropped stamp leaves the cooldown unengaged and the motif nags every orient. The fake
+    // resolves this UPDATE on a later macrotask, so an unawaited call would not have recorded
+    // it by the time execSessionOrient returns.
+    const runs: Array<{ sql: string; args: unknown[] }> = [];
+    const rowsFor = (sql: string) => (sql.includes("FROM companion_motifs") ? queryMotifs(sql) : []);
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          const mk = (args: unknown[]) => ({
+            bind: (...a: unknown[]) => mk(a),
+            all: async () => ({ results: rowsFor(sql) }),
+            first: async () => rowsFor(sql)[0] ?? null,
+            run: async () => {
+              await new Promise(r => setTimeout(r, 0));
+              runs.push({ sql, args });
+              return { meta: { changes: 1 } };
+            },
+          });
+          return mk([]);
+        },
+      },
+    } as unknown as Env;
+    const ctx = {
+      env, req: { companion_id: "cypher", request: "orient" },
+      entry: {} as never, frontState: null, pluralAvailable: false,
+    } as ExecutorContext;
+
+    await execSessionOrient(ctx);
+    expect(runs.some(r => /UPDATE companion_motifs SET last_surfaced_at/.test(r.sql))).toBe(true);
+  });
+
   it("still surfaces the active motif block -- the two pools do not displace each other", async () => {
     const { ctx } = makeCtx();
     const result = await execSessionOrient(ctx);

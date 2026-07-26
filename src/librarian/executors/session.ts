@@ -552,9 +552,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Consume-once: open -> surfaced so cards don't nag every orient. They stay
   // queryable ("guardian report") and self-resolve when the condition clears.
+  // Awaited for the same reason as the motif stamp below -- a dropped consume-once write
+  // means the card re-surfaces forever and looks like a detector bug.
   if (guardianFlags.length > 0) {
     const flagIds = guardianFlags.map(f => f.id);
-    ctx.env.DB.prepare(
+    await ctx.env.DB.prepare(
       `UPDATE guardian_flags SET status = 'surfaced', surfaced_at = datetime('now') WHERE id IN (${flagIds.map(() => "?").join(",")}) AND status = 'open'`
     ).bind(...flagIds).run().catch(() => null);
   }
@@ -574,9 +576,18 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Consume-once: stamp last_surfaced_at on resurrected motifs so the cooldown
   // keeps them from nagging every orient (active motifs are read-only here).
+  //
+  // AWAITED (2026-07-26). Unawaited D1 writes may be silently discarded once the Worker
+  // flushes its response -- same reason mindOrient's auto-ack is awaited. This statement
+  // was fire-and-forget for five weeks and it never mattered, because the shared candidate
+  // window meant it never executed at all (HOLE 9). Making resurrection work made this
+  // load-bearing for the first time: a dropped stamp leaves the cooldown unengaged, so the
+  // same motif nags every single orient -- exactly what the cooldown exists to prevent, and
+  // it would read as a resurrection bug rather than a lost write. The .catch stays: a failed
+  // stamp must not break boot.
   if (resurrectedMotifs.length > 0) {
     const motifIds = resurrectedMotifs.map(m => m.id);
-    ctx.env.DB.prepare(
+    await ctx.env.DB.prepare(
       `UPDATE companion_motifs SET last_surfaced_at = datetime('now') WHERE id IN (${motifIds.map(() => "?").join(",")})`
     ).bind(...motifIds).run().catch(() => null);
   }
