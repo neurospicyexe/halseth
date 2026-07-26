@@ -159,6 +159,15 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     }
   }
 
+  // 4b. Recent feelings -- feeling_log writes were orient-invisible until 2026-07-26;
+  // a companion could log an emotion and never meet it again at boot.
+  if (wm.recent_feelings && wm.recent_feelings.length > 0) {
+    const line = wm.recent_feelings
+      .map((f) => `${f.emotion}${f.sub_emotion ? `/${f.sub_emotion}` : ""} (${f.intensity})${f.created_at ? ` @ ${f.created_at.slice(0, 10)}` : ""}`)
+      .join("; ");
+    parts.push(`[Recent feelings] ${line}`);
+  }
+
   // 5. Relational snapshot -- current state toward each named person
   if (wm.relational_snapshot?.length > 0) {
     for (const r of wm.relational_snapshot) {
@@ -231,6 +240,16 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     for (const t of wm.top_threads) {
       const age = t.last_touched_at ? `, touched ${relativeTime(t.last_touched_at)}` : "";
       parts.push(`  • [${t.lane ?? "general"}] «${t.title}» (priority ${t.priority}${age})`);
+    }
+  }
+
+  // 11b. Open loops -- unresolved carried things, heaviest first. Same read
+  // ground/bot_orient already had; Claude.ai boot gets it as of 2026-07-26.
+  if (wm.open_loops && wm.open_loops.length > 0) {
+    parts.push(`[Open loops: ${wm.open_loops.length}]`);
+    for (const l of wm.open_loops) {
+      const snippet = l.loop_text.length > 150 ? l.loop_text.slice(0, 150) + "…" : l.loop_text;
+      parts.push(`  • [weight ${l.weight}, opened ${l.opened_at?.slice(0, 10) ?? "?"}] «${snippet}»`);
     }
   }
 

@@ -30,7 +30,7 @@ the traps below exist because names lie.
 | `halseth_session_light_ground` | execSessionLightGround | session.ts | READ | |
 | `halseth_bot_orient` | execBotOrient | session.ts | READ | |
 | `halseth_feelings_read` | execFeelingsRead | reads.ts | READ | |
-| `halseth_journal_read` | execJournalRead | reads.ts | READ | |
+| `halseth_journal_read` | execJournalRead | reads.ts | READ | companion caller: UNION of companion_journal (own reflections) + growth_journal (worker ledger), labeled by `journal` field (2026-07-26; was growth_journal only). No companion_id: human_journal. |
 | `halseth_wound_read` | execWoundRead | reads.ts | READ | |
 | `halseth_delta_read` | execDeltaRead | reads.ts | READ | |
 | `halseth_dreams_read` | execDreamsRead | reads.ts | READ | |
@@ -45,7 +45,7 @@ the traps below exist because names lie.
 | `halseth_audit_read` | execAuditRead | reads.ts | READ | |
 | `halseth_session_read` | execSessionRead | reads.ts | READ | |
 | `halseth_fossil_check` | execFossilCheck | reads.ts | READ | |
-| `halseth_companion_notes_read` | execCompanionNotesRead | reads.ts | READ | reads inter_companion_notes |
+| `halseth_companion_notes_read` | execCompanionNotesRead | reads.ts | READ | reads inter_companion_notes incl. broadcasts (to_id IS NULL) as of 2026-07-26 — previously only to/from self, so triad broadcasts were boot-visible but never re-readable on request |
 | `halseth_journal_search` | execJournalSearch | reads.ts | READ | |
 | `pattern_recall` | execPatternRecall | reads.ts | READ | |
 | `signal_audit_read` | execSignalAuditRead | reads.ts | companion_journal (UPDATE: marks audited) | read-named but WRITES |
@@ -63,7 +63,7 @@ the traps below exist because names lie.
 | `drift_witness` | execDriftWitness | drift.ts | companion_drifts | |
 | `drift_crystallize` | execDriftCrystallize | drift.ts | companion_drifts | |
 | `drift_fade` | execDriftFade | drift.ts | companion_drifts | |
-| `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes | broadcast to_id=NULL; trap cluster 2 |
+| `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes OR companion_journal | THREE-WAY ROUTE: addressed peer → inter_companion_notes (to_id set); broadcast → inter_companion_notes (to_id=NULL); unaddressed/no broadcast intent → **companion_journal** (self-reflection; ack carries `routed_to: "journal"`). Trap cluster 2. Until 2026-07-26 this row claimed inter_companion_notes only — the journal fallback was undocumented, so unaddressed notes looked lost. |
 | `halseth_feeling_log` | execFeelingLog | writes.ts | feelings | |
 | `halseth_journal_add` | execJournalAdd | writes.ts | human_journal | TRAP: the human's journal, NOT companion_journal |
 | `halseth_dream_log` | execDreamLog | writes.ts | companion_dreams | |

@@ -13,11 +13,24 @@ export async function execFeelingsRead(ctx: ExecutorContext): Promise<ExecutorRe
 
 export async function execJournalRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (ctx.req.companion_id) {
-    // Companions reading their own growth journal -- human_journal is Raziel's personal store
-    const rows = await ctx.env.DB.prepare(
-      "SELECT id, entry_type, content, tags_json, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
-    ).bind(ctx.req.companion_id).all();
-    return { data: rows.results ?? [], meta: { operation: "halseth_journal_read", companion_id: ctx.req.companion_id } };
+    // "Read my journal" spans BOTH journals: companion_journal holds the companion's
+    // own reflections (companion_note_add unaddressed, held_mark, session witness
+    // notes); growth_journal holds the autonomous-worker growth ledger. Reading only
+    // growth_journal left every self-written entry invisible to the canonical verb.
+    // human_journal stays Raziel's personal store -- never returned here.
+    const [own, growth] = await Promise.all([
+      ctx.env.DB.prepare(
+        "SELECT id, note_text AS content, tags, source, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 10"
+      ).bind(ctx.req.companion_id).all<Record<string, unknown> & { created_at: string | null }>(),
+      ctx.env.DB.prepare(
+        "SELECT id, entry_type, content, tags_json, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 10"
+      ).bind(ctx.req.companion_id).all<Record<string, unknown> & { created_at: string | null }>(),
+    ]);
+    const rows = [
+      ...(own.results ?? []).map((r) => ({ ...r, journal: "companion_journal" })),
+      ...(growth.results ?? []).map((r) => ({ ...r, journal: "growth_journal" })),
+    ].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+    return { data: rows, meta: { operation: "halseth_journal_read", companion_id: ctx.req.companion_id } };
   }
   return { data: await journalRead(ctx.env), meta: { operation: "halseth_journal_read" } };
 }

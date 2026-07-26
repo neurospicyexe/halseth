@@ -261,6 +261,18 @@ export interface WmLimbicStateInput {
   companion_id?: string;
 }
 
+/** Row from the feelings table (0014) -- logged via feeling_log / session_close. */
+export interface WmFeeling {
+  id: string;
+  companion_id: string;
+  session_id: string | null;
+  emotion: string;
+  sub_emotion: string | null;
+  intensity: number;
+  source: string | null;
+  created_at: string;
+}
+
 export interface WmOrientResponse {
   identity_anchor: WmIdentityAnchor | null;
   limbic_state: WmLimbicState | null;
@@ -283,6 +295,8 @@ export interface WmOrientResponse {
   raziel_witness_entries: WmRelationalState[];  // recent witness observations about Raziel (not ROW_NUMBER collapsed)
   active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs, type-distributed
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
+  recent_feelings?: WmFeeling[];                // feelings logged via feeling_log -- were write-only to orient before 2026-07-26
+  open_loops?: WmOpenLoop[];                    // unresolved open loops, heaviest first (same read as ground/bot_orient); optional so cached pre-2026-07-26 payloads stay valid
   soma_arc?: {
     note_id: string;
     content: string;
@@ -381,6 +395,20 @@ export interface WmGroundResponse {
   recent_notes: WmContinuityNote[];
   open_loops: WmOpenLoop[];
   sitting_notes: WmSittingNote[];
+  /** Digests of cap-evicted continuity notes (wm_archive_notes). Until 2026-07-26 the
+   *  archive was write-only: overflow notes were digested, deleted, and unreachable. */
+  archived_digests?: WmArchiveDigest[];
+}
+
+/** Row from wm_archive_notes (0050) -- compressed digest of cap-evicted continuity notes. */
+export interface WmArchiveDigest {
+  id: string;
+  agent_id: string;
+  summary: string;
+  note_count: number;
+  period_from: string;
+  period_to: string;
+  created_at: string;
 }
 
 // ── Companion Spiral Runs ────────────────────────────────────────────────────

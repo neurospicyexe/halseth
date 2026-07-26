@@ -110,6 +110,50 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0060` | `confidence` (REAL, default 0.6) + `evidence_count` (INT, default 1) on `synthesis_summary` -- multi-pass corroboration scoring |
 | -- | `0061` | `growth_journal.review_status` enum (pending/accepted/declined) + `reviewed_at` -- ratification loop closure |
 | -- | `0062` | `prehended_ids` + `vault_path` on growth_journal/patterns/markers, `evidence_json` + `novelty` on growth_journal -- triad layer + vault materialization. Adds `thoughtform` marker_type. New endpoints: `/mind/triad/recent/:companion_id`, `/mind/growth/thoughtforms/detect`, `/mind/growth/unmaterialized/:companion_id`, `PATCH /mind/growth/:kind/:id/vault`. See `docs/private/triad-thoughtforms.md`. |
+| -- | `0063` | `companion_settings` -- per-companion KV store (companion_id, key, value) |
+| -- | `0064` | `metronome_actions` -- per-companion action palette for Metronome heartbeat cron |
+| -- | `0065a` | The Home: `home_rooms`, `home_presence`, `home_events` -- inhabited place-graph; seeds 7 rooms + presence + home settings |
+| -- | `0065b` | `metronome_actions` rebuild -- context-aware trigger columns (silence/cooldown/caps/signal) + relational action types |
+| -- | `0066a` | Home rooms v2 -- replaces placeholder rooms with the Oakhaven spec (Study, Vowbed, Grove, Spiral Pantry, ...) |
+| -- | `0066b` | `synthesis_summary.domains` -- controlled-vocabulary domain tags (nullable JSON array) |
+| -- | `0067` | `identity_kernel` -- versioned canonical identity per companion; `companion_questions` -- continuity-gap questions to Raziel |
+| -- | `0068` | `forage_finds` -- foraging pool of outward raw material; dedup + unconsumed indexes |
+| -- | `0069` | `companion_state.version` write counter (CAS guard) + `metronome_actions` CHECK rebuild adding Phase 4b actions (name_pattern, write_note_to_raziel) |
+| -- | `0070` | Self-monitoring wave: `charge` on companion_tensions, `companion_triggers` (prospective tripwires), `companion_self_model` (preference ladder), `voice_scores` (drift scoring) |
+| -- | `0071` | `media_experiences` -- shared-experience Phase 1 (music listen events, analysis + reactions JSON) |
+| -- | `0072` | The Club: `club_rounds/recommendations/votes/discussions` + metronome CHECK rebuild adding `share_media` |
+| -- | `0073` | Guardian: `guardian_flags` (red-flag cards, live dedup) + `guardian_runs` |
+| -- | `0074` | `heat` + `last_access_at` on wm_continuity_notes/synthesis_summary (lazy decay), `growth_journal.supersedes_id` -- reconsolidation |
+| -- | `0075` | `growth_journal.charge_phase` + `charge_advanced_at` -- fresh -> active -> processing -> metabolized lifecycle |
+| -- | `0076` | `companion_motifs` -- recurring symbolic threads; trust weight, fade + resurrection |
+| -- | `0077` | `companion_tool_calls` -- audit log for companion tools (web_search, generate_image) |
+| -- | `0078` | `companion_drives` (need floats, lazy decay) + `creatures`/`creature_interactions`; seeds relational_need + Sol the corvid |
+| -- | `0079` | `collection_sparkle` -- sparkle-weight sidecar over forage_finds/media_experiences |
+| -- | `0080` | `companion_self_model.kind` (skill ladder) + council mode: `council_questions/answers/rankings` |
+| -- | `0081` | Subjective ND-state columns on `biometric_snapshots` (mood, pain, energy, focus, spoons, meds_taken) |
+| -- | `0082` | `reviewed_at` on `companion_open_loops` -- the "hold" half of Guardian loop self-resolution |
+| -- | `0083` | `dismissed_at` on `companion_basin_history` -- the "deny / it was noise" half of basin triage |
+| -- | `0084` | `companion_interiority` -- the private back room; sealed by default, disclosure is explicit |
+| -- | `0085` | `companion_id` on `oauth_codes`/`oauth_tokens` -- binds an OAuth token to one companion |
+| -- | `0086` | Agency layer: `companion_refusals` (honored, not a veto) + `companion_preferences` (asserted, not earned) |
+| -- | `0087` | `companion_drifts` -- sanctioned drift lane; declared becomings, witnessed not ratified |
+| -- | `0088` | relational_need drive retune (can actually fire) + `echo_metrics` + guardian_flags CHECK rebuild adding echo_chamber/orphan_memory |
+| -- | `0089` | `companion_soma_shifts` -- emergent SOMA: bounded float nudges on drift crystallization, logged + reversible |
+| -- | `0090` | Metronome CHECK rebuild adding `tend_creature` + `creatures.avatar_url` + seed tend-Sol actions |
+| -- | `0091` | `imp_activations` -- imp reply-flavor activation log (settings ride companion_settings KV) |
+| -- | `0092` | `commons_posts` -- Hearth async wall; one table for global /log, club discussion, shelf comments |
+| -- | `0093a` | `club_rounds` rebuild -- adds standing `discussing` status + `discussing_at` |
+| -- | `0093b` | Metronome CHECK rebuild adding `drift_open` + seed one drift_open action per companion |
+| -- | `0094` | `obsession_shelf` -- Raziel's current fixations; reactions live in commons_posts (`shelf:<id>`) |
+| -- | `0095` | `synthesis_summary.session_created_at` + backfill -- fixes last-session recency bug from backfilled old sessions |
+| -- | `0096` | `companion_journal.topic_tags` -- content-derived keyword tags (distinct from categorical `tags`) |
+| -- | `0097` | `companion_tensions.source` -- distinguishes swarm-written rows (replaceable) from companion/human-authored |
+| -- | `0098` | `companion_journal.external_id` + partial unique index -- idempotency key for speech writes/backfill |
+| -- | `0099` | The Library: `books`, `book_progress`, `book_annotations` + `club_abstentions` |
+| -- | `0100` | Sol inner life: `creature_milestones` (one-time trust events) + `creature_nest` (hoard); backfills crossed milestones |
+| -- | `0101` | Fermentation layer: SOMA baseline/seed/`ferment_at` columns on `companion_state`, rest/novelty drives, `companion_ferment_events` |
+| -- | `0102` | `companion_state.ferment_off_since` -- off-baseline duration for the felt-sense trajectory clause |
+| -- | `0103` | Backfill `companion_journal.source` on NULL rows (session/legacy) -- evidence-based provenance for recall re-rank |
 
 ## BBH Companion State Tables (migration 0020+)
 
@@ -151,6 +195,21 @@ Orient augmentation: `session_orient` now returns SOMA state + continuity block 
 ## Authentication Pattern
 
 All endpoints check `ADMIN_SECRET` via Bearer token. Auth **fails closed** (2026-07-12 hardening): if `ADMIN_SECRET` or `MCP_AUTH_SECRET` is unset, every request is denied (401) rather than allowed through. Both must be set for the worker to serve any authenticated request at all, in every environment including local dev.
+
+## Foundation Convergence (2026-07-26 audit)
+
+The 2026-07-26 four-track audit and its fixes are the current architectural priority.
+Key docs:
+
+- `docs/write-read-coverage.md` -- write→read coverage matrix; every companion-writable
+  table and which read surfaces return it. Enforced by `src/__tests__/write-read-coverage.test.ts`.
+- `docs/mindstate-contract.md` -- Phase 1 design draft: one versioned MindState + one
+  loader for all boot surfaces (session_orient / bot_orient / mindOrient / Hearth chat).
+- Root `../CLAUDE.md` -- suite-wide phase plan and migration freeze.
+
+**Migration freeze:** no new inner-life organs/tables until the MindState loader lands.
+When touching any boot surface (orient/ground/bot_orient), re-verify against the coverage
+matrix -- ground.ts read dead tables for ~4 months because nothing checked.
 
 ## Security
 

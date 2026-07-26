@@ -599,8 +599,12 @@ export async function claimDreamSeed(env: Env, seedId: string, companionId: stri
 }
 
 export async function companionNotesRead(env: Env, companionId: string, limit = 20) {
+  // to_id IS NULL = broadcast to the whole triad; a sibling's broadcast is addressed
+  // to this companion too, so it must show here (orient already matched broadcasts,
+  // the explicit read verb didn't -- companions could see mail at boot they could
+  // never re-read on request).
   const r = await env.DB.prepare(
-    "SELECT * FROM inter_companion_notes WHERE to_id = ? OR from_id = ? ORDER BY created_at DESC LIMIT ?"
+    "SELECT * FROM inter_companion_notes WHERE to_id = ? OR from_id = ? OR to_id IS NULL ORDER BY created_at DESC LIMIT ?"
   ).bind(companionId, companionId, limit).all();
   return r.results ?? [];
 }
