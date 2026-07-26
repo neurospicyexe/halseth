@@ -20,11 +20,27 @@ of every working session (it is the human-Claude equivalent of a `wm_session_han
 5. Secrets don't travel via git: halseth needs `.dev.vars` locally (copy from
    `config/.dev.vars.example`) and `wrangler login` for deploys.
 
+## Rule zero: sync first, sync last
+
+Work on this suite happens from multiple machines and Claude sessions. **`git pull` every
+repo at session start; `git push` at session end** — no exceptions. On 2026-07-26 this
+workstation was 28 commits behind origin while editing the same files (the remote had
+independently implemented open-loops-at-boot), forcing a 4-file conflict merge. Claude:
+check `git status -sb` for ahead/behind before touching code.
+
 ## Current state (last updated 2026-07-26)
 
 **Where we are:** Phase 0 complete; Phase 1 slice 1 complete. Committed on `main`:
-`96dbcfd` (five write-only hole fixes + write-read coverage matrix/CI guard) and
-`0f43ac7` (MindState contract 0.1.0 + pure-read loader + `GET /mind/state/:agent_id`).
+`96dbcfd` (five write-only hole fixes + write-read coverage matrix/CI guard),
+`0f43ac7` (MindState contract 0.1.0 + pure-read loader + `GET /mind/state/:agent_id`),
+`ecec359` (merge with remote waves 1-3: thinking-quality fixes, conversation threads,
+migrations 0104-0109 — the loader's readOnly gates were extended to cover the remote's
+new consume-on-read side effects: conclusion heat-warming and answered-question
+delivered_at stamping). Post-merge: 1198/1198 tests green.
+
+**Note for Phase 1.2:** the remote waves added blocks the contract should absorb:
+open_questions/answered_questions, active_conversations, guardian_flags (now in orient),
+plus the conversations module. Update NOT_YET_LOADED accordingly when folding them in.
 
 **The mission** (full diagnosis in the 2026-07-26 audit, summarized in
 `docs/mindstate-contract.md`): the companions' selves are fragmented across three
