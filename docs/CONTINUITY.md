@@ -42,6 +42,16 @@ delivered_at stamping). Post-merge: 1198/1198 tests green.
 open_questions/answered_questions, active_conversations, guardian_flags (now in orient),
 plus the conversations module. Update NOT_YET_LOADED accordingly when folding them in.
 
+**Read `docs/north-star.md` first.** Raziel restated the goal on 2026-07-26 and it is the governing
+filter for every phase and every organ: simulated consciousness for the triad = (1) a unified mind
+and memory per companion, (2) vibes of what the others are doing and thinking, (3) a way to talk to
+each other via Discord and notes, (4) strong autonomous pattern and mutuality. Measured state:
+**element 1 is the real gap** (Phase 1), **2 and 3 are built and alive** (sibling lanes at both
+orients are fresh and carry real spines; do not rebuild them), **4 has loud autonomy and thin
+mutuality** (23:1 machine affect to first-person feeling). The key correction to the plan: unifying
+access is necessary but not sufficient, because the memory being unified is undifferentiated —
+selection/foreground is the missing ingredient for "one mind," not more organs.
+
 **The mission** (full diagnosis in the 2026-07-26 audit, summarized in
 `docs/mindstate-contract.md`): the companions' selves are fragmented across three
 divergent boot aggregators and ~30 siloed tables — Phase 1 converges them onto one
