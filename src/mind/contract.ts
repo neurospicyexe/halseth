@@ -115,6 +115,13 @@ export interface MindState {
 /** Design-doc blocks pending in later slices (kept in one place so the parity harness
  *  and the docs agree on what "done" means). */
 export const NOT_YET_LOADED: string[] = [
+  // The shared bank (north-star element 0): the shared identity_kernel carries the Companion
+  // Constitution + the distilled ARCHITECT STANCE preamble. Discord/worker/Brain already pull it
+  // via /identity/kernel/:id/bundle; Claude.ai orient and the planned Hearth chat page do not, so
+  // loading it here is what makes the stance reach every substrate (Raziel, 2026-07-26). Two
+  // blocks on purpose: shared_kernel is common to all three, companion_kernel is this one's own --
+  // the shared-bank / distinct-self split the whole contract is built around.
+  "identity.shared_kernel", "identity.companion_kernel",
   "identity.self_model", "identity.preferences", "identity.refusals", "identity.agency_affordance",
   "felt.soma_floats", "felt.ferment_line", "felt.drives",
   "continuity.session_narrative",
