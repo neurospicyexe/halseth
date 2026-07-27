@@ -53,7 +53,7 @@ import {
   getAutonomyThreads,
 } from "./handlers/autonomy.js";
 import {
-  postGrowthJournal, getGrowthJournal, acceptJournalEntry, declineJournalEntry, deleteJournalEntry,
+  postGrowthJournal, getGrowthJournal, getGrowthPendingCount, acceptJournalEntry, declineJournalEntry, deleteJournalEntry,
   postGrowthPattern, getGrowthPatterns,
   postGrowthMarker, getGrowthMarkers,
   getUnmaterialized, patchVaultPath, postVaultPathsLookup,
@@ -403,6 +403,9 @@ const router = new Router()
 
   // Autonomous worker -- growth artifacts
   .on("POST", "/mind/growth/journal",                            (request, env)         => postGrowthJournal(request, env))
+  // Registered BEFORE the :companion_id wildcard -- otherwise "pending-count" is
+  // swallowed as a companion id and the count 400s on validateCompanion.
+  .on("GET",  "/mind/growth/pending-count",                      (request, env)         => getGrowthPendingCount(request, env))
   .on("GET",  "/mind/growth/journal/:companion_id",              (request, env, params) => getGrowthJournal(request, env, params ?? {}))
   .on("PATCH", "/mind/growth/journal/:id/accept",               (request, env, params) => acceptJournalEntry(request, env, params ?? {}))
   .on("PATCH", "/mind/growth/journal/:id/decline",              (request, env, params) => declineJournalEntry(request, env, params ?? {}))

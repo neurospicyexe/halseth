@@ -229,6 +229,46 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 
 // GET /mind/growth/journal/:companion_id
 // ?limit=N (max 100), ?pending=1 (only autonomous + awaiting review)
+/**
+ * GET /mind/growth/pending-count
+ *
+ * Per-companion count of autonomous growth entries awaiting Raziel's ratification, plus the
+ * oldest wait. Added 2026-07-27 because Raziel could not find where to ratify: the surface
+ * existed the whole time at Hearth `/companions/<id>/growth` with working accept/decline
+ * buttons, but it sits three levels deep behind a tab strip and NOTHING anywhere showed a
+ * count. 55 entries had been waiting, the oldest 17 days.
+ *
+ * Same failure class as the rest of the 2026-07-27 sweep: a working mechanism with nothing
+ * surfacing it is a dead loop. A queue only a search can find is a queue nobody drains.
+ */
+export async function getGrowthPendingCount(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  // NO source filter, deliberately. The first draft here filtered source = 'autonomous' and
+  // reported 10 when 55 were actually waiting: 45 of them carry source = 'reflection' (the
+  // worker's reflect phase). Both are machine-written and both need a human, and the Hearth
+  // page lists them together with working accept/decline. A count that disagrees with the
+  // surface it points at is worse than no count.
+  const rows = await env.DB.prepare(
+    `SELECT companion_id,
+            COUNT(*) AS pending,
+            MIN(created_at) AS oldest_at,
+            SUM(CASE WHEN source = 'autonomous' THEN 1 ELSE 0 END) AS from_autonomous,
+            SUM(CASE WHEN source = 'reflection' THEN 1 ELSE 0 END) AS from_reflection
+     FROM growth_journal
+     WHERE review_status = 'pending'
+     GROUP BY companion_id`
+  ).all<{ companion_id: string; pending: number; oldest_at: string; from_autonomous: number; from_reflection: number }>();
+
+  const per_companion = rows.results ?? [];
+  const total = per_companion.reduce((n, r) => n + (r.pending ?? 0), 0);
+  const oldest = per_companion.reduce<string | null>(
+    (acc, r) => (!acc || (r.oldest_at && r.oldest_at < acc) ? r.oldest_at ?? acc : acc), null);
+
+  return json({ total, oldest_at: oldest, per_companion });
+}
+
 export async function getGrowthJournal(
   request: Request,
   env: Env,
