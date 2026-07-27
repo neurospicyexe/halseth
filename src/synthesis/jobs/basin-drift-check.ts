@@ -29,6 +29,13 @@ export function cosineSim(a: number[], b: number[]): number | null {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/** How far back to look for the verdict owner's (second-brain evaluator's) latest row.
+ *  The evaluator runs every ~6.4h with a 12h worst observed gap (measured in prod
+ *  2026-07-26), so 24h is 2x the worst case -- wide enough that a session close almost
+ *  always finds a row to annotate, narrow enough that the read attaches to a current
+ *  reading rather than a stale one. */
+export const ANNOTATE_WINDOW_HOURS = 24;
+
 interface DriftResult {
   drift_type: "stable" | "growth" | "pressure";
   drift_score: number;   // 0.0 = no drift, 2.0 = severe
@@ -212,12 +219,48 @@ drift_score: 0.0 = fully aligned, 2.0 = severe departure`;
     console.warn("[basin-drift-check] embedding corroboration failed (non-fatal):", String(e));
   }
 
-  const id = crypto.randomUUID();
-  const notes = result.reasoning
-    ? (result.reasoning.slice(0, 2000 - embeddingEvidence.length) + embeddingEvidence)
+  const read = result.reasoning
+    ? (result.reasoning.slice(0, 1500 - embeddingEvidence.length) + embeddingEvidence)
     : (embeddingEvidence || null);
+  if (!read) return;
+
+  // ── Single-owner write (Raziel's call, 2026-07-26): "detector owns the verdict,
+  // interpreter annotates." This job used to INSERT its own stable/growth/pressure row
+  // alongside the second-brain evaluator's, and the two contradicted each other on the
+  // same companion on the same day -- cypher carried growth AND stable AND pressure on
+  // 2026-07-13, plus 11 more such days. The evaluator already treats these rows as
+  // foreign bodies, filtering `blocks_analyzed=` out of its own baseline because this
+  // job's 0..2 score scale "would poison the mean."
+  //
+  // So: the evaluator owns drift_type / drift_score / worst_basin. This job contributes
+  // the thing it is actually better at -- a semantic read of WHY the movement happened --
+  // by appending to the owner's most recent row. No competing verdict can exist.
+  // Appending to `notes` rather than a new column because the migration freeze holds;
+  // promote it to its own column when the freeze lifts.
+  const owner = await env.DB.prepare(
+    `SELECT id, drift_type FROM companion_basin_history
+     WHERE companion_id = ? AND notes LIKE 'blocks_analyzed=%'
+       AND recorded_at > datetime('now', '-${ANNOTATE_WINDOW_HOURS} hours')
+     ORDER BY recorded_at DESC LIMIT 1`
+  ).bind(companionId).first<{ id: string; drift_type: string }>();
+
+  if (!owner) {
+    // No owner row to hang the read on. Write nothing rather than resurrect a competing
+    // verdict -- the evaluator runs every ~6.4h (12h worst observed gap), so this should
+    // be rare, and a lost interpretation is cheaper than a contradicted log.
+    console.warn(`[basin-drift-check] ${companionId}: no evaluator row within ${ANNOTATE_WINDOW_HOURS}h -- read not recorded`);
+    return;
+  }
+
+  // caleth_confirmed survives as a signal, but only where it is coherent: this job's
+  // auto-confirm means "growth that looks healthy," so it may only ever confirm a row the
+  // OWNER also called growth, and it may only ever set the flag, never clear one.
+  const confirmHere = calethConfirmed === 1 && owner.drift_type === "growth";
+  const annotation = `\n| session-close read (${result.drift_type}, score ${score.toFixed(2)}): ${read}`;
 
   await env.DB.prepare(
-    "INSERT INTO companion_basin_history (id, companion_id, drift_score, drift_type, caleth_confirmed, worst_basin, notes, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))"
-  ).bind(id, companionId, score, result.drift_type, calethConfirmed, result.worst_basin ?? null, notes).run();
+    `UPDATE companion_basin_history
+     SET notes = substr(COALESCE(notes, '') || ?, 1, 4000)${confirmHere ? ", caleth_confirmed = 1" : ""}
+     WHERE id = ?`
+  ).bind(annotation, owner.id).run();
 }

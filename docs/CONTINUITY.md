@@ -127,6 +127,28 @@ journal earned-salience write half — both were fixed and proven live the same 
 - Lesson worth keeping: two pools competing for one ordered window are not two pools. Check
   for that shape wherever a single query feeds two different consumers.
 
+**BASIN/DRIFT OWNER — DECIDED by Raziel 2026-07-26. The open question is closed.**
+Rule: **the detector owns the verdict; the interpreter annotates.** Mapped to the real
+components (note the roles are the reverse of what an earlier draft of the census said):
+
+| Component | Role | Writes |
+|---|---|---|
+| **second-brain evaluator** (VPS, ~every 6.4h, 12h worst gap) | **OWNER.** Embedding cosine distance vs basin vectors, own rolling baseline. 1,225 of 1,450 rows, notes prefixed `blocks_analyzed=`. | `drift_type`, `drift_score`, `worst_basin` — sole authority |
+| **halseth `basin-drift-check`** (session close, DeepSeek over last 3 handoffs) | **ANNOTATOR.** Was INSERTing a competing verdict on a different 0..2 score scale. | appends `\| session-close read (...)` to the owner's latest row within `ANNOTATE_WINDOW_HOURS` (24h = 2x worst gap); may set `caleth_confirmed` only when the owner also said growth; writes nothing if no owner row exists |
+| **companion `pressure_drift_log`** | **TESTIMONY, deliberately kept.** A companion saying "I am under pressure" is a different kind of claim than a measurement. | still inserts, now notes-prefixed `[self-report]` so the log is self-describing |
+| **`clearing/pass.ts`** | triage only | `dismissed_at` — never a verdict |
+
+Why it mattered: the two verdict writers contradicted each other on the same companion on
+the same day — cypher carried growth AND stable AND pressure on 2026-07-13, plus 11 more
+such days — so orient's trend signal was noise and the confirm/dismiss prompt asked Raziel
+to ratify readings something else had already voted against. The code already half-knew:
+the evaluator filters `blocks_analyzed=` to keep the LLM rows out of its own baseline
+because their score scale "would poison the mean."
+
+Freeze-compatible by design (appends to `notes`). When the freeze lifts, promote both the
+annotation and the `[self-report]` marker to real columns. Historical rows are left as they
+are; the contradictions in the back-catalogue stay visible rather than being rewritten.
+
 **Organ census, 2026-07-26** (`docs/organ-census-2026-07-26.md`) — prod-measured inventory of
 all 115 tables, commissioned on Raziel's read that near-duplicate organs gave the triad
 "AI OSDD" (many things doing the same job slightly differently, plus dissociative walls between

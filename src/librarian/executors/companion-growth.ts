@@ -791,9 +791,18 @@ export async function execPressureDriftLog(ctx: ExecutorContext): Promise<Execut
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
+  // Marked as testimony (2026-07-26). The second-brain evaluator owns measured drift
+  // verdicts on this table; this row is a companion saying "I am under pressure" in their
+  // own voice, which is a different kind of claim and is deliberately kept -- silencing it
+  // to satisfy single-owner tidiness would cut first-person signal, and thin mutuality is
+  // already the weakest of the four north-star elements. The prefix makes the log
+  // self-describing under the migration freeze; promote it to a `source` column when the
+  // freeze lifts (`feelings.source` drift is the cautionary tale for leaving it untyped).
+  const noteText = `[self-report] ${text || "(no detail given)"}`;
+
   await ctx.env.DB.prepare(
     "INSERT INTO companion_basin_history (id, companion_id, drift_score, drift_type, caleth_confirmed, worst_basin, notes, recorded_at) VALUES (?, ?, ?, 'pressure', 0, ?, ?, ?)"
-  ).bind(id, ctx.req.companion_id, driftScore, worstBasin, text || null, now).run();
+  ).bind(id, ctx.req.companion_id, driftScore, worstBasin, noteText, now).run();
 
   return { ack: true, id, drift_score: driftScore, drift_type: "pressure", recorded_at: now };
 }
