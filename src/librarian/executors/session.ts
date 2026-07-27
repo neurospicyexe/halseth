@@ -1101,8 +1101,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).bind(agentId, ctx.env.SYSTEM_OWNER).all<{ state_text: string }>(),
     // 7. Unread incoming companion notes (max 3, exclude own notes)
     ctx.env.DB.prepare(
-      "SELECT from_id, content FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
-    ).bind(agentId, agentId).all<{ from_id: string; content: string }>(),
+      "SELECT from_id, content, created_at FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
+    ).bind(agentId, agentId).all<{ from_id: string; content: string; created_at: string }>(),
     // 8+9. Sibling lane: PK lookup on companion_state -- written at session close,
     // no index scan, no heap access beyond the PK row itself.
     ctx.env.DB.prepare(
@@ -1113,8 +1113,8 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ).bind(botSiblings[1]).first<{ motion_state: string; lane_spine: string }>(),
     // 10. Recent growth journal (max 3 -- what the companion has been learning autonomously)
     ctx.env.DB.prepare(
-      "SELECT entry_type, content FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
-    ).bind(agentId).all<{ entry_type: string; content: string }>(),
+      "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
+    ).bind(agentId).all<{ entry_type: string; content: string; created_at: string }>(),
     // 11. Strongest growth patterns (max 2 -- recognized recurring themes)
     ctx.env.DB.prepare(
       "SELECT pattern_text FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
@@ -1347,7 +1347,11 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     : [];
 
   const incoming_notes: Array<{ from: string; content: string }> = notesResult.status === "fulfilled" && notesResult.value?.results
-    ? notesResult.value.results.map(r => ({ from: r.from_id, content: (r.content ?? "").slice(0, 200) }))
+    ? notesResult.value.results.map(r => ({
+        from: r.from_id,
+        content: (r.content ?? "").slice(0, 200),
+        age: relativeTime(r.created_at),
+      }))
     : [];
 
   const sibling_lanes = botSiblings.map((id, i) => {
@@ -1358,9 +1362,16 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
 
   const recent_growth: Array<{ type: string; content: string }> =
     growthJournalResult.status === "fulfilled" && growthJournalResult.value?.results
+      // Age-stamped (2026-07-27). A read-back with no age is read as present-tense news:
+      // Gaia told the commons "Rosie is a dog. Got it. The contentment ceremony makes much
+      // more sense now" about a fact from 2026-07-14, thirteen days earlier, as though she
+      // had just learned it. Same bug the listens block already had fixed twice (2026-06-17,
+      // 2026-07-27) -- history_excerpts uses excerptWithAge, listens use relativeTime, and
+      // these blocks selected the timestamp and threw it away.
       ? growthJournalResult.value.results.map(r => ({
           type: r.entry_type ?? "learning",
           content: (r.content ?? "").slice(0, 200),
+          age: relativeTime(r.created_at),
         }))
       : [];
 
