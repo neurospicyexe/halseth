@@ -1175,7 +1175,17 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     // 24. Recent listens (shared-experience layer, migration 0071) -- music actually
     // heard together; shared table, no companion filter.
     ctx.env.DB.prepare(
-      "SELECT id, title, artist, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
+      // Provenance carried (2026-07-27). This query used to select id/title/artist/created_at
+      // only, so every listen reached the Discord presence as an ANONYMOUS artifact: no who
+      // gave it, no who it was for, and not the companion's own recorded reaction. All three
+      // facts are stored and were being dropped here. Observed consequence: Drevan discussed
+      // "BIG BOSS" in the commons saying GAIA handed it to him and he had sat with it 6 days
+      // -- it was shared by Raziel, requested_companion = drevan, and it was 18 days old.
+      // 15 of the 17 listens in the system were given by Raziel TO Drevan; every one of them
+      // arrived here stripped, so the model had to invent a giver and a date, and did.
+      // See feedback/command-string-is-not-the-content: never let the model infer a fact the
+      // row already states.
+      "SELECT id, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
     ).all<{ id: string; title: string; artist: string | null; created_at: string }>(),
     // 25. Club: current non-closed round (0072) -- phase cue for the bot loom.
     ctx.env.DB.prepare(
@@ -1511,12 +1521,32 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
           }))
         : [],
       recent_listens: mediaResult.status === "fulfilled" && mediaResult.value?.results
-        ? (mediaResult.value.results as Array<{ id: string; title: string; artist: string | null; created_at: string }>).map(r => ({
-            id: r.id,
-            title: (r.title ?? "").slice(0, 150),
-            artist: r.artist ? r.artist.slice(0, 100) : null,
-            created_at: r.created_at,
-          }))
+        ? (mediaResult.value.results as Array<{ id: string; title: string; artist: string | null; shared_by: string | null; requested_companion: string | null; reactions_json: string | null; created_at: string }>).map(r => {
+            // Own reaction only. A companion gets their OWN words back verbatim; a sibling's
+            // reaction is reported as a bare fact ("drevan sat with this") and never as text,
+            // because handing one companion another's phrasing is how attribution scrambles
+            // (2026-06-26). Sibling PRESENCE is wanted; sibling VOICE in your mouth is not.
+            let ownReaction: string | null = null;
+            const reactedBy: string[] = [];
+            try {
+              const parsed = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>;
+              for (const [who, text] of Object.entries(parsed)) {
+                if (!text) continue;
+                if (who === agentId) ownReaction = String(text).slice(0, 240);
+                else reactedBy.push(who);
+              }
+            } catch { /* malformed -> no reaction, never breaks orient */ }
+            return {
+              id: r.id,
+              title: (r.title ?? "").slice(0, 150),
+              artist: r.artist ? r.artist.slice(0, 100) : null,
+              shared_by: r.shared_by ?? null,
+              requested_companion: r.requested_companion ?? null,
+              own_reaction: ownReaction,
+              also_heard_by: reactedBy,
+              created_at: r.created_at,
+            };
+          })
         : [],
       club_round: clubResult.status === "fulfilled" && clubResult.value
         ? clubResult.value as ClubRoundRow
