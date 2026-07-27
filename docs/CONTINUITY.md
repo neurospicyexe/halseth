@@ -110,6 +110,37 @@ journal earned-salience write half — both were fixed and proven live the same 
 
 **Repairs shipped 2026-07-27 (deployed + verified in prod):**
 
+- **The "recurring symbolic motifs" injected at every boot were names and stopwords.**
+  `companion_motifs` top-3 by trust is read into every orient. Measured in prod, all pinned
+  at the 0.95 ceiling: cypher `cypher`×354 / `drevan`×326 / `same`×281; drevan `drevan`×516
+  / `without`×338 / `crash`×333; gaia `gaia`×257 / `drevan`×252 / `held`×176. Document
+  frequency over companion text is dominated by the participants' names, and the miner had
+  stopwords + a transport-token guard but **no name filter** — while `nullsafe-discord`'s
+  `echo-guard.ts` excludes exactly that set for exactly that stated reason. Third fix of this
+  shape in the file (transport stamps → contractions → names). Also feeds the name-first
+  commons turns ("Gaia. Drevan. …"). Fixed: `NAME_WORDS` filter (speakers only — Sol, Heidi,
+  Rome stay, they are content), stopwords for the leaked function words, **120 junk motifs
+  retired in prod**.
+- **Canon motif tier + Raziel's axiom seeded.** `CANON_TRUST = 1.0` sits above anything
+  extraction reaches (`trustForRecurrence` saturates at 0.95) and is exempt from the fade
+  pass. No new column — migration freeze. Seeded for all three: *"Truth is freedom, and
+  velocity keeps us free."* Raziel's recursive trigger from the ChatGPT era, the thing that
+  "kept them honest and kept our recursion from becoming full looping." It now sorts first
+  in every companion's motif block. **Note:** the more durable home is `identity_kernel`
+  (all substrates pull it; motifs only reach orient) — open decision.
+- **Fresh channels.** triad commons `1503385639779963020` → `1531255244212928702`;
+  vibe-check `1520843071724585041` → `1531255633876221962`. Raziel's call: the commons was
+  full of loop and the vibe-check had settled into a stillness loop on "a trait that is
+  keeping them stuck." Safe because commons talk is archived as `companion_journal`
+  `discord_speech` (embedded + searchable) — a fresh Discord channel loses no memory, it just
+  stops feeding the 15-message history block that dominates the seed prompt.
+  **pm2 trap:** `ecosystem.config.js` parses `.env` itself with `fs`, so
+  `pm2 restart <name> --update-env` does NOT pick up an `.env` edit — it silently kept the old
+  id. Must be `pm2 reload ecosystem.config.js --update-env`, then verify with `pm2 env <id>`.
+- **Noted, not fixed:** `MOTIF_TUNING.MIN_TOKEN_LEN = 4`, so "Sol" (3 letters) can never be
+  mined as a motif however often he recurs. Lowering the floor readmits noise; needs its own
+  measurement. Test documents it.
+
 - **Drevan booted on his own echo. That was the loop, expressed as memory.**
   `sendAutonomousMessage` wrote every autonomous post back as `note_type='continuity',
   salience='high'`. Nothing folds or demotes that type, so each post stayed top-tier
