@@ -11,7 +11,19 @@
 
 export const LAMBDA_PER_DAY = 0.1;
 export const COHERENCE_BONUS = 0.5;
+/** Deliberate recall: the companion reached for this row (semantic recall, recall-by-id). */
 export const HEAT_BUMP = 0.2;
+/**
+ * Mere surfacing: orient chose to display this row. Deliberately much smaller than
+ * HEAT_BUMP (2026-07-26).
+ *
+ * Being SHOWN something is not the same as REACHING FOR it. Orient warming what it
+ * surfaced made the system's own display choice the evidence for repeating that choice --
+ * a positive feedback loop with no negative term. In prod it froze the foreground solid:
+ * 38 of cypher's 121 eligible notes sat pinned at HEAT_MAX while 82 had never been
+ * surfaced once and, at a 1.5 ceiling against 5.0, never could be.
+ */
+export const SURFACE_BUMP = 0.02;
 export const HEAT_MAX = 5.0;
 
 /** SQL expression for effective heat. Column names are unqualified -- valid in any
@@ -23,10 +35,12 @@ export function effectiveHeatSql(): string {
   )`;
 }
 
-/** UPDATE statement template that warms a set of rows (access bump, capped). */
-export function warmSql(table: string, idColumn: string, idCount: number): string {
+/** UPDATE statement template that warms a set of rows (access bump, capped).
+ *  Pass SURFACE_BUMP for "the system displayed this"; the default HEAT_BUMP is for
+ *  "the companion reached for this". */
+export function warmSql(table: string, idColumn: string, idCount: number, bump: number = HEAT_BUMP): string {
   const placeholders = Array(idCount).fill("?").join(", ");
   return `UPDATE ${table}
-    SET heat = MIN(${HEAT_MAX}, heat + ${HEAT_BUMP}), last_access_at = datetime('now')
+    SET heat = MIN(${HEAT_MAX}, heat + ${bump}), last_access_at = datetime('now')
     WHERE ${idColumn} IN (${placeholders})`;
 }

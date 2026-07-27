@@ -13,7 +13,7 @@ import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
-import { effectiveHeatSql, warmSql } from "./heat.js";
+import { effectiveHeatSql, warmSql, SURFACE_BUMP } from "./heat.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
@@ -84,12 +84,19 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
        WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
        ORDER BY ${effectiveHeatSql()} DESC LIMIT 3`
     ).bind(agentId).all<WmContinuityNote>(),
+    // Novelty draws from the COLD end, never-accessed first (2026-07-26). It used to be
+    // `LIMIT 1 OFFSET 5` over the same effective-heat ordering as Core -- i.e. the
+    // sixth-warmest note, which is not novel, it is just less popular. Because warm rows
+    // saturate at HEAT_MAX and an unaccessed row peaks at 1.0 + 0.5 coherence, both pools
+    // drew from the same frozen winners: in prod 38 of cypher's 121 eligible notes were
+    // pinned at 5.0 while 82 had NEVER been surfaced and were arithmetically unreachable.
+    // Ordering by last_access_at (NULLs first) gives every one of them a path in, and the
+    // small surface bump rotates each out again after it is shown.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
        WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
-       ORDER BY ${effectiveHeatSql()} DESC LIMIT 1 OFFSET 5`
+       ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
-    // Note: Novelty returns empty when fewer than 6 qualifying rows exist (new/sparse agents fall back to Core-only)
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
        WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
@@ -207,10 +214,13 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     }
   }
 
-  // Warm surfaced notes (0074): access is what keeps a memory hot. Non-fatal --
-  // orient never breaks on a heat bookkeeping failure.
+  // Warm surfaced notes (0074), at SURFACE_BUMP rather than the full recall bump
+  // (2026-07-26). Displaying a note is weak evidence that it matters; the companion
+  // deliberately recalling one is strong evidence. Warming both at the same rate is what
+  // let orient's own choices compound into a frozen foreground. Non-fatal -- orient never
+  // breaks on a heat bookkeeping failure.
   if (!opts.readOnly && recentNotes.length > 0) {
-    await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", recentNotes.length))
+    await env.DB.prepare(warmSql("wm_continuity_notes", "note_id", recentNotes.length, SURFACE_BUMP))
       .bind(...recentNotes.map(n => n.note_id)).run()
       .catch(e => console.warn("[orient] heat warm failed (non-fatal):", e));
   }
@@ -228,7 +238,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   // readOnly skips it for the loader's pure-read covenant; non-fatal like its siblings.
   const journalWarmIds = (recentJournal.results ?? []).map(j => j.id).filter(Boolean);
   if (!opts.readOnly && journalWarmIds.length > 0) {
-    await env.DB.prepare(warmSql("companion_journal", "id", journalWarmIds.length))
+    await env.DB.prepare(warmSql("companion_journal", "id", journalWarmIds.length, SURFACE_BUMP))
       .bind(...journalWarmIds).run()
       .catch(e => console.warn("[orient] journal heat warm failed (non-fatal):", e));
   }
@@ -281,7 +291,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     ...flagged_beliefs.map(c => c.id),
   ]));
   if (!opts.readOnly && conclusionWarmIds.length > 0) {
-    await env.DB.prepare(warmSql("companion_conclusions", "id", conclusionWarmIds.length))
+    await env.DB.prepare(warmSql("companion_conclusions", "id", conclusionWarmIds.length, SURFACE_BUMP))
       .bind(...conclusionWarmIds).run()
       .catch(e => console.warn("[orient] conclusion heat warm failed (non-fatal):", e));
   }
