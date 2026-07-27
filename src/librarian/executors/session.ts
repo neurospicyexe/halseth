@@ -1308,7 +1308,12 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     ? (synthResult.value as { id?: string }).id ?? null
     : null;
   if (synthId) {
-    await ctx.env.DB.prepare(warmSql("synthesis_summary", "id", 1)).bind(synthId).run()
+    // SURFACE_BUMP, not the recall default (2026-07-27). Orient/session_load DISPLAYING the
+    // summary is not the companion reaching for it. session-summary.ts:240 ranks the corpus by
+    // effectiveHeatSql(), so a full-bump display write is the same read-writes-the-ranking loop
+    // fixed on wm_continuity_notes -- missed on the first pass because only note warms were
+    // audited. Prod at fix time: 362 summaries, 323 NEVER accessed, the same ~19 recirculating.
+    await ctx.env.DB.prepare(warmSql("synthesis_summary", "id", 1, SURFACE_BUMP)).bind(synthId).run()
       .catch(e => console.warn("[bot-orient] synthesis warm failed (non-fatal):", e));
   }
 

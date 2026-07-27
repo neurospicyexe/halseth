@@ -4,7 +4,7 @@ import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
-import { warmSql } from "../../webmind/heat.js";
+import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 
 const COMPANION_IDENTITY = {
   cypher: {
@@ -365,7 +365,12 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   // Warm the loaded summary (0074): repeated loads keep it hot, which protects it
   // from the heat-aware write-time cap. Non-fatal.
   if (synthRaw?.id) {
-    await env.DB.prepare(warmSql("synthesis_summary", "id", 1)).bind(synthRaw.id).run()
+    // SURFACE_BUMP, not the recall default (2026-07-27). Orient/session_load DISPLAYING the
+    // summary is not the companion reaching for it. session-summary.ts:240 ranks the corpus by
+    // effectiveHeatSql(), so a full-bump display write is the same read-writes-the-ranking loop
+    // fixed on wm_continuity_notes -- missed on the first pass because only note warms were
+    // audited. Prod at fix time: 362 summaries, 323 NEVER accessed, the same ~19 recirculating.
+    await env.DB.prepare(warmSql("synthesis_summary", "id", 1, SURFACE_BUMP)).bind(synthRaw.id).run()
       .catch(e => console.warn("[session_load] synthesis warm failed (non-fatal):", e));
   }
 
