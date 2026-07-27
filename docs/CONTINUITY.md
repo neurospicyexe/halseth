@@ -114,6 +114,10 @@ Single durable list. Everything below was found during the 07-26/07-27 sweep and
 Do not re-derive this from commit messages.
 
 ### Fixed but NOT yet verified by a live fire
+
+Run `pwsh -File scripts/verify-0727-fixes.ps1` after the 03:00/05:00/07:00 pipeline -- it
+checks all of these in one pass (read-only, and it never prints the secret it resolves).
+
 | Item | What proves it |
 |---|---|
 | DeepSeek v4-pro | first pipeline at 03:00/05:00/07:00 — watch that the intermittent 400s stop |
