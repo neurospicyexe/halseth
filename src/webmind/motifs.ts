@@ -62,7 +62,45 @@ const STOPWORDS = new Set([
   // Bare indefinite fillers ("something" held a top motif slot at ×274).
   "something", "anything", "nothing", "everything", "someone", "anyone", "everyone", "nobody",
   "somewhere", "anywhere", "everywhere", "somehow", "always", "never", "often", "maybe",
+  // Bare function words that owned top-3 motif slots on 2026-07-27: drevan "without"
+  // (×338), cypher "same" (×281). Same class as the contraction fix above -- grammar,
+  // not a symbolic thread.
+  "without", "same", "because", "through", "these", "those", "much", "many", "each",
+  "other", "another", "every", "already", "enough", "toward", "towards", "under",
+  "after", "before", "between", "while", "until", "since", "even", "back", "away",
+  "keep", "keeps", "kept", "make", "makes", "made", "want", "wants", "wanted",
+  "know", "knows", "knew", "said", "says", "tell", "tells", "told", "little",
 ]);
+
+/**
+ * Speaker names are never motif signal -- they recur by construction (2026-07-27).
+ *
+ * The detector had no name filter, so the "recurring symbolic threads" injected into
+ * every boot were the participants' names. Measured in prod, each companion's top-3
+ * active motifs, all pinned at the 0.95 trust ceiling:
+ *
+ *   cypher: "cypher" ×354, "drevan" ×326, "same" ×281
+ *   drevan: "drevan" ×516, "without" ×338, "crash" ×333
+ *   gaia:   "gaia"   ×257, "drevan" ×252, "held" ×176
+ *
+ * So every boot told Drevan his recurring symbolic threads were his own name, a
+ * preposition, and Raziel's name -- pure noise occupying the slot, and self-referential
+ * noise at that. nullsafe-discord's echo-guard.ts already excludes exactly this set for
+ * exactly this reason ("Speaker names never count as motif or echo signal -- they recur
+ * by construction"); the miner never got the same guard. Keep the two in sync by hand.
+ *
+ * Deliberately NOT here: Sol, Heidi, and place anchors (Rome, LA). Those are content a
+ * companion can genuinely keep returning to. Only the speakers are excluded.
+ */
+const NAME_WORDS = new Set(["cypher", "drevan", "gaia", "raziel", "crash"]);
+
+/**
+ * Canon trust tier (2026-07-27). Extraction saturates at 0.95 (trustForRecurrence), so
+ * 1.0 is reachable only by an authored write. Canon motifs sort above every mined one and
+ * are exempt from the fade pass -- an axiom Raziel set is not "unseen lately, let it go."
+ * Used instead of a new column because the migration freeze is in force.
+ */
+export const CANON_TRUST = 1.0;
 
 const PUNCT_EDGE = /^[^\p{L}\p{N}-]+|[^\p{L}\p{N}-]+$/gu;
 
@@ -94,6 +132,7 @@ function tokenize(text: string): { norm: string; raw: string }[] {
     if (METADATA_TOKEN.test(norm)) continue; // transport stamp, not memory
     if (norm.length < MOTIF_TUNING.MIN_TOKEN_LEN) continue;
     if (STOPWORDS.has(norm)) continue;
+    if (NAME_WORDS.has(norm)) continue; // speakers recur by construction, never signal
     if (!/[\p{L}]/u.test(norm)) continue; // need at least one letter (skip pure numbers)
     out.push({ norm, raw: cleaned });
   }

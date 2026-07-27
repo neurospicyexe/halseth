@@ -17,7 +17,7 @@ import { authGuard } from "../lib/auth.js";
 import { COMPANIONS } from "../guardian/detectors.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
 import {
-  extractMotifs, trustForRecurrence, selectResurrections, MOTIF_TUNING, type MotifRow,
+  extractMotifs, trustForRecurrence, selectResurrections, MOTIF_TUNING, CANON_TRUST, type MotifRow,
 } from "../webmind/motifs.js";
 
 function json(data: unknown, status = 200): Response {
@@ -93,9 +93,12 @@ export async function postMotifsDetect(request: Request, env: Env): Promise<Resp
 
       // Fade pass: motifs unseen past the window slip active -> faded (resurrection-
       // eligible). Self-healing classification, no separate cron.
+      // Canon motifs (trust = CANON_TRUST, authored by Raziel) never fade. Extraction
+      // saturates below that, so this only ever spares deliberate writes.
       await env.DB.prepare(
         `UPDATE companion_motifs SET status = 'faded'
-         WHERE companion_id = ? AND status = 'active' AND last_seen < datetime('now','-' || ? || ' days')`
+         WHERE companion_id = ? AND status = 'active' AND trust < ${CANON_TRUST}
+           AND last_seen < datetime('now','-' || ? || ' days')`
       ).bind(id, MOTIF_TUNING.FADE_DAYS).run();
 
       perCompanion[id] = candidates.length;
