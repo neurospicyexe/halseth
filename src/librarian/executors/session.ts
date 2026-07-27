@@ -14,7 +14,7 @@ import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, MOTIF_TUNING, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
-import { warmSql } from "../../webmind/heat.js";
+import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
@@ -1233,13 +1233,43 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   const groundNotes = Array.isArray(ground?.recent_notes)
     ? (ground.recent_notes as Array<{ note_id: string; content: string; heat?: number; salience?: string }>)
     : [];
-  const surfacedNotes = [...groundNotes]
+  // Discrimination fix, bot half (2026-07-27). The 07-26 fix landed on mindOrient only --
+  // the LOW-frequency writer. This path is the high-frequency one (every bot boot, all day),
+  // so it was the actual saturation engine: it took the top 3 by heat out of ground's
+  // 10-newest window and warmed them at the full deliberate-recall bump. A note is in that
+  // window for roughly a day (cypher creates ~10/day); whatever won the window in that day
+  // hit HEAT_MAX and stayed pinned there forever, and whatever lost was never touched again
+  // by anything. Prod, live notes: cypher 43/138 saturated + 93 never accessed, drevan 32/108
+  // + 74, gaia 27/90 + 62 -- the same shape on all three. See feedback/fix-landed-on-a-
+  // different-writer.
+  //
+  // Two changes: (a) reserve one of the three slots for a note the companion has never been
+  // shown, drawn from the WHOLE live pool rather than the recency window -- ground's LIMIT 10
+  // cannot supply one once all ten are warm, and ground has other consumers so the query
+  // lives here; (b) warm at SURFACE_BUMP. Being shown a note is not reaching for it, and the
+  // read must not write the ranking that chose it.
+  //
+  // Safe against eviction: high-salience notes are never cap-evicted (notes.ts addNote), and
+  // salience-prune only scans companion_journal -- so a colder bot-surfaced note cannot be
+  // pruned out from under the live presence by this change.
+  const coreNotes = [...groundNotes]
     .sort((a, b) => (b.salience === "high" ? 1 : 0) - (a.salience === "high" ? 1 : 0) || (b.heat ?? 0) - (a.heat ?? 0))
-    .slice(0, 3);
+    .slice(0, 2);
+  const seenIds = new Set(coreNotes.map(n => n.note_id));
+  const noveltyNote = await ctx.env.DB.prepare(
+    `SELECT note_id, content FROM wm_continuity_notes
+     WHERE agent_id = ? AND archived = 0 AND salience = 'high'
+     ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
+  ).bind(agentId).first<{ note_id: string; content: string }>()
+    .catch(() => null);
+  const surfacedNotes = [
+    ...coreNotes,
+    ...(noveltyNote && !seenIds.has(noveltyNote.note_id) ? [noveltyNote as typeof coreNotes[number]] : []),
+  ];
   const continuity_notes = surfacedNotes.map(n => String(n.content ?? "").slice(0, 200)).filter(Boolean);
   const warmIds = surfacedNotes.map(n => n.note_id).filter(Boolean);
   if (warmIds.length > 0) {
-    await ctx.env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length)).bind(...warmIds).run()
+    await ctx.env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length, SURFACE_BUMP)).bind(...warmIds).run()
       .catch(e => console.warn("[bot-orient] note warm failed (non-fatal):", e));
   }
   const synthId = synthResult.status === "fulfilled" && synthResult.value
