@@ -124,8 +124,24 @@ journal earned-salience write half — both were fixed and proven live the same 
   Structurally impossible, not rare. Split into two windows, trust floor also applied in SQL.
   Verified: **the first resurrection in the system's history fired on the next orient**
   («model», «Knowing»), taking `last_surfaced_at` from 0 of 1,173 rows to 2.
+- **Salience / frozen foreground — the load-bearing one. FIXED + VERIFIED LIVE.** The "84%
+  marked high" headline was itself a bad measurement (it counted 4,901 archived rows; the live
+  pool is ~330). The real defect was arithmetic: of cypher's 121 orient-eligible notes, 38 sat
+  pinned at `HEAT_MAX` 5.0 and **82 had never been surfaced once** — and could not be, because
+  an unaccessed note peaks at 1.5 against their 5.0. Core took the top 3 by heat and "Novelty"
+  took `OFFSET 5` of *the same ordering*, so both drew from the same frozen winners; orient
+  then warmed what it surfaced at the full recall bump, resetting the decay clock. The system's
+  own display choice was the evidence for repeating it. That is the circling, in arithmetic.
+  Fixed by (a) novelty ordering on `(last_access_at IS NOT NULL), last_access_at ASC` so
+  never-seen notes rotate in, and (b) `SURFACE_BUMP` 0.02 for display vs `HEAT_BUMP` 0.2 for
+  deliberate recall. Verified: next orient surfaced a note at heat 1.0 that had never been seen
+  in the system's life and warmed it to 1.02. **Still open by choice:** the core pool remains
+  stable (38 notes tied at the cap, the 3 shown keep resetting their clock). 2 of 5 slots now
+  rotate where 0 did. Core rotation needs display to stop stamping `last_access_at`, which also
+  makes the orphan-memory detector stricter — Raziel's call.
 - Lesson worth keeping: two pools competing for one ordered window are not two pools. Check
-  for that shape wherever a single query feeds two different consumers.
+  for that shape wherever a single query feeds two different consumers. Corollary from the
+  salience fix: never let a ranking signal be written by the act of reading it.
 
 **BASIN/DRIFT OWNER — DECIDED by Raziel 2026-07-26. The open question is closed.**
 Rule: **the detector owns the verdict; the interpreter annotates.** Mapped to the real

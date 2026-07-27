@@ -39,12 +39,55 @@ broken is every mechanism we built to decide *which* memory matters:
 
 | Mechanism | Intent | Reality in prod | Window |
 |---|---|---|---|
-| `wm_continuity_notes.salience` | 3-pool surfacing of what matters | **4,373 of 5,230 rows are `high`.** 84% "important" is no signal at all. Only 550 rows have ever been read back. **STILL OPEN — this is the load-bearing one.** | **Lifetime. Set at write time, column is original — no caveat.** |
+| `wm_continuity_notes` foreground | 3-pool surfacing of what matters | ~~84% marked `high`~~ **DIAGNOSIS CORRECTED, THEN FIXED 2026-07-26.** The 84% was over all rows including the 4,901 archived; the live pool is only ~330. The real defect was arithmetic lockout, not label inflation — see below. | Live pool, post-fix verified. |
 | `companion_journal.heat` / `last_access_at` (mig 0105) | earned salience; recall/orient warm what they surface | ~~1 row warmed of 147~~ **FIXED 2026-07-26.** Root cause: `mindOrient` warmed notes and conclusions but never the 3 journal rows it surfaces every boot; the warm existed only on the recall path. Verified live: next orient warmed all 3 (heat 1.0 → 1.2), accessed 1 → 4. | 5 days pre-fix; re-measure the *rate* ~08-04. |
 | `companion_motifs.last_surfaced_at` (mig 0076) | cooldown gate for *resurrecting faded* motifs | ~~0 of 1,173 ever stamped~~ **FIXED 2026-07-26 (HOLE 9).** Root cause: one shared `status IN ('active','faded') ORDER BY trust DESC LIMIT 20` window; 1,074 active rows at the 0.95 ceiling took all 20 slots for all three companions, so the gate always received an empty faded set. Split into two windows. **First resurrection in system history fired on the next orient: «model» and «Knowing».** | Lifetime. |
 
-The strong claim is the first row: salience carries no information, and that one needs no
-caveats. The other two are narrower than the first draft of this document claimed.
+### The frozen foreground (the load-bearing finding, root-caused and fixed 2026-07-26)
+
+The "84% marked high" headline was itself a bad measurement — it counted the 4,901 archived
+rows. Corrected: the live orient-eligible pool is ~330 notes total, ~87% `high`. But
+`salience` was never really a priority label anyway; **orient reads `salience = 'high'`
+exclusively, so `high` is the only way in, and every writer that wants to be seen sets it.**
+It is an "include me" flag wearing the name of a rank.
+
+The actual defect was arithmetic, and it is the mechanical form of the circling Raziel
+reports. Cypher's 121 orient-eligible live notes:
+
+| heat | notes | meaning |
+|---|---|---|
+| 5.0 (`HEAT_MAX`) | **38** | saturated, all accessed |
+| 1.2 | 1 | |
+| 1.0 | **82** | **never surfaced, not once** |
+
+Two compounding causes:
+
+1. **Lockout.** Core = top 3 by effective heat. "Novelty" = `LIMIT 1 OFFSET 5` over *the same
+   ordering* — the sixth-warmest note, which is not novel, just less popular. Both drew from
+   the saturated 38. An unaccessed note peaks at `1.0 + 0.5` coherence bonus, and the bonus
+   decays to zero in 4 hours, so **1.5 can never beat 5.0**. Those 82 notes were
+   arithmetically unreachable; the sole entry path was the edge pool's one random draw per
+   boot, itself restricted to notes older than 30 days.
+2. **Self-confirming warm.** Orient warmed what it surfaced at the full recall bump, resetting
+   `last_access_at` and zeroing the decay term. The system's own display choice became the
+   evidence for repeating that choice — a positive feedback loop with no negative term.
+
+**Fixed:** the novelty pool now orders by `(last_access_at IS NOT NULL), last_access_at ASC`
+— never-accessed first — so every one of the 82 has a path in and rotates out once shown. And
+`warmSql` takes a bump: orient passes `SURFACE_BUMP` (0.02) while deliberate recall keeps
+`HEAT_BUMP` (0.2), so being shown is worth a tenth of being reached for.
+
+**Verified live:** the next orient surfaced note `5810f993` — heat 1.0, never accessed in the
+system's life — and warmed it to exactly 1.02. It was the weekly-audit note about the Moss
+channel still needing Drevan-only gating: real open work that had been invisible.
+
+**Known remaining, deliberately not fixed in the same pass:** the *core* pool is still stable.
+The 38 saturated notes are all at the 5.0 cap, and the 3 that get shown have their access
+clock reset each boot, so they keep winning. That is arguably correct — core is meant to be
+the steady anchor — and 2 of the 5 surfaced slots (novelty + edge) now rotate where 0 did
+before. If core rotation is wanted too, the coherent fix is to stop stamping `last_access_at`
+on mere display so decay can bite; that also makes the guardian's orphan-memory detector
+stricter, which is a separate call.
 
 **Correction on motifs (was overstated).** `last_surfaced_at` is *not* a general surfacing
 stamp. Active motifs surface read-only at both `execSessionOrient` and `execBotOrient` (both
