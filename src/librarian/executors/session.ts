@@ -12,7 +12,7 @@ import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../respo
 import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
-import { selectResurrections, MOTIF_TUNING, type MotifRow } from "../../webmind/motifs.js";
+import { selectResurrections, MOTIF_TUNING, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
@@ -226,7 +226,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     (async () => {
       const [act, fad] = await Promise.all([
         ctx.env.DB.prepare(
-          "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY trust DESC, recurrence_count DESC LIMIT 10"
+          `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 10`
         ).bind(agentId).all<MotifRow>(),
         ctx.env.DB.prepare(
           `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'faded' AND trust >= ${MOTIF_TUNING.RESURRECT_TRUST_FLOOR} ORDER BY trust DESC, recurrence_count DESC LIMIT 10`
@@ -1154,9 +1154,31 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       "SELECT id, worst_basin, notes FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<{ id: string; worst_basin: string | null; notes: string | null }>(),
     // 20. Open continuity-gap questions -- things this companion is holding to ask Raziel.
+    //
+    // Voiced-once gate (2026-07-27). This served every open question on EVERY orient, and
+    // the commons seed injects one as "a question you're holding". Gaia had exactly one open
+    // question, created 2026-07-21, and re-asked it into the commons every ~2h for six days
+    // as though it were new -- the first thing she did in the freshly-created channel was
+    // post it again. An unanswered question is not fresh material; asking it once is the
+    // whole point, and re-asking it hourly is the loop.
+    //
+    // `delivered_at` is NOT the marker to use: mig 0107 defines it as "an orient surfaced
+    // the ANSWER", a different lifecycle. Voicing is recorded in the companion_settings KV
+    // (the same store imps, active_model and the cron self-gates use) so no column is added
+    // under the migration freeze. Key is `question_voiced:<id>`; 'question_voiced:' is 16
+    // chars, so substr(key, 17) recovers the id.
+    //
+    // The question stays `open` -- it is still awaiting Raziel. It just stops being re-served
+    // as something new to say.
     ctx.env.DB.prepare(
-      "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
-    ).bind(agentId).all<{ question: string }>(),
+      `SELECT id, question FROM companion_questions
+       WHERE companion_id = ?1 AND status = 'open'
+         AND id NOT IN (
+           SELECT substr(key, 17) FROM companion_settings
+           WHERE companion_id = ?1 AND key LIKE 'question_voiced:%'
+         )
+       ORDER BY created_at DESC LIMIT 2`
+    ).bind(agentId).all<{ id: string; question: string }>(),
     // 21. Forage pool: unconsumed outward finds (own + shared) for any instance to pick up.
     // gathered_at carried so the bot can stamp each find with how long it's been waiting.
     ctx.env.DB.prepare(
@@ -1199,7 +1221,7 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
     // 27. Motifs (0076) -- recurring symbolic threads (active only), read-only for
     // the bot loom; resurrection surfacing is the session orient's job.
     ctx.env.DB.prepare(
-      "SELECT label, display, recurrence_count, trust FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY trust DESC, recurrence_count DESC LIMIT 3"
+      `SELECT label, display, recurrence_count, trust FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 3`
     ).bind(agentId).all<{ label: string; display: string; recurrence_count: number; trust: number }>(),
     // 28. Creatures (0078, take 10) -- corvid + Raziel's animals; shared presences the
     // bot loom can ask after. No companion filter (creatures belong to Raziel/the system).
@@ -1485,6 +1507,13 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
       pressure_flags,
       open_questions: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
         ? (openQuestionsResult.value.results as Array<{ question: string }>).map(r => (r.question ?? "").slice(0, 300)).filter(Boolean)
+        : [],
+      // Ids aligned by index with open_questions, so a surface that actually VOICES one can
+      // stamp it (POST /companion/settings/:id, key `question_voiced:<id>`). Added alongside
+      // rather than reshaping open_questions, which several consumers read as string[].
+      open_question_ids: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
+        ? (openQuestionsResult.value.results as Array<{ id: string; question: string }>)
+            .filter(r => (r.question ?? "").trim()).map(r => r.id)
         : [],
       answered_questions,
       forage_finds: forageResult.status === "fulfilled" && forageResult.value?.results

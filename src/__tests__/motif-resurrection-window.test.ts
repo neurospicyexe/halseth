@@ -66,7 +66,11 @@ function queryMotifs(sql: string): MotifFixture[] {
   else if (/status\s*=\s*'faded'/.test(sql)) pool = pool.filter(m => m.status === "faded");
   else if (/status IN \('active','faded'\)/.test(sql)) pool = [...pool];
 
-  const floor = /trust\s*>=\s*([0-9.]+)/.exec(sql);
+  // Anchored on the WHERE clause form. Since 2026-07-27 the ORDER BY carries
+  // effectiveTrustSql(), whose CASE contains "trust >= 1.0" (the canon exemption) -- an
+  // unanchored /trust >= N/ matched THAT and filtered the whole pool to canon-only, which
+  // silently emptied the active block. Match only the resurrection floor.
+  const floor = /AND\s+trust\s*>=\s*([0-9.]+)/.exec(sql);
   if (floor) pool = pool.filter(m => m.trust >= Number(floor[1]));
 
   const sorted = [...pool].sort((a, b) => b.trust - a.trust || b.recurrence_count - a.recurrence_count);

@@ -17,7 +17,7 @@ import { authGuard } from "../lib/auth.js";
 import { COMPANIONS } from "../guardian/detectors.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
 import {
-  extractMotifs, trustForRecurrence, selectResurrections, MOTIF_TUNING, CANON_TRUST, type MotifRow,
+  extractMotifs, trustForRecurrence, selectResurrections, MOTIF_TUNING, CANON_TRUST, effectiveTrustSql, type MotifRow,
 } from "../webmind/motifs.js";
 
 function json(data: unknown, status = 200): Response {
@@ -133,7 +133,7 @@ export async function getMotifs(request: Request, env: Env, params: Record<strin
     const motifs = await env.DB.prepare(
       `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status
        FROM companion_motifs WHERE ${conditions.join(" AND ")}
-       ORDER BY trust DESC, recurrence_count DESC LIMIT ?`
+       ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT ?`
     ).bind(...bindings, limit).all<MotifRow>();
 
     // Resurrection candidates: high-trust faded motifs off cooldown.

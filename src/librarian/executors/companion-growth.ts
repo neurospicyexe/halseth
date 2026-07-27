@@ -1,7 +1,7 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus } from "../backends/halseth.js";
 import { getCurrentLimbicState } from "../../webmind/limbic.js";
-import { selectResurrections, type MotifRow } from "../../webmind/motifs.js";
+import { selectResurrections, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
 import { collectionForageSql, collectionMediaSql, bumpSparkleSql, sparkleDelta } from "../../webmind/collection.js";
@@ -328,7 +328,7 @@ export async function execForageRead(ctx: ExecutorContext): Promise<ExecutorResu
 export async function execMotifsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "motifs_read_failed", reason: "companion_id required" };
   const rows = await ctx.env.DB.prepare(
-    "SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status IN ('active','faded') ORDER BY trust DESC, recurrence_count DESC LIMIT 20"
+    `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status IN ('active','faded') ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 20`
   ).bind(ctx.req.companion_id).all<MotifRow>();
   const all = rows.results ?? [];
   const active = all.filter(m => m.status === "active").slice(0, 8);

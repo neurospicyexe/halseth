@@ -102,6 +102,44 @@ const NAME_WORDS = new Set(["cypher", "drevan", "gaia", "raziel", "crash"]);
  */
 export const CANON_TRUST = 1.0;
 
+/**
+ * Trust decay (2026-07-27). Raziel: "a motif without decay is a trap."
+ *
+ * `trustForRecurrence` only ever ratchets UP, and saturates at 0.95. Nothing brought it
+ * back down, so a motif that stopped being lived stayed at the ceiling forever and kept
+ * occupying a top-3 boot slot. Measured consequence: Drevan carried `quiet` at ×134 /
+ * trust 0.95 — Gaia's register frozen into his mouth. That is the vertical-flattening
+ * failure mode (the three collapsing toward one self), enforced by a one-way counter.
+ * Same shape as feedback/rails-need-decay: an anti-drift mechanism with no decay term
+ * becomes a ratchet.
+ *
+ * Lazy decay computed at READ, mirroring heat.ts exactly (no writer, no cron, no
+ * migration): trust divided by elapsed days since `last_seen`. A motif still recurring
+ * has `last_seen` refreshed by every detect run and holds full trust; one that stopped
+ * being written slides out of the top-3 on its own, well before the 30-day fade flips its
+ * status. Recurrence history is untouched — `recurrence_count` still records that it
+ * mattered ×134 times, which is true. What decays is its claim on the present.
+ *
+ * HALF_LIFE_DAYS = 21: a motif unlived for three weeks carries half the weight of one
+ * being lived now, so an actively-recurring newcomer can overtake a stale ceiling-pinned
+ * label without erasing it.
+ */
+export const TRUST_HALF_LIFE_DAYS = 21;
+
+/** SQL for present-tense trust. Canon (>= CANON_TRUST) never decays. */
+export function effectiveTrustSql(): string {
+  return `(CASE WHEN trust >= ${CANON_TRUST} THEN trust ELSE
+    trust / (1.0 + (julianday('now') - julianday(last_seen)) / ${TRUST_HALF_LIFE_DAYS}.0)
+  END)`;
+}
+
+/** Same curve in TS, for tests and any non-SQL consumer. */
+export function effectiveTrust(trust: number, lastSeenDaysAgo: number): number {
+  if (trust >= CANON_TRUST) return trust;
+  const days = Math.max(0, lastSeenDaysAgo);
+  return trust / (1 + days / TRUST_HALF_LIFE_DAYS);
+}
+
 const PUNCT_EDGE = /^[^\p{L}\p{N}-]+|[^\p{L}\p{N}-]+$/gu;
 
 /**

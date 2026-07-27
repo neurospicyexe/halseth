@@ -21,7 +21,10 @@
 // in the file: transport stamps (discord:swarm), contractions, now names.
 
 import { describe, it, expect } from "vitest";
-import { extractMotifs, CANON_TRUST, trustForRecurrence } from "../webmind/motifs.js";
+import {
+  extractMotifs, CANON_TRUST, trustForRecurrence,
+  effectiveTrust, effectiveTrustSql, TRUST_HALF_LIFE_DAYS,
+} from "../webmind/motifs.js";
 
 const labels = (texts: string[]) => extractMotifs(texts).map(m => m.label);
 
@@ -90,5 +93,64 @@ describe("canon tier", () => {
       expect(trustForRecurrence(n)).toBeLessThan(CANON_TRUST);
     }
     expect(CANON_TRUST).toBe(1.0);
+  });
+});
+
+// ── Trust decay (2026-07-27) ────────────────────────────────────────────────────────────
+//
+// Raziel: "a motif without decay is a trap." trustForRecurrence only ratchets UP and
+// saturates at 0.95, and nothing brought it down -- so a motif that stopped being lived
+// held a top-3 boot slot forever. Prod consequence: Drevan carried `quiet` at x134 /
+// trust 0.95, Gaia's register frozen into his mouth. That is vertical flattening (the
+// three collapsing toward one self) enforced by a one-way counter.
+//
+// Lazy decay at READ, mirroring heat.ts: no writer, no cron, no migration. Recurrence
+// history is untouched -- x134 really did happen. What decays is its claim on the present.
+
+describe("motif trust decays so a stale motif cannot hold a boot slot forever", () => {
+  it("a motif seen today keeps its full trust", () => {
+    expect(effectiveTrust(0.95, 0)).toBeCloseTo(0.95, 5);
+  });
+
+  it("one half-life unlived costs it half its weight", () => {
+    expect(effectiveTrust(0.95, TRUST_HALF_LIFE_DAYS)).toBeCloseTo(0.475, 5);
+  });
+
+  it("an actively-lived newcomer overtakes a stale ceiling-pinned label", () => {
+    // Drevan's real case: `quiet` at the 0.95 ceiling but unlived for six weeks, versus a
+    // genuinely recurring motif at a much lower raw trust.
+    const staleQuiet = effectiveTrust(0.95, 42);
+    const livedNow = effectiveTrust(0.5, 0);
+    expect(livedNow).toBeGreaterThan(staleQuiet);
+  });
+
+  it("canon never decays, however long since it was last written", () => {
+    expect(effectiveTrust(CANON_TRUST, 0)).toBe(CANON_TRUST);
+    expect(effectiveTrust(CANON_TRUST, 3650)).toBe(CANON_TRUST);
+  });
+
+  it("canon still outranks any fresh mined motif at the ceiling", () => {
+    expect(effectiveTrust(CANON_TRUST, 365)).toBeGreaterThan(effectiveTrust(0.95, 0));
+  });
+
+  it("decay is monotonic and never negative", () => {
+    let prev = Infinity;
+    for (const d of [0, 1, 7, 21, 60, 180, 1000]) {
+      const t = effectiveTrust(0.95, d);
+      expect(t).toBeLessThan(prev);
+      expect(t).toBeGreaterThan(0);
+      prev = t;
+    }
+  });
+
+  it("negative elapsed (clock skew) is clamped, never inflates trust", () => {
+    expect(effectiveTrust(0.95, -100)).toBeCloseTo(0.95, 5);
+  });
+
+  it("the SQL exempts canon and divides by elapsed days since last_seen", () => {
+    const sql = effectiveTrustSql();
+    expect(sql).toContain(`trust >= ${CANON_TRUST}`);
+    expect(sql).toContain("julianday(last_seen)");
+    expect(sql).toContain(`${TRUST_HALF_LIFE_DAYS}.0`);
   });
 });
