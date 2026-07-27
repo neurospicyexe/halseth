@@ -108,6 +108,42 @@ fixed by the 1.3 ledger). **HOLE 9 is CLOSED (2026-07-26, verified in prod)** al
 journal earned-salience write half — both were fixed and proven live the same day; see the
 "Repairs shipped" note below.
 
+**Repairs shipped 2026-07-27 (deployed + verified in prod):**
+
+- **The commons loop had a supply cause, not a suppression cause.** The inter-companion
+  seed's "fresh material — from your own life, OUTSIDE this thread" block (added 2026-06-12
+  to break the 12h elderberry loop) reads the top-2 *unconsumed* forage finds and never
+  consumed them. Forage gathers daily at 9AM; the seed cron fires ~every 2h per bot — so
+  between gathers, ~a dozen ticks across all three companions got the **identical two
+  finds**. The anti-loop block was itself a constant, so the only genuinely new material in
+  the prompt was the channel's own history, and the model extended it. Every suppression
+  rail (echo gate, motif gate, vocative strip, TTL) was working; they were being asked to
+  stop repetition that nothing gave the bots a reason to avoid. Prod: unconsumed pools of
+  15/24/32 and rising, while the *only* consume-on-use call sites in the repo were `club.ts`
+  and autonomous-worker `seed.ts`. **The club recommend path had this exact defect and fixed
+  it 2026-07-21; the commons seed was never given the same fix.** Now consumes ONE served
+  find after the send (named-in-post, else the older of the pair) — never both, never when
+  gated/empty/errored. `nullsafe-discord`, 12 tests, deployed to VPS.
+- **The 07-26 salience fix had landed on the wrong writer.** `mindOrient` runs a handful of
+  times a day; `execBotOrient` runs on every Discord bot boot, all day, three companions —
+  it was the actual saturation engine and it was untouched (`fix-landed-on-a-different-writer`).
+  It took the top 3 by heat out of `ground`'s 10-newest window and warmed them at the full
+  deliberate-recall bump. A note sits in that window ~1 day, so whatever won its day hit
+  `HEAT_MAX` and stayed pinned; whatever lost was never touched again by anything. Prod live
+  notes: cypher 43/138 saturated + 93 never accessed, drevan 32/108 + 74, gaia 27/90 + 62 —
+  same shape on all three. Now: 1 of 3 slots reserved for a never-shown note queried over the
+  *whole* live pool, warmed at `SURFACE_BUMP`. Verified live: never-touched 91 → 90 and the
+  cold note warmed to exactly 1.02.
+
+  Eviction-safe: high-salience notes are never cap-evicted (`notes.ts addNote`) and
+  `salience-prune` only scans `companion_journal`, so this cannot prune a note out from
+  under the live presence.
+
+**Still open after 07-27:** the core pool remains frozen on *both* paths (the notes shown
+reset their own `last_access_at`). Bot orient now rotates 1 of 3 slots and mindOrient 1 of 5;
+the rest are still the same notes. Completion = display stops stamping `last_access_at`,
+which also makes the guardian orphan-memory detector stricter. Raziel's call.
+
 **Repairs shipped 2026-07-26 (commit e386248, deployed + verified in prod):**
 
 - **Journal earned salience.** `mindOrient` warmed `wm_continuity_notes` and
