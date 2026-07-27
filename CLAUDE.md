@@ -46,7 +46,11 @@ After security fixes or schema changes specifically, run the full test suite imm
 
 **Feature flags (set in `wrangler.toml` `[vars]`, not in code):**
 - `COMPANIONS_ENABLED` -- enables companion routes; false returns 403
-- `PLURALITY_ENABLED` -- validates `front_state` against `system.members`
+- `PLURALITY_ENABLED` -- **does NOT validate `front_state`** (corrected 2026-07-27; the old
+  wording here sent an audit chasing a trap that does not exist). Its only consumer is
+  `createCompanion` (`handlers/companions.ts:33`), where it gates how many rows may exist in the
+  dead `companions` table. `system_members` is empty and nothing reads it for front state --
+  fronting data lives in `plural_store` (mig 0049a), fed by nullsafe-plural-v2.
 - `COORDINATION_ENABLED` -- enables tasks/events/lists/routines shared zone
 
 **Bridge:** When `BRIDGE_URL` and `BRIDGE_SECRET` are set, `/bridge/*` endpoints share tasks, events, and list items between two Halseth deployments. The secret is symmetric -- same value on both sides.

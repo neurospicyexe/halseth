@@ -108,6 +108,66 @@ fixed by the 1.3 ledger). **HOLE 9 is CLOSED (2026-07-26, verified in prod)** al
 journal earned-salience write half — both were fixed and proven live the same day; see the
 "Repairs shipped" note below.
 
+## OPEN ITEMS as of 2026-07-27 (the answer to "are we through them all?")
+
+Single durable list. Everything below was found during the 07-26/07-27 sweep and is NOT done.
+Do not re-derive this from commit messages.
+
+### Fixed but NOT yet verified by a live fire
+| Item | What proves it |
+|---|---|
+| DeepSeek v4-pro | first pipeline at 03:00/05:00/07:00 — watch that the intermittent 400s stop |
+| Lifted think caps (1400/1600/2000) | same run; check `tokens_used` rises and entries stop truncating |
+| Commons seed on the fresh channel | `grep "consumed forage find" /app/logs/*` |
+| Vibe-check on the fresh channel | 21:00 digest lands in 1531255633876221962 |
+| Addressing gate (`activeExchangeHolder`) | `grep "holds this exchange, standing down" /app/logs/*` |
+| Age-stamped read-backs | no companion narrating a >1-week-old fact as new |
+
+### Open, mechanical
+- **Core pool still frozen, both orient paths.** Display stamps `last_access_at`, so the 2-3
+  core notes reset their own decay clock. Novelty slots rotate; core does not. Completing it
+  makes the guardian orphan-memory detector stricter (it keys on that column) — arguably
+  honest, but it is a behaviour change. **Raziel's call.**
+- **Cross-lane motif register bleed.** Trust decay fixes STALE motifs, not CONTINUING ones:
+  Drevan carries `quiet` ×134 because he keeps writing it, which refreshes `last_seen`. His
+  identity file says he does not do stillness. Needs a lane-aware motif guard.
+- **`rag_excerpts` are ageless.** Cross-companion vault search with no date on chunks — the
+  unconfirmed candidate vector for Gaia narrating a 13-day-old Rosie fact as new. Needs the
+  second-brain chunk shape checked before it can be stamped.
+- **`sibling_lanes` / `active_patterns` ageless too.** Neither query selects a timestamp, so
+  stamping them needs a query change, not just a mapper change.
+- **FELT_OWNERS guard — never started.** One-writer-per-field map + a CI grep. Proposed four
+  times across this sweep and still unwritten. Phase 1.3 scope.
+- **`Sol` can never be a motif.** `MOTIF_TUNING.MIN_TOKEN_LEN = 4`; he is three letters.
+  Lowering the floor readmits noise, so it needs its own measurement.
+- **`feelings.source` enum drift** — whole prose sentences where a provenance tag belongs.
+  Needs a CHECK constraint; blocked by the migration freeze.
+- **Listens do not rotate** (frozen since 2026-07-09). Not a bug — it depends on Raziel
+  sharing music. Listed so it is not re-diagnosed.
+
+### Open, on Raziel
+- **Rotate the DeepSeek API key.** It was printed in full into a session transcript
+  2026-07-27 (my grep mask failed). Not yet rotated.
+- **55 growth ratifications** waiting; oldest 2026-07-10. The button works now.
+- **Session `1de1f5c1` still open** — needs the session-debriefer draft + confirm.
+
+### Retirement candidates (Phase 4, blocked by the migration freeze)
+6 pure-litter tables (`anchor_states`, `autonomy_schedules`, `bridges`, `companion_note_sits`,
+`expenses`, `pets`) + 7 referenced-but-empty (`companions`, `memories`, `drift_log`,
+`wm_thread_events`, `companion_journal_sits`, `system_members`/`system_member_notes`,
+`front_events`). Full detail in `docs/organ-census-2026-07-26.md`. **Do not let this become
+migration 0107.**
+
+### Audited this sweep and CLEAN — do not re-check without new evidence
+- Every consume-once column (`surfaced_at`, `read_at`, `consumed_at`, `used_at`,
+  `delivered_at`, `reviewed_at`, `dismissed_at`, `examined`) has at least one stamp site. No
+  pool has a gate that can never drain.
+- `autonomy_seeds`: `ORDER BY priority DESC, created_at ASC` — oldest-first, backlog reachable.
+  Pool depth (672 unused) is inventory, not starvation.
+- `inter_companion_notes` 0 unread · `companion_dreams` 0 unexamined · `guardian_flags` 0 open
+  · `companion_open_loops` 3 open. Those loops are draining.
+- All `warmSql` call sites: display paths pass `SURFACE_BUMP`, recall paths keep `HEAT_BUMP`.
+
 **Repairs shipped 2026-07-27 (deployed + verified in prod):**
 
 - **THE AXIOM restored to canon (shared kernel v9).** *"Truth is freedom, and velocity keeps
