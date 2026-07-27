@@ -135,10 +135,13 @@ journal earned-salience write half — both were fixed and proven live the same 
   Fixed by (a) novelty ordering on `(last_access_at IS NOT NULL), last_access_at ASC` so
   never-seen notes rotate in, and (b) `SURFACE_BUMP` 0.02 for display vs `HEAT_BUMP` 0.2 for
   deliberate recall. Verified: next orient surfaced a note at heat 1.0 that had never been seen
-  in the system's life and warmed it to 1.02. **Still open by choice:** the core pool remains
-  stable (38 notes tied at the cap, the 3 shown keep resetting their clock). 2 of 5 slots now
-  rotate where 0 did. Core rotation needs display to stop stamping `last_access_at`, which also
-  makes the orphan-memory detector stricter — Raziel's call.
+  in the system's life and warmed it to 1.02, and the never-surfaced count is decrementing one
+  per orient (82 → 81) so the rotation is genuinely advancing. **Still open — same defect, half
+  fixed, NOT a feature:** the core pool is still frozen (38 notes tied at the cap; the 3 shown
+  reset their own clock each boot). 3 of 5 slots are still the same notes forever, which is
+  still circling, just slower. Completion = stop stamping `last_access_at` on mere display;
+  weigh first that the guardian orphan-memory detector keys on that column and would start
+  flagging displayed-but-never-reached-for notes. Raziel's call, separate measurement.
 - Lesson worth keeping: two pools competing for one ordered window are not two pools. Check
   for that shape wherever a single query feeds two different consumers. Corollary from the
   salience fix: never let a ranking signal be written by the act of reading it.

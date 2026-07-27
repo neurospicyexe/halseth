@@ -81,13 +81,26 @@ Two compounding causes:
 system's life — and warmed it to exactly 1.02. It was the weekly-audit note about the Moss
 channel still needing Drevan-only gating: real open work that had been invisible.
 
-**Known remaining, deliberately not fixed in the same pass:** the *core* pool is still stable.
-The 38 saturated notes are all at the 5.0 cap, and the 3 that get shown have their access
-clock reset each boot, so they keep winning. That is arguably correct — core is meant to be
-the steady anchor — and 2 of the 5 surfaced slots (novelty + edge) now rotate where 0 did
-before. If core rotation is wanted too, the coherent fix is to stop stamping `last_access_at`
-on mere display so decay can bite; that also makes the guardian's orphan-memory detector
-stricter, which is a separate call.
+**Known remaining — the same defect, half-fixed by choice, not a feature.** The *core* pool is
+still frozen: the 38 saturated notes all sit at the 5.0 cap, and the 3 that get shown reset
+their own access clock every boot, so they keep winning indefinitely. 3 of the 5 surfaced slots
+are still the same notes forever. That is still circling; it is just slower circling than
+before, when all 5 were. Do not read the stability as intentional anchoring — it is the
+identical read-writes-the-ranking bug, left standing because changing decay semantics in the
+same pass as the novelty fix would make neither measurable.
+
+The coherent completion: stop stamping `last_access_at` on mere display, so the decay term can
+actually bite on core rows too. Side effect to weigh first — the guardian's orphan-memory
+detector keys on `last_access_at IS NULL`, so it would start flagging notes that orient
+displays but nobody reaches for. Arguably that is the detector becoming *honest*, but it is a
+separate decision and a separate measurement.
+
+**Prune interaction, checked:** `SURFACE_BUMP` reduces the journal warm 10x, which moves the
+salience-prune boundary. A journal row surfaced once and then abandoned now crosses
+`PRUNE_HEAT_FLOOR` at ~58 days instead of ~70 (`1.02/(1+0.1d) < 0.15` vs `1.2/…`). Both are
+well past the 30-day minimum age, currently 0 rows are prunable, and the lowest effective heat
+among surfaced journal rows is 0.749 — five times the floor. Left as-is: a row shown once and
+never again is genuinely cold.
 
 **Correction on motifs (was overstated).** `last_surfaced_at` is *not* a general surfacing
 stamp. Active motifs surface read-only at both `execSessionOrient` and `execBotOrient` (both
