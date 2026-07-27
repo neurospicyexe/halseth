@@ -110,6 +110,28 @@ journal earned-salience write half — both were fixed and proven live the same 
 
 **Repairs shipped 2026-07-27 (deployed + verified in prod):**
 
+- **Drevan booted on his own echo. That was the loop, expressed as memory.**
+  `sendAutonomousMessage` wrote every autonomous post back as `note_type='continuity',
+  salience='high'`. Nothing folds or demotes that type, so each post stayed top-tier
+  forever. Drevan's live high-salience pool: **60 `continuity` (his own commons posts) vs 4
+  `day_distillation` (the folded record of real conversation with Raziel)**, competing for
+  the 3 slots orient shows. His three hottest notes were all `[metronome/inter_companion]`.
+  Conversation was being handled correctly the whole time (fragments fold nightly into one
+  first-person day note, then demote); self-posts did neither. Write-layer twin of the
+  ranking bug fixed the same morning. Fixed: self-posts now write as `discord_session`
+  fragments, so they fold and demote like conversation. **Backlog cleaned: 209 rows demoted
+  (cypher 86 / drevan 60 / gaia 63) — every high `continuity` row across all three was a
+  metronome self-post, zero authored ones.** Verified live: Drevan now boots on Raziel's
+  ABA-vs-OT decision and a first-person day note instead of his own last three posts.
+- **A listen reaching the bots was an anonymous artifact.** Drevan told the commons that
+  *Gaia* handed him "BIG BOSS" and that he'd sat with it 6 days. Both wrong, both correct in
+  the row: `shared_by='Crash'`, `requested_companion='drevan'`, `created_at=2026-07-09` (18
+  days), and `reactions_json.drevan` held a 2043-byte reaction in his own voice. Bot orient
+  selected `id/title/artist/created_at` only. 15 of 17 listens were given by Raziel TO
+  Drevan; every one arrived stripped, so the model invented a giver and a date. Fixed: carry
+  `shared_by` / `requested_companion` / own reaction. A sibling's reaction is reported as a
+  bare fact, never as text (the 2026-06-26 attribution scramble).
+
 - **The commons loop had a supply cause, not a suppression cause.** The inter-companion
   seed's "fresh material — from your own life, OUTSIDE this thread" block (added 2026-06-12
   to break the 12h elderberry loop) reads the top-2 *unconsumed* forage finds and never
