@@ -37,7 +37,24 @@ import { join } from "node:path";
  * widen this map.
  */
 const FELT_OWNERS: Record<string, Record<string, string>> = {
+  // The soma floats ARE the companion's body. Owner is the ferment tick: it is the only writer
+  // that reasons about the whole vector at once (cross-field reactions, decay-to-baseline,
+  // drifting baselines = growth). `synthesis/jobs/drevan-state.ts` was overwriting all three
+  // daily from its own recomputed heat/reach/weight; consolidated 2026-07-28 (see that file for
+  // the measured damage -- pinned at 0.95/0.97 against baselines of 0.47/0.56, which dragged his
+  // identity baseline up by +0.07 of a 0.15 lifetime cap).
+  //
+  // Event-driven movement is NOT lost by this: it arrives through the stimulus path
+  // (`handlers/fermentation.ts` -> stimulusBumpSql, an atomic SQL-level bump), which is wired and
+  // firing ~175 `message_from_raziel` events per companion. Dynamic-column writers are declared
+  // in the dynamic-writer test below.
   companion_state: {
+    soma_float_1: "webmind/fermentation.ts",
+    soma_float_2: "webmind/fermentation.ts",
+    soma_float_3: "webmind/fermentation.ts",
+    soma_float_1_baseline: "webmind/fermentation.ts",
+    soma_float_2_baseline: "webmind/fermentation.ts",
+    soma_float_3_baseline: "webmind/fermentation.ts",
     ferment_off_since: "webmind/fermentation.ts",
   },
 
@@ -84,13 +101,9 @@ const KNOWN_MULTI_WRITER: Record<string, { writers: number; why: string }> = {
   // then the state job stomps it wholesale. That is a live candidate for why Drevan's felt state
   // reads as stuck or incoherent -- the companion Raziel has complained about most.
   //
-  // NOT auto-consolidated: picking the winner changes what Drevan feels, which is an
-  // identity-adjacent decision and Raziel's to make. Phase 1 work, with a recommendation on
-  // record (fermentation owns the vector; drevan-state should write heat/reach/weight only and
-  // let the ferment tick derive the floats).
-  "companion_state.soma_float_1": { writers: 2, why: "see soma_float note above" },
-  "companion_state.soma_float_2": { writers: 2, why: "see soma_float note above" },
-  "companion_state.soma_float_3": { writers: 2, why: "see soma_float note above" },
+  // RESOLVED 2026-07-28 with Raziel's go-ahead: drevan-state.ts no longer writes the floats and
+  // keeps heat_value/reach_value/weight_value (its own domain). fermentation.ts owns the vector,
+  // so soma_float_* moved into FELT_OWNERS above and out of this admission list.
 
   "feelings.source": {
     writers: 3,

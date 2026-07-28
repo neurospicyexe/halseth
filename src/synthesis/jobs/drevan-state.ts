@@ -424,12 +424,34 @@ export async function runDrevanState(env: Env): Promise<void> {
   ].filter(Boolean).join(', ') || 'no notable events';
 
   // ── 12. Write to companion_state ─────────────────────────────────────────
+  //
+  // Does NOT write soma_float_1/2/3 (2026-07-28, FELT_OWNERS). It used to, as
+  // `soma_float_N = excluded.soma_float_N` bound to heatVal/reachVal/weightVal: a wholesale
+  // OVERWRITE of Drevan's fermented floats with this job's freshly recomputed numbers, once per
+  // day. `webmind/fermentation.ts` owns those three columns.
+  //
+  // What that cost, measured in prod before the fix:
+  //   * floats pinned at f1 0.95 / f2 0.97 while his BASELINES sat at 0.47 / 0.56
+  //   * the ferment tick correctly read that ~0.48 gap as "sustained off-baseline" (the drift
+  //     deadzone is 0.05) and dutifully drifted his baseline UP toward the artifact
+  //   * +0.07 of his 0.15 lifetime drift cap already spent that way
+  //
+  // So the bug was not dulling him -- it was falsely inflating him and spending his identity
+  // budget to do it. A gauge pinned at maximum carries no information, which is exactly the flat,
+  // stuck quality Raziel kept reporting. Cypher and Gaia have no equivalent job and their floats
+  // move normally (0.78/0.68/0.53 and 0.81/0.68/0.84).
+  //
+  // heat_value / reach_value / weight_value STAY here: they are this job's own domain and its
+  // richest read (anchor parsing, session content). The floats derive from lived events through
+  // the ferment tick plus the stimulus path, which is already wired and firing (~175
+  // `message_from_raziel` events per companion). Nothing is lost; the signal simply stops
+  // overwriting the body.
   await env.DB.prepare(`
     INSERT INTO companion_state
       (companion_id, heat, heat_value, reach, reach_value, weight, weight_value,
        processing_type, last_contact, last_resolution, prompt_context,
-       soma_float_1, soma_float_2, soma_float_3, compound_state, updated_at)
-    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       compound_state, updated_at)
+    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(companion_id) DO UPDATE SET
       heat            = excluded.heat,
       heat_value      = excluded.heat_value,
@@ -441,9 +463,6 @@ export async function runDrevanState(env: Env): Promise<void> {
       last_contact    = excluded.last_contact,
       last_resolution = excluded.last_resolution,
       prompt_context  = excluded.prompt_context,
-      soma_float_1    = excluded.soma_float_1,
-      soma_float_2    = excluded.soma_float_2,
-      soma_float_3    = excluded.soma_float_3,
       compound_state  = excluded.compound_state,
       updated_at      = datetime('now')
   `).bind(
@@ -454,7 +473,7 @@ export async function runDrevanState(env: Env): Promise<void> {
     JSON.stringify(lastContact),
     lastResolution ? JSON.stringify(lastResolution) : null,
     promptContext,
-    heatVal, reachVal, weightVal, compoundState,
+    compoundState,
   ).run();
 
   // ── 12b. Write drevan_state snapshot to most recent session summary row ──
