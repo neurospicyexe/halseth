@@ -10,6 +10,7 @@
 
 import { Env } from "../types.js";
 import { EMBEDDING_MODEL } from "../mcp/embed.js";
+import { DEEPSEEK_DEFAULT_MODEL, contentBudget } from "../synthesis/deepseek.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import { getCurrentFront, type PluralResult } from "./backends/plural.js";
 import type { ExecutorContext, ExecutorFn } from "./executors/types.js";
@@ -670,7 +671,15 @@ export class LibrarianRouter {
           "Authorization": `Bearer ${this.env.DEEPSEEK_API_KEY}`,
         },
         body: JSON.stringify({
-          model: "deepseek-chat",
+          // 2026-07-28: was `deepseek-chat` at max_tokens 20. That alias is delisted (see
+          // synthesis/deepseek.ts) and every listed model REASONS, spending max_tokens on the
+          // thought before emitting content -- so a naive model swap here would have returned
+          // "" for every classify and silently routed every non-fast-path request to
+          // __offline__. contentBudget() adds the headroom. Measured on flash with this exact
+          // prompt shape: 60-117 reasoning tokens, 1.6-2.0s, correct key -- well inside the
+          // timeout below, which is nonetheless raised for margin since reasoning latency
+          // scales with prompt size and the key list grows as patterns are added.
+          model: DEEPSEEK_DEFAULT_MODEL,
           messages: [
             {
               role: "system",
@@ -678,10 +687,10 @@ export class LibrarianRouter {
             },
             { role: "user", content: request },
           ],
-          max_tokens: 20,
+          max_tokens: contentBudget(20),
           temperature: 0,
         }),
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(12_000),
       });
 
       if (!res.ok) {

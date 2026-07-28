@@ -9,6 +9,7 @@
 
 import { Env } from "../../types.js";
 import { embedText } from "../../mcp/embed.js";
+import { DEEPSEEK_DEFAULT_MODEL, contentBudget } from "../deepseek.js";
 
 interface BasinRow {
   basin_name: string;
@@ -147,9 +148,13 @@ drift_score: 0.0 = fully aligned, 2.0 = severe departure`;
       "Authorization": `Bearer ${env.DEEPSEEK_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      // 2026-07-28: was `deepseek-chat` (delisted) at max_tokens 120. Every listed model
+      // reasons, spending max_tokens on the thought before emitting content -- at 120 this
+      // would have returned "" and the JSON parse below would have thrown on every check.
+      // See synthesis/deepseek.ts for the measurement.
+      model: DEEPSEEK_DEFAULT_MODEL,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 120,
+      max_tokens: contentBudget(120),
       temperature: 0,
     }),
   });
