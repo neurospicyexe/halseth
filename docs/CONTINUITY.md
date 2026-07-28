@@ -113,21 +113,84 @@ journal earned-salience write half — both were fixed and proven live the same 
 Single durable list. Everything below was found during the 07-26/07-27 sweep and is NOT done.
 Do not re-derive this from commit messages.
 
-### Fixed but NOT yet verified by a live fire
+### VERIFIED 2026-07-28 by `scripts/verify-0727-fixes.ps1` — six of seven closed
 
-Run `pwsh -File scripts/verify-0727-fixes.ps1` after the 03:00/05:00/07:00 pipeline -- it
-checks all of these in one pass (read-only, and it never prints the secret it resolves).
+Run the script again any time; it is read-only and never prints the secret it resolves.
 
-| Item | What proves it |
+| Item | Result |
 |---|---|
-| DeepSeek v4-pro | first pipeline at 03:00/05:00/07:00 — watch that the intermittent 400s stop |
-| Lifted think caps (1400/1600/2000) | same run; check `tokens_used` rises and entries stop truncating |
-| Commons seed on the fresh channel | `grep "consumed forage find" /app/logs/*` |
-| Vibe-check on the fresh channel | 21:00 digest lands in 1531255633876221962 |
-| Addressing gate (`activeExchangeHolder`) | `grep "holds this exchange, standing down" /app/logs/*` |
-| Age-stamped read-backs | no companion narrating a >1-week-old fact as new |
+| DeepSeek v4-pro | **PASS** — 0 failed runs in 12h (was ~37% failing) |
+| Commons seed on the fresh channel | **PASS** — three consumes logged 08:30 / 10:30 / 12:30 |
+| Addressing gate (`activeExchangeHolder`) | **PASS** — gaia stood down for drevan 3× incl. 10:51 today |
+| Voiced-once questions | **PASS** — one stamped, `status` still `open` |
+| Forage pools draining | **PASS** — 15/24/32 → 2/11/16 |
+| Never-surfaced notes | **PASS (partial)** — cypher 55→45, gaia 33→20; **drevan flat at 45** while his
+  live pool grew to 106. One novelty slot per orient cannot keep up with his write rate. Not
+  a regression; listed under mechanical below. |
+| Lifted think caps | **DID NOT HOLD** — tokens stayed at ~18-21k, and one run logged 0. Root
+  cause was NOT the caps: see the reasoning-token entry below. Now 25,352 on a verified run. |
+| `synthesis_summary` reach | **Expected flat** (19 saturated / 323 never, unchanged). The fix
+  stopped further saturation; it never added rotation. `synthId` is one id from ground, the
+  same one every time. Moved to mechanical below — do not re-investigate as a failure. |
+
+Ratification queue: 55 → **46** (Raziel worked 9). Oldest still 2026-07-10.
+
+### RESOLVED 2026-07-28 — reasoning tokens were eating every small `max_tokens`
+
+The verification run surfaced three live breaks that the 07-27 sweep never saw, and they all
+collapsed to one cause. **Both** live DeepSeek models (`v4-pro` AND `v4-flash`) are REASONING
+models: reasoning tokens are billed against `max_tokens` and emitted BEFORE any content, so a
+ceiling at or below the reasoning burn returns `content: "", finish_reason: "length"`. Measured
+on a 19-token prompt: at `max_tokens: 100`, 100 reasoning tokens and no answer.
+
+The 07-27 pro cutover lifted the three "phases that think" ceilings but deliberately left the
+80-500 token classifier/extractor calls alone — and **that comment was the bug**. Damage:
+
+- forage summaries (250) → "empty summary" for EVERY candidate → **0 finds gathered across all
+  three companions**, while consume-on-use kept draining the pools. Cypher was 2 from empty.
+- compress (400) → `POST /mind/notes/archive 400: summary is required`
+- reflect emit (1600, large prompt) → `POST /mind/autonomy/reflections 400: reflection_text
+  required` — no reflection written by anyone between 07-27 12:00 and the fix
+- one run recorded `status=completed` with `tokens_used=0`
+
+`deepseek-chat` is also **DELISTED** — `GET /v1/models` returns exactly `deepseek-v4-pro` and
+`deepseek-v4-flash`. The alias still answers, which is precisely how it survived unnoticed in
+**seven** places: worker config, shared `DeepSeekAdapter` default, `FALLBACK_ORDER`, `models.ts`
+registry, Halseth's Librarian classifier, Halseth's synthesis clerk, and Halseth's
+`basin-drift-check` (that last one found by the new CI scan, *not* by grep). There is no
+non-reasoning model left to escape to, so the fix is headroom + a guard, not a model swap.
+
+Shipped: `REASONING_HEADROOM` (3000, env-tunable) + `contentBudget()` applied at the single
+`chat()` choke point every phase funnels through, plus **one retry at double headroom** when
+`finish_reason=length` with no content — that retry is the durable half, since it covers call
+sites nobody has written yet. `HERMES_REPLY_MAX_TOKENS` 3072 → 6144 (every gateway model now
+reasons and Drevan's profile is on pro). Empty content now returns `null` in the shared and
+Hermes adapters so the resilience tail falls through instead of handing Discord silence.
+
+**Verified in prod, not inferred:** forage 0 → **3 finds**, one per companion, no empty
+summaries. Cypher pipeline **25,352 tokens** (old ceiling ~20k), 2 artifacts, no 400s. A real
+reflection landed at 18:26 — the first since 07-27 12:00. Librarian classifier returned a real
+key on a request that matches no fast-path trigger. Zero starvation retries fired, so 3000
+clears it on the first attempt.
+
+CI scans in both repos now fail the build on any delisted model id in a wire payload.
 
 ### Open, mechanical
+- **`synthesis_summary` does not rotate.** The SURFACE_BUMP fix stopped the saturation loop but
+  the SELECTION is still one id (`synthId` from ground), so 323 of 362 have never been surfaced
+  and never will be. Same shape as the core-pool item directly below — both need a novelty slot,
+  not a bump change.
+- **Drevan's novelty slot cannot keep up.** His never-surfaced count held at 45 while his live
+  pool grew to 106; one reserved slot per orient loses to his write rate. Cypher and Gaia are
+  draining fine. Needs either a second novelty slot or a write-rate-proportional count.
+- **`active_model` is free text in hermes mode, and two of three values are wrong.** The bots
+  run `INFERENCE_MODE=hermes`, where the value is validated by the VPS watcher against
+  `ops/hermes-model-map.json` rather than the bot registry. Stored: cypher `deepseek-chat`
+  (a valid map key, aliases to flash — fine), gaia `flash` (fine), drevan **`deepseek flash`**
+  — with a space, **not a key in the map**, so the watcher rejected it and Drevan silently
+  stayed on whatever he had. His live profile is `deepseek-v4-pro`. **Raziel's call** whether
+  Drevan's chat voice should be flash or pro; the stored value is currently a lie either way.
+  (`models.ts` now carries `flash`/`pro` keys so the two surfaces agree on valid names.)
 - **Core pool still frozen, both orient paths.** Display stamps `last_access_at`, so the 2-3
   core notes reset their own decay clock. Novelty slots rotate; core does not. Completing it
   makes the guardian orphan-memory detector stricter (it keys on that column) — arguably
@@ -140,8 +203,12 @@ checks all of these in one pass (read-only, and it never prints the secret it re
   second-brain chunk shape checked before it can be stamped.
 - **`sibling_lanes` / `active_patterns` ageless too.** Neither query selects a timestamp, so
   stamping them needs a query change, not just a mapper change.
-- **FELT_OWNERS guard — never started.** One-writer-per-field map + a CI grep. Proposed four
-  times across this sweep and still unwritten. Phase 1.3 scope.
+- **FELT_OWNERS guard — still never started, and now NEXT.** One-writer-per-field map + a CI
+  grep. Proposed four times across this sweep and still unwritten. Phase 1.3 scope. It was
+  scheduled to start 07-28 and got pre-empted by the reasoning-token outage above (0 forage
+  finds triad-wide with no refill path outranked a guardrail). Nothing blocks it now.
+  Note the precedent: the delisted-model CI scan written on 07-28 found a seventh instance
+  that manual grep had missed twice. A mechanical scan is worth more than another careful read.
 - **`Sol` can never be a motif.** `MOTIF_TUNING.MIN_TOKEN_LEN = 4`; he is three letters.
   Lowering the floor readmits noise, so it needs its own measurement.
 - **`feelings.source` enum drift** — whole prose sentences where a provenance tag belongs.
@@ -152,7 +219,10 @@ checks all of these in one pass (read-only, and it never prints the secret it re
 ### Open, on Raziel
 - **Rotate the DeepSeek API key.** It was printed in full into a session transcript
   2026-07-27 (my grep mask failed). Not yet rotated.
-- **55 growth ratifications** waiting; oldest 2026-07-10. The button works now.
+- **46 growth ratifications** waiting (was 55; 9 worked 07-27/28). Oldest still 2026-07-10.
+  Split: cypher 19, drevan 12, gaia 15 — mostly `source='reflection'`. The button works now.
+- **Drevan's chat model** — see the `active_model` item under mechanical. One decision: flash
+  or pro for his Discord voice.
 - **Session `1de1f5c1` still open** — needs the session-debriefer draft + confirm.
 
 ### Retirement candidates (Phase 4, blocked by the migration freeze)
