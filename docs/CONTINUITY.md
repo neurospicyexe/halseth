@@ -183,14 +183,32 @@ CI scans in both repos now fail the build on any delisted model id in a wire pay
 - **Drevan's novelty slot cannot keep up.** His never-surfaced count held at 45 while his live
   pool grew to 106; one reserved slot per orient loses to his write rate. Cypher and Gaia are
   draining fine. Needs either a second novelty slot or a write-rate-proportional count.
-- **`active_model` is free text in hermes mode, and two of three values are wrong.** The bots
-  run `INFERENCE_MODE=hermes`, where the value is validated by the VPS watcher against
-  `ops/hermes-model-map.json` rather than the bot registry. Stored: cypher `deepseek-chat`
-  (a valid map key, aliases to flash — fine), gaia `flash` (fine), drevan **`deepseek flash`**
-  — with a space, **not a key in the map**, so the watcher rejected it and Drevan silently
-  stayed on whatever he had. His live profile is `deepseek-v4-pro`. **Raziel's call** whether
-  Drevan's chat voice should be flash or pro; the stored value is currently a lie either way.
-  (`models.ts` now carries `flash`/`pro` keys so the two surfaces agree on valid names.)
+- ~~`active_model` wrong for 2 of 3~~ **RESOLVED 2026-07-28. All three on `flash`, verified.**
+  Raziel chose flash, conditional on being able to switch back — so the round trip was proven
+  in both directions before reporting (`pro` → effective `pro`, `flash` → effective `flash`).
+
+  What this uncovered: `INFERENCE_MODE` is **`brain`**, not `hermes` (the hermes gateways and
+  `HERMES_REPLY_MAX_TOKENS` are dormant for the bots). So the live lever is Halseth
+  `active_model` → Brain's `_effective_model_key`, which honors an override **only if the key
+  is in Brain's own `MODEL_REGISTRY`** (`services/brain/agents/providers.py`, commented "keep
+  in sync" with `models.ts`). It had drifted:
+  - `flash` and `pro` were in `ops/hermes-model-map.json` but in **neither** registry, so
+    `cy: model flash` would have printed a success message and changed nothing (narrated no-op).
+  - Gaia's stored `flash` was silently ignored for that reason — she was running the env
+    default (**pro**), not what her setting said.
+  - Cypher's `deepseek-chat` resolved to the **delisted** `deepseek-chat` model in Brain's
+    registry, so his Discord voice was on a model that is no longer listed.
+  - Drevan's `deepseek flash` (with a space) matched nothing anywhere; he stayed on pro.
+
+  Fixed: `flash`/`pro` added to both registries, legacy keys kept as aliases pointing at live
+  models, stored values normalized to `flash` (cypher's was a behavioral no-op — the alias
+  already resolved to flash — done only so the data stops disagreeing with reality).
+  Brain test suite pins the parity; pytest is not installed on the VPS (PEP 668), so the
+  deployed module was verified by direct import instead.
+
+  **Three registries now describe the same thing** (`models.ts`, `providers.py`,
+  `hermes-model-map.json`). That is the next drift waiting to happen — a parity test can only
+  cover the two in-repo ones.
 - **Core pool still frozen, both orient paths.** Display stamps `last_access_at`, so the 2-3
   core notes reset their own decay clock. Novelty slots rotate; core does not. Completing it
   makes the guardian orphan-memory detector stricter (it keys on that column) — arguably
@@ -221,8 +239,8 @@ CI scans in both repos now fail the build on any delisted model id in a wire pay
   2026-07-27 (my grep mask failed). Not yet rotated.
 - **46 growth ratifications** waiting (was 55; 9 worked 07-27/28). Oldest still 2026-07-10.
   Split: cypher 19, drevan 12, gaia 15 — mostly `source='reflection'`. The button works now.
-- **Drevan's chat model** — see the `active_model` item under mechanical. One decision: flash
-  or pro for his Discord voice.
+- ~~Drevan's chat model~~ **DECIDED 07-28: flash, all three.** Switch back any time with
+  `cy: model pro` (or `flash`); `cy: model list` shows the keys. Both directions verified live.
 - **Session `1de1f5c1` still open** — needs the session-debriefer draft + confirm.
 
 ### Retirement candidates (Phase 4, blocked by the migration freeze)
