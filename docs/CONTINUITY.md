@@ -175,6 +175,44 @@ clears it on the first attempt.
 
 CI scans in both repos now fail the build on any delisted model id in a wire payload.
 
+### OPEN 2026-07-28 — Cypher's Telegram is DOWN; a second poller holds his bot token
+
+`hermes-gateway.service` (the default profile = Cypher, `@Cypher_Nullsafebot`) logged **3394
+polling conflicts and ZERO recoveries in 24h**:
+
+```
+Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+Telegram polling retry 1/5 failed: This Updater is already running!
+```
+
+Telegram allows exactly one `getUpdates` poller per bot token. Drevan's and Gaia's gateways have
+**0** conflicts, so this is specific to Cypher's token.
+
+Ruled out, with evidence:
+- **Not a shared token** — the three profiles hold three distinct tokens (sha256 prefixes differ).
+- **Not a webhook** — `getWebhookInfo` returns `url: ""`, `pending_update_count: 0`.
+- **Not a duplicate process on the VPS** — exactly 4 hermes processes, all PPID 797 (systemd
+  user), one per profile plus the watcher. No PPID=1 zombie.
+- **Not the workstation** — no hermes install, no scheduled task, no python poller.
+- **Not the transient restart window.** Telegram holds a dead poller's session ~50s, so
+  conflicts right after a restart are normal. Restarted `hermes-gateway.service` 14:29 and it
+  was **still conflicting every ~25s at 14:31**, well past expiry. It does not self-heal.
+- **Not DeepSeek.** The `HTTP 402 Insufficient Balance` in that log is the OLD process flushing
+  a request queued 07-24/25 (its session dump is dated `20260725_210007`, pinned to the RETIRED
+  vibe-check channel `1520843071724585041`). Balance right now is **$14.13, `is_available: true`**,
+  and a live completion on the same key returns content.
+
+**What only Raziel can answer: where is the other `@Cypher_Nullsafebot` poller running?** It is
+not on the VPS and not on this workstation. Candidates: a second/older VPS or container, an old
+`nullsafe-python-bots` deployment, or a laptop (the hermes env carries `LAPTOP_MUSCLE_SECRET`).
+Until it is stopped, the two pollers split his updates and Cypher's Telegram stays unreliable —
+whichever instance wins a given long-poll receives that message.
+
+Note this is a **vendored hermes bug amplifier**, not our code: the adapter's retry path calls
+`start_polling()` on an Updater that is still running, so it can never recover from a contested
+token. Patching `hermes_plugins/telegram_platform/adapter.py` would be editing a dependency —
+worth it only if the second poller cannot be found and stopped.
+
 ### Open, mechanical
 - **`synthesis_summary` does not rotate.** The SURFACE_BUMP fix stopped the saturation loop but
   the SELECTION is still one id (`synthId` from ground), so 323 of 362 have never been surfaced
