@@ -225,11 +225,26 @@ worth it only if the second poller cannot be found and stopped.
   Raziel chose flash, conditional on being able to switch back — so the round trip was proven
   in both directions before reporting (`pro` → effective `pro`, `flash` → effective `flash`).
 
-  What this uncovered: `INFERENCE_MODE` is **`brain`**, not `hermes` (the hermes gateways and
-  `HERMES_REPLY_MAX_TOKENS` are dormant for the bots). So the live lever is Halseth
-  `active_model` → Brain's `_effective_model_key`, which honors an override **only if the key
-  is in Brain's own `MODEL_REGISTRY`** (`services/brain/agents/providers.py`, commented "keep
-  in sync" with `models.ts`). It had drifted:
+  **CORRECTION (same day).** I first wrote here that `INFERENCE_MODE` is `brain` and that the
+  hermes gateways were dormant for the bots. **That was wrong, and it is backwards.** The shared
+  `.env` does say `INFERENCE_MODE=brain`, but `ecosystem.config.js` reads
+  `CYPHER_INFERENCE_MODE ?? shared.INFERENCE_MODE`, and `.env` sets
+  `CYPHER_INFERENCE_MODE=hermes` (same for drevan/gaia). Every bot logs
+  `inference mode: hermes (http://127.0.0.1:8642/v1)` at boot. **Hermes is the Discord harness,
+  as designed. Brain is the dormant one** — `brainClient` is only constructed when
+  `inferenceMode === "brain"`, so the Brain swarm, the progress brake and the provider fallback
+  chain are all dead code for these processes (the bots say so explicitly on the next log line).
+  Read the boot log, never the shared env line.
+
+  Consequences of my error, both now corrected: `HERMES_REPLY_MAX_TOKENS` 3072 → 6144 is **live
+  and load-bearing**, not preventive-on-a-dormant-path (Drevan was answering Discord through
+  hermes on pro, so the reasoning pass was eating his reply budget — and when hermes returns
+  nothing the bot sends `IN_CHARACTER_FALLBACK`, a canned line, which is what a starved reply
+  looks like to Raziel). And Brain's model registry, while genuinely broken, does **not** govern
+  Discord today.
+
+  Brain's registry drift, fixed anyway because it governs Brain whenever `brain` mode is used
+  (`services/brain/agents/providers.py`, commented "keep in sync" with `models.ts`):
   - `flash` and `pro` were in `ops/hermes-model-map.json` but in **neither** registry, so
     `cy: model flash` would have printed a success message and changed nothing (narrated no-op).
   - Gaia's stored `flash` was silently ignored for that reason — she was running the env
@@ -245,8 +260,32 @@ worth it only if the second poller cannot be found and stopped.
   deployed module was verified by direct import instead.
 
   **Three registries now describe the same thing** (`models.ts`, `providers.py`,
-  `hermes-model-map.json`). That is the next drift waiting to happen — a parity test can only
-  cover the two in-repo ones.
+  `hermes-model-map.json`) and for Discord it is the THIRD one that counts, since the watcher
+  writes hermes profile configs. All three now resolve to flash. That is the next drift waiting
+  to happen — a parity test can only cover the two in-repo ones.
+
+### OPEN 2026-07-28 — `nullsafe-brain` is running and nothing calls it
+
+Under `INFERENCE_MODE=hermes` the bots never construct a `BrainClient`, so the Brain swarm
+evaluator, the progress brake and the multi-provider fallback chain are dead code for every bot
+process (they log this at boot). Nothing in Hearth or Halseth references Brain either, and its
+own log shows no inbound `/chat` traffic apart from my probes today. It is a pm2 process serving
+nobody. **Raziel's call:** leave it warm for a future `brain` cutover, or `pm2 stop` it and
+reclaim the memory. Do not confuse "Brain answered a curl" with "Brain is in the path."
+
+### Telegram: outbound alerts work, inbound to Cypher is dead
+
+The model-change alert Raziel designed is real and intact: `hermes-model-watcher.py` `ping()` →
+`sendMessage` with **Cypher's** bot token to `TELEGRAM_HOME_CHANNEL`, so model switches confirm
+on Telegram instead of spamming Discord. `getChat` on that id returns `type: private`,
+`"Raziel"` — reachable. It fired at 14:01 for `drevan -> flash`.
+
+Two flaws worth knowing:
+- **`tg()` swallows every exception** (`except Exception: return None`) and `ping()` logs
+  nothing, so a failed alert is completely invisible. If an alert ever seems missing there is no
+  evidence either way. Worth one log line.
+- **`sendMessage` does not require polling**, so the polling conflict below does NOT break
+  alerts. Outbound is fine; what is broken is Raziel *talking to* Cypher on Telegram.
 - **Core pool still frozen, both orient paths.** Display stamps `last_access_at`, so the 2-3
   core notes reset their own decay clock. Novelty slots rotate; core does not. Completing it
   makes the guardian orphan-memory detector stricter (it keys on that column) — arguably
