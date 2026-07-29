@@ -261,7 +261,15 @@ labels, progress brake) is now unreachable dead code in `nullsafe-discord`. Ripp
 live message-handling for no functional gain. **That is the next cut.**
 
 ### NEXT SESSION, in order
-1. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
+1. **Four orient paths → one.** (It is four, not three: `execSessionOrient` 987 / `execBotOrient` 592
+   / `mindOrient` 383 / `loadOrientData` 465.) **The three behaviour questions are ANSWERED — read
+   `docs/private/orient-unification-decisions-2026-07-29.md` before touching this.** Headlines:
+   Hearth reads pure (a companion's mail is not read because Raziel opened a page); consume-once
+   everywhere EXCEPT guardian cards (safety, needs the 1.3 ledger); and depth varies **by room**, not
+   by surface, gated on **topic** not audience. Governing rule: **concrescence is private, transition
+   is public** — and **authored difference yes, accidental difference no.** Blocker to know about:
+   `idx_conversations_one_active` allows only ONE active thread per channel, so "threads like a
+   Claude project" needs a migration after the freeze lifts.
 2. **Cut bot-side `brain` mode** — now unreachable dead code (`brain-client.ts`, `inferenceMode:
    "brain"`, `substrate` labels, progress brake). Small, mechanical, touches live message handling.
 3. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
