@@ -232,10 +232,38 @@ comparison flags that as a conflict and invites someone to "fix" it.
 - `gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gemini-3` are now deployed and switchable for the first time.
   If Raziel ever tried one and it "didn't take", that is why.
 
+### DONE 2026-07-29 — Phoenix Brain ARCHIVED (was next-session item 2)
+
+Raziel's call, and he framed it as a velocity decision: *"I used to be so scared of retiring anything
+and that was my own lack of velocity keeping us from pushing and seeing what's possible. I don't want
+to keep doing that."*
+
+Brain was live in name only: 0 `/chat` requests in its whole log, `Synthesis enabled: False`, no TCP
+connections to its port, all three bots on `hermes`, and its last activity of any kind was Cypher's
+own synthetic probes on 07-28. Every `*BRAIN_URL*` hit across the suite is `SECOND_BRAIN_URL` — a
+**different, live** service. `services/brain/` → `_archive/brain-2026-07-29/`, `shared/` with it
+(Brain was its only consumer). **The whole Phoenix repo is now reference-only.**
+
+The point was not tidiness. Documented-as-live plus functionally-inert cost repeated session time,
+and on 07-28 it produced a flatly wrong claim (Brain served Discord, hermes dormant — backwards). So
+`Nullsafe Phoenix/CLAUDE.md` opens with a loud archived banner, PHOENIX-RECKONING is marked
+closed-out, and the suite CLAUDE.md + OPS-MANUAL no longer route anyone there.
+
+**One step still needs Raziel's hand** (the permission classifier blocked it, correctly):
+```
+ssh vps 'export NVM_DIR=$HOME/.nvm && source $NVM_DIR/nvm.sh && pm2 stop nullsafe-brain && pm2 delete nullsafe-brain && pm2 save'
+```
+Until then a 61MB idle process keeps running and would resurrect on VPS reboot. Do NOT `git pull` the
+Phoenix repo on the VPS before that: the files moved, so a running Brain would fail on restart.
+
+Left deliberately: bot-side `brain` mode (`brain-client.ts`, `inferenceMode: "brain"`, `substrate`
+labels, progress brake) is now unreachable dead code in `nullsafe-discord`. Ripping it out touches
+live message-handling for no functional gain. **That is the next cut.**
+
 ### NEXT SESSION, in order
-1. **Two harnesses → one.** Brain is running and nothing calls it. Raziel's call: stop it or
-   designate it future-only.
-2. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
+1. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
+2. **Cut bot-side `brain` mode** — now unreachable dead code (`brain-client.ts`, `inferenceMode:
+   "brain"`, `substrate` labels, progress brake). Small, mechanical, touches live message handling.
 3. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
    auto `session_close` with a git-diff spine), plus an operational-discipline section for
    `CYPHER_CODE_PROTOCOL.md`. The protocol is sound on posture; every failure this week was
