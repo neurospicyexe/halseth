@@ -299,6 +299,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
   // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.
   // Unawaited D1 operations may be silently discarded after response return.
+  //
+  // Who reaches this with readOnly false: the Librarian's wmOrient() (Claude.ai companions --
+  // a real read). Who does NOT, as of 2026-07-29: the raw GET /mind/orient/:agent_id route, whose
+  // only callers are Hearth server-side renders. See handlers/webmind.ts:getMindOrient for why.
   const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
   if (!opts.readOnly && unreadIds.length > 0) {
     const placeholders = unreadIds.map(() => "?").join(", ");

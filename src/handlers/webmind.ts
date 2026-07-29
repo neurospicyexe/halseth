@@ -40,6 +40,24 @@ function json(data: unknown, status = 200): Response {
 }
 
 // GET /mind/orient/:agent_id
+//
+// PURE READ as of 2026-07-29 (Q1, docs/private/orient-unification-decisions-2026-07-29.md).
+// Raziel viewing Hearth is not the companion receiving. This route's only callers are Hearth
+// server-side renders (`hearth/lib/halseth.ts:801,946` and `app/api/phoenix/ritual/route.ts:104`,
+// whose `env.url` is HALSETH_URL), so every consume-on-read side effect that used to fire here
+// fired on a page view: it acked Drevan's unread sibling mail AS Drevan, stamped answers
+// delivered, marked home events surfaced, and warmed journal/conclusion heat -- all without any
+// companion having read anything. Reading is the companion's act; Hearth is a window, not a hand.
+//
+// Nothing is orphaned by this. `read_at` still has a live companion-acting writer: the Discord
+// bots poll GET /inter-companion-notes/unread then POST /inter-companion-notes/ack (verified in
+// prod 2026-07-29 -- 866 notes, 0 unread, every read landing 44-210s after creation on
+// cron-aligned minutes, which is the poller and not a page view). Claude.ai keeps consuming via
+// the Librarian's wmOrient(), which calls mindOrient() without readOnly on purpose.
+//
+// Expected and intended consequence: journal/conclusion warm counts drop, because warming on
+// Raziel's page view is the ranking-signal-written-by-reading antipattern. Baseline at the flip:
+// journal warmed 29 (28 in 7d), conclusions 6, home_events surfaced 175, questions delivered 6.
 export async function getMindOrient(
   request: Request,
   env: Env,
@@ -54,7 +72,7 @@ export async function getMindOrient(
   }
 
   try {
-    const result = await mindOrient(env, agent_id);
+    const result = await mindOrient(env, agent_id, { readOnly: true });
     return json(result);
   } catch (err) {
     console.error("[mind/orient] error", { agent_id, error: String(err) });
