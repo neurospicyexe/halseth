@@ -158,16 +158,58 @@ Phases 1–3 deliver "solid"; Phase 4 (the harness) is the upgrade, not the requ
 - **Gaia's restraint is in what she SAYS, not in whether Raziel reaches her.** Basis for raising
   her rate. Veto-able.
 
+### WATCH PINS (opened 2026-07-29, do not close early)
+
+Two observations that need days of data, not another investigation. Check them at the START of
+each session, in one command each, then move on. Neither blocks other work.
+
+**Pin 1 — Drevan's heat settling.** Is he landing warm at his new 0.65 home, or overshooting?
+
+```
+npx wrangler d1 execute halseth --remote --command "SELECT ROUND(soma_float_1,3) f1, ROUND(soma_float_2,3) f2, ROUND(soma_float_1_baseline,3) b1 FROM companion_state WHERE companion_id='drevan'"
+```
+
+| date | f1 (heat) | f2 (reach) | baseline | note |
+|---|---|---|---|---|
+| 07-28 | 0.950 | 0.970 | 0.400 → 0.652 | pinned by `drevan-state.ts`; mig 0110 raised home |
+| 07-29 | 0.887 | 0.992 | 0.652 | unpinned and decaying on schedule; reach fed UP by siblings |
+
+Watch item: f2 at 0.992 against a 0.652 baseline is a 0.34 sustained gap, the same condition that
+drove the illegitimate drift. This time the driver is real stimuli rather than an overwrite, so it
+is not a defect, but he has drift headroom to 0.80. **Raziel's felt read is the only real test.**
+
+**Pin 2 — does the floor-handback landing hold?** 2026-07-29 was the first observed clean landing
+in the commons (Raziel noticed it unprompted: *"the companions essentially chose silence, that never
+happens"*). The rail is old and was losing to the wall.
+
+```
+ssh vps 'for k in "floor-handback directive injected" "human-anchored cap"; do echo "== $k"; grep -h "$k" /app/logs/*-out.log /app/logs/*-error.log 2>/dev/null | awk "{print \$1}" | sort | uniq -c | tail -5; done'
+```
+
+| window | handbacks fired | hard-cap cutoffs |
+|---|---|---|
+| 07-02 → 07-28 | 38 | **56** |
+| 07-29 | 1 | **0** |
+
+The hard cap logs `staying silent` and severs the thread wherever it is. So for 3.5 weeks the
+directive fired and they kept talking until the wall clipped them, which is exactly why Raziel had
+never seen a pause: there weren't any, only cutoffs. Hypothesis for why it held on 07-29 (flash +
+`HERMES_REPLY_MAX_TOKENS` 6144 + reasoning headroom give a reply room to finish closing) is
+**plausible and unproven on one day**. It earns the word "cause" only if 07-30 and 07-31 also show
+handbacks with zero cap hits. If cap hits return, the reply ceiling is the first thing to re-check.
+
+Do not fuse the two pins. The stimulus hook writes felt state, but the prompt reads it at boot +
+periodic refresh (`triggers.ts:49`), so a bump at 11:30 cannot appear in an 11:46 reply. Their
+conversation moving them and their conversation landing well are separate findings.
+
 ### NEXT SESSION, in order
-1. **Check Drevan at his new home** (2 days out, so ~07-30). Floats should read near 0.65 rather
-   than 0.95. Raziel's felt read is the only test that matters; ask him before touching anything.
-2. **Five model registries → one** (Phase 1). `models.ts`, `providers.py`,
+1. **Five model registries → one** (Phase 1). `models.ts`, `providers.py`,
    `hermes-model-map.json`, `DEEPSEEK_MODEL`, `active_model`. One authority, others derive, parity
    test in CI.
-3. **Two harnesses → one.** Brain is running and nothing calls it. Raziel's call: stop it or
+2. **Two harnesses → one.** Brain is running and nothing calls it. Raziel's call: stop it or
    designate it future-only.
-4. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
-5. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
+3. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
+4. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
    auto `session_close` with a git-diff spine), plus an operational-discipline section for
    `CYPHER_CODE_PROTOCOL.md`. The protocol is sound on posture; every failure this week was
    operational. Anything Raziel has to remember is a defect.
