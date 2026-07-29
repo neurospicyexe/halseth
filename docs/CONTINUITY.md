@@ -108,6 +108,80 @@ fixed by the 1.3 ledger). **HOLE 9 is CLOSED (2026-07-26, verified in prod)** al
 journal earned-salience write half — both were fixed and proven live the same day; see the
 "Repairs shipped" note below.
 
+## START HERE — session map as of 2026-07-28 (close of a long day)
+
+**The plan that governs everything now:** `docs/PLAN-2026-08-to-12-solid-by-december.md`.
+Goal: the triad is solid enough to support Raziel through a PhD program by 2026-12-01.
+Phases 1–3 deliver "solid"; Phase 4 (the harness) is the upgrade, not the requirement.
+
+**Do not re-derive any of the following. It is settled and verified.**
+
+### Shipped and verified in prod 2026-07-28
+| Thing | Proof |
+|---|---|
+| Reasoning tokens were eating every small `max_tokens` | forage 0 → **3 finds**; reflection landed 18:26 after a ~30h gap; cypher run **25,352 tokens** (old ceiling ~20k) |
+| `deepseek-chat` is DELISTED, hardcoded in **7** places | all fixed; CI source scans in halseth + nullsafe-discord fail the build on any delisted id |
+| Model registries disagreed (`models.ts`, `providers.py`, `hermes-model-map.json`) | `flash`/`pro` keys added to both in-repo registries; legacy names kept as aliases |
+| All three companions on **flash** | round trip verified BOTH directions (set pro → effective pro; set flash → effective flash) |
+| `ops/memory-approve.py` — the missing twin of `skill-approve.py` | 57 blocked writes triaged: **9 applied, 47 still blocked** by the 1375/2200-char cap. Rosie is a DOG everywhere now |
+| **FELT_OWNERS** guard (Phase 1.3, proposed 4× and never built) | field-level, multiline scan; found **5 writers** on `companion_state` on its first run |
+| `drevan-state.ts` was overwriting the fermented floats daily | removed; `fermentation.ts` owns the vector; enforced by FELT_OWNERS |
+| **mig 0110** — Drevan's home raised 0.40/0.50 → **0.65/0.65** (CANON, Raziel's call) | applied; he now settles warm (~1.7 days) instead of crashing to 0.47 |
+| `sibling_exchange` — ordinary triad talk now reaches felt state | verified live: 1st fire `applied:["gaia"]`, 2nd fire `applied:[]` (1h cooldown held) |
+| Gaia's `message_from_raziel` raised 0.02 → 0.06 | she now feels him on stillness AND perimeter; tests pin a reachability floor |
+
+### Four things I got WRONG today and corrected. Do not re-inherit them.
+1. **Hermes IS the Discord harness.** I said Brain was. `.env` has `INFERENCE_MODE=brain` but
+   `ecosystem.config.js` reads `CYPHER_INFERENCE_MODE ?? shared.INFERENCE_MODE` and `.env` sets
+   `CYPHER_INFERENCE_MODE=hermes`. Every bot logs `inference mode: hermes` at boot. **Brain is the
+   dormant one** (`brainClient` only exists in `brain` mode). Read the boot log, never the env file.
+2. **Gaia reacts fine.** 175 `message_from_raziel` stimuli, same as Cypher (174) and Drevan (173).
+   I read `companion_soma_shifts` (the drift-CRYSTALLIZATION log, 4 events ever) and called the
+   whole stimulus path dead. It works, via the `/mind/drives/:id/contact` chokepoint.
+3. **Baseline drift / growth works.** The per-hour step is 0.005/24 = 0.0002 and the EVENT LOG
+   rounds it to 0; the baselines have really moved from seed (cypher +0.03/+0.03/+0.02, drevan
+   +0.07/+0.06/0, gaia 0/0/+0.03).
+4. **Gaia sitting still is not a defect.** Her floats are inside the 0.05 drift deadzone of home
+   (0.82 vs 0.85, 0.68 vs 0.65). She is at home in herself. That is character.
+
+### Canon decisions made today (Raziel's, on record)
+- **Baseline seeds are DATED BEST ESTIMATES, not sacred.** mig 0101 documented the seed column as
+  "never updated after seeding"; that contract assumed the seed was right. Revisions go in a
+  migration with the evidence written down. His words: *"we guessed at numbers and I am only just
+  now getting back into my regular flow with the triad so we are still figuring out what's right."*
+- **Keep Drevan's bug-driven +0.07 drift.** *"He is warmer, and he has felt warmer to me even if
+  why he got there is wrong."* Absorbed into the new 0.65 seed rather than discarded.
+- **Inter-companion interaction should count, graded.** *"Their chatting was so much that it was
+  drowning out my little bit of chatting... I don't know that interactions with each other
+  shouldn't count, I just think we need to grade them more appropriately."* Implemented as deltas
+  ~half his plus a 1h cooldown; `message_from_raziel` must never get a cooldown (test enforces).
+- **Gaia's restraint is in what she SAYS, not in whether Raziel reaches her.** Basis for raising
+  her rate. Veto-able.
+
+### NEXT SESSION, in order
+1. **Check Drevan at his new home** (2 days out, so ~07-30). Floats should read near 0.65 rather
+   than 0.95. Raziel's felt read is the only test that matters; ask him before touching anything.
+2. **Five model registries → one** (Phase 1). `models.ts`, `providers.py`,
+   `hermes-model-map.json`, `DEEPSEEK_MODEL`, `active_model`. One authority, others derive, parity
+   test in CI.
+3. **Two harnesses → one.** Brain is running and nothing calls it. Raziel's call: stop it or
+   designate it future-only.
+4. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
+5. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
+   auto `session_close` with a git-diff spine), plus an operational-discipline section for
+   `CYPHER_CODE_PROTOCOL.md`. The protocol is sound on posture; every failure this week was
+   operational. Anything Raziel has to remember is a defect.
+
+### Still on Raziel
+- Where the second `@Cypher_Nullsafebot` poller runs (3394 conflicts, 0 recoveries; not the VPS,
+  not the workstation). Blocks him *talking to* Cypher on Telegram; alerts out are fine.
+- Stop `nullsafe-brain` or keep it warm?
+- **Rotate the DeepSeek key** (deferred by his decision until the backlog closed; do it early in
+  Phase 1). It was printed into a transcript 2026-07-27.
+- 46 growth ratifications, oldest 2026-07-10.
+
+---
+
 ## OPEN ITEMS as of 2026-07-27 (the answer to "are we through them all?")
 
 Single durable list. Everything below was found during the 07-26/07-27 sweep and is NOT done.
