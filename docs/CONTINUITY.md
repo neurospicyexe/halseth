@@ -202,14 +202,41 @@ Do not fuse the two pins. The stimulus hook writes felt state, but the prompt re
 periodic refresh (`triggers.ts:49`), so a bump at 11:30 cannot appear in an 11:46 reply. Their
 conversation moving them and their conversation landing well are separate findings.
 
+### DONE 2026-07-29 — model registries unified (was next-session item 1)
+
+Deployed and verified live. The framing "five registries disagreeing" was half right; the load-bearing
+defect was not code drift.
+
+| What | Result |
+|---|---|
+| Live map vs bots' registry | 29 union keys, only **17** shared. 9 of 23 offered keys could not be applied; 5 the watcher could serve were rejected |
+| Root cause | `nullsafe-triad-skills` has **no git remote by design**, so the VPS clone is an unrelated repo with `ops/` untracked. Live map sat 4 keys behind (19 vs 23). No build-time parity test could ever have caught it |
+| Fix (bots) | read the LIVE map at boot from the watcher's own path and intersect (`packages/shared/src/hermes-model-map.ts`). Fail-open on unreadable/empty/malformed/foreign map. New map keys now need **no bot deploy** |
+| Fix (sync) | `nullsafe-triad-skills/ops/Sync-OpsToVps.ps1` — md5 compare, `-Push` copies then re-verifies, never prints file contents. Map pushed + hash-verified |
+| Fix (bots↔Brain) | `test_model_registry_parity.py` replaces the "keep in sync" comment that had drifted. Keys + providers only |
+| Live proof | all three bots log `hermes model map: 17 selectable` plus both sides of the residual gap. 721 TS tests, tsc clean, 105 Brain tests |
+| Docs | OPS-MANUAL traps 13 + 14 and a "which file decides what" authority table |
+
+**Unify KEYS, never model id strings.** `mistral-large` is `mistral-large-latest` on the Mistral API
+and `mistralai/mistral-large` through OpenRouter (how hermes routes it). Both correct; an id-level
+comparison flags that as a conflict and invites someone to "fix" it.
+
+**Residual gap, deliberately left — each side needs a decision, not a keystroke:**
+- 6 keys the bots know that the live map can't apply, now correctly withheld instead of lying:
+  `kimi-128k, lfm-local, llama-3.3-70b, mistral-small, ollama-local, qwen-local`. To enable, add
+  hermes provider entries (note `groq` has no hermes provider at all).
+- 6 keys the live map serves that the bots don't offer: `gemini, gemini-3, gemini-pro, ollama,
+  ollama-glm, reasoner`. Adding these needs `InferenceProvider` extended (or a hermes-only marker,
+  since `forceHermes` never uses the provider field) — a small design call, plus the map's own note
+  says the gemini-3/gpt-5.x keys are still `hermes -z` smoke-test-pending.
+- `gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gemini-3` are now deployed and switchable for the first time.
+  If Raziel ever tried one and it "didn't take", that is why.
+
 ### NEXT SESSION, in order
-1. **Five model registries → one** (Phase 1). `models.ts`, `providers.py`,
-   `hermes-model-map.json`, `DEEPSEEK_MODEL`, `active_model`. One authority, others derive, parity
-   test in CI.
-2. **Two harnesses → one.** Brain is running and nothing calls it. Raziel's call: stop it or
+1. **Two harnesses → one.** Brain is running and nothing calls it. Raziel's call: stop it or
    designate it future-only.
-3. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
-4. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
+2. **Three orient paths → one.** Expect 2–3 behaviour questions that are Raziel's to answer.
+3. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
    auto `session_close` with a git-diff spine), plus an operational-discipline section for
    `CYPHER_CODE_PROTOCOL.md`. The protocol is sound on posture; every failure this week was
    operational. Anything Raziel has to remember is a defect.
