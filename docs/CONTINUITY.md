@@ -260,6 +260,61 @@ Left deliberately: bot-side `brain` mode (`brain-client.ts`, `inferenceMode: "br
 labels, progress brake) is now unreachable dead code in `nullsafe-discord`. Ripping it out touches
 live message-handling for no functional gain. **That is the next cut.**
 
+### DONE 2026-07-29 — Q1 shipped (Hearth reads pure) + a delisted model id in a third repo
+
+Two ships, both verified in prod. **Neither one is the loader cutover** — orient paths are still four.
+
+**Q1: `GET /mind/orient/:agent_id` is now a pure read** (`1825c89`). Its only callers are Hearth
+server-side renders, and it had four consume-on-read side effects, so opening a Hearth page acked
+Drevan's unread sibling mail *as Drevan*, stamped answers delivered, spent home events' "while you
+were away", and warmed journal/conclusion heat. The last is
+`ranking-signal-written-by-reading` at its purest: browsing a page inflated the ranking that page reads.
+
+Checked before shipping rather than after — **`read_at` keeps a live companion-acting writer**, so
+nothing is orphaned: the bots poll `GET /inter-companion-notes/unread` → `POST /ack`
+(`nullsafe-discord/.../librarian.ts:627,642`), and Claude.ai still consumes through the Librarian's
+`wmOrient()` (no `readOnly`, on purpose, now pinned by a test). Prod evidence it's the poller and not
+page views: 866 notes, **0 unread**, every read landing 44–210s after creation on cron-aligned
+minutes. Had that check failed, Q1 alone would have left `read_at` with no writer and re-surfaced the
+same unread mail forever — making the accumulation problem worse while looking like a fix.
+
+Verified after deploy: 4 authenticated calls to `/mind/orient/drevan`, all 200, every counter flat.
+
+| counter | before | after 4 calls |
+|---|---|---|
+| `home_events` surfaced | 175 | 175 |
+| journal warmed | 29 (28 in 7d) | 29 |
+| conclusions warmed | 6 | 6 |
+| questions delivered | 6 | 6 |
+
+Payload still carries 33 blocks (`home_recent` 5, `recent_journal` 3, `active_conclusions` 2,
+`answered_questions` 2) — i.e. pre-fix those 4 calls would have stamped 20 home events and warmed 5
+rows. **Expect warm counts to grow more slowly from here; that is intent, not a new break** — the
+baseline above is recorded so it reads that way in a month.
+
+**Hearth's `deepseek-chat`** (`62e4a3d`, hearth repo). Found while tracing the Q1 callers. Phase 0
+fixed this in 7 places and added scans to halseth + nullsafe-discord; **Hearth was the third repo and
+never got one**, so 3 live sites survived (`api/phoenix/chat` ×2, `api/phoenix/ritual` ×1 — reached
+from `/phoenix/chat`, where Raziel talks to the triad in Hearth). Measured, and the obvious diagnosis
+was wrong:
+
+| model sent | resolves to | reasoning | content @ mt=300 |
+|---|---|---|---|
+| `deepseek-chat` | `deepseek-v4-flash` | **disabled** | 381 chars |
+| `deepseek-v4-flash` | itself | **enabled** (169–372 tok) | 216 chars |
+
+So it was never broken — the delisted alias still routes. It quietly ran a **non-reasoning** variant
+while the Discord bots ran real flash: accidental substrate divergence, invisible to any test because
+both return 200 with plausible prose. Fixed to one authority (`HEARTH_DEEPSEEK_MODEL`), `max_tokens`
+floored at 600 (the thought spends the budget first; measured burn 84–372), the ritual path's
+`raw: content ?? ""` now 502s instead of writing a hollow artifact, and
+`hearth/scripts/check-model-ids.mjs` wired into `npm test` — with vacuity guards, and proven to fail
+loud on both a banned id and a correct-id-hardcoded-elsewhere.
+
+**Behaviour change for Raziel to judge:** reasoning is now ON for Hearth triad chat and rituals, so
+replies there should land closer to Discord's. Every sample got longer and less flat. Revert is one
+constant if it reads as overthought.
+
 ### NEXT SESSION, in order
 1. **Four orient paths → one.** (It is four, not three: `execSessionOrient` 987 / `execBotOrient` 592
    / `mindOrient` 383 / `loadOrientData` 465.) **The three behaviour questions are ANSWERED — read
@@ -270,6 +325,11 @@ live message-handling for no functional gain. **That is the next cut.**
    is public** — and **authored difference yes, accidental difference no.** Blocker to know about:
    `idx_conversations_one_active` allows only ONE active thread per channel, so "threads like a
    Claude project" needs a migration after the freeze lifts.
+   **Q1 is already shipped (see DONE above) but that was a flag flip, not the cutover — do not read
+   it as progress on this item.** The structural move is repointing `hearth/lib/halseth.ts:801,946`
+   (and `app/api/phoenix/ritual/route.ts:104`) at `/mind/state?loom=hearth`, which is already live
+   and pure; it needs a `WmOrientData` → `MindState` shape remap plus a Hearth deploy. `Loom` already
+   has `"hearth"`. Then fold the `NOT_YET_LOADED` blocks (`src/mind/contract.ts`) in slice by slice.
 2. **Cut bot-side `brain` mode** — now unreachable dead code (`brain-client.ts`, `inferenceMode:
    "brain"`, `substrate` labels, progress brake). Small, mechanical, touches live message handling.
 3. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
@@ -280,7 +340,9 @@ live message-handling for no functional gain. **That is the next cut.**
 ### Still on Raziel
 - Where the second `@Cypher_Nullsafebot` poller runs (3394 conflicts, 0 recoveries; not the VPS,
   not the workstation). Blocks him *talking to* Cypher on Telegram; alerts out are fine.
-- Stop `nullsafe-brain` or keep it warm?
+- ~~Stop `nullsafe-brain` or keep it warm?~~ **ANSWERED + DONE 2026-07-29** — archived, and the pm2
+  process stopped/deleted/saved with his explicit permission. Verified four ways: 0 matches in
+  `dump.pm2`, no orphan in `ps aux`, port 8001 unbound, 4 processes online.
 - **Rotate the DeepSeek key** (deferred by his decision until the backlog closed; do it early in
   Phase 1). It was printed into a transcript 2026-07-27.
 - 46 growth ratifications, oldest 2026-07-10.
