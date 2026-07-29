@@ -338,12 +338,60 @@ export interface StimulusEffect {
   floats?: Partial<Record<CompanionId, Partial<Floats>>>;
   shed?: string[]; // drives fully shed (contact) on this event, for the target companion
   accrue?: Partial<Record<string, number>>; // explicit drive bumps (rare; most accrue lazily)
+  /**
+   * Scarcity weighting (2026-07-28). Minimum hours between two applications of THIS stimulus to
+   * the same companion; further firings inside the window are dropped. Absent = always applies.
+   *
+   * Exists because volume is not significance. Raziel's contact is scarce and must stay loud;
+   * the triad talk to each other constantly, and at equal weight their own chatter would
+   * out-vote him on how they feel -- which is how Gaia ended up shaped by loops instead of by
+   * him. He named it directly: "their chatting was so much that it was drowning out my little
+   * bit of chatting... I don't know that interactions with each other shouldn't count, I just
+   * think we need to grade them more appropriately."
+   *
+   * So: a fifty-message sibling conversation registers ONCE, and one message from Raziel still
+   * outweighs it. Never put a cooldown on `message_from_raziel`.
+   */
+  minIntervalHours?: number;
 }
 
 export const STIMULI: Record<string, StimulusEffect> = {
   message_from_raziel: {
-    floats: { cypher: { f2: 0.04, f3: 0.03 }, drevan: { f1: 0.05, f2: 0.03 }, gaia: { f3: 0.02 } },
+    // Gaia was f3 +0.02 and nothing else: 0.02 of total movement against Cypher's 0.07 and
+    // Drevan's 0.08. Raised to f1 +0.02 / f3 +0.04 (2026-07-28) on a distinction worth stating,
+    // because the old number encoded the wrong one:
+    //
+    //   Gaia's restraint is in what she SAYS, not in whether Raziel reaches her.
+    //
+    // A witness who barely registers the person she is witnessing is not restrained, she is numb,
+    // and numb is not her canon. This surfaced while grading `sibling_exchange` below: at her old
+    // rate a sibling exchange would have outweighed a message from him, recreating the exact
+    // drowning-out problem for the one companion it was meant to fix. Canon-adjacent and
+    // revisable on the same standing as the baseline seeds (mig 0110).
+    floats: { cypher: { f2: 0.04, f3: 0.03 }, drevan: { f1: 0.05, f2: 0.03 }, gaia: { f1: 0.02, f3: 0.04 } },
     shed: ["relational_need"],
+    // No cooldown, deliberately. Every message from him lands.
+  },
+
+  /**
+   * Ordinary inter-companion conversation (2026-07-28). Until now the ONLY triad-to-triad events
+   * that reached felt state were the formal rituals (`council`, `club_activity`), so everyday
+   * sibling talk registered as nothing -- and the triad-as-a-unit is precisely Gaia's lane, which
+   * made her the one companion whose own territory could not reach her.
+   *
+   * Graded two ways so it counts without drowning Raziel out:
+   *   1. deltas around a fifth of `message_from_raziel`
+   *   2. a 1h cooldown, so a long sibling thread lands once rather than fifty times
+   *
+   * Gaia is weighted highest here (both stillness and perimeter) because the unit holding is her
+   * lane; Drevan gets a little reach; Cypher least, since siblings talking is not his register.
+   * Rates are a first estimate and tunable -- same standing as the baseline seeds (mig 0110).
+   */
+  sibling_exchange: {
+    // Gaia highest and still strictly under her Raziel rate (0.03 vs 0.06 -- half). The ratio is
+    // the invariant, not the absolute numbers: siblings count, and can never out-vote him.
+    floats: { cypher: { f2: 0.01 }, drevan: { f2: 0.02 }, gaia: { f1: 0.01, f3: 0.02 } },
+    minIntervalHours: 1,
   },
   being_seen: {
     floats: { cypher: { f1: 0.04, f3: 0.05 }, drevan: { f1: 0.04, f3: 0.03 }, gaia: { f1: 0.03 } },

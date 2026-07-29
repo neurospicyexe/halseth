@@ -283,10 +283,30 @@ export async function bumpFloatsForStimulus(env: Env, companionId: CompanionId, 
   return d;
 }
 
+/**
+ * True when this stimulus fired for this companion inside its own cooldown window.
+ *
+ * Enforced HERE rather than at the caller so no future caller can bypass the scarcity weighting
+ * by accident -- the whole protection for Raziel's scarce contact depends on it holding. Reads
+ * the ferment event log, which is already the record of every stimulus application.
+ */
+async function inCooldown(env: Env, companionId: CompanionId, stimulus: string, hours: number): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 AS hit FROM companion_ferment_events
+     WHERE companion_id = ? AND kind = 'stimulus' AND stimulus = ?
+       AND created_at > datetime('now', ?)
+     LIMIT 1`,
+  ).bind(companionId, stimulus, `-${hours} hours`).first<{ hit: number }>().catch(() => null);
+  return row !== null;
+}
+
 /** Full stimulus: floats + drive sheds + drive accrues, for one companion. */
 async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stimulus: string): Promise<boolean> {
   const eff = STIMULI[stimulus];
   if (!eff) return false;
+  if (eff.minIntervalHours && await inCooldown(env, companionId, stimulus, eff.minIntervalHours)) {
+    return false;
+  }
   const d = stimulusFloatDelta(stimulus, companionId);
   const driveDeltas: Record<string, number> = {};
   const touchesFloats = d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0;
