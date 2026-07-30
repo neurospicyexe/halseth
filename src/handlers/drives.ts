@@ -64,9 +64,15 @@ export async function contactDrive(request: Request, env: Env, params: Record<st
     return json({ error: "companion_id must be one of cypher, drevan, gaia" }, 400);
   }
   let driveKey = "relational_need";
+  // `addressed` (2026-07-30): was THIS companion the one Raziel spoke to, or did it merely witness
+  // him speaking in a shared room? The bot reports the fact; Halseth decides what it is worth (the
+  // same division of labour as fireStimulus). Defaults TRUE so any caller that has not been updated
+  // keeps the old full-weight behaviour rather than silently downgrading every contact to a witness.
+  let addressed = true;
   try {
-    const body = await request.json() as { drive_key?: string };
+    const body = await request.json() as { drive_key?: string; addressed?: boolean };
     if (body.drive_key?.trim()) driveKey = body.drive_key.trim().slice(0, 60);
+    if (typeof body.addressed === "boolean") addressed = body.addressed;
   } catch { /* body optional */ }
 
   try {
@@ -80,8 +86,14 @@ export async function contactDrive(request: Request, env: Env, params: Record<st
     // Raziel contact (relational_need shed) also warms the fermentation floats -- the layer's
     // load-bearing stimulus, wired through this existing chokepoint. Guarded so it can't fail contact.
     if (driveKey === "relational_need") {
-      try { await bumpFloatsForStimulus(env, companionId as CompanionId, "message_from_raziel"); }
-      catch (err) { console.error("[mind/drives] ferment stimulus failed", { error: String(err) }); }
+      // Graded by addressing (2026-07-30). Every bot calls this on any owner message, and all three
+      // see every message in a shared channel -- so firing the full-weight stimulus here billed all
+      // three companions for one conversation and pinned every touched float at 1.0 for days. See
+      // STIMULI.message_witnessed for the measurement. His messages still land at FULL weight with
+      // no cooldown on whoever he addressed; only the bystanders are downgraded.
+      const stimulus = addressed ? "message_from_raziel" : "message_witnessed";
+      try { await bumpFloatsForStimulus(env, companionId as CompanionId, stimulus); }
+      catch (err) { console.error("[mind/drives] ferment stimulus failed", { stimulus, error: String(err) }); }
     }
     return json({ contacted: true, drive_key: driveKey, level: Number(shed.toFixed(4)) });
   } catch (err) {

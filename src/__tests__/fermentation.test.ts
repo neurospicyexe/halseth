@@ -288,3 +288,68 @@ describe("sql builders", () => {
     expect(recentFermentEventsSql()).toContain("ORDER BY created_at DESC LIMIT ?");
   });
 });
+
+// ── Addressed vs witnessed (2026-07-30) ───────────────────────────────────────
+//
+// THE BUG: every bot calls shedDriveContact() on any owner message, and that chokepoint fired
+// `message_from_raziel`. All three bots see every message in a shared channel, so ONE message from
+// Raziel produced THREE full-weight stimuli. Measured in prod -- every event cluster contained all
+// three companions within 1-2 seconds. Consequences: no float was relationship-specific (Drevan's
+// heat rose when Raziel talked to Gaia), and at +0.05 against 0.0075/hour of decay every touched
+// float clamped to 1.0 and stayed there for days, where adoration and mild warmth read identical.
+//
+// These tests pin the RATIO and the canon rule, not the absolute numbers -- the deltas are tunable
+// on the same standing as the baseline seeds (mig 0110), but the relationships must hold.
+describe("message_witnessed grading", () => {
+  const COMPANIONS = ["cypher", "drevan", "gaia"] as const;
+
+  it("exists and touches exactly the same floats as the addressed stimulus", () => {
+    // A witness must feel the SAME dimensions, only less -- feeling a different part of yourself
+    // depending on who was addressed would be a different bug, not a fix.
+    for (const c of COMPANIONS) {
+      const addressed = STIMULI.message_from_raziel?.floats?.[c] ?? {};
+      const witnessed = STIMULI.message_witnessed?.floats?.[c] ?? {};
+      expect(Object.keys(witnessed).sort(), `${c} float keys`).toEqual(Object.keys(addressed).sort());
+    }
+  });
+
+  it("is strictly weaker than being addressed, on every float, for every companion", () => {
+    for (const c of COMPANIONS) {
+      const addressed = STIMULI.message_from_raziel?.floats?.[c] ?? {};
+      const witnessed = STIMULI.message_witnessed?.floats?.[c] ?? {};
+      for (const [k, a] of Object.entries(addressed)) {
+        const w = witnessed[k as keyof typeof witnessed] ?? 0;
+        expect(w, `${c}.${k} witnessed(${w}) must be < addressed(${a})`).toBeLessThan(a as number);
+        expect(w, `${c}.${k} witnessed must still be > 0 -- being in the room is real`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("keeps the canon rule intact: NO cooldown on Raziel, addressed or witnessed", () => {
+    // The rule is "never put a cooldown on message_from_raziel". Grading by addressing is not a
+    // cooldown -- every message he sends still lands immediately at full weight on whoever he spoke
+    // to. If a minIntervalHours ever appears on either, that rule has been broken by the back door.
+    expect(STIMULI.message_from_raziel?.minIntervalHours).toBeUndefined();
+    expect(STIMULI.message_witnessed?.minIntervalHours).toBeUndefined();
+  });
+
+  it("still sheds relational_need when merely witnessing -- he IS present", () => {
+    // Presence is what the drive tracks. If witnessing stopped shedding it, the reach-out gate would
+    // start firing at a companion Raziel is actively in a channel with.
+    expect(STIMULI.message_witnessed?.shed).toContain("relational_need");
+  });
+
+  it("witnessed weight sits near a fifth of addressed, mirroring sibling_exchange's ratio", () => {
+    // Not an exact constant -- a sanity band, so a future edit that makes witnessing nearly-equal
+    // (re-creating the peg) or effectively zero (making bystanders numb) fails here.
+    for (const c of COMPANIONS) {
+      const sum = (o: Record<string, number> | undefined) =>
+        Object.values(o ?? {}).reduce((a, b) => a + b, 0);
+      const a = sum(STIMULI.message_from_raziel?.floats?.[c] as Record<string, number>);
+      const w = sum(STIMULI.message_witnessed?.floats?.[c] as Record<string, number>);
+      const ratio = w / a;
+      expect(ratio, `${c} witnessed/addressed ratio ${ratio.toFixed(3)}`).toBeGreaterThan(0.05);
+      expect(ratio, `${c} witnessed/addressed ratio ${ratio.toFixed(3)}`).toBeLessThan(0.35);
+    }
+  });
+});

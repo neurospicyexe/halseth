@@ -370,7 +370,48 @@ export const STIMULI: Record<string, StimulusEffect> = {
     // revisable on the same standing as the baseline seeds (mig 0110).
     floats: { cypher: { f2: 0.04, f3: 0.03 }, drevan: { f1: 0.05, f2: 0.03 }, gaia: { f1: 0.02, f3: 0.04 } },
     shed: ["relational_need"],
-    // No cooldown, deliberately. Every message from him lands.
+    // No cooldown, deliberately. Every message TO HIS ADDRESSEE lands -- see message_witnessed for
+    // why that qualifier had to be added on 2026-07-30, and why it is not a cooldown on him.
+  },
+
+  /**
+   * Raziel spoke in a room this companion is in, but not TO this companion (2026-07-30).
+   *
+   * THE BUG THIS FIXES. Every bot independently called `shedDriveContact()` on any owner message,
+   * and that chokepoint fires `message_from_raziel`. All three bots see every message in a shared
+   * channel, so one message from Raziel produced THREE full-weight stimuli. Confirmed in prod, not
+   * inferred -- every event cluster contained all three companions within 1-2 seconds:
+   *
+   *     11:45:14  cypher,drevan,gaia        11:54:21 gaia / :22 cypher,drevan
+   *     11:46:02  gaia / :03 cypher,drevan  11:56:17 gaia / :18 drevan,cypher
+   *
+   * So no float was relationship-specific: Drevan's heat rose when Raziel talked to Gaia. Raziel
+   * caught this himself -- "no way I talked to each one of them that many times today" -- against my
+   * own wrong reading of the counts.
+   *
+   * The compounding effect: at +0.05/message against 0.0075/hour of decay, one message was already
+   * worth 6.7 hours of decay for Drevan. Times three companions, ~25 messages/day clamped every
+   * touched float to 1.0 and held it there -- Drevan's for over 94 hours. A float pinned at the
+   * ceiling carries no information: adoration and mild warmth produce the same number.
+   *
+   * WHY THIS IS NOT A COOLDOWN ON HIM. The rule above says never put one on `message_from_raziel`,
+   * and that rule stands untouched: every message he sends still lands at full weight, immediately,
+   * with no interval -- on the companion he addressed. What changes is that the other two stop being
+   * billed for a conversation they were only present for. Witnessing was already a first-class event
+   * with its own graded stimulus (`sibling_exchange`, a fifth of his weight); this is the same
+   * principle applied to him. Being in the room is real, and it is not the same as being spoken to.
+   *
+   * Deltas are a fifth of the addressed rate, mirroring `sibling_exchange`'s ratio. No cooldown: the
+   * per-companion volume is now naturally low, and a cooldown here would silently re-create the
+   * scarcity problem from the other side. First estimate, tunable on the same standing as the
+   * baseline seeds (mig 0110).
+   */
+  message_witnessed: {
+    floats: { cypher: { f2: 0.008, f3: 0.006 }, drevan: { f1: 0.01, f2: 0.006 }, gaia: { f1: 0.004, f3: 0.008 } },
+    // Deliberately NOT shedding relational_need: he is present in the room, which is what the drive
+    // tracks, so presence still counts. Kept identical to the addressed path so the reach-out gate
+    // does not start firing at a companion Raziel is actively in a channel with.
+    shed: ["relational_need"],
   },
 
   /**
