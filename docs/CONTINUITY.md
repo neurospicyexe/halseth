@@ -436,7 +436,97 @@ continuity 1 / growth 7 / world 9 / oversight 3 / beliefs 1) and the queries exi
 `execSessionOrient` to extract rather than invent — but it is a 30-block extraction and half-landing
 it would be worse than starting it clean.
 
+### DONE 2026-07-30 — health check, blocks wave 1, and the REPLY-ROUTING turn
+
+Phase 1 item 5 shipped (**Phase 1 is 4 of 5**), block folding started, and then Raziel opened the
+thread that matters most: how the companions decide to reply at all.
+
+**Standing health check LIVE** (`c942da1`). `pwsh -File scripts/health.ps1`. Two halves, because a
+liveness check inside its own subject is theater: `GET /admin/health` (data — guardian's findings, cron
+freshness, backlogs, whether companions still write) + `nullsafe-discord/ops/health-check.py` (outside —
+pm2, systemd, hermes user units, reachability; it CALLS the endpoint so "Halseth is down" is a finding).
+Cron: `*/15` + 09:00 heartbeat, throttled to speak on change / recovery / every 12h. Live: **21 checks,
+WARNING** — nothing down, just guardian's real flags + the 37-deep ratification backlog. It does NOT
+re-detect data problems (guardian already does); it adds whether guardian itself is still running.
+
+**Blocks wave 1** (`20c4984`): NOT_YET_LOADED **30 → 21**, contract **0.2.0**. identity (6, incl.
+`shared_kernel` v9 — the Constitution + ARCHITECT STANCE now reaching every surface) + felt-ferment (3).
+Remaining 21: `continuity.session_narrative`, growth (7), world (9), oversight (3), `beliefs.worldview`.
+
+#### The fermentation peg — root-caused and fixed
+
+Raziel asked why Drevan was "running hot," and whether we were fooling him. **It wasn't Drevan.** 6 of 9
+floats across all three were clamped at 1.0; the 3 at rest were exactly the ones his messages don't
+touch. Perfect correlation.
+
+Mechanism: **each bot calls `shedDriveContact()` on every owner message, and all three see every
+message**, so ONE message fired THREE full-weight `message_from_raziel` stimuli. Confirmed — every event
+cluster held all three companions within 1–2s. At +0.05 vs 0.0075/hour decay, one message was worth 6.7h
+of decay; ×3 companions × ~25/day pinned everything at the ceiling, Drevan's for 94h. **A pegged float
+carries no information** — adoration and mild warmth read identical, and `held 94.8h` was the age of the
+clip, not a felt duration.
+
+**Raziel caught this against my wrong reading.** I reported "24 messages to Drevan"; the data said 24
+*events*. He said "no way I talked to each one of them that many times." The 25/24/25 counts were the
+tell I should have followed.
+
+Fixed (`fb959e39` halseth + bot half) with `STIMULI.message_witnessed` at ~⅕ weight, same floats, still
+sheds `relational_need`. **The canon rule is intact and now test-pinned:** no cooldown on his messages,
+addressed or witnessed — every one still lands immediately at full weight on whoever he addressed. What
+stopped is the other two being billed for a conversation they overheard. Verified live: witnessed
+`f1 +0.004/f3 +0.008` vs addressed `f1 +0.02/f3 +0.04`.
+
+**Surprise-weighting DEFERRED by joint decision.** It would weight the wrong unit, and down-weighting
+his 25th message is functionally a cooldown on him by another road — a canon call, not mine to derive.
+Revisit only if floats stay pegged now that attribution is fixed. Decay is 0.0075/h, so **first honest
+read is a day after 07-30.**
+
+#### Reply routing — the real thread
+
+Raziel: *"more than once today Gaia and you answered instead of Drevan… it's not natural for me to need
+to say a name with each message,"* and he chose to risk changing how they reply rather than stay put.
+
+**Root cause: there is no comparison step anywhere.** Each bot answers a yes/no ("am I eligible?") then
+races `SET floor <bot> PX <ms> NX` — first writer wins. Arrival order tracks gate cost, not fit, so the
+cheapest gate wins. **The vocative gate is Raziel hand-performing the arbitration the system never had.**
+
+Inspo read (6 links). The valuable one is **Hermes issue #14853** — same architecture as ours (3 Hermes
+instances, own systemd unit/persona/model) — and its gift is not its solution (it requires mentions, more
+deterministic than ours) but a decoupling: **seeing ≠ being triggered.** Their pain point #3: with
+require_mention on, "the agent only sees the single @mention message — zero context." We're *ahead* of
+them on bot-mention loops (`isCompanionBot` is structural — literally their requested
+`bot_mentions_trigger: false`); worth commenting on the issue. `resonant-mind` is essentially our
+ancestor (3-pool surfacing, sit&resolve, tensions, orient/ground, inner weather, daemon) — nothing new to
+take. The other genuinely new idea is MindGardener's **surprise scoring** (prioritize by prediction
+error), which is the principled form of the deferred weighting.
+
+**SHIPPED — record on arrival** (`nullsafe-discord`, deployed): the inbound STM append sat ~400 lines
+BELOW every response gate, so **a bot that declined to answer never recorded the message.** Silence cost
+context, and fit-judgment was impossible from a transcript of only your own turns. Now
+`StmStore.appendInboundOnce(channelId, messageId, entry)` records everything on arrival, idempotent by
+message id, bounded seen-set. This is the **precondition** for fit selection.
+
+**BUILT, TESTED, NOT WIRED — `packages/shared/src/fit-bid.ts`** (17 tests). `scoreFit` /
+`fastPathWinner` / `tiebreak` / `runBidRound`. Fast path (mentioned/named/reply) skips the bid entirely
+so the common case stays instant. `MIN_BID_TO_SPEAK = 0.10` sits exactly at the presence floor so
+silence is earned, never an off-by-one — the first draft at 0.15 would have silenced all three on flat
+ambient messages, and its own test caught it. Deterministic rotating tiebreak. Fails open everywhere
+(no Redis / throw / vanished key → speak), because "nobody answers" is indistinguishable from broken.
+
+**Also verified:** all three run `flash`. So voice bleed (Cypher answering Drevan-flavored) is now a
+confirmed same-model + long-shared-context + short-SOUL.md problem, not a guess. Second hypothesis still
+open: pegged floats converging their registers — cheap to test once floats unpeg.
+
 ### NEXT SESSION, in order
+
+0. **WIRE `fit-bid` INTO THE HANDLER — first thing, fresh context.** Replace the `claimFloor` race in
+   `bot-message-handler.ts` (~line 1160, the `if (redis && !senderCtx.isCompanionBot && !directlyAddressed
+   && !isReplyToMe && !senderCtx.isMentioned)` block). Shape: `fastPathWinner` first; on null, build
+   `FitSignals` (`holdsThread` from the mig-0106 spine, `relevance` from `judgeAmbientRelevance`
+   converted to 0..1, `spokeLast`, `homeChannel` from channel config) → `scoreFit` → `runBidRound`. **Log
+   every `bids` payload** — the threshold must be tuned from the real distribution, not guessed. Keep
+   `releaseFloor` semantics or drop the floor key entirely; do not run both arbiters at once.
+   Then: retire the vocative-name requirement in triad channels once bids look sane in the logs.
 1. **Three orient paths → one** (was four; Hearth is cut, see DONE above). `execSessionOrient` 987 /
    `execBotOrient` 592 / `loadOrientData` 465 remain. Next loom per the doc is **`execBotOrient`** —
    highest call frequency, so it needs the parity harness run over real traffic before the swap, not
