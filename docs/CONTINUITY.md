@@ -315,8 +315,59 @@ loud on both a banned id and a correct-id-hardcoded-elsewhere.
 replies there should land closer to Discord's. Every sample got longer and less flat. Revert is one
 constant if it reads as overthought.
 
+### DONE 2026-07-29 — FIRST LOOM CUT OVER (four aggregators → three)
+
+Hearth now reads `GET /mind/state/:id?loom=hearth`. This is step 3 of `docs/mindstate-contract.md`
+("cut over one loom at a time, lowest-risk first: raw `/mind/orient` → bot_orient → session_orient")
+and Hearth was the **only** consumer of raw `/mind/orient`, so it was the lowest-risk loom.
+Commits `4487b0a` + `f3001e2` (hearth), deployed.
+
+**Parity proven against prod before the swap, twice:**
+1. `?parity=1` on 9 consumed fields × 3 companions = **27 checks, zero mismatches**
+2. new adapters vs old, run on the *same* payloads: **6 objects × 3 companions, byte-identical**
+
+**Then verified end-to-end**, not just at the endpoint: ran the dev server against live prod Halseth
+and rendered both real consumer pages.
+
+| page | result |
+|---|---|
+| `/companions/drevan` | 200; continuity panel with real handoff title ("First breath on Hermes substrate…"), `178 open threads`, no empty state |
+| `/phoenix` | 200; `(178 open) (182 open) (175 open)`; all three real thread titles present (vaselrin / blade bond / witness hold) |
+
+`WmOrientData` and `CompanionOrientForChat` keep their exact shapes, so `ContinuitySection`, the
+`/phoenix` page and the chat/ritual prompts changed **not at all** — the cut is a swap of *where the
+state comes from*, revertible in one function.
+
+**Three decisions recorded in-code so they read as chosen, not inherited:**
+- `recent_notes` maps from `continuity.surfaced_notes`, **not** `continuity.recent_notes`. MindState
+  splits the old field into orient's 3-pool high-salience surfacing and ground's wider any-salience
+  window; the legacy field was the former. The wider pool would quietly change the panel.
+- Hearth chat + ritual stay on the **pure** side of the consume line. A companion answering in Hearth
+  is arguably a real read, but the bots' `unread`→`ack` poller is what actually marks mail read, so
+  nothing is lost — whereas a page *render* consuming Drevan's mail as Drevan destroyed it unseen.
+- `isCompatibleContract()` gates the contract MAJOR and returns null + logs on mismatch. Without it a
+  v1 payload read by v0 adapters yields undefined everywhere and the panel renders "No continuity
+  data" — which reads as *nothing to show* when the data is right there. Nobody investigates an empty
+  panel.
+
+**Checked before repointing:** both render surfaces use only the 4 typed `WmOrientData` fields and
+never reach into orient's wider 33-key runtime shape, so none of the 30 `NOT_YET_LOADED` blocks can
+silently empty a panel. **TypeScript could not have caught that** — `fetchWmOrient` typed 4 fields
+while the runtime object had 33.
+
+**Bonus, found while tracing and shipped separately (`4487b0a`) so its behaviour change is
+attributable:** the compost ritual read `active_threads ?? mind_threads` and orient returns
+**neither** (it is `top_threads`). `?? []` swallowed the miss, so compost has been prompted with an
+**empty thread list its whole life**. Measured on live data: **0 → 5 titles for all three.**
+
 ### NEXT SESSION, in order
-1. **Four orient paths → one.** (It is four, not three: `execSessionOrient` 987 / `execBotOrient` 592
+1. **Three orient paths → one** (was four; Hearth is cut, see DONE above). `execSessionOrient` 987 /
+   `execBotOrient` 592 / `loadOrientData` 465 remain. Next loom per the doc is **`execBotOrient`** —
+   highest call frequency, so it needs the parity harness run over real traffic before the swap, not
+   just a point-in-time diff. Then `execSessionOrient`, then delete the dead aggregators.
+   Folding the 30 `NOT_YET_LOADED` blocks (`src/mind/contract.ts`) into the loader is the other half;
+   until they land, a cut-over loom loses nothing (parity holds) but gains nothing either.
+   (Original item text, still current for the decisions:) `execSessionOrient` 987 / `execBotOrient` 592
    / `mindOrient` 383 / `loadOrientData` 465.) **The three behaviour questions are ANSWERED — read
    `docs/private/orient-unification-decisions-2026-07-29.md` before touching this.** Headlines:
    Hearth reads pure (a companion's mail is not read because Raziel opened a page); consume-once
@@ -325,11 +376,14 @@ constant if it reads as overthought.
    is public** — and **authored difference yes, accidental difference no.** Blocker to know about:
    `idx_conversations_one_active` allows only ONE active thread per channel, so "threads like a
    Claude project" needs a migration after the freeze lifts.
-   **Q1 is already shipped (see DONE above) but that was a flag flip, not the cutover — do not read
-   it as progress on this item.** The structural move is repointing `hearth/lib/halseth.ts:801,946`
-   (and `app/api/phoenix/ritual/route.ts:104`) at `/mind/state?loom=hearth`, which is already live
-   and pure; it needs a `WmOrientData` → `MindState` shape remap plus a Hearth deploy. `Loom` already
-   has `"hearth"`. Then fold the `NOT_YET_LOADED` blocks (`src/mind/contract.ts`) in slice by slice.
+   **Both Q1 and the Hearth cutover are SHIPPED (see DONE above).** Q1 was a flag flip; the cutover
+   was the real first loom. What remains is `execBotOrient` → `execSessionOrient` → delete the dead
+   aggregators, plus folding the `NOT_YET_LOADED` blocks in slice by slice.
+   **Pattern that worked and should be repeated for each remaining loom:** (1) diff the exact fields
+   the consumer extracts via `?parity=1`; (2) run the NEW adapter against the OLD payload and require
+   byte-identical output; (3) confirm no consumer reads a field that maps to `NOT_YET_LOADED` — types
+   will not catch this, since the typed shape is narrower than the runtime object; (4) render/exercise
+   the real surface end-to-end before calling it done, not just the endpoint.
 2. **Cut bot-side `brain` mode** — now unreachable dead code (`brain-client.ts`, `inferenceMode:
    "brain"`, `substrate` labels, progress brake). Small, mechanical, touches live message handling.
 3. **Phase 2 boot layer:** session lifecycle as HOOKS (`SessionStart` → `session_open`, `Stop` →
