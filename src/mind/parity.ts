@@ -42,6 +42,12 @@ import { execBotOrient } from "../librarian/executors/session.js";
 const SAMPLE_INTERVAL_MS = 60 * 60 * 1000;
 const GATE_KEY = "bot_parity_sampled_at";
 
+/** companion_settings pseudo-companion for system-wide stamps. `_system` (underscore) is the
+ *  convention salience-prune already established; the first cut of this file used "system" and
+ *  created a SECOND convention for the same row, which the health check would then have had to know
+ *  about. One spelling. */
+const SYSTEM_ROW = "_system";
+
 /**
  * One comparable field. `bot` and `ms` each project their side to a stable primitive so the diff is
  * about CONTENT, not key names -- the two shapes are deliberately different (a flat wire format vs
@@ -201,7 +207,7 @@ export async function sampleBotOrientParity(env: Env, opts: { force?: boolean } 
   if (!opts.force) {
     const row = await env.DB.prepare(
       "SELECT value FROM companion_settings WHERE companion_id = ? AND key = ?",
-    ).bind("system", GATE_KEY).first<{ value: string }>().catch(() => null);
+    ).bind(SYSTEM_ROW, GATE_KEY).first<{ value: string }>().catch(() => null);
     const last = row?.value ? Date.parse(row.value) : NaN;
     if (Number.isFinite(last) && now - last < SAMPLE_INTERVAL_MS) return;
   }
@@ -211,7 +217,7 @@ export async function sampleBotOrientParity(env: Env, opts: { force?: boolean } 
   await env.DB.prepare(
     `INSERT INTO companion_settings (companion_id, key, value, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(companion_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-  ).bind("system", GATE_KEY, stamp, stamp).run().catch((e: unknown) => {
+  ).bind(SYSTEM_ROW, GATE_KEY, stamp, stamp).run().catch((e: unknown) => {
     console.warn("[bot-parity] gate stamp failed (non-fatal):", String(e));
   });
 

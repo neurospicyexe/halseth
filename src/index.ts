@@ -35,6 +35,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
+import { getHealth } from "./handlers/health.js";
 import { getMindState, getBotParity, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
@@ -149,6 +150,7 @@ const router = new Router()
   // created after they were first inserted (fixes filtered recall without spending neurons).
   .on("POST", "/admin/reindex-existing",      (request, env) => reindexExisting(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
+  .on("GET", "/admin/health",             (request, env) => getHealth(request, env))
 
   // Presence (dashboard feed)
   .on("GET", "/presence", (request, env) => getPresence(request, env))
