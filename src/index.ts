@@ -35,7 +35,7 @@ import { postStmEntry, getStmEntries } from "./handlers/stm.js";
 import { postPersonaBlocks, postHumanBlocks, getPersonaBlocks, getHumanBlocks, prunePersonaBlocks } from "./handlers/blocks.js";
 import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
-import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { getMindState, getBotParity, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
@@ -208,6 +208,7 @@ const router = new Router()
 
   // WebMind — companion continuity and thread state
   .on("GET",  "/mind/state/:agent_id",        (request, env, params) => getMindState(request, env, params ?? {}))
+  .on("GET",  "/mind/parity/bot/:agent_id",   (request, env, params) => getBotParity(request, env, params ?? {}))
   .on("GET",  "/mind/orient/:agent_id",       (request, env, params) => getMindOrient(request, env, params ?? {}))
   .on("GET",  "/mind/orient-debug/:agent_id", (request, env, params) => getMindOrientDebug(request, env, params ?? {}))
   .on("GET",  "/mind/ground/:agent_id",       (request, env, params) => getMindGround(request, env, params ?? {}))
@@ -623,6 +624,27 @@ export default {
       (async () => {
         try { await runSaliencePrune(env); }
         catch (err) { console.error("salience prune failed", err); }
+      })(),
+    );
+
+    // Bot-orient parity sampler (src/mind/parity.ts). Self-gates to 1h on its own
+    // companion_settings stamp, same shape as the two ticks above.
+    //
+    // This is the data-collection phase for the NEXT loom cutover, started deliberately BEFORE the
+    // cutover is scheduled: execBotOrient runs ~20x more often than any other orient path and its
+    // content tracks live conversation, so its cut needs parity evidence across real days rather
+    // than the point-in-time diff that was sufficient for Hearth. Deferring the cutover is right;
+    // deferring the measurement would just relocate the same wait to a worse moment.
+    //
+    // Both sides run readOnly, so sampling cannot warm the heat ranking it samples. Results go to
+    // the log (filter `[bot-parity]`), not a table -- the migration freeze holds until the loader
+    // lands. Guarded so a failure never breaks the synthesis queue.
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const { sampleBotOrientParity } = await import("./mind/parity.js");
+          await sampleBotOrientParity(env);
+        } catch (err) { console.error("bot parity sample failed", err); }
       })(),
     );
   },

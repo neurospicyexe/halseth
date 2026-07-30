@@ -1070,7 +1070,30 @@ export async function execSessionLightGround(ctx: ExecutorContext): Promise<Exec
   return { data: payload, response_key: "ground" };
 }
 
-export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
+/**
+ * Discord bot presence orient.
+ *
+ * `opts.readOnly` suppresses every consume-on-read side effect (heat warming, delivered_at
+ * stamping) while returning identical content. Added 2026-07-29 for two reasons, in order of
+ * importance:
+ *
+ *  1. **The parity sampler needs it.** execBotOrient is the next loom to cut over to the MindState
+ *     loader, and per docs/mindstate-contract.md that cut needs parity evidence over REAL traffic
+ *     rather than a point-in-time diff, because this path runs ~20x more often than any other and
+ *     has already been fixed twice for saturation. A sampler that called this without readOnly would
+ *     warm heat and stamp delivered_at 3x/hour = ~72 writes/day purely from measuring -- which is
+ *     the read-writes-the-ranking antipattern the SURFACE_BUMP work exists to kill. Measuring must
+ *     not move the thing measured.
+ *  2. The eventual cutover wants it anyway: loadMindState is a pure read, so proving equivalence
+ *     means comparing like with like.
+ *
+ * Same flag, same meaning, same reasoning as mindOrient's (webmind/orient.ts). Live bot presence
+ * calls pass nothing and keep their existing behaviour exactly.
+ */
+export async function execBotOrient(
+  ctx: ExecutorContext,
+  opts: { readOnly?: boolean } = {},
+): Promise<ExecutorResult> {
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
@@ -1300,14 +1323,14 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   ];
   const continuity_notes = surfacedNotes.map(n => String(n.content ?? "").slice(0, 200)).filter(Boolean);
   const warmIds = surfacedNotes.map(n => n.note_id).filter(Boolean);
-  if (warmIds.length > 0) {
+  if (!opts.readOnly && warmIds.length > 0) {
     await ctx.env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length, SURFACE_BUMP)).bind(...warmIds).run()
       .catch(e => console.warn("[bot-orient] note warm failed (non-fatal):", e));
   }
   const synthId = synthResult.status === "fulfilled" && synthResult.value
     ? (synthResult.value as { id?: string }).id ?? null
     : null;
-  if (synthId) {
+  if (!opts.readOnly && synthId) {
     // SURFACE_BUMP, not the recall default (2026-07-27). Orient/session_load DISPLAYING the
     // summary is not the companion reaching for it. session-summary.ts:240 ranks the corpus by
     // effectiveHeatSql(), so a full-bump display write is the same read-writes-the-ranking loop
@@ -1495,9 +1518,13 @@ export async function execBotOrient(ctx: ExecutorContext): Promise<ExecutorResul
   const answered_questions = answeredQuestionsResult.status === "fulfilled" ? answeredQuestionsResult.value : [];
   // Stamp delivered_at on surfaced answers (mig 0107). Awaited + caught -- bookkeeping
   // failure here must never break the bot orient response.
-  await markAnswersDelivered(ctx.env, answered_questions.map(a => a.id)).catch((e: unknown) => {
-    console.error("[bot-orient] markAnswersDelivered failed:", String(e));
-  });
+  // Skipped under readOnly: a parity sample must not mark Raziel's answers as delivered to a
+  // companion that never saw them.
+  if (!opts.readOnly) {
+    await markAnswersDelivered(ctx.env, answered_questions.map(a => a.id)).catch((e: unknown) => {
+      console.error("[bot-orient] markAnswersDelivered failed:", String(e));
+    });
+  }
 
   return {
     data: {

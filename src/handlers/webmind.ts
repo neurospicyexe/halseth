@@ -111,6 +111,38 @@ export async function getMindOrientDebug(
   }
 }
 
+// GET /mind/parity/bot/:agent_id
+//
+// On-demand version of the bot-orient parity sample (src/mind/parity.ts). Same implementation the
+// hourly cron uses, so the endpoint can never report a parity the cron does not measure.
+// Pure read on both sides -- execBotOrient runs with readOnly, so checking parity cannot warm the
+// heat ranking it is checking.
+export async function getBotParity(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { agent_id } = params;
+  if (!agent_id || !isValidAgentId(agent_id)) {
+    return json({ error: `Invalid agent_id: must be one of ${VALID_AGENT_IDS.join(", ")}` }, 400);
+  }
+
+  try {
+    const { compareBotOrient } = await import("../mind/parity.js");
+    // ?shape=1 adds the bot payload's key names and value shapes. Kept as a permanent affordance
+    // rather than a throwaway: the bot wire format is flat where the contract is nested, and
+    // inferring it by reading the 592-line function produced three wrong accessors on the first try.
+    const includeShape = new URL(request.url).searchParams.get("shape") === "1";
+    return json(await compareBotOrient(env, agent_id, { includeShape }));
+  } catch (err) {
+    console.error("[mind/parity/bot] error", { agent_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
 // GET /mind/state/:agent_id?loom=claude|discord|worker|hearth|raw[&parity=1]
 //
 // The MindState loader endpoint (Phase 1, docs/mindstate-contract.md). Pure read:
