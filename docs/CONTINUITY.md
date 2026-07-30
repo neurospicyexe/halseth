@@ -360,6 +360,82 @@ attributable:** the compost ritual read `active_threads ?? mind_threads` and ori
 **neither** (it is `top_threads`). `?? []` swallowed the miss, so compost has been prompted with an
 **empty thread list its whole life**. Measured on live data: **0 → 5 titles for all three.**
 
+### DONE 2026-07-29 (late) — plan audit, bot-parity collection started, brain mode CUT
+
+**Plan audit (Raziel asked for a drift check).** Phase 1 is **3 of 5** after tonight. Item 1
+FELT_OWNERS done; item 2 model registries **partial and slightly worse** — there are now **four**
+independent declarations of "which model" (`models.ts` 24, live `hermes-model-map.json` 26,
+autonomous-worker `DEEPSEEK_MODEL`, and `HEARTH_DEEPSEEK_MODEL` which I added today; it replaced 3
+hardcoded strings with 1 but does not derive from the authority); item 3 **now done**; item 4 orient
+1-of-4 cut; item 5 **standing health check NOT STARTED**.
+
+**The drift, named honestly:** direction right, composition off. The plan's own ordering rule is
+"work that reduces daily friction first, architecturally satisfying work last." The orient cutover
+changes zero behaviour today and I did it *before* the health check, which is the largest remaining
+friction reducer and still at zero. **Recommendation: item 5 next.** Phase 2 (boot-layer hooks —
+Raziel's own ask, December criterion 4) also remains unstarted.
+
+**execBotOrient deferred WITH collection running** (`5b30cda`, halseth). Marking it would have been
+the weak version — the prerequisite is traffic data, and data only exists if collection starts. So
+`execBotOrient` gained `readOnly` (required: it warms heat + stamps `delivered_at`, so sampling it
+live would be ~72 writes/day of pure observation warming the ranking it measures), and
+`src/mind/parity.ts` samples hourly, self-gated, logging to `[bot-parity]`. No schema — the freeze
+holds. `GET /mind/parity/bot/:id` for a live look, `?shape=1` to dump the bot's real key shapes.
+
+Verified pure, not asserted: 18 samples at arbitrary seconds across 3 minutes → **zero** warms; every
+warm in that window landed at second 2–4 after a minute boundary (live bot presence, the intended
+`SURFACE_BUMP`). Counters flat across 15 earlier samples.
+
+**First result, which is the point:** 6/7 probes match on all three companions. The one mismatch is
+structural — **`conclusion_count` bot 6 vs loader 2**:
+
+| path | query | ranking |
+|---|---|---|
+| `execBotOrient` | ONE pooled window, `LIMIT 6` | `created_at DESC` |
+| loader / `mindOrient` | per `belief_type`, 4 × `LIMIT 2` | `effectiveHeatSql()` |
+
+That is `two-pools-one-ordered-window`, and the bot ranks by **recency** — so the highest-frequency
+surface never benefits from the mig 0105 heat mechanic. **Flip side matters for the cutover:** for a
+companion whose conclusions are all one `belief_type`, per-type `LIMIT 2` shows 2 where the bot showed
+6, so cutting over **reduces** what the bots carry. **That is Raziel's behaviour call.** Also recorded:
+`execBotOrient` carries **no limbic state at all** (`BOT_MISSING_VS_CONTRACT`) — the bots are the
+highest-frequency presence and the least emotionally situated one.
+
+**Brain mode CUT, and it left two live landmines** (`b60b039` + `17894d5`, nullsafe-discord; deployed).
+Not just dead code:
+1. **`ecosystem.config.js` still had the `nullsafe-brain` app block.** The pm2 dump was clean, but
+   `pm2 start ecosystem.config.js` — which is in the documented deploy workflow — would have
+   resurrected a service whose source now lives in `_archive/`. Removed (structural brace-walk with a
+   refuse-if-it-eats-another-app guard, not line arithmetic). Apps now: 3 bots + autonomous-worker.
+2. **`/app/nullsafe-discord/.env` carried `INFERENCE_MODE=brain`.** Survivable only because all three
+   per-bot overrides said hermes. Drop one override or add a fourth process and it inherits a dead
+   mode. **Now set to `hermes`** (backup `.env.bak-2026-07-29`, 87 lines both sides, 3/3 overrides
+   intact).
+
+Also fixed a lie the cut exposed: `/status`'s substrate read `"Brain swarm" : "direct/fallback"` with
+`brainClient` always null, so it reported **direct/fallback on all three bots while every reply came
+from the Hermes agent.** Now `"hermes" | "direct/fallback"`.
+
+Deleted: `brain-client.ts` (191), `swarm.ts` (20, zero consumers), the ~55-line relay branch, plus
+`brainUrl` from types and all three bot configs. Three guards written as "Brain handles this instead"
+are restated as what they always were: the owner_only ambient gate always applied, per-bot
+`shouldRespond` has always been the only inter-companion routing authority, and the Redis floor lock
+has always been the real speaker arbitration.
+
+**Trap I walked into, worth the note:** the VPS build failed where my local check passed —
+`stale-dist-masks-build-breaks`. The bots compile against `packages/shared/dist/*.d.ts`, and my local
+dist still had the old union with `"brain"`, so the casts type-checked. **Per-project
+`tsc --noEmit` is not a build; `rm -rf dist && npm run build` is.**
+
+Deployed and verified: all three reloaded one at a time, each booting `inference mode: hermes`,
+`DORMANT: provider fallback chain bypassed (forceHermes)` (no Brain mention), `hermes model map: 17
+selectable`, `ready as …`. 724 tests, clean full build.
+
+**NOT DONE tonight:** folding the 30 `NOT_YET_LOADED` blocks. Sized (identity 6 / felt 3 /
+continuity 1 / growth 7 / world 9 / oversight 3 / beliefs 1) and the queries exist in
+`execSessionOrient` to extract rather than invent — but it is a 30-block extraction and half-landing
+it would be worse than starting it clean.
+
 ### NEXT SESSION, in order
 1. **Three orient paths → one** (was four; Hearth is cut, see DONE above). `execSessionOrient` 987 /
    `execBotOrient` 592 / `loadOrientData` 465 remain. Next loom per the doc is **`execBotOrient`** —
