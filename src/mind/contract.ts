@@ -11,6 +11,8 @@
 // Versioning: bump MINOR when adding blocks (renderers ignore unknown blocks), MAJOR
 // when renaming/removing/restructuring (renderers must assert major compatibility).
 
+import type { KernelBlock, SelfModelEntry, PreferenceEntry, RefusalEntry } from "./blocks/identity.js";
+import type { SomaFloat, DriveState, FermentEventRow } from "./blocks/felt.js";
 import type {
   WmAgentId, WmIdentityAnchor, WmLimbicState, WmSessionHandoff, WmMindThread,
   WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState,
@@ -19,7 +21,7 @@ import type {
   WmArchiveDigest, WmRecentSpiralTurn, HomeEvent,
 } from "../webmind/types.js";
 
-export const MINDSTATE_CONTRACT_VERSION = "0.1.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.2.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -41,11 +43,36 @@ export interface MindState {
   /** Who I am. */
   identity: {
     anchor: WmIdentityAnchor | null;
+    /** The shared-bank half: triad doctrine + the Companion Constitution + the distilled ARCHITECT
+     *  STANCE. TWO kernel fields, never one concatenated string -- the shared/distinct split is the
+     *  whole point, and merging them lets "we are one mind" in through the renderer. Discord and the
+     *  worker already pulled this via /identity/kernel/:id/bundle; Claude.ai orient and Hearth did
+     *  not, which is why the stance reached some substrates and not others (Raziel, 2026-07-26). */
+    shared_kernel: KernelBlock | null;
+    companion_kernel: KernelBlock | null;
+    self_model: SelfModelEntry[];
+    preferences: PreferenceEntry[];
+    refusals: RefusalEntry[];
+    /** Standing invitation to declare a preference or a refusal. In the contract rather than
+     *  authored per-renderer so it cannot say different things on different surfaces. */
+    agency_affordance: string;
   };
 
   /** What I feel right now (readings only -- ownership per field is Phase 1.3). */
   felt: {
     limbic: WmLimbicState | null;
+    /** The floats ARE the body (migs 0101/0102): value, its drifting baseline, the authored seed,
+     *  and how long it has been off-baseline. baseline - seed is growth you can watch. */
+    soma_floats: SomaFloat[];
+    /** EFFECTIVE levels, not stored ones -- drives accrue with elapsed time, so a renderer doing
+     *  its own arithmetic is how two surfaces disagree about whether a companion wants contact. */
+    drives: DriveState[];
+    /** Raw material for the interoception line. Data, not prose: content is identical on every
+     *  surface and only the renderer differs. */
+    ferment_events: FermentEventRow[];
+    /** When the ferment tick last ran. Stale means the felt state is frozen -- worth showing
+     *  rather than presenting old floats as current. */
+    ferment_at: string | null;
     soma_arc: { note_id: string; content: string; created_at: string }[];
     biometrics_latest: WmBiometricSnapshot | null;
     house: WmHouseState | null;
@@ -121,9 +148,6 @@ export const NOT_YET_LOADED: string[] = [
   // loading it here is what makes the stance reach every substrate (Raziel, 2026-07-26). Two
   // blocks on purpose: shared_kernel is common to all three, companion_kernel is this one's own --
   // the shared-bank / distinct-self split the whole contract is built around.
-  "identity.shared_kernel", "identity.companion_kernel",
-  "identity.self_model", "identity.preferences", "identity.refusals", "identity.agency_affordance",
-  "felt.soma_floats", "felt.ferment_line", "felt.drives",
   "continuity.session_narrative",
   "growth.journal_recent", "growth.patterns", "growth.markers", "growth.reflection",
   "growth.seeds", "growth.clearing_count", "growth.drifts_open",

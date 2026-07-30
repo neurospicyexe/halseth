@@ -376,7 +376,10 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
 
 // ── Read (Hearth) ──────────────────────────────────────────────────────────────────
 
-const FLOAT_LABELS: Record<CompanionId, [string, string, string]> = {
+/** Per-companion names for the three soma floats. Exported so src/mind/blocks/felt.ts uses the SAME
+ *  labels rather than a second copy -- Drevan's floats are heat/reach/weight everywhere or the surfaces
+ *  disagree about what his body is called. */
+export const FLOAT_LABELS: Record<CompanionId, [string, string, string]> = {
   cypher: ["acuity", "presence", "warmth"],
   drevan: ["heat", "reach", "weight"],
   gaia: ["stillness", "density", "perimeter"],
