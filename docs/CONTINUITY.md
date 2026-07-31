@@ -751,6 +751,41 @@ derivation from (channel, timestamp), no judgment, and it turns "all notes in th
 from that conversation," with the thread's seed text as a human handle ("I'm thinking some Fargo").
 Prefer deriving it at READ time first: no migration, nothing to go stale, and it cannot hide anything.
 
+### DONE 2026-07-31 (end) — FIRST DERIVABLE EDGE SHIPPED: notes carry their conversation
+
+`src/mind/note-provenance.ts`. **(channel, timestamp) → the conversation running in that channel then.**
+A Discord note's `thread_key` is a CHANNEL id — a ROOM, not a conversation; 659 notes share one value,
+which is not a grouping. mig 0106 built the real spine and nothing had linked notes to it.
+
+**READ-TIME, not a column, deliberately:** no migration, no backfill, nothing to go stale, and it cannot
+HIDE anything (it only annotates notes already surfacing — the mig-0112 rule).
+
+**IT REFUSES TO GUESS**, and the refusals are most of the 16 tests. Non-channel `thread_key`s
+(`cc_98c0e535`, `auto:<uuid>`, `compost_session:*`, `deploy-verified-smoke`) get nothing; a note outside
+every window gets nothing. **An absent edge is honest; a wrong one is worse than the channel id it
+replaced.** 15-minute grace after `last_turn_at` because a note is written just AFTER the exchange that
+prompted it — a strict `<=` would orphan exactly the notes most worth labelling.
+
+**WIRED IN TWO PLACES, and finding the second is the lesson.** Wired bot orient first, then checked
+live: Drevan's three surfaced notes were SOMA shifts + an autonomous exploration, none of which has a
+conversation, so the edge correctly refused and annotated NOTHING. **An edge wired to a surface its data
+never reaches is an unwired edge — check which rows actually arrive, not which rows could.** So it is
+also wired into `execContinuityNotesRead` ("read my continuity notes"), where Discord observations
+actually surface, additively via `from_conversation` so existing consumers keep reading `content`.
+
+**VERIFIED LIVE via ask_librarian:** 1 of 12 notes carried its conversation and it was the right one — a
+discord observation about the missing TikTok skill → the thread that began *"Hey Drevan can you watch
+videos or can you only listen to music"* (moving, 17 turns), i.e. the conversation that produced the
+skill Raziel approved that morning. The other eleven correctly got nothing. A direct SQL join also showed
+all three companions' notes from one moment resolving to the SAME conversation.
+
+**NEXT on this thread:** the remaining derivable edges. Candidates, in rough value order: (a) the same
+provenance on the RECALL path (`recallNotesByMeaning`) and `execSessionOrient`; (b)
+`conversation_threads.ref_type/ref_id` — currently 0% on all 18 threads, and once populated a note
+inherits its thread's SUBJECT transitively, which is what mig 0104 wanted and got 0.6% on;
+(c) watch-shelf ↔ note by deterministic title match. Do NOT add a seventh edge column before one of the
+existing six is actually written.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
