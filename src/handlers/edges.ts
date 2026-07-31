@@ -52,10 +52,10 @@ export async function getEdges(request: Request, env: Env): Promise<Response> {
          WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NOT NULL) AS resolved,
       (SELECT COUNT(*) FROM companion_conclusions n JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
          WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NULL
-           AND n.created_at > datetime('now','-${SUPERSEDE_CANDIDATE_WINDOW_DAYS} days')) AS open_in_window,
+           AND datetime(n.created_at) > datetime('now','-${SUPERSEDE_CANDIDATE_WINDOW_DAYS} days')) AS open_in_window,
       (SELECT COUNT(*) FROM companion_conclusions n JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
          WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NULL
-           AND n.created_at <= datetime('now','-${SUPERSEDE_CANDIDATE_WINDOW_DAYS} days')) AS expired_unanswered,
+           AND datetime(n.created_at) <= datetime('now','-${SUPERSEDE_CANDIDATE_WINDOW_DAYS} days')) AS expired_unanswered,
       (SELECT COUNT(*) FROM companion_conclusions WHERE superseded_by IS NOT NULL) AS retired_total
   `);
 
@@ -67,10 +67,17 @@ export async function getEdges(request: Request, env: Env): Promise<Response> {
       (SELECT COUNT(*) FROM wm_continuity_notes WHERE archived = 0) AS live_notes,
       (SELECT COUNT(*) FROM wm_continuity_notes WHERE archived = 0
          AND thread_key IS NOT NULL AND thread_key GLOB '[0-9]*' AND length(thread_key) >= 15) AS addressable,
+      -- datetime() ON BOTH SIDES. Notes store an ISO instant (2026-07-31T14:01:32.157Z) while SQLite
+      -- datetime() emits space-separated (2026-07-30 12:11:38), so a raw string compare diverges at
+      -- index 10 (T is 0x54, space is 0x20) and silently drops most matches. Measured on prod: raw
+      -- compare 6, normalized 30 -- an 80% UNDERCOUNT in the very readout the hold-and-see decision
+      -- rests on. The runtime edge was never affected (note-provenance.ts compares in JS via tsToMs,
+      -- which normalizes), so this was a lying instrument rather than a broken feature -- and a lying
+      -- instrument is the worse of the two when a decision hangs on it.
       (SELECT COUNT(*) FROM wm_continuity_notes n JOIN conversation_threads t
          ON t.channel_id = n.thread_key
-         AND n.created_at >= t.created_at
-         AND n.created_at <= datetime(t.last_turn_at, '+15 minutes')
+         AND datetime(n.created_at) >= datetime(t.created_at)
+         AND datetime(n.created_at) <= datetime(t.last_turn_at, '+15 minutes')
        WHERE n.archived = 0) AS addressed
   `);
 

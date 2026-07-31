@@ -559,11 +559,24 @@ export async function execWatchView(ctx: ExecutorContext): Promise<ExecutorResul
 }
 
 export async function execWatchProgress(ctx: ExecutorContext): Promise<ExecutorResult> {
-  // `context` first, `request` as fallback. The caller should pass the title+position in context;
-  // parsing it back out of the request STRING is the documented trap (the command string is not the
-  // content), so context wins whenever it is supplied.
-  const raw = (ctx.req.context ?? ctx.req.request ?? "").trim();
-  if (!raw) return { error: "watch_progress_failed", reason: "need a title and position, e.g. \"Fargo S4E5\"" };
+  // `context` ONLY -- no fallback to the request string (tightened 2026-07-31, review finding).
+  //
+  // The fallback was the exact trap this comment used to merely warn about. `watch_progress` fast-path
+  // triggers include "we watched" and "we're on episode", so an ordinary sentence -- "we watched a movie
+  // last night" -- reached here, yielded title = "a movie last night", and INSERTED a shelf row. Every
+  // casual mention would accumulate a bogus title, and those then compete with the real row through
+  // findByTitle's LIKE fallback. A shelf that answers "where are we" from garbage is worse than one that
+  // asks to be told properly, because the organ's entire value is being trustworthy.
+  //
+  // Refusing is safe: the reason string tells the companion exactly what to send, and a refusal costs one
+  // round trip where a bad write costs a permanently wrong answer.
+  const raw = (ctx.req.context ?? "").trim();
+  if (!raw) {
+    return {
+      error: "watch_progress_failed",
+      reason: "send it in context as { \"title\": \"Fargo\", \"code\": \"S4E5\" } -- I will not guess a title out of the sentence, because a wrong shelf row would then answer 'where are we' incorrectly forever",
+    };
+  }
 
   // Parse position out of free text, same forms the Discord command accepts.
   const lower = raw.toLowerCase();

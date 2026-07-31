@@ -1300,7 +1300,7 @@ export async function execBotOrient(
        JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
        WHERE n.companion_id = ?1 AND n.supersede_candidate_id IS NOT NULL
          AND o.superseded_by IS NULL
-         AND n.created_at > datetime('now', '-' || ?2 || ' days')
+         AND datetime(n.created_at) > datetime('now', '-' || ?2 || ' days')
        ORDER BY n.created_at DESC LIMIT 2`
     ).bind(agentId, SUPERSEDE_CANDIDATE_WINDOW_DAYS).all<{ new_id: string; supersede_candidate_id: string; supersede_candidate_score: number; new_text: string; old_text: string }>(),
   ]);
