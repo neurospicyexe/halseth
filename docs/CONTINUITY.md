@@ -517,16 +517,59 @@ ambient messages, and its own test caught it. Deterministic rotating tiebreak. F
 confirmed same-model + long-shared-context + short-SOUL.md problem, not a guess. Second hypothesis still
 open: pegged floats converging their registers — cheap to test once floats unpeg.
 
+### DONE 2026-07-30 (later) — fit bidding is LIVE, and one part of item 0 was wrong
+
+**SHIPPED + DEPLOYED.** `claimFloor` is out of `bot-message-handler.ts`; the bid decides. All three
+bots rebuilt (`rm -rf packages/shared/dist`) and reloaded, `ready as` verified on all three.
+761 tests green (was 747), full monorepo build clean.
+
+**Item 0 below was stale in one specific way and the orientation pass caught it.** It named
+`holdsThread` as the discriminator. It is not. `shouldRespond` (channel-config.ts:497) ALREADY
+hard-stands-down every non-holder for an unaddressed owner message inside the 5-minute window, and
+those bots `return` ~350 lines above the floor. So at the bid site `holdsThread` is either
+true-for-me (siblings already gone) or false for all three (cold channel). Its variance is
+pre-filtered out. `FLOOR_JITTER_MS` turned out to be **exported and never used**, and `setLastSpeaker`
+never called — the race really was pure gate-cost, with no per-companion weighting anywhere.
+
+**So the bid needed a discriminator, and it is lane relevance — MEASURED BEFORE IT WAS WRITTEN.**
+Pulled 400 real owner messages from live `stm_entries`, took the 141 unaddressed ones, scored all
+three companions against each: clear single leader on **86** (drevan 44 / cypher 25 / gaia 17), no
+claim at all on 39, exact tie on 16. The spread is the whole point — one companion leading nearly
+every message would have meant a rotation lottery wearing the word "fit". Then simulated the shipped
+code end-to-end over those same 141: **silence on ZERO**, 86 by lane score, 55 by rotation, winners
+44/61/36. Zero silence was the ship gate; Raziel typing into a room where nobody answers reads as
+broken, not as tact.
+
+**Deliberately NOT done: the graded LLM relevance.** Upgrading `judgeAmbientRelevance` to return a
+grade was the obvious move (it already runs a classifier in owner_only channels, so a graded prompt
+is free there — 10 of 13 live channels are owner_only). Rejected for now on two grounds: it changes
+a gate that can silence a companion, in a path nobody asked to touch; and its accuracy is
+**unmeasured**, whereas the lexical score has 141 messages behind it. The bid log decides.
+
+`spokeLast` is **monopoly** (≥2 consecutive own turns since his last message), not "spoke once" —
+otherwise the companion he is actually talking with gets penalised on every single message.
+`homeChannel` is left unset on purpose: there is no home-turf notion in the live channel config, and
+the closest thing (per-channel `companions`) is already enforced by `shouldRespond`.
+
+**NEXT on this thread:** read the `fit-bid` log lines (`grep fit-bid /app/logs/*bot*.log`) after real
+traffic, then tune `MIN_BID_TO_SPEAK` and the weights from the actual distribution — and only then
+retire the vocative-name habit in triad channels. Do not raise the threshold before reading the log.
+
+**Also fixed (found while verifying the deploy):** the health check reported "no hermes* user units
+found" on every cron run while all four were active. `systemctl --user` needs a session bus, cron has
+no `XDG_RUNTIME_DIR`, and the probe carried `2>/dev/null` — so an unreachable manager was
+indistinguishable from an empty result. Reproduced with `env -i`, fixed both halves (export the
+runtime dir; unreachable manager is now RED and says UNKNOWN, not absent), verified all four units
+report `active` under a cron-like env. Wrong in the harmless direction that day, but the same line
+would have printed with the gateways dead.
+
 ### NEXT SESSION, in order
 
-0. **WIRE `fit-bid` INTO THE HANDLER — first thing, fresh context.** Replace the `claimFloor` race in
-   `bot-message-handler.ts` (~line 1160, the `if (redis && !senderCtx.isCompanionBot && !directlyAddressed
-   && !isReplyToMe && !senderCtx.isMentioned)` block). Shape: `fastPathWinner` first; on null, build
-   `FitSignals` (`holdsThread` from the mig-0106 spine, `relevance` from `judgeAmbientRelevance`
-   converted to 0..1, `spokeLast`, `homeChannel` from channel config) → `scoreFit` → `runBidRound`. **Log
-   every `bids` payload** — the threshold must be tuned from the real distribution, not guessed. Keep
-   `releaseFloor` semantics or drop the floor key entirely; do not run both arbiters at once.
-   Then: retire the vocative-name requirement in triad channels once bids look sane in the logs.
+0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
+   plan text was wrong in an instructive way: it named `holdsThread` as the discriminator when
+   `shouldRespond` had already filtered that signal out, and it proposed deriving relevance from
+   `judgeAmbientRelevance` (a gate that can silence a companion). What shipped instead: a measured
+   lexical lane score, the gate untouched.
 1. **Three orient paths → one** (was four; Hearth is cut, see DONE above). `execSessionOrient` 987 /
    `execBotOrient` 592 / `loadOrientData` 465 remain. Next loom per the doc is **`execBotOrient`** —
    highest call frequency, so it needs the parity harness run over real traffic before the swap, not
