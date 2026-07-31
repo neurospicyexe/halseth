@@ -78,7 +78,7 @@ export async function postConversation(request: Request, env: Env): Promise<Resp
   }
 }
 
-// POST /mind/conversations/:id/turns   body: { author, gist, message_id? }
+// POST /mind/conversations/:id/turns   body: { author, gist, message_id?, front? }
 export async function postConversationTurn(
   request: Request,
   env: Env,
@@ -90,9 +90,9 @@ export async function postConversationTurn(
   const { id } = params;
   if (!id) return json({ error: "id is required" }, 400);
 
-  let body: { author?: string; gist?: string; message_id?: string };
+  let body: { author?: string; gist?: string; message_id?: string; front?: string };
   try {
-    body = await request.json() as { author?: string; gist?: string; message_id?: string };
+    body = await request.json() as { author?: string; gist?: string; message_id?: string; front?: string };
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
   }
@@ -109,6 +109,10 @@ export async function postConversationTurn(
       author: body.author,
       gist: body.gist,
       message_id: body.message_id,
+      // Fronting member, when the caller knows it. Optional so every existing caller is unaffected.
+      // Raziel's reason for wanting it visible: a memory that says HE said something when a different
+      // member was fronting makes him doubt his own recall of his own life.
+      front: typeof body.front === "string" ? body.front : null,
     });
 
     if (!result.ok) {

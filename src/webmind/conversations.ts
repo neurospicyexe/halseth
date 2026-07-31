@@ -123,6 +123,20 @@ export async function openConversation(env: Env, input: {
 
 export async function appendTurn(env: Env, threadId: string, input: {
   author: string; gist: string; message_id?: string;
+  /**
+   * The fronting member who actually spoke this turn, when known (2026-07-31).
+   *
+   * RECORDED ON THE TURN, NOT IN `participants`, and the split is the whole design. Raziel's reason:
+   * "the front team members should be visible on the memories, because then there's not random 'oh, so
+   * and so said this' and then we have to freak out and think that we just don't remember saying it."
+   * A memory that says HE said something, when it was actually a different member fronting, makes him
+   * doubt his own recall of his own life. That is a real cost, not a tidiness issue.
+   *
+   * A front is per-TURN because fronting changes mid-conversation; `participants` stays the coarse
+   * identity set (`raziel`, `blue`, `guest`, companion ids) so the attribution logic that asks
+   * "was Raziel here at all" keeps working and no consumer sees a forked token.
+   */
+  front?: string | null;
 }): Promise<{ ok: boolean; deduped?: boolean; state?: string; reason?: string }> {
   const thread = await env.DB.prepare(
     "SELECT * FROM conversation_threads WHERE id = ?"
@@ -140,8 +154,14 @@ export async function appendTurn(env: Env, threadId: string, input: {
     ? "INSERT OR IGNORE INTO thread_ledger (id, thread_id, author, gist, message_id, said_at) VALUES (?, ?, ?, ?, ?, ?)"
     : "INSERT INTO thread_ledger (id, thread_id, author, gist, message_id, said_at) VALUES (?, ?, ?, ?, ?, ?)";
 
+  // Ledger keeps the front-qualified speaker ("raziel (Magpie)"); `participants` below is bound to the
+  // bare `input.author` so the coarse token set stays stable.
+  const front = typeof input.front === "string" ? input.front.trim().slice(0, 60) : "";
+  const ledgerAuthor = front && front.toLowerCase() !== input.author.toLowerCase()
+    ? `${input.author} (${front})`
+    : input.author;
   const insertResult = await env.DB.prepare(insertSql)
-    .bind(ledgerId, threadId, input.author, gist, messageId, now)
+    .bind(ledgerId, threadId, ledgerAuthor, gist, messageId, now)
     .run();
 
   if (insertResult.meta.changes === 0) {
