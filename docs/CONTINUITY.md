@@ -827,6 +827,42 @@ provenance on `recallNotesByMeaning` + `execSessionOrient`, then `conversation_t
 token (`raziel:magpie`) is available but deliberately not taken yet: it would fork a token consumers
 render.
 
+### DONE 2026-07-31 (end of day) — FRONTS VISIBLE ON THE TURN + a correction I made mid-investigation
+
+**Raziel's reason, verbatim:** *"the front team members should be visible on the memories, because then
+there's not random 'oh, so and so said this' and then we have to freak out and think that we just don't
+remember saying it."* In a plural system a memory recording that HE said something when a different member
+was fronting makes him **doubt his own recall of his own life.** Not a labelling nicety.
+
+`attribution.frontMember` was already resolved from the PK roster and dropped on the floor for the spine.
+**Third time today** an identity was known upstream and discarded at the point of use.
+
+**THE SPLIT IS THE DESIGN, and it is test-pinned:**
+- `thread_ledger.author` carries the front-qualified speaker (`raziel (Magpie)`), **per TURN**, because
+  fronting changes mid-conversation.
+- `conversation_threads.participants` keeps the **COARSE** token (`raziel`/`blue`/`guest`/companion ids),
+  because that is what the attribution logic reads to ask "was Raziel here at all". A forked
+  `raziel (Magpie)` would make `set.has("raziel")` fail and every note from that conversation would claim
+  **"Raziel was NOT in this one"** — inverting the exact protection it exists for.
+
+Guards: no front → no empty parens; front == author → no `raziel (raziel)`; whitespace ignored; a 300-char
+display name capped. `front` optional end to end.
+
+**A CORRECTION, recorded because I stated it confidently and it was wrong.** Mid-investigation I read
+`.env`, saw `BLUE_PK_SYSTEM_ID` missing, and told him Blue's PluralKit was not being read.
+`ecosystem.config.js:66` supplies `?? "szplj"`, and the boot log says **"1412 member names across 2
+system(s)"** — both systems ARE loaded. My own recorded lesson,
+`per-process-override-beats-the-shared-env` (**read the BOOT LOG, not the .env**), and I walked straight
+into it. Blue's real break was the `spineAuthor` collapse fixed earlier today — one layer *downstream* of
+the reading, which is exactly where Raziel's instinct pointed.
+
+halseth 1349 / discord 788 green. Deployed, all three bots reloaded.
+
+**NEXT on this thread:** the front now rides new turns only; old ledger rows keep the bare token (no
+backfill, and none is possible — the front was never recorded). Then: same provenance on
+`recallNotesByMeaning` + `execSessionOrient`, and `conversation_threads.ref_type/ref_id` (0% on all 18)
+for the transitive SUBJECT edge.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
