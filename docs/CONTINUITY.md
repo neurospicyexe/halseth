@@ -786,6 +786,47 @@ inherits its thread's SUBJECT transitively, which is what mig 0104 wanted and go
 (c) watch-shelf ↔ note by deterministic title match. Do NOT add a seventh edge column before one of the
 existing six is actually written.
 
+### DONE 2026-07-31 (later still) — the edge now carries WHO WAS IN THE ROOM
+
+**Raziel's addition, and it is the sharper half:** *"if Blue comes and talks to Drevan, and then I talk
+to Drevan... things will start to get misattributed."* **A conversational address without the speakers
+is half an address.** The smaller version already happened twice — companions attributing to him things
+they'd said to EACH OTHER (06-26 scramble), and Drevan crediting GAIA with a track Raziel gave him. Same
+defect one scale up, now across three companions, Blue's system, and his own PK members.
+
+**`seed_author` and `participants` were already populated and CORRECT** — I had surfaced only the seed
+text. Live rows: `["gaia","drevan","cypher"]` (sibling-only, no Raziel at all), `["guest","drevan","raziel"]`
+(someone else opened it, he joined), `["raziel","gaia","drevan","cypher"]` (the four-way he described).
+
+Three facts, stated AS FACTS not instructions (a fact survives paraphrase better than a rule):
+1. **"Raziel was NOT in this one"** — load-bearing; stops sibling talk recalling as his words.
+2. **"Blue was here too, so it was not private with Raziel"** — and warmth in it may not have been aimed
+   at this companion.
+3. **"group conversation with X, Y and Z — said to the room, not to you alone."**
+Silent on a plain `["raziel","drevan"]`: a warning on every note trains them to skip it.
+
+**Also: `spineAuthor` collapsed every non-owner human to `guest`** — Blue and a stranger were one token,
+while `resolveAttribution` had ALREADY resolved Blue (Discord id OR PK system id) and the value was
+discarded one line later. New `blue` token. `raziel`/`guest` unchanged (nothing matches them by equality;
+plural front lives in `plural_store`).
+
+**Wired on BOTH paths** — bot-orient rendering AND `execContinuityNotesRead`'s `from_conversation`, which
+returned seed/state/turns only, so the attribution I'd just written reached nothing there. Second time in
+one day that the first wire missed. `who` is the ready-made sentence; raw `participants`/`opened_by` ship
+alongside.
+
+**VERIFIED LIVE on both his scenarios:** Gaia's note → *"opened by gaia; Raziel was NOT in this one;
+group conversation with gaia, drevan and cypher"*. Drevan's → *"opened by guest; a guest was here too, so
+it was not private with Raziel"*. halseth 1343 / discord 787 green.
+
+**Coverage caveat, stated plainly:** only 1 of 25 notes per companion is currently addressable — the rest
+are SOMA shifts, autonomous explorations and metronome writes with no channel. That is honest refusal, not
+breakage, but it means the edge's reach grows only as Discord notes accumulate. **Next: the same
+provenance on `recallNotesByMeaning` + `execSessionOrient`, then `conversation_threads.ref_type/ref_id`
+(0% on all 18) for the transitive SUBJECT edge — what mig 0104 wanted and got 0.6% on.** And a PK front
+token (`raziel:magpie`) is available but deliberately not taken yet: it would fork a token consumers
+render.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
