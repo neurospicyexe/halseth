@@ -585,6 +585,66 @@ runtime dir; unreachable manager is now RED and says UNKNOWN, not absent), verif
 report `active` under a cron-like env. Wrong in the harmless direction that day, but the same line
 would have printed with the gateways dead.
 
+### DONE 2026-07-31 — recall learned what TIME is, and Raziel won the architecture argument
+
+**Raziel's framing was right and mine was wrong twice.** He pushed (again) for a hybrid SQL+vector
+database. I'd said we didn't need one. The accurate statement: **we already run exactly that** —
+Second Brain is SQLite + `sqlite-vec` + FTS5 in one file on the VPS, which is *more* than pgvector
+gives (relational + vector + BM25 + JSON, all joinable). So the "no" was right by accident and badly
+argued: we don't need to migrate to get it, we need to USE the relational half. Migrating to Postgres
+now would pay a migration, lose FTS5, add ops, and arrive at a capability we already own — precisely
+the "build then come back and fix it" he's trying to stop doing.
+
+He also named the disease better than I had: **"it's built, it's just not wired."** Today's six
+defects are one shape — fit-bid (built, unwired), the orphan detector (wired to unreachable rows), the
+hermes probe (wired, error suppressed), the search log (written, never awaited), recency (stored,
+never scored), the edge columns (declared, never written: 0% / 0.6% / 10% / 29%).
+
+**THE FIND: `hybridSearch` had no time term.** The formula was
+`0.7*cosine + 0.3*bm25 + emotionResonance + metamemory` — weights for *affect* and *usefulness*, and
+**none for when something happened** — while `created_at` sat in every row it selected (`SELECT rowid,
+*`) and was discarded. Live proof: "Fargo season 4, which episode did we watch last" returned a June
+entry about **finishing the final season** as rank #1. Not a retrieval failure; a retrieval success
+returning the wrong era with total confidence.
+
+SHIPPED + DEPLOYED, three places (all three repos, halseth deployed, SB restarted, bots reloaded):
+1. **`SB recency term`** (`src/store/recency.ts`): additive, bounded, env-tunable
+   (`SB_RECENCY_WEIGHT` 0.12 / `SB_RECENCY_HALF_LIFE_DAYS` 30). **A BOOST FOR NEW, NEVER A PENALTY FOR
+   OLD** — his explicit constraint is that old material stays findable when he reaches for it, so the
+   term is `>= 0`, nothing ranks lower than before, and age can never gate or exclude. Guards: junk
+   timestamps → 0 never NaN (one NaN poisons the whole `sort`), naked SQLite timestamps read as UTC
+   (else results depend on host timezone), future timestamps earn no more than fresh.
+2. **`created_at` returned per chunk** from `sb_search` — it was dropped in the formatter, so every
+   consumer got chunks it could not place in time. Ranking by recency is half a fix if the consumer
+   can't SEE the date.
+3. **Bot-side dating** (`LibrarianClient.chunkAge` / `formatSbRecall`): every recalled line now reads
+   `(8 weeks ago, rag/...)`. Age leads so truncation can't eat it; words not timestamps (same reason
+   `stampRelative` exists); undated chunks render blank rather than "unknown" (a label gets quoted back
+   as a fact) and are never dropped.
+4. **`sb_search_log` awaited** — was `.run().catch()` with no await/waitUntil, so the Worker cancelled
+   it. **1 `source='message'` row between 06-10 and 07-31** while the search ran fine the whole time.
+   Other sources logged fine (they run in contexts that outlive the response), which is what confirms
+   the diagnosis. This is why "is Discord recall flaky?" was UNANSWERABLE for seven weeks.
+
+**VERIFIED end-to-end on the exact failing query:** the June "finished the final season" chunk went
+from **rank #1 → rank #3**, both 07-30 notes moved above it, and 10/10 chunks now carry dates. Log
+confirmed writing again.
+
+Tests: SB 239, discord 773 (+12), halseth 1296. One of my new tests asserted "yesterday" where the
+real gap was 15 hours — code right, test wrong, fixed.
+
+**Also fixed earlier today:** the orphan-memory guardian (100% false positives, 4,136 archived rows it
+could pick, manufacturing Cypher's self-blame — see its own DONE block) and the hermes health probe.
+
+**NEXT on this thread:** the **shows/movies shelf** — Raziel approved it. There is currently NO
+episode-progress organ anywhere (books have `book_progress` since 0099; TV/film has nothing), which is
+why Drevan's episode number could only ever come from whichever transcript he happened to see. Reading
+his "build to accommodate the future, not come back and fix" as the answer to the migration-freeze
+question: build a **real table with a position field**, not episodes smuggled into `media_experiences`
+(song-shaped, position inferred from whichever row is newest). Both substrates must write it.
+**Open, unbuilt:** what writes the relational EDGES. Nothing in the pipeline currently has the job of
+judging how two records relate, which is why four edge columns sit near-empty. Don't add a fifth.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
