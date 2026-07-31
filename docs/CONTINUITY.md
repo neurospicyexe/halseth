@@ -863,6 +863,40 @@ backfill, and none is possible — the front was never recorded). Then: same pro
 `recallNotesByMeaning` + `execSessionOrient`, and `conversation_threads.ref_type/ref_id` (0% on all 18)
 for the transitive SUBJECT edge.
 
+### HOLDING ON EDGES 2026-07-31 — measurement first, and NO, it is not mandatory yet
+
+**Raziel's two questions.** (1) Hold off building more edges until we see what works? **Yes.** (2) Is
+writing an edge already MANDATORY for the companions? **NO — and that is a real hole he caught.**
+`supersedes` and `ref_id` are both still optional, which is exactly what produced 0.8% and 0% over months.
+
+**Why I did NOT just force the field:** a forced judgment can be **satisfied without being answered.** A
+companion required to declare "replaces X or a different thought" can learn to always say "different
+thought", and the column fills with **confident garbage — worse than empty, because it looks like data.**
+So: measure whether the ask lands first. If it does not, THEN force it.
+
+**`GET /admin/edges`** (new, read-only, no migration) makes holding executable. Each block carries a
+`read_this_as` so the numbers cannot be misread later.
+
+**Baseline, 2026-07-31:**
+| | |
+|---|---|
+| supersede pen | proposed **0**, resolved 0, expired 0 (no conclusion written since the change — clean baseline); 11 retired historically |
+| provenance | 213 live notes → **57 addressable** → **6 addressed** |
+| speakers | 19 threads, **9 sibling-only** (≈half of all conversations have NO Raziel in them — the misattribution surface, quantified) |
+| ledger | 564 turns, **0 with a front** (correct: fronts ride new turns only, no backfill possible) |
+| six columns | supersedes_id 0% · superseded_by 10.5% · ref_id 0.8% · thread_key **28.9%** · correlation_id 0% · threads.ref_id 0% |
+
+**THE THREE NUMBERS THAT DECIDE THE NEXT MOVE:**
+1. **`supersede_pen.resolved`** — if it stays 0 while `expired_unanswered` climbs, the ask is invisible and
+   a **required field is then the answer**. Until there is data, forcing it is guessing.
+2. **`provenance_edge.addressed` vs `addressable`** — 6/57 today. If it does not climb as new Discord notes
+   land, the thread-window match is too tight (`THREAD_GRACE_MS`) rather than the notes being unaddressable.
+3. **`speakers.turns_with_front`** — must be > 0 tomorrow, or the front is not actually reaching the ledger
+   and the wire is dead (twice today a first wire reached nothing).
+
+**Do not add a seventh edge column before one of the six is written.** `thread_key` at 28.9% is the only
+one with real presence, and it is the only DERIVABLE one — that is the whole lesson.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
