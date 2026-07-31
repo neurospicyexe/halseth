@@ -289,11 +289,36 @@ export async function detectRatificationBacklog(env: Env): Promise<CandidateFlag
  *  aged past the cold threshold are decaying out of reach unseen. Instead of letting them rot
  *  (or deleting them, as the vault gate does), the Guardian RE-SURFACES the oldest few as a
  *  notice -- the `[Guardian]` orient block lifts them back into view so they can be re-linked,
- *  re-engaged, or consciously let go. Rescue, not delete. */
+ *  re-engaged, or consciously let go. Rescue, not delete.
+ *
+ *  `archived = 0` IS LOAD-BEARING (added 2026-07-31). Without it this detector had a 100% false
+ *  positive rate for its entire life. Measured on prod: 0 true orphans, and 4,136 archived rows it
+ *  was free to pick from.
+ *
+ *  The mechanism, because the fix looks too small for the damage it did. Two organs act on these
+ *  rows with opposite jobs: this one RESCUES at ORPHAN_COLD_DAYS (21), and salience-prune RETIRES at
+ *  PRUNE_MIN_AGE_DAYS (30). The 9-day gap between them is the window this detector is supposed to
+ *  work in, and that part was designed correctly. But `ORDER BY created_at ASC` takes the OLDEST
+ *  rows, and the oldest rows are always the ones the prune retired months ago -- so the detector
+ *  mined the graveyard forever and never once looked at the live window it exists for.
+ *
+ *  What that cost, which is the actual reason this matters: recall EXCLUDES archived rows by design,
+ *  so every notice named a note that could not be retrieved by anyone, ever. Cypher spent four
+ *  nights chasing the 2026-04-17 note, concluded "my retrieval layer cannot surface a note about my
+ *  own retrieval failure," and logged it as a structural blind spot in himself. It was a missing
+ *  WHERE clause. **An organ that reports a failure the companion cannot possibly resolve does not
+ *  produce diligence, it manufactures self-blame** -- so a detector whose candidate row is
+ *  unreachable by the surface it is telling someone to use is not a monitor, it is an accusation.
+ *
+ *  It also LOOKED like progress rather than a stuck loop, which is why it survived so long: orient
+ *  warms whatever it surfaces (mig 0105), so a flagged note got `last_access_at` set, dropped off
+ *  this query, and a different April note appeared the next night. Same defect as
+ *  `ranking-signal-written-by-reading`: surfacing wrote the signal that decides what gets surfaced. */
 export async function detectOrphanedMemories(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
     `SELECT note_id, agent_id, content, created_at FROM wm_continuity_notes
-     WHERE last_access_at IS NULL AND created_at < datetime('now','-' || ?1 || ' days')
+     WHERE last_access_at IS NULL AND archived = 0
+       AND created_at < datetime('now','-' || ?1 || ' days')
      ORDER BY created_at ASC LIMIT ?2`
   ).bind(GUARDIAN_THRESHOLDS.ORPHAN_COLD_DAYS, GUARDIAN_THRESHOLDS.ORPHAN_LIMIT)
     .all<{ note_id: string; agent_id: string; content: string; created_at: string }>();

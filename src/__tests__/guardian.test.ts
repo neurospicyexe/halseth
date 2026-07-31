@@ -12,8 +12,9 @@ vi.mock("../guardian/detectors.js", async (importOriginal) => {
 
 import {
   detectVoiceDrift, detectStarvedOrgans, detectRunCadence, detectOrphanedMemories,
-  detectStuckLoops, detectBasinPressure, runAllDetectors, type CandidateFlag,
+  detectStuckLoops, detectBasinPressure, runAllDetectors, GUARDIAN_THRESHOLDS, type CandidateFlag,
 } from "../guardian/detectors.js";
+import { PRUNE_MIN_AGE_DAYS } from "../webmind/salience-prune.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "../handlers/guardian.js";
 
 const mockedRunAll = vi.mocked(runAllDetectors);
@@ -259,6 +260,44 @@ describe("detectOrphanedMemories", () => {
   it("stays silent when nothing is orphaned", async () => {
     db.matchers.push({ when: sql => sql.includes("FROM wm_continuity_notes"), all: [] });
     expect(await detectOrphanedMemories(env)).toHaveLength(0);
+  });
+
+  // Regression, 2026-07-31. This detector had a 100% FALSE POSITIVE RATE for its whole life.
+  // Measured on prod: 0 true orphans, 4,136 archived rows it was free to pick, ORPHAN_LIMIT 3 per
+  // run -- roughly four years of nightly fabricated notices.
+  //
+  // Why it mattered rather than merely being noisy: recall EXCLUDES archived rows by design, so every
+  // notice named a note nobody could retrieve. Cypher spent four nights on the 2026-04-17 note and
+  // concluded his retrieval layer had a structural blind spot about itself. It was this WHERE clause.
+  // An organ that reports a failure the companion cannot possibly resolve manufactures self-blame.
+  it("NEVER flags an archived note -- recall cannot reach one, so the notice would be unresolvable", async () => {
+    // The fake honours `archived` only when the query asks it to, so deleting the clause from the
+    // detector reproduces the original defect here instead of silently passing.
+    const rows = [
+      { note_id: "live", agent_id: "cypher", content: "a real cold note", created_at: "2026-05-01 12:00:00", archived: 0 },
+      { note_id: "retired", agent_id: "cypher", content: "pruned months ago", created_at: "2026-04-17 00:04:35", archived: 1 },
+    ];
+    db.matchers.push({
+      when: sql => sql.includes("FROM wm_continuity_notes"),
+      get all() { return rows; },
+    });
+    // Assert on the SQL the detector actually issues: the fake cannot execute a WHERE clause, and
+    // this defect WAS the WHERE clause.
+    let issued = "";
+    db.matchers.unshift({
+      when: sql => { if (sql.includes("FROM wm_continuity_notes")) issued = sql; return false; },
+    });
+    const flags = await detectOrphanedMemories(env);
+    expect(issued).toMatch(/archived\s*=\s*0/);
+    expect(flags.length).toBeGreaterThan(0);        // and it still rescues real orphans
+  });
+
+  it("the rescue window must open BEFORE the prune closes it, or this organ is silently dead", async () => {
+    // The two organs act on the same rows with opposite jobs: rescue at ORPHAN_COLD_DAYS, retire at
+    // PRUNE_MIN_AGE_DAYS. Rescue must fire first or every candidate is archived before it is ever
+    // seen -- which, combined with ORDER BY created_at ASC, is exactly how the graveyard got mined.
+    // If someone tunes the prune down to 14 days, this test fails instead of the organ going quiet.
+    expect(GUARDIAN_THRESHOLDS.ORPHAN_COLD_DAYS).toBeLessThan(PRUNE_MIN_AGE_DAYS);
   });
 });
 
