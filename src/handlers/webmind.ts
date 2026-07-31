@@ -729,7 +729,18 @@ export async function getMindSearch(
         try { return (JSON.parse(result ?? "{}") as { chunks?: unknown[] })?.chunks?.length ?? 0; }
         catch { return result ? 1 : 0; }
       })();
-      env.DB.prepare(
+      // AWAITED, not fire-and-forget (2026-07-31). This was `.run().catch(() => null)` with no
+      // `await` and no `ctx.waitUntil`, so the Worker cancelled the promise the moment the response
+      // returned. Result: ONE logged row between 2026-06-10 and 2026-07-31, across every companion
+      // and thousands of messages -- while the search itself was running fine the whole time.
+      //
+      // That made "is Discord recall working?" UNANSWERABLE rather than answered badly, and it is the
+      // reason a recall path could look flaky for seven weeks with nobody able to check. Same shape as
+      // `verify-the-index-not-just-the-write`: a fire-and-forget write in a Worker is not a write.
+      //
+      // Awaiting costs a few ms on a call that already made a network round trip to the VPS, and the
+      // catch keeps a logging failure from ever breaking the search it is only observing.
+      await env.DB.prepare(
         `INSERT INTO sb_search_log (id, companion_id, query, hit_count, source) VALUES (?, ?, ?, ?, 'message')`
       ).bind(crypto.randomUUID(), agentId, query.slice(0, 200), hitCount).run().catch(() => null);
     }
