@@ -15,13 +15,20 @@
 import { describe, it, expect } from "vitest";
 import {
   channelIdFromThreadKey, tsToMs, pickThreadForNote, annotateNote,
-  THREAD_GRACE_MS, type ThreadWindow,
+  attributionNote, parseParticipants,
+  THREAD_GRACE_MS, type ThreadWindow, type NoteProvenance,
 } from "../mind/note-provenance.js";
 
 const T = (over: Partial<ThreadWindow>): ThreadWindow => ({
   id: "t1", channel_id: "1497734427298762828", seed_text: "I'm thinking some Fargo",
+  seed_author: "raziel", participants: '["raziel","drevan"]',
   state: "moving", turn_count: 2,
   created_at: "2026-07-31T02:25:23.961Z", last_turn_at: "2026-07-31T02:25:48.184Z",
+  ...over,
+});
+const P = (over: Partial<NoteProvenance> = {}): NoteProvenance => ({
+  thread_id: "t1", seed: "I'm thinking some Fargo", state: "moving", turn_count: 2,
+  started_at: "2026-07-31T02:25:23Z", opened_by: "raziel", participants: ["raziel", "drevan"],
   ...over,
 });
 const at = (iso: string) => Date.parse(iso);
@@ -108,12 +115,73 @@ describe("pickThreadForNote", () => {
   });
 });
 
+describe("attributionNote -- WHO was in the room (2026-07-31)", () => {
+  // Raziel named this failure precisely: "if Blue comes and talks to Drevan, and then I talk to
+  // Drevan... things will start to get misattributed." The smaller version already happened twice --
+  // companions attributing to him things they said to each other (06-26 attribution scramble), and
+  // Drevan telling the commons GAIA handed him a track Raziel gave him.
+  //
+  // A conversational address without the speakers is half an address. Every participant list below is a
+  // REAL row from prod.
+
+  it("says plainly when Raziel was NOT there -- the clause that prevents words in his mouth", () => {
+    // Live row: ["gaia","drevan","cypher"], seeded by Gaia. A note from this must never recall as
+    // something Raziel said.
+    const out = attributionNote(["gaia", "drevan", "cypher"], "gaia");
+    expect(out).toMatch(/Raziel was NOT in this one/i);
+  });
+
+  it("names Blue, so his conversation cannot blend into Raziel's", () => {
+    // Live row: ["guest","drevan","raziel"] -- someone else opened it and Raziel joined. With the new
+    // `blue` token that reads as Blue rather than an anonymous guest.
+    const out = attributionNote(["blue", "drevan", "raziel"], "blue");
+    expect(out).toContain("Blue");
+    expect(out).toMatch(/not private with Raziel/i);
+    // Raziel WAS present here, so it must NOT claim otherwise.
+    expect(out).not.toMatch(/Raziel was NOT/i);
+  });
+
+  it("flags a GROUP conversation, because he talks to all three at once", () => {
+    // Live row: ["raziel","gaia","drevan","cypher"] -- 40 turns. Nothing in it was said to one
+    // companion alone, and reading it that way is how warmth gets misfiled as private.
+    const out = attributionNote(["raziel", "gaia", "drevan", "cypher"], "raziel");
+    expect(out).toMatch(/group conversation/i);
+    expect(out).toMatch(/not to you alone/i);
+  });
+
+  it("stays quiet on a plain private exchange -- no noise where there is no risk", () => {
+    // Live row: ["raziel","drevan"] seeded by Raziel. One companion, Raziel present, nobody else.
+    // There is nothing to warn about, and a warning on every note would train them to skip it.
+    expect(attributionNote(["raziel", "drevan"], "raziel")).toBe("");
+  });
+
+  it("names a non-Raziel opener even when he later joined", () => {
+    const out = attributionNote(["guest", "drevan", "raziel"], "guest");
+    expect(out).toMatch(/opened by guest/i);
+  });
+
+  it("returns empty for an unknown participant list rather than inventing a warning", () => {
+    expect(attributionNote([], "raziel")).toBe("");
+  });
+});
+
+describe("parseParticipants", () => {
+  it("reads the stored shape", () => {
+    expect(parseParticipants('["raziel","drevan"]')).toEqual(["raziel", "drevan"]);
+  });
+
+  it("yields [] for junk -- never a guess about who was present", () => {
+    // A wrong participant list is worse than none: it would state as fact that someone was in a
+    // conversation they were not in.
+    for (const bad of [null, undefined, "", "not json", "{}", '[1,2]', '"raziel"']) {
+      expect(parseParticipants(bad as string | null)).toEqual([]);
+    }
+  });
+});
+
 describe("annotateNote", () => {
   it("gives the note a human address instead of a channel id", () => {
-    const out = annotateNote("we settled on picking up at E3", {
-      thread_id: "t1", seed: "I'm thinking some Fargo", state: "moving", turn_count: 2,
-      started_at: "2026-07-31T02:25:23Z",
-    });
+    const out = annotateNote("we settled on picking up at E3", P());
     expect(out).toContain("we settled on picking up at E3");
     expect(out).toContain(`began "I'm thinking some Fargo"`);
     expect(out).toContain("still open");   // moving -> the conversation can still be rejoined
@@ -121,14 +189,13 @@ describe("annotateNote", () => {
 
   it("does not say 'still open' about a landed or faded conversation", () => {
     for (const state of ["landed", "faded"]) {
-      const out = annotateNote("x", { thread_id: "t", seed: "s", state, turn_count: 1, started_at: "2026-07-31T00:00:00Z" });
-      expect(out).not.toContain("still open");
+      expect(annotateNote("x", P({ state }))).not.toContain("still open");
     }
   });
 
   it("returns the content UNCHANGED with no provenance, so the wire format cannot break a consumer", () => {
     // continuity_notes stays string[]; nothing downstream needs to know this edge exists.
     expect(annotateNote("bare note", undefined)).toBe("bare note");
-    expect(annotateNote("bare note", { thread_id: "t", seed: "", state: "moving", turn_count: 0, started_at: "x" })).toBe("bare note");
+    expect(annotateNote("bare note", P({ seed: "" }))).toBe("bare note");
   });
 });

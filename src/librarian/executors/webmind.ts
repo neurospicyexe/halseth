@@ -2,7 +2,7 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmReviewLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 import { listConversations, landConversation, getActiveConversation } from "../../webmind/conversations.js";
-import { resolveNoteProvenance } from "../../mind/note-provenance.js";
+import { resolveNoteProvenance, attributionNote } from "../../mind/note-provenance.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
@@ -349,15 +349,32 @@ export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<Exe
     ...n,
     // `from_conversation` is additive: existing consumers keep reading `content` untouched, and this
     // edge can only ever add context to a row that was already being returned.
-    from_conversation: prov.get(n.note_id)
-      ? { seed: prov.get(n.note_id)!.seed, state: prov.get(n.note_id)!.state, turn_count: prov.get(n.note_id)!.turn_count }
-      : null,
+    from_conversation: (() => {
+      const p = prov.get(n.note_id);
+      if (!p) return null;
+      return {
+        seed: p.seed,
+        state: p.state,
+        turn_count: p.turn_count,
+        // WHO WAS IN THE ROOM. Included here and not only in the bot-orient rendering, because a
+        // conversational address without the speakers is half an address -- and this is the path a
+        // companion uses to read its own notes. Raziel's case: Blue talks to Drevan, then he talks to
+        // Drevan, and without this the two blend. `who` is the ready-made sentence; the raw fields are
+        // kept so a consumer can decide differently without re-deriving.
+        opened_by: p.opened_by,
+        participants: p.participants,
+        who: attributionNote(p.participants, p.opened_by),
+      };
+    })(),
   }));
   return {
     data,
     meta: {
       operation: "continuity_notes_read",
       with_conversation: data.filter(d => d.from_conversation).length,
+      // How many carry an actual misattribution warning -- the number worth watching, since a note from
+      // a conversation Raziel was never in is the one most likely to be recalled as his words.
+      with_attribution_warning: data.filter(d => d.from_conversation?.who).length,
     },
   };
 }

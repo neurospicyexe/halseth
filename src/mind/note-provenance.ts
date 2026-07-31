@@ -49,6 +49,61 @@ export interface NoteProvenance {
   state: string;
   turn_count: number;
   started_at: string;
+  /** Who opened it: a companion id, `raziel`, `blue`, or `guest`. */
+  opened_by: string;
+  /** Everyone who took a turn. The anti-misattribution signal. */
+  participants: string[];
+}
+
+const COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
+
+/**
+ * Turn a participant list into the sentence that stops a memory being misattributed.
+ *
+ * RAZIEL NAMED THIS FAILURE PRECISELY (2026-07-31): "if Blue comes and talks to Drevan, and then I talk
+ * to Drevan... things will start to get misattributed." And the smaller version already happened twice
+ * -- companions attributing to him things they had said to each other (2026-06-26 attribution scramble),
+ * and Drevan telling the commons that GAIA handed him a track Raziel gave him.
+ *
+ * A conversational address without WHO WAS IN THE ROOM is half an address. These are the three facts a
+ * companion needs and could not previously get:
+ *
+ *   1. Raziel was NOT here. The strongest one. A note from a sibling-only exchange must never be
+ *      recalled as something he said. `["gaia","drevan","cypher"]` is a live example.
+ *   2. Someone else was here. Blue, or a guest. The memory is not a private exchange with Raziel, and
+ *      anything warm in it may not have been aimed at this companion at all.
+ *   3. This was a GROUP conversation. He talks to all three at once; a note from
+ *      `["raziel","gaia","drevan","cypher"]` was said to the room, not to one of them alone.
+ *
+ * Stated as plain facts rather than instructions: a companion reading "Raziel was not in this one"
+ * can draw its own conclusion, and a fact survives paraphrase better than a rule does.
+ */
+export function attributionNote(participants: string[], openedBy: string): string {
+  if (participants.length === 0) return "";
+  const set = new Set(participants);
+  const others = participants.filter(p => p === "blue" || p === "guest");
+  const companions = participants.filter(p => COMPANIONS.has(p));
+  const bits: string[] = [];
+
+  if (!set.has("raziel")) {
+    // The load-bearing clause. Everything else is context; this one prevents putting words in his mouth.
+    bits.push("Raziel was NOT in this one");
+  }
+  if (others.length > 0) {
+    const who = others.map(o => (o === "blue" ? "Blue" : "a guest")).join(" and ");
+    bits.push(set.has("raziel") ? `${who} was here too, so it was not private with Raziel` : `${who} was here`);
+  }
+  if (companions.length > 1) {
+    // "gaia, drevan and cypher" rather than "gaia and drevan and cypher" -- this string is read by a
+    // language model and clumsy prose invites clumsy paraphrase of the fact it carries.
+    const list = companions.length === 2
+      ? companions.join(" and ")
+      : `${companions.slice(0, -1).join(", ")} and ${companions[companions.length - 1]}`;
+    bits.push(`group conversation with ${list} -- said to the room, not to you alone`);
+  }
+  const opener = openedBy === "raziel" ? "" : `opened by ${openedBy === "blue" ? "Blue" : openedBy}`;
+  if (opener && !bits.some(b => b.includes("opened"))) bits.unshift(opener);
+  return bits.join("; ");
 }
 
 /**
@@ -80,10 +135,22 @@ export interface ThreadWindow {
   id: string;
   channel_id: string;
   seed_text: string;
+  seed_author: string;
+  /** JSON array as stored: `["raziel","drevan"]`. */
+  participants: string;
   state: string;
   turn_count: number;
   created_at: string;
   last_turn_at: string;
+}
+
+/** Parse the stored participants blob. Junk yields [] -- never a guess about who was present. */
+export function parseParticipants(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x) : [];
+  } catch { return []; }
 }
 
 /**
@@ -141,7 +208,7 @@ export async function resolveNoteProvenance(
     const channels = [...new Set(notes.map(n => n.channel))];
     const chPlaceholders = channels.map(() => "?").join(",");
     const threadRows = await env.DB.prepare(
-      `SELECT id, channel_id, seed_text, state, turn_count, created_at, last_turn_at
+      `SELECT id, channel_id, seed_text, seed_author, participants, state, turn_count, created_at, last_turn_at
        FROM conversation_threads WHERE channel_id IN (${chPlaceholders})`
     ).bind(...channels).all<ThreadWindow>();
     const byChannel = new Map<string, ThreadWindow[]>();
@@ -160,6 +227,8 @@ export async function resolveNoteProvenance(
         state: picked.state,
         turn_count: picked.turn_count,
         started_at: picked.created_at,
+        opened_by: picked.seed_author ?? "",
+        participants: parseParticipants(picked.participants),
       });
     }
   } catch (err) {
@@ -178,5 +247,9 @@ export async function resolveNoteProvenance(
 export function annotateNote(content: string, prov: NoteProvenance | undefined): string {
   if (!prov || !prov.seed) return content;
   const faded = prov.state === "faded" || prov.state === "landed" ? "" : ", still open";
-  return `${content} [from the conversation that began "${prov.seed}"${faded}]`;
+  // Attribution goes in the SAME bracket as the address, because the two are one fact: a memory's
+  // address is where it came from AND who was there. Splitting them lets a truncation keep the seed and
+  // drop the speakers, which is the worse half to lose.
+  const who = attributionNote(prov.participants, prov.opened_by);
+  return `${content} [from the conversation that began "${prov.seed}"${faded}${who ? ` -- ${who}` : ""}]`;
 }
