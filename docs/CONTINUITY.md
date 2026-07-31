@@ -551,9 +551,31 @@ otherwise the companion he is actually talking with gets penalised on every sing
 `homeChannel` is left unset on purpose: there is no home-turf notion in the live channel config, and
 the closest thing (per-channel `companions`) is already enforced by `shouldRespond`.
 
-**NEXT on this thread:** read the `fit-bid` log lines (`grep fit-bid /app/logs/*bot*.log`) after real
-traffic, then tune `MIN_BID_TO_SPEAK` and the weights from the actual distribution — and only then
-retire the vocative-name habit in triad channels. Do not raise the threshold before reading the log.
+**Then the bid was nearly useless and a live-Redis check caught it.** Rather than wait for traffic, I
+ran the real module against the live Redis. It failed in the dangerous direction: **the bid fails open,
+so a bid that never arbitrates looks exactly like one that works** (someone always answers). Cause:
+in `owner_only` channels — 10 of 13 — `judgeAmbientRelevance` makes an LLM call **upstream of the
+bid**, and three independent hermes gateways do not return in lockstep. With the 600ms window measured
+from each bot's own arrival, the bot whose judge answered first posted, waited, read a hash containing
+only its own bid, and took the floor on whatever score it happened to have. **The footrace, one layer
+up from the one I had just removed.**
+
+Fixed: `runBidRound` takes `deadlineAt`, the handler passes `message.createdTimestamp +
+BID_WINDOW_MS`, so all three read at the SAME instant regardless of arrival. Window 600 → 2500ms.
+Clamped both ways (past deadline → read now, so a late bot still compares; upper clamp so Discord-vs-VPS
+clock skew cannot stall a reply). Tests: a REPRODUCTION of the defect paired with the contrast — and the
+first version of that test was **vacuous** (the spread I picked was inside the window, so old and new
+behaved identically), which is why the reproduction is kept alongside the fix.
+
+**KNOWN LIMIT, stated not hidden:** the guarantee holds only up to `BID_WINDOW_MS` of arrival spread,
+and 2500ms is an **estimate** of gateway spread. The log line therefore carries `arrival=+Nms`.
+
+**NEXT on this thread, in order:**
+1. `grep fit-bid /app/logs/*bot*.log` after real traffic. **First read `arrival=+Nms` across the three
+   bots on ONE `msg=` id** — that is the real gateway spread. If it exceeds 2500ms, raise the window or
+   move the ambient judge below the bid. Everything else is downstream of that number.
+2. Then tune `MIN_BID_TO_SPEAK` and the `scoreFit` weights from the observed score distribution.
+3. Only then retire the vocative-name habit in triad channels. Do not raise the threshold first.
 
 **Also fixed (found while verifying the deploy):** the health check reported "no hermes* user units
 found" on every cron run while all four were active. `systemctl --user` needs a session bus, cron has
