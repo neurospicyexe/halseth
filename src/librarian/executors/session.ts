@@ -1,6 +1,7 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck, SUPERSEDE_CANDIDATE_WINDOW_DAYS } from "../../webmind/novelty.js";
+import { resolveNoteProvenance, annotateNote } from "../../mind/note-provenance.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
@@ -1354,7 +1355,21 @@ export async function execBotOrient(
     ...coreNotes,
     ...(noveltyNote && !seenIds.has(noveltyNote.note_id) ? [noveltyNote as typeof coreNotes[number]] : []),
   ];
-  const continuity_notes = surfacedNotes.map(n => String(n.content ?? "").slice(0, 200)).filter(Boolean);
+  // FIRST DERIVABLE EDGE (2026-07-31): give each surfaced note the CONVERSATION it came from, not the
+  // room it was said in. `thread_key` on a Discord note is a channel id -- 659 notes share one value,
+  // which is not a grouping. mig 0106 built the real spine; nothing had linked notes to it. Derived at
+  // read time from (channel, timestamp): no migration, nothing to go stale, and it cannot hide anything
+  // because it only annotates notes that were already surfacing.
+  //
+  // Fails soft by construction: no provenance -> the content is returned unchanged, so the wire format
+  // stays string[] and no consumer can break on this.
+  const provenance = await resolveNoteProvenance(
+    ctx.env,
+    surfacedNotes.map(n => n.note_id).filter(Boolean),
+  );
+  const continuity_notes = surfacedNotes
+    .map(n => annotateNote(String(n.content ?? "").slice(0, 200), provenance.get(n.note_id)))
+    .filter(Boolean);
   const warmIds = surfacedNotes.map(n => n.note_id).filter(Boolean);
   if (!opts.readOnly && warmIds.length > 0) {
     await ctx.env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length, SURFACE_BUMP)).bind(...warmIds).run()

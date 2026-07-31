@@ -2,6 +2,7 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmReviewLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 import { listConversations, landConversation, getActiveConversation } from "../../webmind/conversations.js";
+import { resolveNoteProvenance } from "../../mind/note-provenance.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
@@ -331,8 +332,34 @@ export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<Exe
      WHERE ${conditions.join(" AND ")}
      ORDER BY CASE salience WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, created_at DESC
      LIMIT ?`
-  ).bind(...bindings).all();
-  return { data: rows.results ?? [], meta: { operation: "continuity_notes_read" } };
+  ).bind(...bindings).all<{ note_id: string; content: string; source: string }>();
+
+  // Conversational provenance (2026-07-31, the first derivable edge). Wired HERE as well as in bot
+  // orient because of what the live check showed: bot orient's three slots go to the highest-salience
+  // notes, which in practice are SOMA shifts and autonomous explorations -- neither has a conversation,
+  // so the edge correctly refused and annotated nothing. THIS is the path where Discord observations
+  // actually surface ("read my continuity notes"), so it is where the edge earns its keep.
+  //
+  // The lesson that produced this second call site is the week's recurring one: an edge wired to a
+  // surface its data never reaches is an unwired edge. Check which rows actually arrive, not which rows
+  // could.
+  const notes = rows.results ?? [];
+  const prov = await resolveNoteProvenance(ctx.env, notes.map(n => n.note_id));
+  const data = notes.map(n => ({
+    ...n,
+    // `from_conversation` is additive: existing consumers keep reading `content` untouched, and this
+    // edge can only ever add context to a row that was already being returned.
+    from_conversation: prov.get(n.note_id)
+      ? { seed: prov.get(n.note_id)!.seed, state: prov.get(n.note_id)!.state, turn_count: prov.get(n.note_id)!.turn_count }
+      : null,
+  }));
+  return {
+    data,
+    meta: {
+      operation: "continuity_notes_read",
+      with_conversation: data.filter(d => d.from_conversation).length,
+    },
+  };
 }
 
 // ── Sit & Resolve ─────────────────────────────────────────────────────────────
