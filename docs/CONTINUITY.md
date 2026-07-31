@@ -645,6 +645,53 @@ question: build a **real table with a position field**, not episodes smuggled in
 **Open, unbuilt:** what writes the relational EDGES. Nothing in the pipeline currently has the job of
 judging how two records relate, which is why four edge columns sit near-empty. Don't add a fifth.
 
+### DONE 2026-07-31 — THE WATCH SHELF (mig 0111), shipped and wired
+
+Shows and films now have a real **position**. `watch_shelf` (the answer) + `watch_events` (the
+evidence, each viewing stamped with the **surface** it came from). Migration applied to prod, halseth
+deployed, all three bots reloaded.
+
+**The whole diagnosis in one line:** a progress fact is a **FIELD, not a memory.** Nothing in 110
+migrations held an episode number, so "where are we in Fargo" fell through to similarity search over
+months of prose and a June note about *finishing* the show ranked first. Books got a position field in
+0099 and reading questions get answered right; TV had nothing.
+
+Built as a real table, NOT `media_experiences` with `media_type='video'` — per Raziel's standing
+instruction *"build to accommodate the future, not build and then come back and fix it."* That table is
+song-shaped (artist/lyrics/duration) with no position concept, so position would be inferred from
+whichever row was newest. **Reading that instruction as his answer to the migration-freeze question**
+(the freeze is about new *inner-life organs*; this is a shared-object organ like `books`).
+
+Rules worth remembering:
+- **FORWARD-ONLY.** Every viewing logs; the shelf only advances. A rewatch must never rewind it or one
+  loose comment becomes the wrong answer to every later "where are we". `PATCH` is the explicit
+  correction path and CAN move it back.
+- `/mind/watch/progress` takes a **TITLE, not an id** (every caller knows the title), and upserts +
+  advances + appends in one call, so a viewing cannot be logged without moving the position.
+- `UNIQUE(lower(title))` — two Fargo rows with two positions is worse than no organ.
+- `paused` ≠ `abandoned`; "want to pick it back up?" depends on it. `with_companion` because he watches
+  certain shows with Drevan specifically, and it is never reported back to the companion it names.
+
+**WIRED, not just built** (the disease Raziel named): bot orient (query **32**, appended at the END of
+a positionally-coupled `allSettled` — inserting mid-array silently reassigns every later result),
+Librarian **read AND write** (`halseth_watch_view` / `halseth_watch_progress`, the write stamping
+`surface='claude'` — the Claude-side write is the ORIGINAL BUG closed), the `watching`/`watched`
+Discord command with deterministic acks, and `docs/write-routing-map.md` — **the repo guard test
+caught that omission**, which is the guard working exactly as designed.
+
+The `[Watching together]` orient block is **PINNED** against the 4800-char tail truncation alongside
+forage: a dropped position block reads as "we aren't watching anything" — a *wrong* fact, not a missing
+one. It also instructs the model to trust the record over what it recalls, since recall is what was
+wrong.
+
+**VERIFIED LIVE on the real case:** discord logs S4E2 → advances; **CLAUDE logs S4E4 → advances** (the
+write that never existed); rewatch S4E1 → logged, shelf holds S4E4; lowercase "fargo" → same row; one
+shelf row. Tests: halseth 1310, discord 787.
+
+**Note for Raziel:** the live Fargo row currently reads **S4E4** with the S4E2 landmark note attached.
+S4E4 is my inference from "two more episodes in a Claude thread" — not a fact he stated. Correct with
+`dre: watched fargo s4e<n> -- <landmark>`.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
