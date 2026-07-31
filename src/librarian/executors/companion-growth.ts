@@ -526,6 +526,136 @@ export async function execShelfView(ctx: ExecutorContext): Promise<ExecutorResul
   };
 }
 
+// ── Watch shelf (0111) ───────────────────────────────────────────────────────
+//
+// The whole point of the organ: "where are we in Fargo" answered from a FIELD instead of from a
+// similarity search over months of prose. Raziel asked Drevan exactly that on 2026-07-30 and got a
+// position from two weeks earlier, because no position column existed anywhere in 110 migrations and
+// the highest-ranked fragment was a June note about having FINISHED the show.
+//
+// BOTH executors matter, and the write one is the reason this is here rather than only in the Discord
+// command. Episodes watched in a Claude thread left no trace the bots could see -- that asymmetry WAS
+// the bug. A Claude-side session has to be able to record a viewing, and it records `surface='claude'`
+// so the substrate a viewing came from stays visible in the evidence.
+
+export async function execWatchView(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const rows = await ctx.env.DB.prepare(
+    `SELECT title, kind, status, season, episode, position_note, with_companion, last_watched_at
+     FROM watch_shelf WHERE status IN ('watching','paused')
+     ORDER BY (status = 'watching') DESC, last_watched_at DESC NULLS LAST LIMIT 20`
+  ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null; last_watched_at: string | null }>();
+  const items = (rows.results ?? []).map(r => ({
+    ...r,
+    position: r.season && r.episode ? `S${r.season}E${r.episode}` : r.season ? `S${r.season}` : r.episode ? `E${r.episode}` : "",
+  }));
+  return {
+    response_key: "summary",
+    watching: items,
+    note: items.length === 0
+      ? "nothing on the watch shelf right now"
+      : "where you actually are in each of these. This is the RECORD -- trust it over anything you recall about episode numbers.",
+    meta: { operation: "watch_view", count: items.length },
+  };
+}
+
+export async function execWatchProgress(ctx: ExecutorContext): Promise<ExecutorResult> {
+  // `context` first, `request` as fallback. The caller should pass the title+position in context;
+  // parsing it back out of the request STRING is the documented trap (the command string is not the
+  // content), so context wins whenever it is supplied.
+  const raw = (ctx.req.context ?? ctx.req.request ?? "").trim();
+  if (!raw) return { error: "watch_progress_failed", reason: "need a title and position, e.g. \"Fargo S4E5\"" };
+
+  // Parse position out of free text, same forms the Discord command accepts.
+  const lower = raw.toLowerCase();
+  let season: number | null = null;
+  let episode: number | null = null;
+  let m = lower.match(/\bs\s*(\d{1,2})\s*[\s._-]*e\s*(\d{1,3})\b/)
+    ?? lower.match(/\b(\d{1,2})\s*x\s*(\d{1,3})\b/)
+    ?? lower.match(/\bseason\s*(\d{1,2})\s*,?\s*ep(?:isode)?\s*(\d{1,3})\b/);
+  if (m) { season = Number(m[1]) || null; episode = Number(m[2]) || null; }
+  else {
+    m = lower.match(/\bep(?:isode)?\s*(\d{1,3})\b/);
+    if (m) episode = Number(m[1]) || null;
+  }
+  // Title = the text with the position and any trailing landmark note stripped.
+  const sepIdx = raw.search(/\s+(?:--|—|\|)\s+/);
+  const head = sepIdx >= 0 ? raw.slice(0, sepIdx) : raw;
+  const note = sepIdx >= 0 ? raw.slice(sepIdx).replace(/^\s+(?:--|—|\|)\s+/, "").trim().slice(0, 500) : null;
+  const title = head
+    .replace(/\bs\s*\d{1,2}\s*[\s._-]*e\s*\d{1,3}\b/i, "")
+    .replace(/\b\d{1,2}\s*x\s*\d{1,3}\b/i, "")
+    .replace(/\bseason\s*\d{1,2}\b/i, "").replace(/\bep(?:isode)?\s*\d{1,3}\b/i, "")
+    .replace(/^[\s,:-]+|[\s,:-]+$/g, "").trim();
+  if (!title) return { error: "watch_progress_failed", reason: "couldn't find a title in that -- try \"Fargo S4E5\"" };
+
+  // Exact match first, LIKE only on a miss (house rule for writes).
+  const existing = await ctx.env.DB.prepare(
+    "SELECT id, season, episode FROM watch_shelf WHERE lower(title) = lower(?) LIMIT 1"
+  ).bind(title).first<{ id: string; season: number | null; episode: number | null }>()
+    ?? await ctx.env.DB.prepare(
+      "SELECT id, season, episode FROM watch_shelf WHERE lower(title) LIKE '%' || lower(?) || '%' ORDER BY last_watched_at DESC LIMIT 1"
+    ).bind(title).first<{ id: string; season: number | null; episode: number | null }>();
+
+  let shelfId: string;
+  if (existing) {
+    shelfId = existing.id;
+    // A bare episode number means "the season we're already on".
+    if (season === null) season = existing.season ?? null;
+  } else {
+    shelfId = crypto.randomUUID().replace(/-/g, "");
+    await ctx.env.DB.prepare(
+      "INSERT INTO watch_shelf (id, title, status, started_at) VALUES (?, ?, 'watching', datetime('now'))"
+    ).bind(shelfId, title.slice(0, 300)).run();
+  }
+
+  // Forward-only, same as the HTTP path: an out-of-order mention is logged but must not rewind the
+  // shelf, or one loose comment becomes the wrong answer to every later "where are we".
+  const curS = existing?.season ?? 0;
+  const curE = existing?.episode ?? 0;
+  const advances = season !== null && episode !== null
+    ? (season > curS || (season === curS && episode > curE))
+    : season !== null ? season > curS
+    : episode !== null ? episode > curE
+    : false;
+
+  const companion = ctx.req.companion_id && ["cypher", "drevan", "gaia"].includes(ctx.req.companion_id)
+    ? ctx.req.companion_id : null;
+
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      "INSERT INTO watch_events (id, shelf_id, season, episode, note, surface, with_companion) VALUES (?, ?, ?, ?, ?, 'claude', ?)"
+    ).bind(crypto.randomUUID().replace(/-/g, ""), shelfId, season, episode, note, companion),
+    ctx.env.DB.prepare(
+      `UPDATE watch_shelf SET
+         season = CASE WHEN ?1 THEN COALESCE(?2, season) ELSE season END,
+         episode = CASE WHEN ?1 THEN COALESCE(?3, episode) ELSE episode END,
+         position_note = COALESCE(?4, position_note),
+         with_companion = COALESCE(?5, with_companion),
+         last_watched_at = datetime('now'),
+         status = CASE WHEN status IN ('paused','abandoned') THEN 'watching' ELSE status END,
+         updated_at = datetime('now')
+       WHERE id = ?6`
+    ).bind(advances ? 1 : 0, season, episode, note, companion, shelfId),
+  ]);
+
+  const row = await ctx.env.DB.prepare(
+    "SELECT title, season, episode FROM watch_shelf WHERE id = ?"
+  ).bind(shelfId).first<{ title: string; season: number | null; episode: number | null }>();
+  const position = row?.season && row?.episode ? `S${row.season}E${row.episode}` : row?.season ? `S${row.season}` : "";
+
+  return {
+    response_key: "witness",
+    recorded: true,
+    advanced: advances,
+    title: row?.title ?? title,
+    position,
+    note: advances
+      ? `recorded -- ${row?.title ?? title} is now at ${position}`
+      : `viewing logged, but the shelf position did not move (that is at or behind ${position}). Say so plainly rather than implying it advanced.`,
+    meta: { operation: "watch_progress", surface: "claude" },
+  };
+}
+
 export async function execCollectionView(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "collection_view_failed", reason: "companion_id required" };
   const limit = 8;

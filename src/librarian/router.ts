@@ -296,6 +296,7 @@ import {
   execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMotifsRead, execMediaRecent, execIdentityAnchorRead,
   execClubStatus, execClubRecommend, execClubVote, execClubDiscuss,
   execShelfView, execCollectionView, execBookNote, execNestView,
+  execWatchView, execWatchProgress,
 } from "./executors/companion-growth.js";
 import {
   execIdentityRecovery, execSelfModelRead, execSelfModelSet, execSelfModelConfirm,
@@ -482,6 +483,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_club_vote: execClubVote,
   halseth_club_discuss: execClubDiscuss,
   halseth_shelf_view: execShelfView,
+  halseth_watch_view: execWatchView,
+  halseth_watch_progress: execWatchProgress,
   halseth_collection_view: execCollectionView,
   halseth_book_note: execBookNote,
   halseth_nest_view: execNestView,

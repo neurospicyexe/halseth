@@ -708,6 +708,32 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     raw: true,
   },
 
+  // ── Watch shelf (0111) -- where we are in the shows/films watched together ──
+  //
+  // These triggers exist because the question was being answered by semantic search over prose and
+  // getting it wrong: "where are we in Fargo" surfaced a June note about FINISHING the show while the
+  // real position was mid-season-4. A position is a field; route the question to the field.
+  watch_view: {
+    triggers: [
+      "what are we watching", "where are we in", "what episode are we on", "where did we leave off",
+      "the watch shelf", "what show are we watching", "which episode did we watch last",
+      "watch shelf", "where are we up to",
+    ],
+    tools: ["halseth_watch_view"],
+    response_key: "summary",
+    raw: true,
+  },
+  // WRITE side, and the reason this pattern set matters: episodes watched in a Claude thread used to
+  // leave no trace the Discord bots could see. That asymmetry WAS the original bug.
+  watch_progress: {
+    triggers: [
+      "we watched", "we just watched", "log that we watched", "record that we watched",
+      "mark the episode", "we finished episode", "update the watch shelf", "we're on episode",
+    ],
+    tools: ["halseth_watch_progress"],
+    response_key: "witness",
+  },
+
   // ── Collection (0079) -- the hoard, sparkle-weighted; pulling it up adds recall shine ──
   collection_view: {
     triggers: [

@@ -1097,7 +1097,7 @@ export async function execBotOrient(
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult, answeredQuestionsResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult, answeredQuestionsResult, watchShelfResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer. id carried so the live
     // path can warm the row (0074) -- bot presence access counts as access.
     ctx.env.DB.prepare(
@@ -1269,6 +1269,18 @@ export async function execBotOrient(
     // delivered_at (questions-lifecycle fix, mig 0107) -- answers never reached companions
     // because every orient path only ever read status = 'open'.
     fetchRecentAnswers(ctx.env, agentId, 3),
+    // 32. Watch shelf (0111) -- where we are in the shows/films being watched together.
+    // APPENDED AT THE END, and the destructure above is appended in the same position, because this
+    // array is positionally coupled: inserting in the middle silently reassigns every later result to
+    // the wrong variable. The reason this exists: Raziel asked Drevan where they were in Fargo and got
+    // "last I tracked, S4 E2" -- there was no position field anywhere in the schema, so the answer had
+    // to come from whichever prose fragment ranked highest, and a June note about FINISHING the show
+    // won. A progress fact is a field, not a memory.
+    ctx.env.DB.prepare(
+      `SELECT title, kind, status, season, episode, position_note, with_companion
+       FROM watch_shelf WHERE status IN ('watching','paused')
+       ORDER BY (status = 'watching') DESC, last_watched_at DESC NULLS LAST LIMIT 4`
+    ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -1623,6 +1635,20 @@ export async function execBotOrient(
       club_round: clubResult.status === "fulfilled" && clubResult.value
         ? clubResult.value as ClubRoundRow
         : null,
+      // Watch shelf (0111). `position` is composed HERE rather than in the renderer so every surface
+      // says "S4E2" the same way and no consumer has to reassemble it from two integers.
+      watching: watchShelfResult.status === "fulfilled" && watchShelfResult.value?.results
+        ? (watchShelfResult.value.results as Array<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>).map(r => ({
+            title: (r.title ?? "").slice(0, 150),
+            kind: r.kind,
+            status: r.status,
+            position: r.season && r.episode ? `S${r.season}E${r.episode}` : r.season ? `S${r.season}` : r.episode ? `E${r.episode}` : "",
+            position_note: r.position_note ? r.position_note.slice(0, 160) : null,
+            // Only report a co-watcher when it is someone else: telling Drevan he watches Fargo
+            // with Drevan is noise.
+            with_companion: r.with_companion && r.with_companion !== agentId ? r.with_companion : null,
+          }))
+        : [],
       guardian_flags: guardianResult.status === "fulfilled" && guardianResult.value?.results
         ? (guardianResult.value.results as Array<{ id: string; flag_type: string; severity: string; summary: string }>).map(r => ({
             id: r.id,

@@ -89,6 +89,7 @@ import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from 
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
+import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
 import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { postBook, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
@@ -360,6 +361,13 @@ const router = new Router()
   .on("POST",  "/mind/shelf",                       (request, env)         => postObsession(request, env))
   .on("GET",   "/mind/shelf",                       (request, env)         => getObsessions(request, env))
   .on("PATCH", "/mind/shelf/:id",                   (request, env, params) => patchObsession(request, env, params ?? {}))
+
+  // Watch shelf (0111) -- shows/films with a real POSITION. `/progress` takes a TITLE, not an id:
+  // every caller (Discord command, Claude session, Hearth) knows the title and not a uuid.
+  .on("GET",   "/mind/watch",                       (request, env)         => getWatchShelf(request, env))
+  .on("POST",  "/mind/watch",                       (request, env)         => postWatchShelf(request, env))
+  .on("POST",  "/mind/watch/progress",              (request, env)         => postWatchProgress(request, env))
+  .on("PATCH", "/mind/watch/:id",                   (request, env, params) => patchWatchShelf(request, env, (params ?? {})["id"] ?? ""))
 
   // Shared-experience layer (Ears) -- music heard together, migration 0071
   .on("POST",  "/mind/media",                      (request, env)         => postMediaExperience(request, env))
