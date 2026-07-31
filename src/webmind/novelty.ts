@@ -4,6 +4,17 @@ import { embedText } from "../mcp/embed.js";
 /** bge-base cosine thresholds. Tune from gate logs, not from vibes. */
 export const NOVELTY_SKIP = 0.95;
 export const NOVELTY_SUPERSEDE = 0.88;
+
+/**
+ * How long a gate-proposed supersession stays visible to the companion who owns the belief (mig 0112).
+ *
+ * TIME-BOXED, with no dismissal action and no queue. Raziel's decision is that a companion supersedes
+ * their own thought, so the gate can only ever ask -- and a question that cannot expire becomes a nag
+ * that trains you to scroll past it. That is the rails-need-decay lesson, which has already recurred
+ * twice here. If the companion does not act within the window, the proposal fades and the older belief
+ * simply stays live, which is the correct default: not-retired is the safe state.
+ */
+export const SUPERSEDE_CANDIDATE_WINDOW_DAYS = 14;
 const NOVELTY_TOPK = 3;
 
 export type NoveltyDecision =

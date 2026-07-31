@@ -1,6 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
-import { noveltyCheck } from "../../webmind/novelty.js";
+import { noveltyCheck, SUPERSEDE_CANDIDATE_WINDOW_DAYS } from "../../webmind/novelty.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
@@ -956,31 +956,34 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
         }
 
         const cid = crypto.randomUUID();
+        // SECOND WRITER of the same rule (mig 0112). `execConclusionAdd` was the obvious one; this
+        // session-close fan-out is the other, and fixing only the first would have left the gate still
+        // silently retiring beliefs on every session close -- the fix-landed-on-a-different-writer
+        // shape, which has bitten this system before. Both paths now obey the same decision:
+        //
+        // Raziel's call, 2026-07-31: a companion supersedes their OWN thought. The gate may only
+        // propose. It had been auto-retiring on cosine >= 0.88, and every read filters
+        // `superseded_by IS NULL`, so a similarity score deleted a belief from view with nobody
+        // deciding it. The precedent that settles it: an inferring pass already recorded that Drevan
+        // had a negative experience with Raziel which was in fact deeply positive.
         const stmts = [
           ctx.env.DB.prepare(
-            "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at) VALUES (?, ?, ?, ?, ?)"
-          ).bind(cid, conclusionCompanion, conclusionText, JSON.stringify([resolvedSessionId]), now),
+            "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at, supersede_candidate_id, supersede_candidate_score) VALUES (?, ?, ?, ?, ?, ?, ?)"
+          ).bind(
+            cid, conclusionCompanion, conclusionText, JSON.stringify([resolvedSessionId]), now,
+            decision.action === "supersede" ? decision.matchRowId : null,
+            decision.action === "supersede" ? decision.score : null,
+          ),
         ];
-        if (decision.action === "supersede") {
-          stmts.push(
-            ctx.env.DB.prepare(
-              "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
-            ).bind(cid, decision.matchRowId, conclusionCompanion)
-          );
-        }
         const results = await ctx.env.DB.batch(stmts);
 
-        // Best-effort delete of the superseded row's vector so a dead conclusion can
-        // never resurface as a novelty-gate match (2026-07-20 review). Mirrors
-        // salience-prune.ts's best-effort pattern: D1 is truth, the row is already
-        // committed, the index is disposable/rebuildable -- a failed delete must never
-        // affect the write or the fanout result.
+        // No vector delete here either. The matched belief is STILL LIVE -- deleting its vector would
+        // pull it out of semantic recall and out of future gate comparisons, a silent partial erasure
+        // that no read would reveal.
         if (decision.action === "supersede") {
-          try {
-            await ctx.env.VECTORIZE.deleteByIds([vectorId("companion_conclusions", decision.matchRowId)]);
-          } catch (err) {
-            console.error("[session_close] superseded vector delete failed (row kept, index stale):", String(err));
-          }
+          console.log("[session_close] conclusion supersede PROPOSED (older belief left live)", {
+            companion: conclusionCompanion, candidate: decision.matchRowId, score: decision.score,
+          });
         }
 
         // Store the vector: reuse the gate's embedding (net +0 AI calls on the
@@ -1097,7 +1100,7 @@ export async function execBotOrient(
   // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
   const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult, answeredQuestionsResult, watchShelfResult] = await Promise.allSettled([
+  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult, answeredQuestionsResult, watchShelfResult, supersedeCandidateResult] = await Promise.allSettled([
     // 1. Most recent session narrative from SB via path pointer. id carried so the live
     // path can warm the row (0074) -- bot presence access counts as access.
     ctx.env.DB.prepare(
@@ -1281,6 +1284,24 @@ export async function execBotOrient(
        FROM watch_shelf WHERE status IN ('watching','paused')
        ORDER BY (status = 'watching') DESC, last_watched_at DESC NULLS LAST LIMIT 4`
     ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>(),
+    // 33. Supersede candidates (mig 0112). The novelty gate used to auto-retire a belief on cosine
+    // >= 0.88; now it can only ASK, because Raziel's call is that a companion supersedes their own
+    // thought. This surfaces the ask to the companion who owns the belief.
+    //
+    // TIME-BOXED by created_at, deliberately: no dismissal action, no queue to drain. A question that
+    // cannot expire becomes a nag (rails-need-decay, recurred twice here). If they do not act it fades
+    // and the older belief stays live -- not-retired is the safe default.
+    ctx.env.DB.prepare(
+      `SELECT n.id AS new_id, n.supersede_candidate_id, n.supersede_candidate_score,
+              substr(n.conclusion_text, 1, 200) AS new_text,
+              substr(o.conclusion_text, 1, 200) AS old_text
+       FROM companion_conclusions n
+       JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
+       WHERE n.companion_id = ?1 AND n.supersede_candidate_id IS NOT NULL
+         AND o.superseded_by IS NULL
+         AND n.created_at > datetime('now', '-' || ?2 || ' days')
+       ORDER BY n.created_at DESC LIMIT 2`
+    ).bind(agentId, SUPERSEDE_CANDIDATE_WINDOW_DAYS).all<{ new_id: string; supersede_candidate_id: string; supersede_candidate_score: number; new_text: string; old_text: string }>(),
   ]);
   const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
     ? (pendingGrowthResult.value as { n: number }).n
@@ -1647,6 +1668,17 @@ export async function execBotOrient(
             // Only report a co-watcher when it is someone else: telling Drevan he watches Fargo
             // with Drevan is noise.
             with_companion: r.with_companion && r.with_companion !== agentId ? r.with_companion : null,
+          }))
+        : [],
+      // Gate-PROPOSED supersessions awaiting this companion's own call (mig 0112). The older belief is
+      // still live; nothing has been retired. Only they can retire it.
+      supersede_candidates: supersedeCandidateResult.status === "fulfilled" && supersedeCandidateResult.value?.results
+        ? (supersedeCandidateResult.value.results as Array<{ new_id: string; supersede_candidate_id: string; supersede_candidate_score: number; new_text: string; old_text: string }>).map(r => ({
+            new_id: r.new_id,
+            older_id: r.supersede_candidate_id,
+            score: r.supersede_candidate_score,
+            newer: r.new_text,
+            older: r.old_text,
           }))
         : [],
       guardian_flags: guardianResult.status === "fulfilled" && guardianResult.value?.results

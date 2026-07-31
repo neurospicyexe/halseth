@@ -102,7 +102,13 @@ describe("postConclusion -- novelty gate", () => {
     expect(insertCalls(captured)).toBe(0);
   });
 
-  it("supersedes on a 0.90 match -- inserts new row AND marks the old one superseded", async () => {
+  // REPLACED 2026-07-31 (mig 0112). This asserted a 0.90 gate match RETIRED the older belief. It no
+  // longer does: Raziel's decision is that a companion supersedes their own thought. Every read filters
+  // `superseded_by IS NULL`, so the old behaviour let a cosine score silently delete a belief from view
+  // -- and an inferring pass had already recorded something false about his relationship with Drevan,
+  // which is why a machine no longer gets that call. Inverted rather than deleted, so the change stays
+  // pinned. This handler is the THIRD of three writers of the same rule.
+  it("a 0.90 gate match PROPOSES only -- older belief stays live, no UPDATE", async () => {
     const captured: Captured = { prepared: [], binds: [] };
     const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
 
@@ -111,15 +117,15 @@ describe("postConclusion -- novelty gate", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(typeof body.id).toBe("string");
-    expect(body.novelty).toMatchObject({ action: "supersede", match_id: "oldrow456", score: 0.90 });
-    expect(body.superseded).toBe("oldrow456"); // gate-driven supersede populates the top-level field too
+    expect(body.superseded).toBeFalsy();
     expect(insertCalls(captured)).toBe(1);
+    expect(supersedeUpdateFor(captured, "oldrow456")).toBeUndefined();
 
-    const updateBind = supersedeUpdateFor(captured, "oldrow456");
-    expect(updateBind).toBeDefined();
-    expect(updateBind).toEqual([body.id, "oldrow456", "cypher"]);
+    // The candidate is persisted on the new row so the companion can be asked later.
+    const insertIdx = captured.prepared.findIndex((sql) => sql.includes("INSERT INTO companion_conclusions"));
+    expect(captured.binds[insertIdx]).toContain("oldrow456");
 
-    // Embedding reused from the gate -- no second AI.run, one Vectorize upsert.
+    // Embedding reused from the gate -- no second AI.run, one Vectorize upsert. Unchanged.
     expect(env.AI.run).toHaveBeenCalledTimes(1);
     expect(env.VECTORIZE.upsert).toHaveBeenCalledTimes(1);
   });
@@ -155,14 +161,17 @@ describe("postConclusion -- novelty gate", () => {
 // vector must be best-effort deleted so it can never resurface as a future novelty-gate
 // match. Mirrors salience-prune.ts's pattern: a delete failure must never affect the write.
 describe("postConclusion -- supersede deletes the OLD row's vector", () => {
-  it("gate-driven supersede calls VECTORIZE.deleteByIds with the OLD row's vector id", async () => {
+  // REPLACED 2026-07-31 (mig 0112): a merely-PROPOSED match keeps its vector. Deleting it would pull a
+  // still-live belief out of semantic recall and out of future gate comparisons -- a silent partial
+  // erasure that no read would reveal. The caller-declared case below still deletes, and is unchanged.
+  it("a gate-PROPOSED match does not delete the older belief's vector", async () => {
     const captured: Captured = { prepared: [], binds: [] };
     const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
 
     const res = await postConclusion(makeRequest(BASE_BODY), env);
 
     expect(res.status).toBe(200);
-    expect(env.VECTORIZE.deleteByIds).toHaveBeenCalledWith([vectorId("companion_conclusions", "oldrow456")]);
+    expect(env.VECTORIZE.deleteByIds).not.toHaveBeenCalled();
   });
 
   it("caller-declared `supersedes` also calls VECTORIZE.deleteByIds with that OLD row's vector id", async () => {
@@ -175,18 +184,22 @@ describe("postConclusion -- supersede deletes the OLD row's vector", () => {
     expect(env.VECTORIZE.deleteByIds).toHaveBeenCalledWith([vectorId("companion_conclusions", "caller-old-1")]);
   });
 
+  // Still guards exactly what it always guarded -- D1 is truth, the index is rebuildable, a Vectorize
+  // hiccup must never fail a committed write. Retargeted 2026-07-31 (mig 0112) to a CALLER-DECLARED
+  // supersede, because that is now the only path that deletes a vector; a gate match merely proposes and
+  // never deletes, so driving this through the gate would have exercised nothing.
   it("a deleteByIds failure never affects the write or the response", async () => {
     const captured: Captured = { prepared: [], binds: [] };
-    const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured);
+    const env = makeEnv([], captured);
     env.VECTORIZE.deleteByIds = vi.fn(async () => { throw new Error("vectorize delete 500"); });
 
-    const res = await postConclusion(makeRequest(BASE_BODY), env);
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, supersedes: "oldrow456" }), env);
 
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body.novelty).toMatchObject({ action: "supersede", match_id: "oldrow456", score: 0.90 });
     expect(body.superseded).toBe("oldrow456");
     expect(insertCalls(captured)).toBe(1);
+    expect(env.VECTORIZE.deleteByIds).toHaveBeenCalled();
   });
 
   it("plain insert (no supersede) never calls deleteByIds", async () => {

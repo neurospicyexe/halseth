@@ -592,30 +592,39 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
 
   const newId = crypto.randomUUID().replace(/-/g, "");
   const now = new Date().toISOString();
+
+  // SUPERSESSION IS THE COMPANION'S CALL (mig 0112, Raziel's decision 2026-07-31).
+  //
+  // The gate used to auto-supersede on cosine >= 0.88, and every read filters
+  // `WHERE superseded_by IS NULL` -- so a similarity score silently removed a belief from view.
+  // 0.88 is loose enough that two genuinely different thoughts about one subject clear it.
+  //
+  // Raziel's reasoning was evidence: an inferring pass has already recorded that Drevan had a
+  // NEGATIVE experience with him which was in fact deeply positive (2026-07-09 fabrication incident).
+  // A machine that has gotten the interior of a relationship wrong does not get to decide which of a
+  // companion's beliefs is dead.
+  //
+  // So: a companion-declared `supersedes` still acts immediately (their own pen); a gate-detected
+  // match is recorded as a CANDIDATE and the older belief stays live. An edge may rank, never hide,
+  // until a mind has confirmed it.
+  const gateProposal = decision.action === "supersede" && decision.matchRowId !== supersedes
+    ? { id: decision.matchRowId, score: decision.score }
+    : null;
+
   const stmts = [
     ctx.env.DB.prepare(
-      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, contradiction_flagged, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, contradictionFlagged, now),
+      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, confidence, belief_type, subject, provenance, contradiction_flagged, created_at, supersede_candidate_id, supersede_candidate_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(newId, ctx.req.companion_id, conclusionText, sourceSessions, confidence, beliefType, subject, provenance, contradictionFlagged, now, gateProposal?.id ?? null, gateProposal?.score ?? null),
   ];
-  // Caller-declared `supersedes` and the novelty gate's own supersede decision are
-  // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
-  // so neither clobbers an already-superseded row.
   const supersededIds: string[] = [];
   if (supersedes) {
+    // `superseded_by IS NULL` guard keeps this from clobbering an already-superseded row.
     stmts.push(
       ctx.env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
     supersededIds.push(supersedes);
-  }
-  if (decision.action === "supersede" && decision.matchRowId !== supersedes) {
-    stmts.push(
-      ctx.env.DB.prepare(
-        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
-      ).bind(newId, decision.matchRowId, ctx.req.companion_id)
-    );
-    supersededIds.push(decision.matchRowId);
   }
   await ctx.env.DB.batch(stmts);
 
@@ -649,12 +658,19 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     ack: true,
     id: newId,
     created_at: now,
-    // Caller-declared `supersedes` and the gate's own supersede decision are both
-    // reflected here -- either one firing means this conclusion superseded a prior belief.
-    superseded: !!supersedes || decision.action === "supersede",
-    novelty: decision.action === "supersede"
-      ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
-      : { action: "insert" },
+    // ONLY a companion-declared `supersedes` counts as superseded now. The gate's opinion is reported
+    // separately as a candidate -- saying `superseded: true` for a cosine match would be the write
+    // claiming an authority it no longer has, and the companion would believe a belief was retired
+    // when it is still live.
+    superseded: !!supersedes,
+    supersede_candidate: gateProposal
+      ? {
+          match_id: gateProposal.id,
+          score: gateProposal.score,
+          note: "a prior belief of yours reads as close to this one. It is STILL LIVE -- nothing was retired. If this new one replaced it, say so and name it; if they are different thoughts, let it be.",
+        }
+      : null,
+    novelty: gateProposal ? { action: "propose_supersede", match_id: gateProposal.id, score: gateProposal.score } : { action: "insert" },
   };
 }
 

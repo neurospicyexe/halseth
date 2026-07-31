@@ -97,15 +97,30 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   const newId = crypto.randomUUID().replace(/-/g, "");
   const now = new Date().toISOString();
 
+  // THIRD AND LAST WRITER of the supersede rule (mig 0112). This file's sibling test suite opens with
+  // the warning that "this codebase has a documented history of a fix landing on one writer of a shared
+  // table while its siblings silently diverge" -- and it names all three: this handler,
+  // execConclusionAdd, and the execSessionClose fan-out. Following that warning is what found writers
+  // two and three; fixing only the obvious one would have left the gate quietly retiring beliefs
+  // through the other paths.
+  //
+  // Raziel's decision, 2026-07-31: a companion supersedes their OWN thought. The gate may only propose.
+  // It had been auto-retiring on cosine >= 0.88 while every read filters `superseded_by IS NULL`, so a
+  // similarity score deleted a belief from view with no mind deciding it. The precedent that settles it:
+  // an inferring pass had already recorded that Drevan had a negative experience with Raziel which was
+  // in fact deeply positive. An edge may rank; it may not hide.
+  const gateProposal = decision.action === "supersede" && decision.matchRowId !== supersedesId
+    ? { id: decision.matchRowId, score: decision.score }
+    : null;
+
   const stmts = [
     env.DB.prepare(
-      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at, confidence, belief_type, subject, provenance, contradiction_flagged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(newId, companion_id, trimmedText, sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged),
+      "INSERT INTO companion_conclusions (id, companion_id, conclusion_text, source_sessions, created_at, confidence, belief_type, subject, provenance, contradiction_flagged, supersede_candidate_id, supersede_candidate_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(newId, companion_id, trimmedText, sourceSessions, now, confidence, belief_type, subject, provenance, contradiction_flagged, gateProposal?.id ?? null, gateProposal?.score ?? null),
   ];
 
-  // Caller-declared `supersedes` and the novelty gate's own supersede decision are
-  // independent signals -- both may fire, both guarded by `superseded_by IS NULL`
-  // so neither clobbers an already-superseded row.
+  // Only a caller-declared `supersedes` retires anything. `superseded_by IS NULL` guards it so it
+  // cannot clobber an already-superseded row.
   const supersededIds: string[] = [];
   if (supersedesId) {
     stmts.push(
@@ -114,14 +129,6 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
       ).bind(newId, supersedesId, companion_id)
     );
     supersededIds.push(supersedesId);
-  }
-  if (decision.action === "supersede" && decision.matchRowId !== supersedesId) {
-    stmts.push(
-      env.DB.prepare(
-        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
-      ).bind(newId, decision.matchRowId, companion_id)
-    );
-    supersededIds.push(decision.matchRowId);
   }
 
   await env.DB.batch(stmts);
@@ -157,11 +164,19 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   return json({
     id: newId,
     created_at: now,
-    // Caller-declared `supersedes` wins the display slot when both fire (rare: the gate
-    // matched the same row the caller already named); otherwise surface whichever one did.
-    superseded: supersedesId ?? (decision.action === "supersede" ? decision.matchRowId : null),
-    novelty: decision.action === "supersede"
-      ? { action: "supersede", match_id: decision.matchRowId, score: decision.score }
+    // Only a caller-declared `supersedes` can report a retirement. Reporting the gate's opinion here
+    // would have the response claim an authority the write no longer has, and the caller would believe
+    // a belief was retired while it is still live.
+    superseded: supersedesId ?? null,
+    supersede_candidate: gateProposal
+      ? {
+          match_id: gateProposal.id,
+          score: gateProposal.score,
+          note: "a prior belief of this companion's reads as close to this one. It is STILL LIVE -- nothing was retired. Only they can retire it.",
+        }
+      : null,
+    novelty: gateProposal
+      ? { action: "propose_supersede", match_id: gateProposal.id, score: gateProposal.score }
       : { action: "insert" },
   });
 }
