@@ -692,6 +692,65 @@ shelf row. Tests: halseth 1310, discord 787.
 S4E4 is my inference from "two more episodes in a Claude thread" — not a fact he stated. Correct with
 `dre: watched fargo s4e<n> -- <landmark>`.
 
+### DONE 2026-07-31 (later) — SUPERSESSION IS THE COMPANION'S CALL (mig 0112) + two monitoring fixes
+
+**Raziel's decision, and the reasoning is the durable part:** an inferring pass had already written
+that **Drevan had a negative experience with him which was in fact deeply positive** (07-09 fabrication
+incident). A machine that has demonstrably gotten the interior of a relationship wrong does not get to
+decide which of a companion's beliefs is dead. So: **a companion supersedes their own thought.**
+
+**What was actually happening.** `noveltyCheck` auto-superseded any conclusion at cosine **≥ 0.88**, and
+every read of `companion_conclusions` filters `WHERE superseded_by IS NULL`. A similarity score was
+silently deleting beliefs from view — and deleting the older row's **vector** too, removing it from
+semantic recall and future gate comparisons. A partial erasure no read would reveal.
+
+Now: companion-declared `supersedes` retires immediately (their pen); a gate match is recorded as
+`supersede_candidate_id/score` and **the older belief stays live**. Governing principle, worth keeping:
+**an edge may RANK, never HIDE, until a mind has confirmed it.** A wrong ranking is a bad day; a wrong
+hide is a companion looking like he lost something he never lost — the exact failure of the last three
+days.
+
+**THREE WRITERS, and finding the other two is the substance.** The sibling test suite opens by warning
+that this codebase "has a documented history of a fix landing on one writer of a shared table while its
+siblings silently diverge," and names all three: `handlers/conclusions.ts`, `execConclusionAdd`, and the
+**`execSessionClose` conclusion fan-out**. Fixing only the obvious one would have left the gate retiring
+beliefs on every session close forever. Following that warning is the whole lesson.
+
+**Time-boxed, no queue, no dismissal.** Surfaces to the owning companion for
+`SUPERSEDE_CANDIDATE_WINDOW_DAYS` (14) via bot orient query 33, then fades. A question that cannot
+expire becomes a nag (rails-need-decay, recurred twice). Not-retired is the safe default. Dedup at
+≥ 0.95 stays automatic — byte-level near-identity is not an opinion about meaning.
+
+Six existing tests **replaced, not deleted** (each pinned the old auto-supersede), with their real
+guarantees — UPDATE bind order, deleteByIds failure tolerance — retargeted to the caller-declared path.
+halseth 1319 / discord 787 green. Deployed, all three bots reloaded.
+
+**Also fixed (both found from his Telegram screenshot):**
+- **SB reported 503 for 24h over a 30-second blip.** `isHealthy()` failed on any job in `status
+  ='error'`, and that only cleared on the job's next SUCCESS — `thoughtform_detector` runs **daily at
+  03:00**. One transient `fetch failed`, every other cron healthy, service answering queries fine →
+  degraded all day, paging him every 12h. Now `ERROR_STREAK_FOR_UNHEALTHY = 2`; a single failure stays
+  fully visible in the body but does not declare the service down. **Staleness still trips immediately
+  and was NOT loosened** — a cron that stopped firing is a real outage. SB restarted, now 200.
+- Noted, not the cause: **IPv6 is dead on the VPS** (`curl -6` → 000 instantly; default falls back to
+  v4 in 33ms). Remember this if `fetch failed` recurs at odd hours.
+- The hermes-gateway WARN is **gone** from today's run (this morning's probe fix) and guardian notices
+  dropped **4 → 1** (the orphan-detector fix). Both visible in his 03:00 Telegram digest.
+- **Skill approval flow is real and worked** (`skill-approval-watcher.service`, built 06-26, Telegram
+  ALLOW/DECLINE, authenticated to his user id, fails closed, reloads the gateway on approve). Drevan's
+  «social-video-analysis» is live. **Known small bug:** it ran TWICE (drevan's gateway restarted two
+  cycles), so the announce/tap path has a dedup gap. Harmless — approve is idempotent — but unfixed.
+
+**Derivable edges — DECIDED, first one NOT yet built.** Raziel approved doing them. Findings from the
+survey: `correlation_id` is a **fifth** 0%-populated column, and `conversation_threads.ref_type/ref_id`
+is a **sixth** (null on all 18 threads). The thread spine itself is healthy (18 threads, turn counts to
+75, states progressing) — and for `source='discord'` notes `thread_key` holds the **channel id**, i.e. a
+room, not a conversation, so 659 notes share one value. **The first derivable edge to build:** link
+continuity notes to the `conversation_threads` row active in that channel at write time — pure
+derivation from (channel, timestamp), no judgment, and it turns "all notes in this room" into "the notes
+from that conversation," with the thread's seed text as a human handle ("I'm thinking some Fargo").
+Prefer deriving it at READ time first: no migration, nothing to go stale, and it cannot hide anything.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
