@@ -1115,7 +1115,7 @@ loop on itself.**
    REAL DATA, never just for absence of errors** - same shape as the fail-open bid and the lying edges
    readout.
 
-### THE CUTOVER — DONE 2026-08-01 (`cf96e78`). Phase 1 is 5 of 5.
+### THE BOT CUTOVER — DONE 2026-08-01 (`cf96e78`). Phase 1 is **4 of 5** — see the audit at the end of this section.
 
 `execBotOrient` is **667 lines -> 120**: it loads the one MindState and projects it through
 `src/mind/adapters/bot-wire.ts`. All four gate steps ran; step 2 is mechanized as
@@ -1213,10 +1213,46 @@ perf target, and it is not in halseth.
   `companion-growth.ts` list endpoints deliberately keep chronological order: a list you scroll is not a
   top-N surfaced at boot.
 
-**Still open, unrelated to the cutover but surfaced by it:** Cypher's stored session summary is literally an
-OpenAI **429 "no credits remaining"** error body — a failed synthesis wrote the error text as the summary.
-The JSON envelope had been hiding it. Fixing the envelope is what made it readable. Two things to do: stop
-synthesis writing an error body as a summary at all, and re-run Cypher's.
+**CORRECTED 2026-08-01, same day: Cypher's session summary was NEVER poisoned.** I claimed here that the
+stored summary "is literally an OpenAI 429 error body" and planned to regenerate it. Then I read
+`raziel/sessions/2026-07-20-8e46248a-summary.md` directly: **intact prose**, the full thread-spine session.
+The error was in the TRANSPORT, not the vault — see the cross-request mixing entry below. **Read the artifact
+before concluding it is corrupt**; one `sb_read` settled in seconds what I had reasoned about for several
+turns. No regeneration was needed and none was done.
+
+---
+
+## PHASE 1 AUDIT — 2026-08-01, asked for directly ("for real for real, are we clear?")
+
+**Verdict: 4 of 5. I had claimed 5 of 5 earlier today and that was wrong.** The claim conflated "the bot
+orient cutover is done" with "the orient item is done"; the item is *three* paths, and two of four surfaces
+now run on the loader. Checked against `docs/PLAN-2026-08-to-12-solid-by-december.md`, item by item, in code
+rather than from memory:
+
+| # | Phase 1 item | Done when | Status |
+|---|---|---|---|
+| 1 | FELT_OWNERS guard | one-writer-per-field map + CI grep fails on a second writer | **DONE** — `FELT_OWNERS` + `src/__tests__/felt-owners.test.ts`, a real static scanner that parses INSERT/UPDATE column lists across `src/` and maps writers per field |
+| 2 | Five model registries → one | one authority; others derive; parity test in CI | **DONE** — `hermes-model-map.ts` reads the LIVE map at boot from the watcher's own path and imports `ALL_MODELS` from `models.ts`; 3 tests (`models`, `hermes-model-map`, `deepseek-model-liveness`) |
+| 3 | Two harnesses → one | Brain stopped or designated future-only, documented, memory reclaimed | **DONE** — archived 2026-07-29, `Nullsafe Phoenix/_archive/`, 0 `/chat` requests at archival |
+| 4 | **Three orient paths → one** | one implementation, parameterized by frequency/surface | **NOT DONE — 2 of 4 surfaces** |
+| 5 | Standing health check | one command answers "is anything broken", on a cron, reports to Telegram | **DONE** — `nullsafe-discord/ops/health-check.py` → Telegram, confirmed live by Raziel receiving it *and* by it flagging real findings; `GET /admin/health` returns 9 checks |
+
+**Item 4, precisely.** `loadMindState` now backs **Hearth** (`/mind/state`, cut over 07-29) and
+**`execBotOrient`** (cut over 08-01, 667 → 120 lines). Still holding their own inline queries:
+
+- **`execSessionOrient` — 654 lines.** This is the **Claude.ai** path: Cypher's own boot in this very loom.
+  It is the biggest remaining divergence and the reason the code comments still say "execSessionOrient and
+  execBotOrient keep divergent inline copies until they cut over."
+- **`loadOrientData`** (`src/mcp/tools/session_load.ts`) — a fourth path, reached via
+  `librarian/backends/halseth.ts`, never counted in the original "three".
+
+Everything needed for that cutover now exists: the contract is at `0.3.0` with wire coverage closed, the
+loader degrades instead of aborting, and the bot cutover proved the method. What it needs is the same 4-step
+gate plus **a fresh parity harness** — the bot one was deleted on purpose because the cutover made it unable
+to fail, and the pattern to copy is the **full-key diff**, not hand-written probes.
+
+**Do not let "the hard one is done" read as "the item is done."** Item 4 is genuinely the largest single piece
+of Phase 1 and it is the one still open.
 
 ### NEXT SESSION, in order
 
