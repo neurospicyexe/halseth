@@ -123,6 +123,11 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
     thread_id?: string;
     next_steps?: string; open_loops?: string;
     state_hint?: string; facet?: string; actor?: string;
+    // Provenance, forwarded to wm_session_handoffs.source. `consolidation` marks a machine summary of
+    // an idle window so a reader can prefer a real session close over it. It was accepted by the table
+    // and the backend all along and dropped HERE, which made every handoff look equally like a real
+    // conversation -- and since consolidations fire on idle, they were almost always the most recent.
+    source?: string;
   }>(ctx.req.context);
 
   // Resolve title/summary from context (accepting session-close aliases)
@@ -176,6 +181,7 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
     ...(stateHint !== undefined && { state_hint: stateHint }),
     ...(p?.facet !== undefined && { facet: p.facet }),
     ...(p?.actor !== undefined && { actor: p.actor as WmHandoffInput["actor"] }),
+    ...(p?.source !== undefined && { source: p.source }),
   };
   const r = await wmWriteHandoff(ctx.env, input);
   return { ack: true, id: r.handoff_id };
