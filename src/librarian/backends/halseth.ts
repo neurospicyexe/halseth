@@ -915,7 +915,11 @@ export async function queryTensions(
   status = "simmering",
 ): Promise<{ tensions: unknown[] }> {
   const rows = await env.DB.prepare(
-    "SELECT id, tension_text, status, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = ? ORDER BY first_noted_at ASC"
+    // `charge DESC` first (2026-08-01): what keeps RESURFACING outranks what has merely been sitting
+    // longest. This is mig 0070's ranking, and it had reached only execBotOrient -- so the Claude.ai path
+    // served tensions in pure chronological order and never benefited from it. Third copy of this query,
+    // third ordering found; unified with webmind/orient.ts. first_noted_at stays as the tiebreak.
+    "SELECT id, tension_text, status, charge, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = ? ORDER BY charge DESC, first_noted_at ASC"
   ).bind(companionId, status).all();
   return { tensions: rows.results };
 }

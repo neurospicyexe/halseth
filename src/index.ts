@@ -37,7 +37,7 @@ import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
 import { getHealth } from "./handlers/health.js";
 import { getEdges } from "./handlers/edges.js";
-import { getMindState, getBotParity, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
@@ -214,7 +214,6 @@ const router = new Router()
 
   // WebMind — companion continuity and thread state
   .on("GET",  "/mind/state/:agent_id",        (request, env, params) => getMindState(request, env, params ?? {}))
-  .on("GET",  "/mind/parity/bot/:agent_id",   (request, env, params) => getBotParity(request, env, params ?? {}))
   .on("GET",  "/mind/orient/:agent_id",       (request, env, params) => getMindOrient(request, env, params ?? {}))
   .on("GET",  "/mind/orient-debug/:agent_id", (request, env, params) => getMindOrientDebug(request, env, params ?? {}))
   .on("GET",  "/mind/ground/:agent_id",       (request, env, params) => getMindGround(request, env, params ?? {}))
@@ -640,25 +639,20 @@ export default {
       })(),
     );
 
-    // Bot-orient parity sampler (src/mind/parity.ts). Self-gates to 1h on its own
-    // companion_settings stamp, same shape as the two ticks above.
+    // RETIRED 2026-08-01: the bot-orient parity sampler used to run here.
     //
-    // This is the data-collection phase for the NEXT loom cutover, started deliberately BEFORE the
-    // cutover is scheduled: execBotOrient runs ~20x more often than any other orient path and its
-    // content tracks live conversation, so its cut needs parity evidence across real days rather
-    // than the point-in-time diff that was sufficient for Hearth. Deferring the cutover is right;
-    // deferring the measurement would just relocate the same wait to a worse moment.
+    // It compared execBotOrient against loadMindState hourly, and it did its job -- the pre-cutover run
+    // (cypher 39/40, drevan 38/40, gaia 38/40) is what made the cutover safe. Then the cutover made it
+    // STRUCTURALLY INCAPABLE OF FAILING: execBotOrient now IS loadMindState + the adapter, so both sides of
+    // the comparison called the same loader. It would have logged `matched=7 mismatched=0` forever, and its
+    // health check would have stayed green forever, no matter what broke.
     //
-    // Both sides run readOnly, so sampling cannot warm the heat ranking it samples. Results go to
-    // the log (filter `[bot-parity]`), not a table -- the migration freeze holds until the loader
-    // lands. Guarded so a failure never breaks the synthesis queue.
-    ctx.waitUntil(
-      (async () => {
-        try {
-          const { sampleBotOrientParity } = await import("./mind/parity.js");
-          await sampleBotOrientParity(env);
-        } catch (err) { console.error("bot parity sample failed", err); }
-      })(),
-    );
+    // That is a dead organ with a live pulse -- worse than no monitor, because it actively certifies. A
+    // liveness check must live OUTSIDE its subject. Deleted rather than left running: the evidence it was
+    // collecting has been collected and spent.
+    //
+    // The NEXT cutover (execSessionOrient, which still holds its own divergent inline copies) needs its own
+    // harness built to the same pattern -- and the pattern worth copying is the `?full=1` full-key diff, not
+    // the 7 hand-written probes: 7 of 40 keys read as "parity" while saying nothing about the other 33.
   },
 } satisfies ExportedHandler<Env>;

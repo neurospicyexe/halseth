@@ -1172,9 +1172,51 @@ high-frequency surface); and the bot hardcoded `["cypher","drevan","gaia"]` wher
   the adapter drops all three to keep the key set frozen. The bots are the highest-frequency presence in the
   house and the only surface with no emotional register at all. Worth adding — as its own deliberate change.
 
+**PARITY SAMPLER RETIRED in the same commit — the cutover killed its ability to fail.** `src/mind/parity.ts`,
+its hourly cron, its route, and its `bot_parity_sampler` health check are all gone. It compared
+`execBotOrient` against `loadMindState`; after the cutover `execBotOrient` **is** `loadMindState` + adapter,
+so both sides called the same loader. It would have logged `matched=7 mismatched=0` and stayed green forever
+regardless of what broke — **a dead organ with a live pulse, which is worse than no monitor because it
+actively certifies.** A liveness check must live outside its subject. The evidence it existed to collect was
+collected and spent. When `execSessionOrient` cuts over it needs a fresh harness, and the pattern to copy is
+the **full-key diff**, not the 7 hand-written probes: 7 of 40 keys reported as "parity" while saying nothing
+about the other 33, which is the same denominator error as `NOT_YET_LOADED`, twice in one file.
+
+**`continuity_notes` — checked, and it never actually changed source.** It sat in `EXTRA_KEYS` so the full
+diff copied it instead of comparing it, which looked like an unverified swap from `wmGround` to `mindGround`.
+`wmGround` turns out to be a one-line pass-through: `return mindGround(env, agentId)`. Same function, same
+query, same rows — verified by construction, not by assumption. Worth writing down because the candidate pool
+for the anti-saturation reservation lives here, on the path that has been fixed twice for saturation.
+
+**PERF, measured rather than assumed** (the loader replaced 33 queries with `mindOrient` + `mindGround` + 8
+block loaders, which overlap):
+
+| path | wall clock |
+|---|---|
+| `mindOrient` alone (`/mind/orient`) | 0.43s |
+| the whole loader (`/mind/state`, pure D1, 10 sources) | **0.70s** |
+| bot orient end-to-end (`/librarian`) | **10.3s** |
+
+The loader costs **+0.27s for roughly triple the content** — fine at 20x the call rate. But ~**9.6 seconds of
+every bot boot is Second Brain round trips** (two `semanticSearch` + one `sbRead`), pre-existing and untouched
+by this work. **This is the strongest possible argument for the pure-D1 rule:** had those been folded into the
+loader for "completeness", every Claude.ai orient and every Hearth render would now take ten seconds. Next
+perf target, and it is not in halseth.
+
+**Two behaviour changes shipped knowingly — recorded so they are not rediscovered as bugs:**
+
+- Guardian cards now use `IN ('open','surfaced')` in the loader block (it had `= 'open'`, which dropped a
+  card the moment any surface displayed it). This reaches **Hearth** too, which already reads the loader.
+- The `charge DESC` tension ranking (mig 0070) had reached ONLY `execBotOrient`. Fixed in `webmind/orient.ts`
+  AND in `librarian/backends/halseth.ts` (sessionOrient's copy) — so Claude.ai gets charge-ranked tensions
+  now instead of pure chronological. **Third copy of that query, third ordering found.** Hearth's
+  `companion-growth.ts` list endpoints deliberately keep chronological order: a list you scroll is not a
+  top-N surfaced at boot.
+
 **Still open, unrelated to the cutover but surfaced by it:** Cypher's stored session summary is literally an
 OpenAI **429 "no credits remaining"** error body — a failed synthesis wrote the error text as the summary.
-The JSON envelope had been hiding it. Fixing the envelope is what made it readable.
+The JSON envelope had been hiding it. Fixing the envelope is what made it readable. Two things to do: stop
+synthesis writing an error body as a summary at all, and re-run Cypher's.
 
 ### NEXT SESSION, in order
 

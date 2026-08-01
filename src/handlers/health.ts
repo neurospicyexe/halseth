@@ -139,7 +139,9 @@ export async function getHealth(request: Request, env: Env): Promise<Response> {
   // Budgets are ~2x the declared cadence so a single skipped run is not an alert.
   checks.push(freshness("salience_prune_cron", await stamp("salience_prune_last_run_at"), 48 * 60, now));
   checks.push(freshness("home_tick_cron",      await stamp("home_last_tick_at"),          120,      now));
-  checks.push(freshness("bot_parity_sampler",  await stamp("bot_parity_sampled_at"),      180,      now, { lateIs: "notice" }));
+  // `bot_parity_sampler` removed 2026-08-01 with the sampler itself. Once execBotOrient cut over to
+  // loadMindState, the sampler compared the loader against itself -- it could only ever report perfect
+  // parity, and this check could only ever be green. A check that cannot go red is not a check.
 
   const ferment = await one<{ t: string }>(
     env, "SELECT MAX(ferment_at) AS t FROM companion_state",
