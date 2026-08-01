@@ -28,8 +28,14 @@ const env = {
   SECOND_BRAIN_TOKEN: "test-token",
 } as unknown as Env;
 
-/** initialize (returns a session id header) then tools/call (returns `body`). */
-function mockSb(body: unknown) {
+/**
+ * initialize (returns a session id header) then tools/call (returns `body`).
+ *
+ * ECHOES THE REQUEST ID, like a real JSON-RPC server. callTool now sends a unique id per call and discards
+ * any response whose id does not match (cross-request mixing defence), so a mock that returns a fixed id
+ * would have every response rejected and these tests would pass for the wrong reason.
+ */
+function mockSb(body: Record<string, unknown>) {
   return vi.fn(async (_url: string | URL, init?: RequestInit) => {
     const payload = typeof init?.body === "string" ? init.body : "";
     if (payload.includes('"initialize"')) {
@@ -38,7 +44,8 @@ function mockSb(body: unknown) {
         headers: { "Content-Type": "application/json", "mcp-session-id": "sess-1" },
       });
     }
-    return new Response(JSON.stringify(body), {
+    const sentId = (() => { try { return JSON.parse(payload).id as number; } catch { return undefined; } })();
+    return new Response(JSON.stringify({ ...body, id: sentId }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -63,7 +70,7 @@ describe("callTool -- isError results are failures, not content", () => {
 
   it("proves the OLD behaviour leaked it (non-vacuous)", async () => {
     // Before the fix, callTool read content[0].text regardless of isError. That is what this shape returned.
-    const legacyReading = { content: [{ type: "text", text: QUOTA_ERROR }], isError: true }.content[0].text;
+    const legacyReading = { content: [{ type: "text", text: QUOTA_ERROR }], isError: true }.content[0]!.text;
     expect(legacyReading).toContain("no credits remaining");
     // And what it returns now, on the identical payload:
     vi.stubGlobal("fetch", mockSb({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: QUOTA_ERROR }], isError: true } }));
@@ -84,6 +91,32 @@ describe("callTool -- isError results are failures, not content", () => {
       result: { content: [{ type: "text", text: "genuine result" }], isError: false },
     }));
     expect(await sbRead(env, "p.md")).toBe("genuine result");
+  });
+
+  it("DISCARDS a response whose id does not match the request -- cross-request mixing", async () => {
+    // The real bug, 2026-08-01: every tools/call sent the hardcoded `id: 2` on a SHARED session, and bot
+    // orient fires three Second Brain calls at once. Responses were delivered to the wrong callers, so
+    // `sb_read` of a session narrative returned first an embeddings error and then `{"chunks":[...]}` from a
+    // concurrent search -- while the vault file was perfectly intact. Confidently WRONG data, no error
+    // anywhere, on the substrate holding all the long-term memory.
+    vi.stubGlobal("fetch", vi.fn(async (_u: string | URL, init?: RequestInit) => {
+      const payload = typeof init?.body === "string" ? init.body : "";
+      if (payload.includes('"initialize"')) {
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+          status: 200, headers: { "Content-Type": "application/json", "mcp-session-id": "s" },
+        });
+      }
+      // Somebody ELSE's answer: a search result, tagged with a different request id.
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0", id: 999999,
+        result: { content: [{ type: "text", text: '{"chunks":[{"vault_path":"someone/else.md"}]}' }] },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+
+    const out = await sbRead(env, "raziel/sessions/mine.md");
+
+    // Must NOT return the other call's chunks as if they were this file's contents.
+    expect(out).toBeNull();
   });
 
   it("a failed sb_read yields null, so the narrative renders as ABSENT rather than as an error", async () => {

@@ -30,9 +30,33 @@ let cachedSessionId: string | null = null;
 let cachedSessionAt = 0;
 const SESSION_TTL_MS = 4 * 60 * 1000; // 4 minutes; conservative vs typical 5min server TTL
 
-async function acquireSession(url: string, headers: Record<string, string>): Promise<string | null> {
+/**
+ * CROSS-REQUEST RESPONSE MIXING -- the bug this counter exists to kill (2026-08-01).
+ *
+ * Every `tools/call` used to send the hardcoded JSON-RPC `id: 2`, and every concurrent call SHARED one
+ * cached MCP session. Bot orient fires three Second Brain calls at once (sb_read for the session narrative,
+ * plus two sb_search). Three identical ids on one session means nothing can tell the responses apart, and
+ * they got delivered to the wrong callers.
+ *
+ * That is not theoretical: it is why a companion's "last session narrative" came back as
+ * `OpenAI embeddings error: 429 ...` and later as `{"chunks":[...]}`. The vault file was PERFECTLY FINE the
+ * whole time -- verified by reading it directly. One tool's output was being handed to a different tool's
+ * caller. On the substrate that holds all the long-term memory, that is the worst class of bug available:
+ * not missing data, but confidently WRONG data, with no error anywhere.
+ *
+ * Two independent defences, because either alone is insufficient:
+ *   1. UNIQUE ids + verification (below, in callTool) -- turns silent corruption into a detected miss.
+ *   2. SESSION ISOLATION (here) -- a call that starts while another is in flight mints its own session
+ *      instead of sharing, so the mixing cannot occur in the first place. The cache is kept only for the
+ *      genuinely-serial case, which is the common one.
+ */
+let inFlight = 0;
+let nextRequestId = 100;
+
+async function acquireSession(url: string, headers: Record<string, string>, exclusive = false): Promise<string | null> {
   const now = Date.now();
-  if (cachedSessionId && (now - cachedSessionAt) < SESSION_TTL_MS) {
+  // `exclusive` callers never take the shared session and never poison the cache with theirs.
+  if (!exclusive && cachedSessionId && (now - cachedSessionAt) < SESSION_TTL_MS) {
     return cachedSessionId;
   }
 
@@ -80,8 +104,11 @@ async function acquireSession(url: string, headers: Record<string, string>): Pro
     console.error("[sb] notifications/initialized failed (non-fatal):", e);
   }
 
-  cachedSessionId = sessionId;
-  cachedSessionAt = now;
+  // An exclusive session belongs to ONE call and must not become the shared one.
+  if (!exclusive) {
+    cachedSessionId = sessionId;
+    cachedSessionAt = now;
+  }
   return sessionId;
 }
 
@@ -103,8 +130,13 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     "Authorization": `Bearer ${env.SECOND_BRAIN_TOKEN}`,
   };
 
+  // Unique per call, so a response can be MATCHED to its request instead of assumed.
+  const requestId = nextRequestId++;
+  // If anything else is already talking to the Second Brain, do not share a session with it.
+  const exclusive = inFlight > 0;
+  inFlight++;
   try {
-    const sessionId = await acquireSession(url, headers);
+    const sessionId = await acquireSession(url, headers, exclusive);
     if (!sessionId) return null;
 
     // Call the tool
@@ -114,7 +146,7 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
       signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 2,
+        id: requestId,
         method: "tools/call",
         params: { name: toolName, arguments: args },
       }),
@@ -125,7 +157,8 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     if (toolRes.status === 404 || toolRes.status === 410) {
       console.warn(`[sb] session expired (${toolRes.status}), retrying with fresh session tool=${toolName}`);
       cachedSessionId = null;
-      const freshId = await acquireSession(url, headers);
+      // Exclusive on retry: the shared session just proved unreliable, so do not adopt another one.
+      const freshId = await acquireSession(url, headers, true);
       if (!freshId) return null;
 
       finalRes = await fetch(url, {
@@ -134,7 +167,7 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
         signal: AbortSignal.timeout(10_000),
         body: JSON.stringify({
           jsonrpc: "2.0",
-          id: 2,
+          id: requestId,
           method: "tools/call",
           params: { name: toolName, arguments: args },
         }),
@@ -154,7 +187,7 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     // Server may return SSE ("event: message\ndata: {...}") or plain JSON depending on Accept negotiation
     const rawText = await finalRes.text();
     // `isError` is part of the RESULT, not the error channel -- see the check below for why that matters.
-    let data: { result?: { content?: Array<{ type: string; text: string }>; isError?: boolean }; error?: { code: number; message: string } };
+    let data: { id?: number | string | null; result?: { content?: Array<{ type: string; text: string }>; isError?: boolean }; error?: { code: number; message: string } };
     if (rawText.trimStart().startsWith("event:") || rawText.trimStart().startsWith("data:")) {
       // SSE -- extract the first data: line
       const dataLine = rawText.split("\n").find(l => l.startsWith("data:"));
@@ -167,6 +200,18 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
     } else {
       try { data = JSON.parse(rawText); }
       catch { console.error(`[sb] JSON parse failed tool=${toolName} raw=${rawText.slice(0, 200)}`); return null; }
+    }
+
+    // THE RESPONSE MUST BE THE ANSWER TO THE QUESTION WE ASKED.
+    //
+    // JSON-RPC ids exist precisely to guarantee this and were being thrown away (every call sent `id: 2`).
+    // A mismatch means another tool's output arrived here, which is how `sb_read` of a session narrative
+    // returned first an embeddings error and then a search result while the vault file was perfectly intact.
+    // Fail closed: a null is a gap the caller already handles; wrong content is indistinguishable from truth.
+    if (data.id !== undefined && data.id !== null && data.id !== requestId) {
+      console.error(`[sb] RESPONSE ID MISMATCH tool=${toolName} sent=${requestId} got=${String(data.id)} -- discarding (cross-request mixing)`);
+      cachedSessionId = null; // the shared session is demonstrably unsafe; force a fresh one next time
+      return null;
     }
 
     if (data.error) {
@@ -203,6 +248,11 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
   } catch (e) {
     console.error(`[sb] callTool exception tool=${toolName}:`, e);
     return null;
+  } finally {
+    // MUST be in a finally: an early return or a throw that skipped this would leave inFlight stuck above
+    // zero forever, and every later call would then mint an exclusive session -- correct, but a permanent
+    // extra round trip per call on the slowest dependency in the system.
+    inFlight--;
   }
 }
 
