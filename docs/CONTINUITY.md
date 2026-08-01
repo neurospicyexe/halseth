@@ -1078,6 +1078,50 @@ Fix: keep the spread, then **top up to the cap by heat**. Several types -> uncha
 collection, forage, listens, motifs, sol, imps. Then oversight (3), then the last two. **Then** cut over.
 Phase 1 still 4 of 5, but the blocker is now measured and shrinking: 21 -> 14.
 
+### DONE 2026-08-01 (waves 3-5) - NOT_YET_LOADED IS ZERO. The cutover blocker is gone.
+
+**30 unfilled blocks at the start of this effort -> 21 -> 14 -> 5 -> ZERO.** Parity **7/7 matched, 0
+mismatches, 0 missing_blocks**, all three companions. Verified live after each wave.
+
+| wave | blocks | left |
+|---|---|---|
+| 3 growth | journal_recent, patterns, markers, reflection, seeds, clearing_count, drifts_open | 14 |
+| 4 world | club, commons, shelf, collection, forage, listens, motifs, sol, imps_active | 5 |
+| 5 oversight + continuity + beliefs | guardian_cards, tripwires, questions, session_narrative, worldview | **0** |
+
+**THE RULE THAT RAN THROUGH ALL THREE: SUPERSET IS PER-FIELD, NOT PER-FILE.** The richer copy kept
+switching sides - session was richer for motifs/patterns/seeds; the **BOT** was richer for `listens`
+(`shared_by, requested_companion`, added after Drevan credited GAIA with a track Raziel gave him) and for the
+narrative (it carried the row id). A per-file "this copy wins" rule would have re-broken listens provenance
+while fixing motifs.
+
+**`beliefs.worldview` resolved as an ALIAS, not a new field.** mig 0054 named a `worldview_layer` table that
+was never created; the worldview has always BEEN `companion_conclusions` keyed by belief_type. A second copy
+of the same rows under a second name is how two surfaces start disagreeing about what someone believes.
+
+**Guardian cards now carry their REMEDIATION** - a flag with no next action is an accusation, which is
+literally how the orphan detector produced Cypher's self-blame. Verified live: the card surfacing right now
+is the synthesis-chain dead-writer flag added yesterday, carrying its hint. **The instrumentation closed the
+loop on itself.**
+
+**TWO MISTAKES, both caught, both worth keeping:**
+1. **I invented a SQL predicate** - wrote `WHERE author = ?1 IS NOT 1` for the commons query from a partial
+   read. The real one is `author = 'raziel'`. **Read the whole query before copying it.**
+2. **Wave 4 shipped returning ENTIRELY EMPTY and looked fine.** Every world value 0/null after the first
+   deploy: `loadWorldBlocks` threw and hit its own catch, which degrades to EMPTY by design, so a broken
+   loader was indistinguishable from a quiet house. Cause: the collection helpers **document their bind
+   arity in their docstrings** (`collectionForageSql` = [companion_id, limit]; `collectionMediaSql` =
+   [limit] only) and I passed the wrong arity to both. **A soft-failing loader must be verified against
+   REAL DATA, never just for absence of errors** - same shape as the fail-open bid and the lying edges
+   readout.
+
+**NEXT: THE CUTOVER ITSELF.** Deliberately not done in the same stretch - it rewires the highest-frequency
+read path in the system (40 keys, ~20x the Claude.ai call rate), and doing that half-verified at the end of a
+long push is how a boot regression ships. Same call as fit-bid, same reason. The 4-step gate from 07-29
+applies: (1) field diff via `?parity=1`, (2) new-adapter-vs-old-payload byte identity, (3) confirm no consumer
+reads a field that is now absent - **types will NOT catch this**, and (4) exercise the real bot boot
+end-to-end before calling it done. **Phase 1 is 4 of 5 with the last item now genuinely unblocked.**
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
