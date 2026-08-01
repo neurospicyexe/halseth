@@ -260,11 +260,41 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
 
   const [selfResults, relationalResults, observationalResults, systemicResults] = await Promise.all(conclusionPromises);
 
+  const CONCLUSION_CAP = 6;
   const seenIds = new Set<string>();
   const active_conclusions: WmConclusion[] = [];
   for (const result of [selfResults, relationalResults, observationalResults, systemicResults] as const) {
     for (const row of (result?.results ?? [])) {
-      if (!seenIds.has(row.id) && active_conclusions.length < 6) {
+      if (!seenIds.has(row.id) && active_conclusions.length < CONCLUSION_CAP) {
+        seenIds.add(row.id);
+        active_conclusions.push(row);
+      }
+    }
+  }
+
+  // FILL TO THE CAP (2026-08-01). The per-type spread above exists to stop one belief_type crowding out
+  // the others, and that intent is right -- but measured on prod, EVERY live conclusion in the system is
+  // belief_type='self' (cypher 46, drevan 29, gaia 19; zero relational/observational/systemic), because
+  // execConclusionAdd defaults to 'self' and nothing has ever passed a type. So four types x LIMIT 2
+  // returned exactly 2 while execBotOrient's single pooled query returned 6.
+  //
+  // That made the bot cutover a straight LOSS of four beliefs for zero distributional benefit: the
+  // distribution was answering a problem the data does not have. Topping up preserves the spread when
+  // several types exist AND fills the cap when only one does, so it is strictly better than either the
+  // pooled query or the bare per-type one -- and it stops being a behaviour decision Raziel has to make.
+  if (active_conclusions.length < CONCLUSION_CAP) {
+    const room = CONCLUSION_CAP - active_conclusions.length;
+    const excluded = [...seenIds];
+    const notIn = excluded.length ? `AND id NOT IN (${excluded.map(() => "?").join(",")})` : "";
+    const topUp = await env.DB.prepare(
+      `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
+              created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+       FROM companion_conclusions
+       WHERE companion_id = ? AND superseded_by IS NULL ${notIn}
+       ORDER BY ${effectiveHeatSql()} DESC LIMIT ?`
+    ).bind(agentId, ...excluded, room).all<WmConclusion>().catch(() => null);
+    for (const row of (topUp?.results ?? [])) {
+      if (!seenIds.has(row.id) && active_conclusions.length < CONCLUSION_CAP) {
         seenIds.add(row.id);
         active_conclusions.push(row);
       }

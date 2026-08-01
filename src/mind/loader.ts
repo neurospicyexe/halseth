@@ -19,9 +19,10 @@ import { mindGround } from "../webmind/ground.js";
 import { MindState, MINDSTATE_CONTRACT_VERSION, NOT_YET_LOADED, Loom } from "./contract.js";
 import { loadIdentityBlocks } from "./blocks/identity.js";
 import { loadFeltFermentBlocks } from "./blocks/felt.js";
+import { loadGrowthBlocks } from "./blocks/growth.js";
 
 export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom): Promise<MindState> {
-  const [orient, ground, identity, felt] = await Promise.all([
+  const [orient, ground, identity, felt, growth] = await Promise.all([
     mindOrient(env, companionId, { readOnly: true }),
     mindGround(env, companionId),
     // Wave 1 of folding in the NOT_YET_LOADED blocks (2026-07-29): identity (6) + felt-ferment (3),
@@ -30,6 +31,9 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
     // cuts over, its inline copies get deleted and it calls these.
     loadIdentityBlocks(env, companionId),
     loadFeltFermentBlocks(env, companionId),
+    // Wave 3 (2026-08-01): growth (7), 21 unfilled -> 14. This is the wave that unblocks the bot cutover
+    // -- 13 of execBotOrient's 40 keys mapped to blocks the loader could not fill.
+    loadGrowthBlocks(env, companionId),
   ]);
 
   return {
@@ -94,6 +98,10 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
       letters: orient.recent_letters,
       journal_recent: orient.recent_journal,
     },
+
+    // Wave 3: what this companion has been becoming on its own time. Canonical implementation --
+    // execSessionOrient and execBotOrient still hold divergent inline copies until they cut over.
+    growth,
 
     oversight: {
       pressure_flags: orient.pressure_flags,

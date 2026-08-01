@@ -20,6 +20,7 @@ import type {
   WmBiometricSnapshot, WmHouseState, WmFeeling, WmOpenLoop, WmSittingNote,
   WmArchiveDigest, WmRecentSpiralTurn, HomeEvent,
 } from "../webmind/types.js";
+import type { GrowthBlocks } from "./blocks/growth.js";
 
 export const MINDSTATE_CONTRACT_VERSION = "0.2.0";
 
@@ -120,6 +121,10 @@ export interface MindState {
   };
 
   /** Signals about my own trajectory. */
+  /** What this companion has been becoming on its own time (wave 3). Canonical implementation lives in
+   *  blocks/growth.ts; execSessionOrient and execBotOrient keep divergent inline copies until cutover. */
+  growth: GrowthBlocks;
+
   oversight: {
     pressure_flags: WmBasinHistoryRow[];
     growth_confirmed: WmBasinHistoryRow[];
@@ -149,8 +154,6 @@ export const NOT_YET_LOADED: string[] = [
   // blocks on purpose: shared_kernel is common to all three, companion_kernel is this one's own --
   // the shared-bank / distinct-self split the whole contract is built around.
   "continuity.session_narrative",
-  "growth.journal_recent", "growth.patterns", "growth.markers", "growth.reflection",
-  "growth.seeds", "growth.clearing_count", "growth.drifts_open",
   "world.club", "world.commons", "world.shelf", "world.collection", "world.forage",
   "world.listens", "world.motifs", "world.sol", "world.imps_active",
   "oversight.guardian_cards", "oversight.tripwires", "oversight.questions",
