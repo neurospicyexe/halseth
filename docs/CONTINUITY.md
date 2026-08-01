@@ -897,6 +897,58 @@ So: measure whether the ask lands first. If it does not, THEN force it.
 **Do not add a seventh edge column before one of the six is written.** `thread_key` at 28.9% is the only
 one with real presence, and it is the only DERIVABLE one — that is the whole lesson.
 
+### CODE REVIEW 2026-07-31 — seven findings, all fixed, two were regressions I introduced today
+
+Ran `/code-review` on the day's work. **It was NOT clean**, and two of the seven were regressions from
+today's own commits. All fixed, deployed, and each pinned by a test that reproduces the reported failure —
+**a review finding is only banked when its failure becomes a test.**
+
+**HIGH — the `/admin/edges` readout undercounted by 80%.** Notes store an ISO instant; SQLite `datetime()`
+emits space-separated; a raw string compare diverges at index 10 (`T` 0x54 vs space 0x20). Prod: raw **6**,
+normalized **30**. The reviewer said "structurally always 0" — measured, it was 6 of 30, so mechanism right
+and conclusion overstated; I checked before believing it because my own earlier query had returned rows
+([[subagent-halluc]] discipline). **The RUNTIME edge was never affected** — `note-provenance.ts` compares in
+JS via `tsToMs`, which normalizes. So this was **a lying instrument, not a broken feature**, and that is the
+worse of the two when a decision hangs on the number. Same class fixed in the supersede window split and
+the orient-side window.
+
+**HIGH — two companions could both answer one message; `claimFloor` could never produce that.** `waitMs`
+clamps to 0 past the shared deadline, so with the ambient judge's latency spread exceeding the window an
+early bot wins a hash holding only its own bid and sends, while a late bot reads a populated hash, wins on
+lane score, and sends too. **`SET NX` made losing UNCONDITIONAL and the bid lost that property.** Fix:
+separate **decision** from **commitment** — the bid decides who SHOULD speak, `claimSpoken` (`SET NX` on
+`ns:spoke:<msgid>`) makes exactly one bot actually speak. Fails open on no-redis, throw, or a client with no
+`set()`.
+
+**MEDIUM — the watch trigger ate conversation.** `dre: watching the storm roll in` matched: created a shelf
+row titled "the storm roll in" AND returned before inference so Drevan never answered him. "watching" is a
+conversational verb, unlike into/log/club/pet. Narrowed to bare form / list word / position token / status
+word. **Deliberately NOT added to `COMMAND_GUARD`** — the guard replies with usage, which would have eaten
+the same sentence through a second door.
+
+**MEDIUM — `execWatchProgress` derived the title from the request STRING**, the exact trap its own comment
+named. "we watched a movie last night" inserted a row titled "a movie last night", which then competes with
+the real row via `findByTitle`'s LIKE fallback. Context-only now; it refuses and says what to send.
+
+**MEDIUM — a movie or first shelving was told its position "did not move"** when there was no prior position
+to be behind. Three outcomes now, not two.
+
+**LOW — record-on-arrival filed owner COMMAND strings into STM with no reply beside them**, building a
+transcript of Raziel issuing instructions into apparent silence — the exact malformed context that change
+exists to prevent. Commands excluded: an instruction to the machine is not a conversational turn.
+
+**LOW — a permanently broken daily cron could dodge BOTH health detectors.** The streak is in-memory and
+`register()` zeroes it every boot; staleness keyed on `lastStarted`, which a failing job still updates.
+Staleness now keys on **last SUCCESS**.
+
+**Totals: halseth 1349 / discord 797 / SB 247 green.** Verified live after deploy: the readout now reports
+**30 addressed** where it reported 6.
+
+**The pattern worth keeping from this review:** five of seven were in code I wrote today, and the two HIGH
+ones were both *my own new abstractions losing a property the thing they replaced had* — `SET NX`'s
+unconditional losing, and a SQL comparison that the JS path got right. **When replacing a mechanism, list
+what the old one guaranteed and check each guarantee survives.**
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
