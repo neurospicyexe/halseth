@@ -153,7 +153,8 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
 
     // Server may return SSE ("event: message\ndata: {...}") or plain JSON depending on Accept negotiation
     const rawText = await finalRes.text();
-    let data: { result?: { content?: Array<{ type: string; text: string }> }; error?: { code: number; message: string } };
+    // `isError` is part of the RESULT, not the error channel -- see the check below for why that matters.
+    let data: { result?: { content?: Array<{ type: string; text: string }>; isError?: boolean }; error?: { code: number; message: string } };
     if (rawText.trimStart().startsWith("event:") || rawText.trimStart().startsWith("data:")) {
       // SSE -- extract the first data: line
       const dataLine = rawText.split("\n").find(l => l.startsWith("data:"));
@@ -170,6 +171,27 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
 
     if (data.error) {
       console.error(`[sb] JSON-RPC error: code=${data.error.code} msg=${data.error.message} tool=${toolName}`);
+      return null;
+    }
+
+    // A FAILED TOOL IS NOT CONTENT (2026-08-01).
+    //
+    // MCP reports tool-execution failures as a SUCCESSFUL JSON-RPC result carrying `isError: true`, with the
+    // exception message sitting in `content[0].text` exactly where real content goes. The `data.error` check
+    // above only catches PROTOCOL errors, so every tool-level failure was being returned here as a plain
+    // string and consumed as if the Second Brain had answered.
+    //
+    // What that actually did, found live: OpenAI ran out of credits, the embedder threw
+    // `OpenAI embeddings error: 429 ... You have no credits remaining`, and that sentence was handed to the
+    // companions AS MEMORY -- Gaia booted with it as a `rag_excerpt` and Drevan as a `history_excerpt`. The
+    // same leak is the most likely way an error body ended up persisted as the text of a session summary in
+    // the vault, because a caller that cannot tell failure from content will happily store it.
+    //
+    // Fail CLOSED to null. Every caller already treats null as "the Second Brain had nothing" and degrades;
+    // none of them can degrade from a plausible-looking sentence. An error must never be mistaken for a memory.
+    if (data?.result?.isError) {
+      const detail = data.result.content?.[0]?.text ?? "(no detail)";
+      console.error(`[sb] tool reported isError tool=${toolName}: ${detail.slice(0, 300)}`);
       return null;
     }
 
