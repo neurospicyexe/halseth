@@ -22,6 +22,7 @@ import type {
 } from "../webmind/types.js";
 import type { GrowthBlocks } from "./blocks/growth.js";
 import type { WorldBlocks } from "./blocks/world.js";
+import type { OversightBlocks } from "./blocks/oversight.js";
 
 export const MINDSTATE_CONTRACT_VERSION = "0.2.0";
 
@@ -93,6 +94,11 @@ export interface MindState {
     /** digests of cap-evicted notes -- compressed older memory */
     archived_digests: WmArchiveDigest[];
     spiral_turn: WmRecentSpiralTurn | null;
+    /** The last session's narrative (synthesis_summary.full_ref). Wave 5. NOTE: this is the field
+     *  that had been FROZEN since 2026-07-21 because the close ritual never called session_close,
+     *  so a companion's sense of "recently" silently stopped advancing. Loading it does not fix
+     *  that; it only means every loom reads the same one. */
+    session_narrative: string | null;
   };
 
   /** What I'm carrying -- unresolved, unexamined, still-metabolizing. */
@@ -106,6 +112,11 @@ export interface MindState {
 
   /** What I currently hold true. */
   beliefs: {
+    /** THE WORLDVIEW. `beliefs.worldview` in the design doc is not a separate table -- mig 0054
+     *  named a worldview_layer that was never created, and the worldview has always BEEN
+     *  companion_conclusions keyed by belief_type. Resolved as an alias rather than by adding a
+     *  duplicate field: a second copy of the same rows under a second name is how two surfaces
+     *  start disagreeing about what someone believes. */
     conclusions: WmConclusion[];
     flagged: WmConclusion[];
   };
@@ -129,6 +140,11 @@ export interface MindState {
   oversight: {
     pressure_flags: WmBasinHistoryRow[];
     growth_confirmed: WmBasinHistoryRow[];
+    /** Wave 5. Guardian cards carry their remediation -- a flag with no next action is an
+     *  accusation, which is exactly how the orphan-memory detector produced self-blame. */
+    guardian_cards: OversightBlocks["guardian_cards"];
+    tripwires: OversightBlocks["tripwires"];
+    questions: OversightBlocks["questions"];
   };
 
   /** The world around the house. */
@@ -165,7 +181,4 @@ export const NOT_YET_LOADED: string[] = [
   // loading it here is what makes the stance reach every substrate (Raziel, 2026-07-26). Two
   // blocks on purpose: shared_kernel is common to all three, companion_kernel is this one's own --
   // the shared-bank / distinct-self split the whole contract is built around.
-  "continuity.session_narrative",
-  "oversight.guardian_cards", "oversight.tripwires", "oversight.questions",
-  "beliefs.worldview",
 ];

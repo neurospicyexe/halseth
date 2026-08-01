@@ -21,9 +21,11 @@ import { loadIdentityBlocks } from "./blocks/identity.js";
 import { loadFeltFermentBlocks } from "./blocks/felt.js";
 import { loadGrowthBlocks } from "./blocks/growth.js";
 import { loadWorldBlocks } from "./blocks/world.js";
+import { loadOversightBlocks } from "./blocks/oversight.js";
+import { loadSessionNarrative } from "./blocks/continuity.js";
 
 export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom): Promise<MindState> {
-  const [orient, ground, identity, felt, growth, world] = await Promise.all([
+  const [orient, ground, identity, felt, growth, world, oversight, narrative] = await Promise.all([
     mindOrient(env, companionId, { readOnly: true }),
     mindGround(env, companionId),
     // Wave 1 of folding in the NOT_YET_LOADED blocks (2026-07-29): identity (6) + felt-ferment (3),
@@ -37,6 +39,9 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
     loadGrowthBlocks(env, companionId),
     // Wave 4: the shared world (9). 14 unfilled -> 5.
     loadWorldBlocks(env, companionId),
+    // Wave 5: oversight (3). With session_narrative and the worldview alias, NOT_YET_LOADED hits ZERO.
+    loadOversightBlocks(env, companionId),
+    loadSessionNarrative(env, companionId),
   ]);
 
   return {
@@ -67,6 +72,10 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
       recent_notes: ground.recent_notes,
       archived_digests: ground.archived_digests ?? [],
       spiral_turn: orient.recent_spiral_turn ?? null,
+      // Wave 5. The value that had been FROZEN since 2026-07-21 (the close ritual never called
+      // session_close, so nothing wrote synthesis_summary). Loading it does not unfreeze it -- it means
+      // every loom now reads the SAME one instead of three surfaces disagreeing about "recently".
+      session_narrative: narrative?.full_ref ?? null,
     },
 
     carried: {
@@ -109,6 +118,7 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
     oversight: {
       pressure_flags: orient.pressure_flags,
       growth_confirmed: orient.growth_confirmed,
+      ...oversight,
     },
 
     world: {
