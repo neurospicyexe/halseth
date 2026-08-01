@@ -20,6 +20,7 @@ import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from 
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
 import { remediationHint } from "../../guardian/remediation.js";
+import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
 
 // Interoception fields the raw MCP tool halseth_session_load accepts (see
 // src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
@@ -73,7 +74,7 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
       ...interoception,
     }),
     ctx.env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
+      `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
     ).bind(ctx.req.companion_id).first<{ n: number }>().catch(() => null),
   ]);
   const withFront = {
@@ -160,7 +161,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     semanticSearch(ctx.env, historyQuery).catch(() => null),
     // Unaccepted growth count: how many autonomous entries are awaiting companion review.
     ctx.env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
+      `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
     ).bind(agentId).first<{ n: number }>().catch(() => null),
     // Open continuity-gap questions: things the companion is holding to ask Raziel.
     ctx.env.DB.prepare(
@@ -1155,7 +1156,7 @@ export async function execBotOrient(
     semanticSearch(ctx.env, `${ctx.req.companion_id} history background origin memory`).catch(() => null),
     // 14. Unaccepted growth count: autonomous entries awaiting review.
     ctx.env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'"
+      `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
     ).bind(agentId).first<{ n: number }>(),
     // 15. Active worldview conclusions (newest 6 active). Wire format uses conclusion_text
     // so both consumers (Discord librarian.ts, Brain halseth_client.py) render [Worldview].

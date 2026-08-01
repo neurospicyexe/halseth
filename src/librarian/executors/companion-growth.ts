@@ -6,6 +6,7 @@ import { COMPANION_IDS } from "../../companions.js";
 import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
 import { collectionForageSql, collectionMediaSql, bumpSparkleSql, sparkleDelta } from "../../webmind/collection.js";
 import { embedAndStoreAsync } from "../../mcp/embed.js";
+import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
 
 const COMPANIONS = COMPANION_IDS;
 
@@ -210,7 +211,7 @@ export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorR
   const rows = await ctx.env.DB.prepare(
     `SELECT id, entry_type, content, tags_json, created_at
      FROM growth_journal
-     WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending'
+     WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}
      ORDER BY created_at DESC
      LIMIT 10`
   ).bind(ctx.req.companion_id).all<{

@@ -23,6 +23,7 @@ import { authGuard } from "../lib/auth.js";
 import { nextPhase, phaseAdvances, advanceChargeSql, type ChargeSignal } from "../webmind/charge.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { storeVector, embedAndStoreAsync } from "../mcp/embed.js";
+import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const MAX_TEXT = 8000;
@@ -286,7 +287,7 @@ export async function getGrowthJournal(
   const acceptedOnly = url.searchParams.get("status") === "accepted";
 
   const sql = pendingOnly
-    ? "SELECT * FROM growth_journal WHERE companion_id = ? AND source = 'autonomous' AND review_status = 'pending' ORDER BY created_at DESC LIMIT ?"
+    ? `SELECT * FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL} ORDER BY created_at DESC LIMIT ?`
     : acceptedOnly
       // ?status=accepted -- reconsolidation sampling (worker reflect phase).
       // ASC: oldest canon first; the stalest memories are the candidates.

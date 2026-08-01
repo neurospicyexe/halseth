@@ -13,6 +13,7 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { runAllDetectors, COMPANIONS } from "../guardian/detectors.js";
+import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -112,7 +113,7 @@ async function composeWeeklyLetter(env: Env): Promise<string> {
       `SELECT COUNT(*) AS n FROM companion_tensions WHERE status = 'simmering'`
     ).first<{ n: number }>(),
     env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM growth_journal WHERE source = 'autonomous' AND review_status = 'pending'`
+      `SELECT COUNT(*) AS n FROM growth_journal WHERE ${RATIFIABLE_PENDING_SQL}`
     ).first<{ n: number }>(),
   ]);
 

@@ -20,6 +20,7 @@
 // (guardian.ts composeWeeklyLetter). Adding a weekly briefing would duplicate that surface.
 
 import { Env } from "../types.js";
+import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
 
 export type BriefingKind = "morning" | "midday" | "evening";
 export const BRIEFING_KINDS: readonly BriefingKind[] = ["morning", "midday", "evening"] as const;
@@ -159,7 +160,7 @@ export async function gatherBriefingData(env: Env): Promise<BriefingData> {
       env,
       "SELECT severity, summary FROM guardian_flags WHERE status IN ('open','surfaced','acknowledged') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END LIMIT 5"
     ),
-    safeCount(env, "SELECT COUNT(*) AS n FROM growth_journal WHERE source = 'autonomous' AND review_status = 'pending'"),
+    safeCount(env, `SELECT COUNT(*) AS n FROM growth_journal WHERE ${RATIFIABLE_PENDING_SQL}`),
     safeCount(env, "SELECT COUNT(*) AS n FROM companion_tensions WHERE status = 'simmering'"),
   ]);
   return {

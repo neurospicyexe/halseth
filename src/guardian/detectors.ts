@@ -6,6 +6,7 @@
 
 import type { Env } from "../types.js";
 import { detectDeadWriters } from "./writer-liveness.js";
+import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
 
 export const COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 export type CompanionId = (typeof COMPANIONS)[number];
@@ -271,7 +272,7 @@ export async function detectBasinPressure(env: Env): Promise<CandidateFlag[]> {
 export async function detectRatificationBacklog(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
     `SELECT companion_id, COUNT(*) AS n FROM growth_journal
-     WHERE source = 'autonomous' AND review_status = 'pending'
+     WHERE ${RATIFIABLE_PENDING_SQL}
      GROUP BY companion_id HAVING n >= ?1`
   ).bind(GUARDIAN_THRESHOLDS.RATIFICATION_BACKLOG).all<{ companion_id: string; n: number }>();
   return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => ({
