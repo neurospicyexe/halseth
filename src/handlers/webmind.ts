@@ -135,8 +135,12 @@ export async function getBotParity(
     // ?shape=1 adds the bot payload's key names and value shapes. Kept as a permanent affordance
     // rather than a throwaway: the bot wire format is flat where the contract is nested, and
     // inferring it by reading the 592-line function produced three wrong accessors on the first try.
-    const includeShape = new URL(request.url).searchParams.get("shape") === "1";
-    return json(await compareBotOrient(env, agent_id, { includeShape }));
+    const params2 = new URL(request.url).searchParams;
+    const includeShape = params2.get("shape") === "1";
+    // ?full=1 -- the cutover gate: adapter output vs the live payload, every key. The 7 probes are a
+    // continuous health signal; this is the one-time equivalence proof.
+    const fullDiff = params2.get("full") === "1";
+    return json(await compareBotOrient(env, agent_id, { includeShape, fullDiff }));
   } catch (err) {
     console.error("[mind/parity/bot] error", { agent_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);

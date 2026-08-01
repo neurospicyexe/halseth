@@ -326,6 +326,44 @@ export async function sbRead(env: Env, path: string, query?: string): Promise<st
   return callTool(env, "sb_read", query ? { path, query } : { path });
 }
 
+/**
+ * Pull the readable prose out of an `sbRead` result.
+ *
+ * `sbRead` returns the tool's raw text, which is a JSON envelope: `{"path":"...","content":"---\nfrontmatter
+ * ...\n---\n\nthe actual text"}`. Both orient paths took that string and ran
+ * `.replace(/^---[\s\S]*?---\n+/, "")` on it to strip frontmatter -- which never matched, because the string
+ * starts with `{`, not `---`. So every companion's "last session narrative" has been arriving as a JSON blob
+ * with escaped newlines and its YAML header intact, on BOTH surfaces (bot orient's `synthesis_summary` and
+ * session orient's `[Last session narrative]` block).
+ *
+ * Found 2026-08-01 during the bot cutover, pre-existing, and in the same field that had separately been FROZEN
+ * since 07-21 because the close ritual never called session_close. A companion's sense of "recently" was
+ * therefore both stale AND unreadable, which is a good illustration of why two independent defects in one
+ * field are so hard to notice: each one explains the symptom on its own.
+ *
+ * ONE helper, both call sites -- the same regex existed twice and was wrong in both, which is the shape where
+ * fixing the copy you happened to be looking at leaves the symptom alive.
+ *
+ * Fails soft in the order that loses the least: valid envelope -> its `content`, frontmatter stripped; not
+ * JSON -> the raw text, frontmatter stripped (some callers pass plain markdown); nothing usable -> null.
+ */
+export function sbExtractContent(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const stripFrontmatter = (s: string): string => s.replace(/^---[\s\S]*?---\n+/, "").trim();
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as { content?: unknown };
+      if (typeof parsed.content === "string") {
+        const body = stripFrontmatter(parsed.content);
+        return body.length > 0 ? body : null;
+      }
+    } catch { /* not an envelope after all -- fall through to the raw path */ }
+  }
+  const body = stripFrontmatter(trimmed);
+  return body.length > 0 ? body : null;
+}
+
 export async function sbList(env: Env, path?: string): Promise<string | null> {
   return callTool(env, "sb_list", path ? { path } : {});
 }

@@ -18,6 +18,8 @@
 import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { remediationHint } from "../../guardian/remediation.js";
+import { fetchRecentAnswers } from "../../webmind/questions.js";
+import type { WmAnsweredQuestion } from "../../webmind/types.js";
 
 export interface GuardianCard {
   id: string;
@@ -45,21 +47,36 @@ export interface OversightBlocks {
   tripwires: ArmedTripwire[];
   /** Questions this companion is carrying for Raziel, minus any already voiced. */
   questions: CarriedQuestion[];
+  /**
+   * Wave 6. Questions Raziel has ANSWERED in the last 7 days -- the other half of the loop.
+   *
+   * `fetchRecentAnswers` is reused rather than reimplemented: it is already the shared reader, and a second
+   * copy of this query is how the two halves of one lifecycle drift apart. Its sibling
+   * `markAnswersDelivered` is deliberately NOT called here -- stamping delivered_at from the loader would
+   * mean merely LOADING state marks an answer as delivered to a companion that never saw it. Delivery is
+   * the route layer's job; the loader is a window, not a hand.
+   */
+  answered_questions: WmAnsweredQuestion[];
 }
 
 export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Promise<OversightBlocks> {
   try {
-    const [flags, triggers, questions] = await Promise.all([
+    const [flags, triggers, questions, answered] = await Promise.all([
       // companion_id IS NULL means house-wide, so it belongs to everyone's oversight.
       env.DB.prepare(
+        // `IN ('open','surfaced')` -- NOT `= 'open'`, which is what this block shipped with on 07-31 and
+        // made it the DEGRADED copy of a query both other paths already had right. A card moves to
+        // `surfaced` once any surface has shown it; filtering to `open` alone means a flag disappears from
+        // the loader the moment it is first displayed, while still being unresolved. Surfaced is not
+        // handled.
         `SELECT id, flag_type, severity, summary FROM guardian_flags
-         WHERE (companion_id = ? OR companion_id IS NULL) AND status = 'open'
+         WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced')
          ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3`
       ).bind(companionId).all<Omit<GuardianCard, "remediation">>(),
       env.DB.prepare(
         `SELECT id, trigger_text, condition_type, condition_value FROM companion_triggers
          WHERE companion_id = ? AND status = 'armed' AND (expires_at IS NULL OR expires_at >= datetime('now'))
-         LIMIT 10`
+         ORDER BY created_at ASC LIMIT 10`
       ).bind(companionId).all<ArmedTripwire>(),
       // Excludes questions already voiced. The question stays `open` (it is still awaiting Raziel); it just
       // stops being re-served as something new to say -- an anti-loop rail that does not need decay because
@@ -73,6 +90,7 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
            )
          ORDER BY created_at DESC LIMIT 2`
       ).bind(companionId).all<CarriedQuestion>(),
+      fetchRecentAnswers(env, companionId, 3).catch(() => []),
     ]);
 
     return {
@@ -83,13 +101,16 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
       })),
       tripwires: (triggers.results ?? []).map(t => ({
         ...t,
-        trigger_text: (t.trigger_text ?? "").slice(0, 300),
+        // 500, not the 300 this block shipped with: a tripwire is an instruction the companion set for
+        // itself, and truncating one at 300 can cut off the condition it was written to catch.
+        trigger_text: (t.trigger_text ?? "").slice(0, 500),
         condition_value: (t.condition_value ?? "").slice(0, 200),
       })),
       questions: questions.results ?? [],
+      answered_questions: answered,
     };
   } catch (err) {
     console.warn("[mind/oversight] load failed, degrading to empty", { companionId, error: String(err) });
-    return { guardian_cards: [], tripwires: [], questions: [] };
+    return { guardian_cards: [], tripwires: [], questions: [], answered_questions: [] };
   }
 }

@@ -32,9 +32,14 @@ const GROUND_NOTES = [
   { note_id: "warm-4", content: "also in the window", heat: 1.2, salience: "high" },
 ];
 
-vi.mock("../librarian/backends/webmind.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../librarian/backends/webmind.js")>();
-  return { ...actual, wmGround: vi.fn(async () => ({ recent_notes: GROUND_NOTES })) };
+// THE CANDIDATE POOL MOVED (cutover, 2026-08-01). execBotOrient no longer calls the librarian's `wmGround`
+// for its note window -- it reads `MindState.continuity.recent_notes`, which loadMindState fills from
+// `mindGround` (src/webmind/ground.ts). So the pool has to be mocked at its new source or these tests silently
+// exercise an empty window and pass for the wrong reason. The BEHAVIOUR under test is unchanged: two slots by
+// (high salience, then heat), one reserved for a never-shown note, all warmed at SURFACE_BUMP.
+vi.mock("../webmind/ground.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../webmind/ground.js")>();
+  return { ...actual, mindGround: vi.fn(async () => ({ recent_notes: GROUND_NOTES })) };
 });
 vi.mock("../librarian/backends/second-brain.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../librarian/backends/second-brain.js")>();

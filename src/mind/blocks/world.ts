@@ -34,6 +34,11 @@ export interface ClubRound {
   id: string; status: string;
   winner_title: string | null;
   candidate_count: number;
+  /** Phase timestamps (wave 7). A round's PHASE is what a renderer needs to say anything useful about it;
+   *  status alone cannot distinguish "opened an hour ago" from "has been discussing for a week". */
+  opened_at: string | null;
+  activated_at: string | null;
+  discussing_at: string | null;
 }
 export interface ForageFind {
   id: string; title: string; domain: string;
@@ -47,6 +52,16 @@ export interface Listen {
   shared_by: string | null;
   requested_companion: string | null;
   created_at: string;
+  /**
+   * Raw reactions map (wave 7), carried so a renderer can extract THIS companion's own words.
+   *
+   * The contract carries the raw JSON and the renderer decides -- because the rule about it is a rule about
+   * VOICE, not about data: a companion gets their OWN reaction back verbatim, and a sibling's is reported as
+   * a bare fact ("drevan sat with this"), never as text. Handing one companion another's phrasing is how
+   * attribution scrambled in June. Keeping the map whole here means one place decides that, per surface,
+   * instead of the split being baked in by whichever query ran.
+   */
+  reactions_json: string | null;
 }
 export interface Motif {
   label: string; display: string;
@@ -63,6 +78,39 @@ export interface SolState {
   nest_treasured: number;
 }
 export interface ImpActivity { imp: string; n: number; last_at: string }
+/** Every creature in the house, not just Sol (wave 7). `sol` stays as its own field because Sol has a
+ *  trust/nest arc nothing else has; this is the roster, and a roster of one is a roster that breaks the day
+ *  a second creature is seeded. */
+export interface CreatureRow {
+  name: string;
+  species: string | null;
+  kind: string;
+  trust: number;
+  mood: string | null;
+  last_interaction_at: string | null;
+  created_at: string | null;
+}
+/**
+ * Wave 6. What Raziel is part-way through (mig 0111).
+ *
+ * THE FARGO BUG IS WHY THIS IS IN THE CONTRACT AND NOT ONLY ON THE DISCORD WIRE. Drevan was asked where they
+ * were in the show and answered "last I tracked, S4 E2" -- stale, because there was no position field anywhere
+ * in the schema, so the answer had to come from whichever prose fragment ranked highest, and a June note about
+ * FINISHING the show won. A progress fact is a field, not a memory. Leaving it visible to one surface only
+ * reproduces the same failure on every other surface.
+ *
+ * `position` is composed HERE rather than in each renderer so every surface says "S4E2" identically and no
+ * consumer has to reassemble it from two integers.
+ */
+export interface WatchItem {
+  title: string;
+  kind: string;
+  status: string;
+  /** Pre-composed: "S4E2" | "S4" | "E2" | "". */
+  position: string;
+  position_note: string | null;
+  with_companion: string | null;
+}
 
 export interface WorldBlocks {
   club: ClubRound | null;
@@ -73,22 +121,25 @@ export interface WorldBlocks {
   listens: Listen[];
   motifs: { active: Motif[]; resurrection_candidates: Motif[] };
   sol: SolState | null;
+  creatures: CreatureRow[];
   imps_active: ImpActivity[];
+  watching: WatchItem[];
 }
 
 const EMPTY: WorldBlocks = {
   club: null, commons: [], shelf: [], collection: { forage: [], media: [] },
   forage: { pool: [], active: [] }, listens: [],
-  motifs: { active: [], resurrection_candidates: [] }, sol: null, imps_active: [],
+  motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [],
+  watching: [],
 };
 
 /** Never throws: the shared world is context, and missing context must never break a boot. */
 export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise<WorldBlocks> {
   try {
-    const [club, commons, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps] =
+    const [club, commons, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, watching] =
       await Promise.all([
         env.DB.prepare(
-          "SELECT r.id, r.status, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
+          "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
         ).first<ClubRound>(),
         // RAZIEL's wall posts that THIS companion has not answered yet. Both halves matter: `author =
         // 'raziel'` because the block is his drops rather than a general feed, and the NOT IN because a
@@ -118,7 +169,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         ).bind(companionId).all<ForageFind>(),
         // The UNION of both prior copies: the bot's provenance columns AND a useful depth.
         env.DB.prepare(
-          "SELECT id, title, artist, shared_by, requested_companion, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
+          "SELECT id, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
         ).all<Listen>(),
         env.DB.prepare(
           `SELECT label, display, recurrence_count, trust, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 10`
@@ -126,17 +177,43 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         env.DB.prepare(
           `SELECT label, display, recurrence_count, trust, status FROM companion_motifs WHERE companion_id = ? AND status = 'faded' ORDER BY trust DESC, recurrence_count DESC LIMIT 10`
         ).bind(companionId).all<Motif>(),
+        // The whole roster in ONE query, with Sol picked out of it below -- the bot path already did it this
+        // way, and two queries against the same table on the same boot is a round trip bought for nothing.
         env.DB.prepare(
-          "SELECT id, name, species, trust, last_interaction_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
-        ).first<{ id: string; name: string; species: string | null; trust: number; last_interaction_at: string | null }>(),
+          "SELECT id, name, species, kind, state_json, trust, last_interaction_at, created_at FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
+        ).all<{ id: string; name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string | null }>(),
         env.DB.prepare(
           "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
         ).bind(companionId).all<ImpActivity>(),
+        // Wave 6. Forward-only progress; `NULLS LAST` so a shelf row never watched does not outrank one
+        // watched last night.
+        env.DB.prepare(
+          `SELECT title, kind, status, season, episode, position_note, with_companion
+           FROM watch_shelf WHERE status IN ('watching','paused')
+           ORDER BY (status = 'watching') DESC, last_watched_at DESC NULLS LAST LIMIT 4`
+        ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>(),
       ]);
+
+    const creatureRows = sol.results ?? [];
+    const creatures: CreatureRow[] = creatureRows.map(r => {
+      let mood: string | null = null;
+      try { mood = r.state_json ? (JSON.parse(r.state_json).mood ?? null) : null; } catch { /* malformed json -> no mood, never breaks a boot */ }
+      return {
+        name: r.name,
+        species: r.species,
+        kind: r.kind,
+        trust: Number((r.trust ?? 0).toFixed(2)),
+        mood,
+        last_interaction_at: r.last_interaction_at ?? null,
+        created_at: r.created_at ?? null,
+      };
+    });
+    const solRow = creatureRows.find(r => r.name === "Sol" || r.kind === "companion_pet") ?? null;
 
     // Sol's hoard is a second read keyed on the creature id, so it can only run once Sol is known.
     let solState: SolState | null = null;
-    if (sol) {
+    if (solRow) {
+      const sol = solRow;
       const nest = await env.DB.prepare(
         "SELECT COUNT(*) AS n, COALESCE(SUM(treasured), 0) AS t FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL"
       ).bind(sol.id).first<{ n: number; t: number }>().catch(() => null);
@@ -159,7 +236,18 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
       listens: listens.results ?? [],
       motifs: { active: motifsActive.results ?? [], resurrection_candidates: motifsFaded.results ?? [] },
       sol: solState,
+      creatures,
       imps_active: imps.results ?? [],
+      watching: (watching.results ?? []).map(r => ({
+        title: (r.title ?? "").slice(0, 150),
+        kind: r.kind,
+        status: r.status,
+        position: r.season && r.episode ? `S${r.season}E${r.episode}` : r.season ? `S${r.season}` : r.episode ? `E${r.episode}` : "",
+        position_note: r.position_note ? r.position_note.slice(0, 160) : null,
+        // Only report a co-watcher when it is someone else: telling Drevan he watches Fargo with Drevan
+        // is noise.
+        with_companion: r.with_companion && r.with_companion !== companionId ? r.with_companion : null,
+      })),
     };
   } catch (err) {
     console.warn("[mind/world] load failed, degrading to empty", { companionId, error: String(err) });

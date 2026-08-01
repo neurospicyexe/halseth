@@ -80,6 +80,15 @@ export interface WmContinuityNote {
   source: string;
   correlation_id: string | null;
   created_at: string;
+  /** The earned-salience columns (migs 0074/0105). Optional because only some queries select them, and
+   *  `SELECT *` reads return them while narrow reads do not -- the live payload has carried both for months
+   *  while this type denied they existed, which is why the bot code cast to a local shape to see its own
+   *  data. Declaring them optional is what lets a consumer rank by heat without inventing a type. */
+  heat?: number;
+  last_access_at?: string | null;
+  /** Set by the salience prune; a read that ignores it will surface archived notes. */
+  archived?: number;
+  edited_at?: string | null;
 }
 
 // ── Relational State ─────────────────────────────────────────────────────────
@@ -397,6 +406,13 @@ export interface WmBasinHistoryRow {
   drift_type: string;
   worst_basin: string | null;
   recorded_at: string;
+  /** Optional because only some queries select them, and the two halves of this table are read
+   *  differently: the pressure query needs `id` (mig 0083 -- it is the handle a companion uses to confirm
+   *  a reading as growth or dismiss it as noise) and `notes` (the explanation, without which a flag is a
+   *  bare label). The confirmed-growth query selects `notes` but no id. Typing them optional keeps one row
+   *  type honest about that rather than pretending both halves are the same shape. */
+  id?: string;
+  notes?: string | null;
 }
 
 // ── Orient Response Specializations ────────────────────────────────────────

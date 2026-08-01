@@ -20,7 +20,13 @@ export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGround
     ).bind(agentId).all<WmContinuityNote>(),
     // Open loops: unresolved things with weight -- heaviest first
     env.DB.prepare(
-      "SELECT * FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC LIMIT 5"
+      // `opened_at ASC` as tiebreak, added wave 7. This shipped as bare `weight DESC`, which is
+      // NONDETERMINISTIC at equal weight -- two boots could legitimately return different loops in a
+      // different order with nothing changed in the data. Three copies of this query existed with three
+      // different orderings (orient: opened_at ASC, bot: opened_at DESC, here: none). ASC is canonical: at
+      // equal weight the loop that has been open LONGEST surfaces first, which is the same tiebreak the
+      // tension query uses (charge DESC, first_noted_at ASC). One convention for "what am I carrying".
+      "SELECT * FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
     ).bind(agentId).all<WmOpenLoop>(),
     // Sitting notes: oldest first (longest waiting for metabolization).
     // Migration 0034 moved sits to companion_journal/companion_journal_sits;

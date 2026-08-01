@@ -23,8 +23,13 @@ import type {
 import type { GrowthBlocks } from "./blocks/growth.js";
 import type { WorldBlocks } from "./blocks/world.js";
 import type { OversightBlocks } from "./blocks/oversight.js";
+import type { RelationalBlocks } from "./blocks/relational.js";
+import type { BeliefExtras } from "./blocks/beliefs.js";
 
-export const MINDSTATE_CONTRACT_VERSION = "0.2.0";
+/** 0.3.0 -- wave 6 added five blocks (world.watching, beliefs.supersede_candidates,
+ *  relational.siblings, relational.recent_witness, oversight.answered_questions). MINOR: additive only,
+ *  renderers ignore unknown blocks. */
+export const MINDSTATE_CONTRACT_VERSION = "0.3.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -119,6 +124,10 @@ export interface MindState {
      *  start disagreeing about what someone believes. */
     conclusions: WmConclusion[];
     flagged: WmConclusion[];
+    /** Wave 6. Supersessions the gate PROPOSED; only the belief's owner may accept one. In the contract
+     *  rather than on the Discord wire alone -- a proposal one surface can see and the others cannot is a
+     *  proposal the companion cannot act on from where they happen to be. */
+    supersede_candidates: BeliefExtras["supersede_candidates"];
   };
 
   /** Me and the people around me. */
@@ -130,6 +139,10 @@ export interface MindState {
     triad_outgoing: WmCompanionNote[];
     letters: WmRazielLetter[];
     journal_recent: WmJournalEntry[];
+    /** Wave 6. The other two's last declared lane -- standing position, not live presence. */
+    siblings: RelationalBlocks["siblings"];
+    /** Wave 6. Gaia's witnessing, read back to her. `[]` for cypher/drevan is complete, not missing. */
+    recent_witness: RelationalBlocks["recent_witness"];
   };
 
   /** Signals about my own trajectory. */
@@ -145,6 +158,8 @@ export interface MindState {
     guardian_cards: OversightBlocks["guardian_cards"];
     tripwires: OversightBlocks["tripwires"];
     questions: OversightBlocks["questions"];
+    /** Wave 6. What Raziel answered -- the closing half of the questions loop. */
+    answered_questions: OversightBlocks["answered_questions"];
   };
 
   /** The world around the house. */
@@ -160,7 +175,12 @@ export interface MindState {
     listens: WorldBlocks["listens"];
     motifs: WorldBlocks["motifs"];
     sol: WorldBlocks["sol"];
+    /** Wave 7. The whole roster; `sol` stays separate because only Sol has a trust/nest arc. */
+    creatures: WorldBlocks["creatures"];
     imps_active: WorldBlocks["imps_active"];
+    /** Wave 6. Where Raziel actually is in what they are watching. A progress fact is a FIELD -- the
+     *  stale-Fargo answer came from ranking prose because no field existed. */
+    watching: WorldBlocks["watching"];
   };
 
   meta: {
@@ -169,11 +189,29 @@ export interface MindState {
     /** Blocks defined by the design doc that this loader version does not fill yet.
      *  Consumers can distinguish "empty" from "not loaded". Shrinks as slices land. */
     not_yet_loaded: string[];
+    /**
+     * Sources that FAILED this load, by name. Empty is healthy.
+     *
+     * `not_yet_loaded` and `degraded` answer different questions and must never be conflated: the first is
+     * "this loader version does not implement that block yet", the second is "it does, and it broke just
+     * now". Both render as an absent block, and treating them alike is how a dead source passes for a quiet
+     * one -- the failure mode that has already cost this project three debugging sessions.
+     */
+    degraded: string[];
   };
 }
 
-/** Design-doc blocks pending in later slices (kept in one place so the parity harness
- *  and the docs agree on what "done" means). */
+/**
+ * Design-doc blocks pending in later slices (kept in one place so the parity harness and the docs agree on
+ * what "done" means).
+ *
+ * READ THE DENOMINATOR. This list counts blocks the DESIGN DOC names. It reached empty on 2026-08-01 and was
+ * misread (by me) as "the bot cutover is unblocked" -- but seven fields execBotOrient actually returns were
+ * not in the design doc at all, so an empty list said nothing about them. The counter was honest about what
+ * it counted; the mistake was in what it was taken to mean. Wave 6 closed five of the seven and the other two
+ * are deliberate exclusions (see blocks/relational.ts). If you add a per-loom field, add it to the CONTRACT
+ * or this number will lie again by being accurate.
+ */
 export const NOT_YET_LOADED: string[] = [
   // The shared bank (north-star element 0): the shared identity_kernel carries the Companion
   // Constitution + the distilled ARCHITECT STANCE preamble. Discord/worker/Brain already pull it

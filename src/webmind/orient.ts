@@ -106,11 +106,18 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // Note: ORDER BY RANDOM() is acceptable at current per-companion scale (~hundreds of rows); at ~5k+ rows, consider keyset sampling
     // Self-defense: active (simmering) tensions -- carried into every session
     env.DB.prepare(
-      "SELECT id, tension_text, status, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY first_noted_at ASC"
+      // `charge DESC` first (wave 7, 2026-08-01): execBotOrient has ordered tensions by charge since mig
+      // 0070 -- what keeps RESURFACING outranks what has merely been sitting longest -- and this copy never
+      // did, so the low-frequency surfaces got the unranked version. Per-field superset: the bot was the
+      // richer copy here, exactly as it was for listens provenance. first_noted_at stays as the tiebreak so
+      // equal-charge order is unchanged.
+      "SELECT id, tension_text, status, charge, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY charge DESC, first_noted_at ASC"
     ).bind(agentId).all<WmTensionRow>(),
     // Self-defense: unconfirmed pressure drift flags -- surface for self-correction
     env.DB.prepare(
-      "SELECT id, drift_score, drift_type, worst_basin, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 3"
+      // `notes` added wave 7: execBotOrient renders "worst_basin: notes" and this copy selected only the
+      // basin, so the same flag read as a bare label on one surface and an explanation on another.
+      "SELECT id, drift_score, drift_type, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<WmBasinHistoryRow>(),
     // Growth tracking: recently confirmed growth records -- surface alongside pressure flags
     env.DB.prepare(

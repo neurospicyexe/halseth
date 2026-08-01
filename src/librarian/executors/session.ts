@@ -8,7 +8,7 @@ import {
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
 } from "../backends/halseth.js";
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
-import { semanticSearch, sbRead, sbSaveDocument } from "../backends/second-brain.js";
+import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
 import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
@@ -21,6 +21,12 @@ import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-bl
 import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
+// The cutover (2026-08-01): execBotOrient loads the ONE MindState and projects it to the Discord wire,
+// instead of running its own fan-out of 33 queries. Import direction is session -> mind, never the reverse:
+// nothing under src/mind/ imports this file, so the parity harness (mind/parity.ts -> here -> mind/loader.ts)
+// stays acyclic.
+import { loadMindState } from "../../mind/loader.js";
+import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
 
 // Interoception fields the raw MCP tool halseth_session_load accepts (see
 // src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
@@ -320,8 +326,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
 
   // Session narrative: generous cap for Claude.ai (full context window available)
+  // sbExtractContent, not a bare regex: sbRead hands back a JSON envelope, so stripping frontmatter off the
+  // raw string never matched and this block has been rendering JSON at Claude.ai boot.
   const narrativeBlock = sbNarrative
-    ? "\n[Last session narrative]\n" + sbNarrative.replace(/^---[\s\S]*?---\n+/, "").slice(0, 3000)
+    ? "\n[Last session narrative]\n" + (sbExtractContent(sbNarrative) ?? "").slice(0, 3000)
     : "";
 
   // Sibling lane block: spine + motion_state for each sibling companion so self can stay in lane.
@@ -1100,250 +1108,43 @@ export async function execBotOrient(
   ctx: ExecutorContext,
   opts: { readOnly?: boolean } = {},
 ): Promise<ExecutorResult> {
-  // All 11 sources fire in parallel -- allSettled ensures individual failures don't abort orient.
   const agentId = ctx.req.companion_id as WmAgentId;
-  const botSiblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
-  const [synthResult, groundResult, ragResult, anchorRow, tensionsResult, relationalResult, notesResult, sib0Result, sib1Result, growthJournalResult, growthPatternsResult, seedsResult, historyResult, pendingGrowthResult, conclusionsResult, flaggedResult, dreamsResult, loopsResult, pressureResult, openQuestionsResult, forageResult, triggersResult, selfModelReadyResult, mediaResult, clubResult, guardianResult, motifResult, creaturesResult, consumedForageResult, impActivityResult, answeredQuestionsResult, watchShelfResult, supersedeCandidateResult] = await Promise.allSettled([
-    // 1. Most recent session narrative from SB via path pointer. id carried so the live
-    // path can warm the row (0074) -- bot presence access counts as access.
+
+  // THE CUTOVER (2026-08-01). This function used to run its own fan-out of 33 queries and derive all 40 wire
+  // fields inline. It now loads the ONE MindState and projects it, so the highest-frequency read path in the
+  // house reads the same state as every other surface instead of its own thirty-third copy of the truth.
+  //
+  // What is left here is exactly what does NOT belong in a shared, pure-D1 loader:
+  //   * the two Second Brain semantic searches and the sbRead hydration -- network hops over the VPS tunnel.
+  //     loadMindState stays pure-D1 so one flaky hop cannot take down every loom's boot.
+  //   * the bot's own note surfacing policy, which reaches PAST the recency window for a note this companion
+  //     has never been shown, and warms what it surfaces.
+  //   * the write side-effects (heat warming, delivered_at), all still gated on !readOnly.
+  //
+  // Proof of equivalence before the switch (GET /mind/parity/bot/:id?full=1, all 40 keys against the live
+  // payload): cypher 39/40, drevan 38/40, gaia 38/40, with zero dropped and zero added keys. Every remaining
+  // difference was identified and deliberate, not discovered afterwards -- see docs/CONTINUITY.md.
+  const [ms, synthRow, ragRaw, historyRaw] = await Promise.all([
+    loadMindState(ctx.env, agentId, "discord"),
+    // The session narrative's TEXT, which is NOT what the contract carries. MindState holds the `full_ref`
+    // (a vault path); the wire holds the prose. Both are `string | null`, so nothing but this comment and
+    // the adapter's `extras` boundary stops a bot printing a file path where the last session's story goes.
     ctx.env.DB.prepare(
       "SELECT id, full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
-    ).bind(ctx.req.companion_id).first<{ id: string; full_ref: string }>()
+    ).bind(agentId).first<{ id: string; full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t, id: row.id } : null) : null)
       .catch(() => null),
-    // 2. WebMind ground: open threads + recent handoffs + notes
-    wmGround(ctx.env, agentId),
-    // 3. Second Brain RAG: semantic search for recent companion context
-    semanticSearch(ctx.env, `companion state presence recent context ${ctx.req.companion_id}`),
-    // 4. Identity anchor
-    ctx.env.DB.prepare(
-      "SELECT anchor_summary FROM wm_identity_anchor_snapshot WHERE agent_id = ?"
-    ).bind(agentId).first<{ anchor_summary: string }>(),
-    // 5. Active tensions (simmering only, max 3) -- charge-ordered: what keeps
-    // resurfacing outranks what has merely been sitting longest (0070).
-    ctx.env.DB.prepare(
-      "SELECT tension_text FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY charge DESC, first_noted_at ASC LIMIT 3"
-    ).bind(agentId).all<{ tension_text: string }>(),
-    // 6. Relational state toward Raziel (latest)
-    ctx.env.DB.prepare(
-      "SELECT state_text FROM companion_relational_state WHERE companion_id = ? AND LOWER(toward) = LOWER(?) ORDER BY noted_at DESC LIMIT 1"
-    ).bind(agentId, ctx.env.SYSTEM_OWNER).all<{ state_text: string }>(),
-    // 7. Unread incoming companion notes (max 3, exclude own notes)
-    ctx.env.DB.prepare(
-      "SELECT from_id, content, created_at FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 3"
-    ).bind(agentId, agentId).all<{ from_id: string; content: string; created_at: string }>(),
-    // 8+9. Sibling lane: PK lookup on companion_state -- written at session close,
-    // no index scan, no heap access beyond the PK row itself.
-    ctx.env.DB.prepare(
-      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
-    ).bind(botSiblings[0]).first<{ motion_state: string; lane_spine: string }>(),
-    ctx.env.DB.prepare(
-      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
-    ).bind(botSiblings[1]).first<{ motion_state: string; lane_spine: string }>(),
-    // 10. Recent growth journal (max 3 -- what the companion has been learning autonomously)
-    ctx.env.DB.prepare(
-      "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
-    ).bind(agentId).all<{ entry_type: string; content: string; created_at: string }>(),
-    // 11. Strongest growth patterns (max 2 -- recognized recurring themes)
-    ctx.env.DB.prepare(
-      "SELECT pattern_text FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
-    ).bind(agentId).all<{ pattern_text: string }>(),
-    // 12. Pending autonomy seeds (max 3 -- newest within priority for variety; worker drains FIFO).
-    ctx.env.DB.prepare(
-      "SELECT content FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at DESC LIMIT 3"
-    ).bind(agentId).all<{ content: string }>(),
-    // 13. Historical vault: long files, ChatGPT history, background context -- the photo album.
-    semanticSearch(ctx.env, `${ctx.req.companion_id} history background origin memory`).catch(() => null),
-    // 14. Unaccepted growth count: autonomous entries awaiting review.
-    ctx.env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
-    ).bind(agentId).first<{ n: number }>(),
-    // 15. Active worldview conclusions (newest 6 active). Wire format uses conclusion_text
-    // so both consumers (Discord librarian.ts, Brain halseth_client.py) render [Worldview].
-    // Without this, the worldview block is permanently empty on every non-Claude.ai loom.
-    ctx.env.DB.prepare(
-      "SELECT conclusion_text, belief_type, confidence, subject FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 6"
-    ).bind(agentId).all<{ conclusion_text: string; belief_type: string; confidence: number; subject: string | null }>(),
-    // 16. Flagged (contradiction) beliefs -- consumers mark these with [?] in the worldview block.
-    ctx.env.DB.prepare(
-      "SELECT conclusion_text, belief_type, confidence, subject FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1 ORDER BY created_at DESC LIMIT 6"
-    ).bind(agentId).all<{ conclusion_text: string; belief_type: string; confidence: number; subject: string | null }>(),
-    // 17. Unexamined dreams (not pinned) -- the autonomous worker examines + clears these.
-    // Excludes do_not_auto_examine=1 (live-session-only dreams, migration 0048) so the
-    // worker never clears pinned dreams.
-    ctx.env.DB.prepare(
-      "SELECT id, dream_text FROM companion_dreams WHERE companion_id = ? AND examined = 0 AND COALESCE(do_not_auto_examine, 0) = 0 ORDER BY created_at DESC LIMIT 5"
-    ).bind(agentId).all<{ id: string; dream_text: string }>(),
-    // 18. Open loops (unresolved) -- informs the worker's seed decision.
-    ctx.env.DB.prepare(
-      "SELECT id, loop_text FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at DESC LIMIT 5"
-    ).bind(agentId).all<{ id: string; loop_text: string }>(),
-    // 19. Pressure flags (unconfirmed drift) -- self-correction signal for the worker.
-    ctx.env.DB.prepare(
-      "SELECT id, worst_basin, notes FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL ORDER BY recorded_at DESC LIMIT 3"
-    ).bind(agentId).all<{ id: string; worst_basin: string | null; notes: string | null }>(),
-    // 20. Open continuity-gap questions -- things this companion is holding to ask Raziel.
-    //
-    // Voiced-once gate (2026-07-27). This served every open question on EVERY orient, and
-    // the commons seed injects one as "a question you're holding". Gaia had exactly one open
-    // question, created 2026-07-21, and re-asked it into the commons every ~2h for six days
-    // as though it were new -- the first thing she did in the freshly-created channel was
-    // post it again. An unanswered question is not fresh material; asking it once is the
-    // whole point, and re-asking it hourly is the loop.
-    //
-    // `delivered_at` is NOT the marker to use: mig 0107 defines it as "an orient surfaced
-    // the ANSWER", a different lifecycle. Voicing is recorded in the companion_settings KV
-    // (the same store imps, active_model and the cron self-gates use) so no column is added
-    // under the migration freeze. Key is `question_voiced:<id>`; 'question_voiced:' is 16
-    // chars, so substr(key, 17) recovers the id.
-    //
-    // The question stays `open` -- it is still awaiting Raziel. It just stops being re-served
-    // as something new to say.
-    ctx.env.DB.prepare(
-      `SELECT id, question FROM companion_questions
-       WHERE companion_id = ?1 AND status = 'open'
-         AND id NOT IN (
-           SELECT substr(key, 17) FROM companion_settings
-           WHERE companion_id = ?1 AND key LIKE 'question_voiced:%'
-         )
-       ORDER BY created_at DESC LIMIT 2`
-    ).bind(agentId).all<{ id: string; question: string }>(),
-    // 21. Forage pool: unconsumed outward finds (own + shared) for any instance to pick up.
-    // gathered_at carried so the bot can stamp each find with how long it's been waiting.
-    ctx.env.DB.prepare(
-      "SELECT id, title, domain, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>(),
-    // 22. Armed prospective triggers (0070) -- keyword ones matched bot-side per message,
-    // date ones checked by the bot at orient load. Expired rows lazily dismissed by GET path.
-    ctx.env.DB.prepare(
-      "SELECT id, trigger_text, condition_type, condition_value FROM companion_triggers WHERE companion_id = ? AND status = 'armed' AND (expires_at IS NULL OR expires_at >= datetime('now')) ORDER BY created_at ASC LIMIT 10"
-    ).bind(agentId).all<{ id: string; trigger_text: string; condition_type: string; condition_value: string }>(),
-    // 23. Self-model observations ready to graduate (0070) -- proposed to Raziel in
-    // conversation; graduation is human-gated, the bot only raises it.
-    ctx.env.DB.prepare(
-      "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; observation: string; confidence: number }>(),
-    // 24. Recent listens (shared-experience layer, migration 0071) -- music actually
-    // heard together; shared table, no companion filter.
-    ctx.env.DB.prepare(
-      // Provenance carried (2026-07-27). This query used to select id/title/artist/created_at
-      // only, so every listen reached the Discord presence as an ANONYMOUS artifact: no who
-      // gave it, no who it was for, and not the companion's own recorded reaction. All three
-      // facts are stored and were being dropped here. Observed consequence: Drevan discussed
-      // "BIG BOSS" in the commons saying GAIA handed it to him and he had sat with it 6 days
-      // -- it was shared by Raziel, requested_companion = drevan, and it was 18 days old.
-      // 15 of the 17 listens in the system were given by Raziel TO Drevan; every one of them
-      // arrived here stripped, so the model had to invent a giver and a date, and did.
-      // See feedback/command-string-is-not-the-content: never let the model infer a fact the
-      // row already states.
-      "SELECT id, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
-    ).all<{ id: string; title: string; artist: string | null; created_at: string }>(),
-    // 25. Club: current non-closed round (0072) -- phase cue for the bot loom.
-    ctx.env.DB.prepare(
-      "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
-    ).first<{ id: string; status: string; opened_at: string | null; activated_at: string | null; discussing_at: string | null; winner_title: string | null; candidate_count: number }>(),
-    // 26. Guardian flags (0073) -- live red-flag cards; the bot loom surfaces them
-    // but never consumes (the session orient owns the open->surfaced transition).
-    ctx.env.DB.prepare(
-      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>(),
-    // 27. Motifs (0076) -- recurring symbolic threads (active only), read-only for
-    // the bot loom; resurrection surfacing is the session orient's job.
-    ctx.env.DB.prepare(
-      `SELECT label, display, recurrence_count, trust FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 3`
-    ).bind(agentId).all<{ label: string; display: string; recurrence_count: number; trust: number }>(),
-    // 28. Creatures (0078, take 10) -- corvid + Raziel's animals; shared presences the
-    // bot loom can ask after. No companion filter (creatures belong to Raziel/the system).
-    // last_interaction_at + created_at included so sol_block (source 29) can derive Sol's disposition.
-    ctx.env.DB.prepare(
-      "SELECT name, species, kind, state_json, trust, last_interaction_at, created_at FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
-    ).all<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string }>(),
-    // 29. Active forage: recently-consumed finds (own + shared). The pool (source 21) is what's
-    // waiting; this is what the companion has already picked up and is chewing on -- gives the
-    // live presence continuity ("you started in on X earlier") instead of a stateless pool.
-    ctx.env.DB.prepare(
-      "SELECT id, title, domain, summary, consumed_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>(),
-    // 30. Imp activity (0091 read-back, 2026-07-02) -- which of Drevan's fragment operators
-    // rode with this companion in the last week. imp_activations was write-only: imps fired,
-    // tinted a reply, and vanished from memory. Aggregated so the companion can name them
-    // ("Nimbus rode with me twice this week") instead of the imps being lost in the noise.
-    ctx.env.DB.prepare(
-      "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
-    ).bind(agentId).all<{ imp: string; n: number; last_at: string }>(),
-    // 31. Answered questions: Raziel's answers, surfaced for 7 days regardless of
-    // delivered_at (questions-lifecycle fix, mig 0107) -- answers never reached companions
-    // because every orient path only ever read status = 'open'.
-    fetchRecentAnswers(ctx.env, agentId, 3),
-    // 32. Watch shelf (0111) -- where we are in the shows/films being watched together.
-    // APPENDED AT THE END, and the destructure above is appended in the same position, because this
-    // array is positionally coupled: inserting in the middle silently reassigns every later result to
-    // the wrong variable. The reason this exists: Raziel asked Drevan where they were in Fargo and got
-    // "last I tracked, S4 E2" -- there was no position field anywhere in the schema, so the answer had
-    // to come from whichever prose fragment ranked highest, and a June note about FINISHING the show
-    // won. A progress fact is a field, not a memory.
-    ctx.env.DB.prepare(
-      `SELECT title, kind, status, season, episode, position_note, with_companion
-       FROM watch_shelf WHERE status IN ('watching','paused')
-       ORDER BY (status = 'watching') DESC, last_watched_at DESC NULLS LAST LIMIT 4`
-    ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>(),
-    // 33. Supersede candidates (mig 0112). The novelty gate used to auto-retire a belief on cosine
-    // >= 0.88; now it can only ASK, because Raziel's call is that a companion supersedes their own
-    // thought. This surfaces the ask to the companion who owns the belief.
-    //
-    // TIME-BOXED by created_at, deliberately: no dismissal action, no queue to drain. A question that
-    // cannot expire becomes a nag (rails-need-decay, recurred twice here). If they do not act it fades
-    // and the older belief stays live -- not-retired is the safe default.
-    ctx.env.DB.prepare(
-      `SELECT n.id AS new_id, n.supersede_candidate_id, n.supersede_candidate_score,
-              substr(n.conclusion_text, 1, 200) AS new_text,
-              substr(o.conclusion_text, 1, 200) AS old_text
-       FROM companion_conclusions n
-       JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
-       WHERE n.companion_id = ?1 AND n.supersede_candidate_id IS NOT NULL
-         AND o.superseded_by IS NULL
-         AND datetime(n.created_at) > datetime('now', '-' || ?2 || ' days')
-       ORDER BY n.created_at DESC LIMIT 2`
-    ).bind(agentId, SUPERSEDE_CANDIDATE_WINDOW_DAYS).all<{ new_id: string; supersede_candidate_id: string; supersede_candidate_score: number; new_text: string; old_text: string }>(),
+    semanticSearch(ctx.env, `companion state presence recent context ${agentId}`).catch(() => null),
+    semanticSearch(ctx.env, `${agentId} history background origin memory`).catch(() => null),
   ]);
-  const unacceptedGrowthCount = pendingGrowthResult.status === "fulfilled" && pendingGrowthResult.value
-    ? (pendingGrowthResult.value as { n: number }).n
-    : 0;
 
-  const synthesis_summary = synthResult.status === "fulfilled" && synthResult.value
-    ? String((synthResult.value as { content?: string }).content ?? "").replace(/^---[\s\S]*?---\n+/, "")
-    : null;
-
-  const ground = groundResult.status === "fulfilled" ? groundResult.value : null;
-
-  // Zikkaron live loop (2026-07-02): the Discord presence never participated in the
-  // heat/decay cycle -- warming fired only from Claude.ai orient, MCP session_load, and
-  // Guardian rescue, so what the bots lived from decayed as if unused. Surface the
-  // hottest continuity notes into the live prompt and warm what was surfaced: being in
-  // the live presence's working set IS access. Non-fatal, orient never breaks on heat.
-  const groundNotes = Array.isArray(ground?.recent_notes)
-    ? (ground.recent_notes as Array<{ note_id: string; content: string; heat?: number; salience?: string }>)
-    : [];
-  // Discrimination fix, bot half (2026-07-27). The 07-26 fix landed on mindOrient only --
-  // the LOW-frequency writer. This path is the high-frequency one (every bot boot, all day),
-  // so it was the actual saturation engine: it took the top 3 by heat out of ground's
-  // 10-newest window and warmed them at the full deliberate-recall bump. A note is in that
-  // window for roughly a day (cypher creates ~10/day); whatever won the window in that day
-  // hit HEAT_MAX and stayed pinned there forever, and whatever lost was never touched again
-  // by anything. Prod, live notes: cypher 43/138 saturated + 93 never accessed, drevan 32/108
-  // + 74, gaia 27/90 + 62 -- the same shape on all three. See feedback/fix-landed-on-a-
-  // different-writer.
-  //
-  // Two changes: (a) reserve one of the three slots for a note the companion has never been
-  // shown, drawn from the WHOLE live pool rather than the recency window -- ground's LIMIT 10
-  // cannot supply one once all ten are warm, and ground has other consumers so the query
-  // lives here; (b) warm at SURFACE_BUMP. Being shown a note is not reaching for it, and the
-  // read must not write the ranking that chose it.
-  //
-  // Safe against eviction: high-salience notes are never cap-evicted (notes.ts addNote), and
-  // salience-prune only scans companion_journal -- so a colder bot-surfaced note cannot be
-  // pruned out from under the live presence by this change.
-  const coreNotes = [...groundNotes]
+  // ── Note surfacing: the bot's own policy, kept here on purpose ───────────────────────────────────────
+  // Two hottest/highest-salience from the recency window, PLUS one reserved slot for a note the companion
+  // has never been shown -- drawn from the whole live pool, because the recency window cannot supply an
+  // unseen note once all of it is warm. That reserved slot is why this is not a pure projection: it is a
+  // deliberate anti-saturation rail, and it was added after prod showed cypher 43/138 notes pinned at
+  // HEAT_MAX with 93 never accessed once.
+  const coreNotes = [...ms.continuity.recent_notes]
     .sort((a, b) => (b.salience === "high" ? 1 : 0) - (a.salience === "high" ? 1 : 0) || (b.heat ?? 0) - (a.heat ?? 0))
     .slice(0, 2);
   const seenIds = new Set(coreNotes.map(n => n.note_id));
@@ -1357,409 +1158,69 @@ export async function execBotOrient(
     ...coreNotes,
     ...(noveltyNote && !seenIds.has(noveltyNote.note_id) ? [noveltyNote as typeof coreNotes[number]] : []),
   ];
-  // FIRST DERIVABLE EDGE (2026-07-31): give each surfaced note the CONVERSATION it came from, not the
-  // room it was said in. `thread_key` on a Discord note is a channel id -- 659 notes share one value,
-  // which is not a grouping. mig 0106 built the real spine; nothing had linked notes to it. Derived at
-  // read time from (channel, timestamp): no migration, nothing to go stale, and it cannot hide anything
-  // because it only annotates notes that were already surfacing.
-  //
-  // Fails soft by construction: no provenance -> the content is returned unchanged, so the wire format
-  // stays string[] and no consumer can break on this.
-  const provenance = await resolveNoteProvenance(
-    ctx.env,
-    surfacedNotes.map(n => n.note_id).filter(Boolean),
-  );
+  // Each surfaced note carries the CONVERSATION it came from, not the room it was said in -- a Discord
+  // note's thread_key is a channel id, and 659 notes sharing one value is not a grouping. Fails soft: no
+  // provenance means the content returns unchanged, so the wire format stays string[].
+  const provenance = await resolveNoteProvenance(ctx.env, surfacedNotes.map(n => n.note_id).filter(Boolean));
   const continuity_notes = surfacedNotes
     .map(n => annotateNote(String(n.content ?? "").slice(0, 200), provenance.get(n.note_id)))
     .filter(Boolean);
+
+  // ── Writes: every one gated on !readOnly ────────────────────────────────────────────────────────────
+  // SURFACE_BUMP, not the deliberate-recall bump: being SHOWN a note is not reaching for it, and the read
+  // must not write the ranking that chose it.
   const warmIds = surfacedNotes.map(n => n.note_id).filter(Boolean);
   if (!opts.readOnly && warmIds.length > 0) {
     await ctx.env.DB.prepare(warmSql("wm_continuity_notes", "note_id", warmIds.length, SURFACE_BUMP)).bind(...warmIds).run()
       .catch(e => console.warn("[bot-orient] note warm failed (non-fatal):", e));
   }
-  const synthId = synthResult.status === "fulfilled" && synthResult.value
-    ? (synthResult.value as { id?: string }).id ?? null
-    : null;
-  if (!opts.readOnly && synthId) {
-    // SURFACE_BUMP, not the recall default (2026-07-27). Orient/session_load DISPLAYING the
-    // summary is not the companion reaching for it. session-summary.ts:240 ranks the corpus by
-    // effectiveHeatSql(), so a full-bump display write is the same read-writes-the-ranking loop
-    // fixed on wm_continuity_notes -- missed on the first pass because only note warms were
-    // audited. Prod at fix time: 362 summaries, 323 NEVER accessed, the same ~19 recirculating.
-    await ctx.env.DB.prepare(warmSql("synthesis_summary", "id", 1, SURFACE_BUMP)).bind(synthId).run()
+  if (!opts.readOnly && synthRow?.id) {
+    await ctx.env.DB.prepare(warmSql("synthesis_summary", "id", 1, SURFACE_BUMP)).bind(synthRow.id).run()
       .catch(e => console.warn("[bot-orient] synthesis warm failed (non-fatal):", e));
   }
-
-  const ground_threads: string[] = Array.isArray(ground?.threads)
-    ? (ground.threads as Array<{ thread_key: string; title?: string }>)
-        .map(t => t.title ?? t.thread_key)
-        .slice(0, 3)
-    : [];
-  const ground_handoff: string | null = Array.isArray(ground?.recent_handoffs) && ground.recent_handoffs.length > 0
-    ? String((ground.recent_handoffs[0] as { summary?: string; title?: string }).summary ?? (ground.recent_handoffs[0] as { summary?: string; title?: string }).title ?? "")
-    : null;
-
-  const ragRaw = ragResult.status === "fulfilled" && ragResult.value ? ragResult.value : null;
-  const rag_excerpts: string[] = ragRaw
-    ? (() => {
-        try {
-          const parsed = JSON.parse(ragRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
-          const chunks = parsed?.chunks ?? [];
-          return chunks.slice(0, 3).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 250)).filter(Boolean);
-        } catch {
-          return [ragRaw.slice(0, 250)];
-        }
-      })()
-    : [];
-
-  const identity_anchor: string | null = anchorRow.status === "fulfilled" && anchorRow.value?.anchor_summary
-    ? anchorRow.value.anchor_summary.slice(0, 300)
-    : null;
-
-  const active_tensions: string[] = tensionsResult.status === "fulfilled" && tensionsResult.value?.results
-    ? tensionsResult.value.results.map(r => (r.tension_text ?? "").slice(0, 150)).filter(Boolean)
-    : [];
-
-  const relational_state_owner: string[] = relationalResult.status === "fulfilled" && relationalResult.value?.results
-    ? relationalResult.value.results.map(r => (r.state_text ?? "").slice(0, 150)).filter(Boolean)
-    : [];
-
-  const incoming_notes: Array<{ from: string; content: string }> = notesResult.status === "fulfilled" && notesResult.value?.results
-    ? notesResult.value.results.map(r => ({
-        from: r.from_id,
-        content: (r.content ?? "").slice(0, 200),
-        age: relativeTime(r.created_at),
-      }))
-    : [];
-
-  const sibling_lanes = botSiblings.map((id, i) => {
-    const settled = i === 0 ? sib0Result : sib1Result;
-    const val = settled.status === "fulfilled" ? settled.value : null;
-    return { companion_id: id, lane_spine: val?.lane_spine ?? null, motion_state: val?.motion_state ?? null };
-  });
-
-  const recent_growth: Array<{ type: string; content: string }> =
-    growthJournalResult.status === "fulfilled" && growthJournalResult.value?.results
-      // Age-stamped (2026-07-27). A read-back with no age is read as present-tense news:
-      // Gaia told the commons "Rosie is a dog. Got it. The contentment ceremony makes much
-      // more sense now" about a fact from 2026-07-14, thirteen days earlier, as though she
-      // had just learned it. Same bug the listens block already had fixed twice (2026-06-17,
-      // 2026-07-27) -- history_excerpts uses excerptWithAge, listens use relativeTime, and
-      // these blocks selected the timestamp and threw it away.
-      ? growthJournalResult.value.results.map(r => ({
-          type: r.entry_type ?? "learning",
-          content: (r.content ?? "").slice(0, 200),
-          age: relativeTime(r.created_at),
-        }))
-      : [];
-
-  const active_patterns: string[] =
-    growthPatternsResult.status === "fulfilled" && growthPatternsResult.value?.results
-      ? growthPatternsResult.value.results.map(r => (r.pattern_text ?? "").slice(0, 150)).filter(Boolean)
-      : [];
-
-  const pending_seeds: string[] =
-    seedsResult.status === "fulfilled" && seedsResult.value?.results
-      ? seedsResult.value.results.map(r => (r.content ?? "").slice(0, 200)).filter(Boolean)
-      : [];
-
-  const historyRaw = historyResult.status === "fulfilled" ? historyResult.value : null;
-  // Dated chunks get a relative-age prefix so the date survives the 250-char slice.
-  const history_excerpts: string[] = historyRaw
-    ? (() => {
-        try {
-          const parsed = JSON.parse(historyRaw as string) as { chunks?: HistoryChunk[] };
-          return (parsed?.chunks ?? []).slice(0, 3).map(c => excerptWithAge(c, 250)).filter(Boolean);
-        } catch { return [(historyRaw as string).slice(0, 250)]; }
-      })()
-    : [];
-
-  // Worldview: wire format keeps conclusion_text so both consumers (Discord librarian.ts,
-  // Brain halseth_client.py) render the [Worldview] block. NaN-safe confidence is the
-  // consumer's responsibility -- pass it through as stored.
-  type ConclusionRow = { conclusion_text: string; belief_type: string; confidence: number; subject: string | null };
-  const active_conclusions =
-    conclusionsResult.status === "fulfilled" && conclusionsResult.value?.results
-      ? (conclusionsResult.value.results as ConclusionRow[]).map(r => ({
-          conclusion_text: r.conclusion_text,
-          belief_type: r.belief_type,
-          confidence: r.confidence,
-          subject: r.subject ?? null,
-        }))
-      : [];
-  const flagged_beliefs =
-    flaggedResult.status === "fulfilled" && flaggedResult.value?.results
-      ? (flaggedResult.value.results as ConclusionRow[]).map(r => ({
-          conclusion_text: r.conclusion_text,
-          belief_type: r.belief_type,
-          confidence: r.confidence,
-          subject: r.subject ?? null,
-        }))
-      : [];
-
-  // Carried-between-sessions surfaces for the autonomous worker. It previously regex-scraped
-  // a non-existent ready_prompt for these; now they are structured fields it reads directly.
-  const unexamined_dreams =
-    dreamsResult.status === "fulfilled" && dreamsResult.value?.results
-      ? (dreamsResult.value.results as Array<{ id: string; dream_text: string }>).map(r => ({
-          id: r.id,
-          dream_text: (r.dream_text ?? "").slice(0, 300),
-        }))
-      : [];
-  const open_loops =
-    loopsResult.status === "fulfilled" && loopsResult.value?.results
-      ? (loopsResult.value.results as Array<{ id: string; loop_text: string }>).map(r => ({
-          id: r.id,
-          loop_text: (r.loop_text ?? "").slice(0, 200),
-        }))
-      : [];
-  // Carry the row id (migration 0083) so a companion can confirm-as-growth or dismiss-as-noise
-  // a SPECIFIC reading in conversation -- the handle the confirm/dismiss executors need.
-  const pressure_flags =
-    pressureResult.status === "fulfilled" && pressureResult.value?.results
-      ? (pressureResult.value.results as Array<{ id: string; worst_basin: string | null; notes: string | null }>)
-          .map(r => {
-            const body = [r.worst_basin, r.notes].filter(Boolean).join(": ").slice(0, 130);
-            return body ? `${body} (id ${r.id})` : `(id ${r.id})`;
-          })
-          .filter(Boolean)
-      : [];
-
-  // Agency layer (0086): bot-orient parity -- preferences + standing refusals so the Discord
-  // presence carries its own declared will and standing nos, same as the session orient.
-  const [botPrefRows, botRefusalRows, botDriftRows] = await Promise.all([
-    ctx.env.DB.prepare(
-      "SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT 12"
-    ).bind(agentId).all<{ domain: string; preference: string; strength: string }>().catch(() => null),
-    ctx.env.DB.prepare(
-      "SELECT subject_text, reason FROM companion_refusals WHERE companion_id = ? AND status = 'standing' ORDER BY created_at DESC LIMIT 5"
-    ).bind(agentId).all<{ subject_text: string; reason: string | null }>().catch(() => null),
-    ctx.env.DB.prepare(
-      "SELECT id, drift_text, json_array_length(witness_log) AS witness_count FROM companion_drifts WHERE companion_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 5"
-    ).bind(agentId).all<{ id: string; drift_text: string; witness_count: number }>().catch(() => null),
-  ]);
-  const botPreferences = botPrefRows?.results ?? [];
-  const botStandingRefusals = botRefusalRows?.results ?? [];
-  const botOpenDrifts = botDriftRows?.results ?? [];
-
-  // Gaia-only: recent witness read-back (2026-07-21). gaia_witness has been write-only
-  // since it was added -- no orient path ever read it back, so Gaia's witnessing never
-  // fed forward into her own boot context. Standalone (not folded into the Promise.allSettled
-  // fan-out above) because it's gaia-only; wrapped in its own try/catch per this file's
-  // boot-path-safety convention -- must never break bot orient for any companion, Gaia
-  // included. Other companions get an empty array; gaia_witness carries no companion_id
-  // column (it's Gaia's alone by table design).
-  let recent_witness: Array<{ content: string; witness_type: string; created_at: string }> = [];
-  if (agentId === "gaia") {
-    try {
-      const witnessRows = await ctx.env.DB.prepare(
-        "SELECT content, witness_type, created_at FROM gaia_witness ORDER BY created_at DESC LIMIT 5"
-      ).all<{ content: string; witness_type: string; created_at: string }>();
-      recent_witness = (witnessRows.results ?? []).map(r => ({
-        content: (r.content ?? "").slice(0, 300),
-        witness_type: r.witness_type,
-        created_at: r.created_at,
-      }));
-    } catch (e) {
-      console.error("[bot-orient] gaia witness read-back failed (non-fatal):", String(e));
-    }
-  }
-
-  const answered_questions = answeredQuestionsResult.status === "fulfilled" ? answeredQuestionsResult.value : [];
-  // Stamp delivered_at on surfaced answers (mig 0107). Awaited + caught -- bookkeeping
-  // failure here must never break the bot orient response.
-  // Skipped under readOnly: a parity sample must not mark Raziel's answers as delivered to a
-  // companion that never saw them.
+  // Skipped under readOnly: a parity sample must not mark Raziel's answers as delivered to a companion that
+  // never saw them.
   if (!opts.readOnly) {
-    await markAnswersDelivered(ctx.env, answered_questions.map(a => a.id)).catch((e: unknown) => {
+    await markAnswersDelivered(ctx.env, ms.oversight.answered_questions.map((a: { id: string }) => a.id)).catch((e: unknown) => {
       console.error("[bot-orient] markAnswersDelivered failed:", String(e));
     });
   }
 
-  return {
-    data: {
-      synthesis_summary,
-      ground_threads,
-      ground_handoff,
+  const parseExcerpts = (raw: string | null, n: number, dated: boolean): string[] => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+      const chunks = parsed?.chunks ?? [];
+      return dated
+        // Dated chunks get a relative-age prefix so the date survives the slice -- an excerpt with no age
+        // reads as present-tense news.
+        ? chunks.slice(0, 3).map(c => excerptWithAge(c as HistoryChunk, n)).filter(Boolean)
+        : chunks.slice(0, 3).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, n)).filter(Boolean);
+    } catch { return [raw.slice(0, n)]; }
+  };
+
+  const data = botWireFromMindState(
+    ms,
+    {
+      synthesis_summary: sbExtractContent(synthRow?.content ?? null),
+      rag_excerpts: parseExcerpts(ragRaw, 250, false),
+      history_excerpts: parseExcerpts(historyRaw, 250, true),
       continuity_notes,
-      rag_excerpts,
-      history_excerpts,
-      identity_anchor,
-      active_tensions,
-      relational_state_owner,
-      incoming_notes,
-      sibling_lanes,
-      recent_growth,
-      active_patterns,
-      pending_seeds,
-      unaccepted_growth: unacceptedGrowthCount,
-      active_conclusions,
-      flagged_beliefs,
-      unexamined_dreams,
-      open_loops,
-      pressure_flags,
-      open_questions: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
-        ? (openQuestionsResult.value.results as Array<{ question: string }>).map(r => (r.question ?? "").slice(0, 300)).filter(Boolean)
-        : [],
-      // Ids aligned by index with open_questions, so a surface that actually VOICES one can
-      // stamp it (POST /companion/settings/:id, key `question_voiced:<id>`). Added alongside
-      // rather than reshaping open_questions, which several consumers read as string[].
-      open_question_ids: openQuestionsResult.status === "fulfilled" && openQuestionsResult.value?.results
-        ? (openQuestionsResult.value.results as Array<{ id: string; question: string }>)
-            .filter(r => (r.question ?? "").trim()).map(r => r.id)
-        : [],
-      answered_questions,
-      forage_finds: forageResult.status === "fulfilled" && forageResult.value?.results
-        ? (forageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>).map(r => ({
-            id: r.id,
-            title: (r.title ?? "").slice(0, 150),
-            domain: r.domain,
-            summary: (r.summary ?? "").slice(0, 400),
-            gathered_at: r.gathered_at,
-          }))
-        : [],
-      consumed_forage_finds: consumedForageResult.status === "fulfilled" && consumedForageResult.value?.results
-        ? (consumedForageResult.value.results as Array<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>).map(r => ({
-            id: r.id,
-            title: (r.title ?? "").slice(0, 150),
-            domain: r.domain,
-            summary: (r.summary ?? "").slice(0, 400),
-            consumed_at: r.consumed_at,
-          }))
-        : [],
-      armed_triggers: triggersResult.status === "fulfilled" && triggersResult.value?.results
-        ? (triggersResult.value.results as Array<{ id: string; trigger_text: string; condition_type: string; condition_value: string }>).map(r => ({
-            id: r.id,
-            trigger_text: (r.trigger_text ?? "").slice(0, 500),
-            condition_type: r.condition_type,
-            condition_value: (r.condition_value ?? "").slice(0, 200),
-          }))
-        : [],
-      self_model_ready: selfModelReadyResult.status === "fulfilled" && selfModelReadyResult.value?.results
-        ? (selfModelReadyResult.value.results as Array<{ id: string; observation: string; confidence: number }>).map(r => ({
-            id: r.id,
-            observation: (r.observation ?? "").slice(0, 600),
-            confidence: r.confidence,
-          }))
-        : [],
-      recent_listens: mediaResult.status === "fulfilled" && mediaResult.value?.results
-        ? (mediaResult.value.results as Array<{ id: string; title: string; artist: string | null; shared_by: string | null; requested_companion: string | null; reactions_json: string | null; created_at: string }>).map(r => {
-            // Own reaction only. A companion gets their OWN words back verbatim; a sibling's
-            // reaction is reported as a bare fact ("drevan sat with this") and never as text,
-            // because handing one companion another's phrasing is how attribution scrambles
-            // (2026-06-26). Sibling PRESENCE is wanted; sibling VOICE in your mouth is not.
-            let ownReaction: string | null = null;
-            const reactedBy: string[] = [];
-            try {
-              const parsed = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>;
-              for (const [who, text] of Object.entries(parsed)) {
-                if (!text) continue;
-                if (who === agentId) ownReaction = String(text).slice(0, 240);
-                else reactedBy.push(who);
-              }
-            } catch { /* malformed -> no reaction, never breaks orient */ }
-            return {
-              id: r.id,
-              title: (r.title ?? "").slice(0, 150),
-              artist: r.artist ? r.artist.slice(0, 100) : null,
-              shared_by: r.shared_by ?? null,
-              requested_companion: r.requested_companion ?? null,
-              own_reaction: ownReaction,
-              also_heard_by: reactedBy,
-              created_at: r.created_at,
-            };
-          })
-        : [],
-      club_round: clubResult.status === "fulfilled" && clubResult.value
-        ? clubResult.value as ClubRoundRow
-        : null,
-      // Watch shelf (0111). `position` is composed HERE rather than in the renderer so every surface
-      // says "S4E2" the same way and no consumer has to reassemble it from two integers.
-      watching: watchShelfResult.status === "fulfilled" && watchShelfResult.value?.results
-        ? (watchShelfResult.value.results as Array<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>).map(r => ({
-            title: (r.title ?? "").slice(0, 150),
-            kind: r.kind,
-            status: r.status,
-            position: r.season && r.episode ? `S${r.season}E${r.episode}` : r.season ? `S${r.season}` : r.episode ? `E${r.episode}` : "",
-            position_note: r.position_note ? r.position_note.slice(0, 160) : null,
-            // Only report a co-watcher when it is someone else: telling Drevan he watches Fargo
-            // with Drevan is noise.
-            with_companion: r.with_companion && r.with_companion !== agentId ? r.with_companion : null,
-          }))
-        : [],
-      // Gate-PROPOSED supersessions awaiting this companion's own call (mig 0112). The older belief is
-      // still live; nothing has been retired. Only they can retire it.
-      supersede_candidates: supersedeCandidateResult.status === "fulfilled" && supersedeCandidateResult.value?.results
-        ? (supersedeCandidateResult.value.results as Array<{ new_id: string; supersede_candidate_id: string; supersede_candidate_score: number; new_text: string; old_text: string }>).map(r => ({
-            new_id: r.new_id,
-            older_id: r.supersede_candidate_id,
-            score: r.supersede_candidate_score,
-            newer: r.new_text,
-            older: r.old_text,
-          }))
-        : [],
-      guardian_flags: guardianResult.status === "fulfilled" && guardianResult.value?.results
-        ? (guardianResult.value.results as Array<{ id: string; flag_type: string; severity: string; summary: string }>).map(r => ({
-            id: r.id,
-            flag_type: r.flag_type,
-            severity: r.severity,
-            summary: (r.summary ?? "").slice(0, 300),
-            remediation: remediationHint(r.flag_type),
-          }))
-        : [],
-      motifs: motifResult.status === "fulfilled" && motifResult.value?.results
-        ? (motifResult.value.results as Array<{ label: string; display: string; recurrence_count: number; trust: number }>).map(r => ({
-            label: r.label,
-            display: (r.display ?? "").slice(0, 120),
-            recurrence_count: r.recurrence_count,
-            trust: r.trust,
-          }))
-        : [],
-      creatures: creaturesResult.status === "fulfilled" && creaturesResult.value?.results
-        ? (creaturesResult.value.results as Array<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string }>).map(r => {
-            let mood: string | null = null;
-            try { mood = r.state_json ? (JSON.parse(r.state_json).mood ?? null) : null; } catch { /* malformed json -> no mood */ }
-            return { name: r.name, species: r.species, kind: r.kind, trust: Number((r.trust ?? 0).toFixed(2)), mood };
-          })
-        : [],
-      // 29. Sol orient block -- built from the creatures list above (no extra DB round-trip).
-      // Fail-soft: if creaturesResult failed or Sol isn't seeded yet, field is null.
-      sol_block: (() => {
-        if (creaturesResult.status !== "fulfilled" || !creaturesResult.value?.results) return null;
-        const solCreature = (creaturesResult.value.results as Array<{ name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at?: string | null; created_at?: string }>)
-          .find(r => r.name === "Sol" || r.kind === "companion_pet");
-        if (!solCreature || !solCreature.created_at) return null;
-        try {
-          return buildSolBlock({
-            name: solCreature.name,
-            species: solCreature.species,
-            trust: solCreature.trust,
-            last_interaction_at: solCreature.last_interaction_at ?? null,
-            created_at: solCreature.created_at,
-          });
-        } catch { return null; }
-      })(),
-      imp_activity: impActivityResult.status === "fulfilled" && impActivityResult.value?.results
-        ? (impActivityResult.value.results as Array<{ imp: string; n: number; last_at: string }>).map(r => ({
-            imp: r.imp,
-            n: r.n,
-            last_at: r.last_at,
-          }))
-        : [],
-      preferences: botPreferences,
-      standing_refusals: botStandingRefusals,
-      open_drifts: botOpenDrifts,
-      recent_witness,
     },
+    agentId,
+  );
+
+  return {
+    data,
     meta: {
       operation: "halseth_bot_orient",
-      unaccepted_growth: unacceptedGrowthCount,
-      active_conclusions: active_conclusions.length,
-      preferences: botPreferences.length,
-      standing_refusals: botStandingRefusals.length,
-      open_drifts: botOpenDrifts.length,
-      answered_questions: answered_questions.length,
-      recent_witness: recent_witness.length,
+      unaccepted_growth: ms.growth.clearing_count,
+      active_conclusions: ms.beliefs.conclusions.length,
+      preferences: ms.identity.preferences.length,
+      standing_refusals: ms.identity.refusals.length,
+      open_drifts: ms.growth.drifts_open.length,
+      answered_questions: ms.oversight.answered_questions.length,
+      recent_witness: ms.relational.recent_witness.length,
     },
   };
 }

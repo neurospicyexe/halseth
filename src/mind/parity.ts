@@ -36,6 +36,14 @@ import type { WmAgentId } from "../webmind/types.js";
 import { COMPANION_IDS } from "../companions.js";
 import { loadMindState } from "./loader.js";
 import { execBotOrient } from "../librarian/executors/session.js";
+import { botWireFromMindState, type BotWireExtras } from "./adapters/bot-wire.js";
+
+/**
+ * The six wire fields the adapter takes as INPUT rather than deriving (network reads + the bot's own note
+ * surfacing policy). For the cutover diff they are lifted straight off the live payload, so they compare
+ * equal by construction and cannot mask a real difference in the 38 fields that ARE being rewired.
+ */
+const EXTRA_KEYS = ["synthesis_summary", "rag_excerpts", "history_excerpts", "continuity_notes"] as const;
 
 /** Self-gate cadence. Hourly: frequent enough to catch conversational variation, rare enough that
  *  the sample cost is nothing against the bots' own call volume. */
@@ -141,6 +149,24 @@ export interface BotParityResult {
    *  the flat wire format returns `identity_anchor` as a STRING, not the nested object orient uses.
    *  Reading the shape beats inferring it. */
   bot_shape?: Record<string, string>;
+  /**
+   * THE CUTOVER GATE, mechanized (?full=1).
+   *
+   * The 7 PROBES above cover 7 of 44 keys, so "matched 7/7" was never consumer coverage -- it says nothing
+   * about the 37 keys no probe touches. This runs the real adapter against the real payload and diffs EVERY
+   * key, which is the only check that can catch the failure modes types cannot see: a field the adapter
+   * omits entirely, a truncation limit that differs by 200 characters, an ORDER BY that was never copied,
+   * or the pointer-for-content swap on `synthesis_summary`.
+   */
+  full_diff?: {
+    /** Keys present in the bot payload but absent from the adapter -- a DROPPED consumer field. */
+    adapter_missing: string[];
+    /** Keys the adapter adds. Must be empty: additions make the diff unreadable. */
+    adapter_extra: string[];
+    equal: string[];
+    /** Truncated: the point is which key differs and roughly how, not a full dump per field. */
+    differs: Array<{ key: string; bot: string; adapter: string }>;
+  };
 }
 
 function shapeOf(v: unknown): string {
@@ -159,7 +185,7 @@ function shapeOf(v: unknown): string {
 export async function compareBotOrient(
   env: Env,
   companionId: WmAgentId,
-  opts: { includeShape?: boolean } = {},
+  opts: { includeShape?: boolean; fullDiff?: boolean } = {},
 ): Promise<BotParityResult> {
   const base: BotParityResult = { companion_id: companionId, matched: [], mismatched: [], missing_blocks: 0 };
   try {
@@ -185,6 +211,30 @@ export async function compareBotOrient(
       const m = p.ms(ms);
       if (JSON.stringify(b) === JSON.stringify(m)) base.matched.push(p.name);
       else base.mismatched.push({ field: p.name, bot: b, mindstate: m });
+    }
+
+    if (opts.fullDiff) {
+      // Extras lifted off the live payload: they are the adapter's inputs, not its output, so comparing
+      // them against themselves is correct here and keeps the 38 rewired fields the only signal.
+      const extras = Object.fromEntries(EXTRA_KEYS.map(k => [k, bot[k]])) as unknown as BotWireExtras;
+      const adapted = botWireFromMindState(ms, extras, companionId) as Record<string, unknown>;
+      const botKeys = Object.keys(bot);
+      const adaptedKeys = Object.keys(adapted);
+      const equal: string[] = [];
+      const differs: Array<{ key: string; bot: string; adapter: string }> = [];
+      for (const k of botKeys) {
+        if (!(k in adapted)) continue; // reported as adapter_missing
+        const b = JSON.stringify(bot[k]) ?? "undefined";
+        const a = JSON.stringify(adapted[k]) ?? "undefined";
+        if (b === a) equal.push(k);
+        else differs.push({ key: k, bot: b.slice(0, 220), adapter: a.slice(0, 220) });
+      }
+      base.full_diff = {
+        adapter_missing: botKeys.filter(k => !adaptedKeys.includes(k)),
+        adapter_extra: adaptedKeys.filter(k => !botKeys.includes(k)),
+        equal,
+        differs,
+      };
     }
     return base;
   } catch (err) {
