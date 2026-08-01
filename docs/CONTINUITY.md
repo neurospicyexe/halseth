@@ -1038,6 +1038,46 @@ halseth 1358 / discord 797 green. Bots redeployed.
 reader uses it. That is the obvious next small win. And **execBotOrient / the last Phase 1 item remains
 untouched** (still 4 of 5).
 
+### DONE 2026-08-01 (later) - ratification unblocked, wave 3 folded, parity now 7/7
+
+**1. RATIFICATION: 41 of 52 entries were UNREACHABLE.** Raziel: "last time I tried they wouldn't all
+load." `source='autonomous'` = 11 (reachable), `source='reflection'` = **41, oldest 22 DAYS** (reachable by
+nothing - every read filtered autonomous-only). Unlistable -> unratifiable -> pending forever, while the
+digest counted all 52. **He was ratifying against a floor.**
+
+Already diagnosed once: `getGrowthPendingCount` carries the note that the count had this exact bug and was
+fixed. **The COUNT got fixed; the READ did not.** The filter lived in NINE places, so it now lives in ONE:
+`src/lib/ratifiable.ts`. Eight read/count sites unified. **VERIFIED: reachable 11 -> 52** (cypher 27,
+drevan 12, gaia 13) and pending-count now agrees with the surface it points at.
+
+**Deliberately NOT applied to `clearing/pass.ts`** - that path asks a model for a dismiss verdict, so
+widening it would hand a model power to decline a new class of his entries. Widening what he can SEE is
+safe; widening what a machine may DISPOSE OF is his call (same line as mig 0112). Explicit allowlist
+exemption + a test that the exemption is not vacuous.
+
+**2. WAVE 3: the `growth` block.** 7 blocks folded (journal_recent, patterns, markers, reflection, seeds,
+clearing_count, drifts_open). **Contract 21 -> 14 unfilled.**
+
+**Rule learned: TAKE THE SUPERSET when unifying divergent copies.** These queries existed twice with
+different select lists - session read `pattern_text, strength` / `seed_type, content, priority`, the bot read
+only `pattern_text` / `content`. One design and one degraded copy. A renderer can ignore a field; it cannot
+recover one never selected.
+
+**3. THE CONCLUSION DIVERGENCE IS CLOSED, and it was not the judgment call I claimed on 07-29.** I framed
+it as "6 by recency vs up to 8 by heat, Raziel's call." Measured: **every live conclusion in the system is
+`belief_type='self'`** - cypher 46, drevan 29, gaia 19, ZERO of the other three types - because
+`execConclusionAdd` defaults to 'self' and nothing ever passes a type. **A seventh under-populated column.**
+So 4 types x LIMIT 2 returned 2 while the bot's pooled query returned 6: the distribution was answering a
+problem the data does not have, and cutover would have been a straight loss of four beliefs.
+Fix: keep the spread, then **top up to the cap by heat**. Several types -> unchanged. One type -> fills to 6.
+
+**VERIFIED LIVE: parity 7/7 matched, ZERO mismatches, all three companions** (was 6/7).
+
+**STILL BLOCKING CUTOVER: 14 blocks.** world (9), oversight (3), `continuity.session_narrative`,
+`beliefs.worldview`. Next wave is **world (9)** - the biggest single chunk: club, commons, shelf,
+collection, forage, listens, motifs, sol, imps. Then oversight (3), then the last two. **Then** cut over.
+Phase 1 still 4 of 5, but the blocker is now measured and shrinking: 21 -> 14.
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
