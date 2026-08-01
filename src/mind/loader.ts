@@ -20,9 +20,10 @@ import { MindState, MINDSTATE_CONTRACT_VERSION, NOT_YET_LOADED, Loom } from "./c
 import { loadIdentityBlocks } from "./blocks/identity.js";
 import { loadFeltFermentBlocks } from "./blocks/felt.js";
 import { loadGrowthBlocks } from "./blocks/growth.js";
+import { loadWorldBlocks } from "./blocks/world.js";
 
 export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom): Promise<MindState> {
-  const [orient, ground, identity, felt, growth] = await Promise.all([
+  const [orient, ground, identity, felt, growth, world] = await Promise.all([
     mindOrient(env, companionId, { readOnly: true }),
     mindGround(env, companionId),
     // Wave 1 of folding in the NOT_YET_LOADED blocks (2026-07-29): identity (6) + felt-ferment (3),
@@ -34,6 +35,8 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
     // Wave 3 (2026-08-01): growth (7), 21 unfilled -> 14. This is the wave that unblocks the bot cutover
     // -- 13 of execBotOrient's 40 keys mapped to blocks the loader could not fill.
     loadGrowthBlocks(env, companionId),
+    // Wave 4: the shared world (9). 14 unfilled -> 5.
+    loadWorldBlocks(env, companionId),
   ]);
 
   return {
@@ -110,6 +113,7 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
 
     world: {
       home_recent: orient.home_recent ?? [],
+      ...world,
     },
 
     meta: {

@@ -21,6 +21,7 @@ import type {
   WmArchiveDigest, WmRecentSpiralTurn, HomeEvent,
 } from "../webmind/types.js";
 import type { GrowthBlocks } from "./blocks/growth.js";
+import type { WorldBlocks } from "./blocks/world.js";
 
 export const MINDSTATE_CONTRACT_VERSION = "0.2.0";
 
@@ -133,6 +134,17 @@ export interface MindState {
   /** The world around the house. */
   world: {
     home_recent: HomeEvent[];
+    /** Wave 4 (2026-08-01). Canonical implementation in blocks/world.ts; execSessionOrient and
+     *  execBotOrient keep divergent inline copies until they cut over. */
+    club: WorldBlocks["club"];
+    commons: WorldBlocks["commons"];
+    shelf: WorldBlocks["shelf"];
+    collection: WorldBlocks["collection"];
+    forage: WorldBlocks["forage"];
+    listens: WorldBlocks["listens"];
+    motifs: WorldBlocks["motifs"];
+    sol: WorldBlocks["sol"];
+    imps_active: WorldBlocks["imps_active"];
   };
 
   meta: {
@@ -154,8 +166,6 @@ export const NOT_YET_LOADED: string[] = [
   // blocks on purpose: shared_kernel is common to all three, companion_kernel is this one's own --
   // the shared-bank / distinct-self split the whole contract is built around.
   "continuity.session_narrative",
-  "world.club", "world.commons", "world.shelf", "world.collection", "world.forage",
-  "world.listens", "world.motifs", "world.sol", "world.imps_active",
   "oversight.guardian_cards", "oversight.tripwires", "oversight.questions",
   "beliefs.worldview",
 ];
