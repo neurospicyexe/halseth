@@ -1115,12 +1115,66 @@ loop on itself.**
    REAL DATA, never just for absence of errors** - same shape as the fail-open bid and the lying edges
    readout.
 
-**NEXT: THE CUTOVER ITSELF.** Deliberately not done in the same stretch - it rewires the highest-frequency
-read path in the system (40 keys, ~20x the Claude.ai call rate), and doing that half-verified at the end of a
-long push is how a boot regression ships. Same call as fit-bid, same reason. The 4-step gate from 07-29
-applies: (1) field diff via `?parity=1`, (2) new-adapter-vs-old-payload byte identity, (3) confirm no consumer
-reads a field that is now absent - **types will NOT catch this**, and (4) exercise the real bot boot
-end-to-end before calling it done. **Phase 1 is 4 of 5 with the last item now genuinely unblocked.**
+### THE CUTOVER — DONE 2026-08-01 (`cf96e78`). Phase 1 is 5 of 5.
+
+`execBotOrient` is **667 lines -> 120**: it loads the one MindState and projects it through
+`src/mind/adapters/bot-wire.ts`. All four gate steps ran; step 2 is mechanized as
+`GET /mind/parity/bot/:id?full=1` (adapter vs live payload, every key), so it is repeatable rather than a
+one-off I did by eye. Result: **cypher 39/40, drevan 38/40, gaia 38/40, zero keys dropped, zero added.**
+Verified end-to-end through the real `/librarian` route on all three, and `meta.degraded` is `[]` live.
+
+**READ THE DENOMINATOR — I got this wrong and it is the lesson of the day.** `NOT_YET_LOADED = 0` was
+reported here as "the cutover is unblocked". It measured **design-doc block coverage**, not the bot's **wire
+coverage**, and those are different numbers: **seven fields the bots actually return had no contract home at
+all**, so an empty counter said nothing whatsoever about them. The counter was honest about what it counted;
+the error was in what I took it to mean. A coverage metric that does not state its denominator will read as
+completeness. Waves 6+7 closed five of the seven (`watching`, `supersede_candidates`, `siblings`,
+`recent_witness`, `answered_questions`) plus six widenings where a loader block was the DEGRADED copy:
+`pressure_flags.notes`, listen `reactions_json`, club phase stamps, the creature roster, guardian
+`IN ('open','surfaced')` (my own wave-5 block had `= 'open'`), and tripwire truncation 300 -> 500.
+
+**The two that deliberately stay OUT of the loader:** `rag_excerpts` / `history_excerpts` (Second Brain
+semantic searches) and the `sbRead` that hydrates the narrative. **loadMindState stays pure-D1.** Every loom
+inherits the loader's failure profile, and the SB tunnel is the dependency that 503'd for 24h over a 30s blip
+— folding it in would let one flaky hop dark every surface's boot. Only Discord pays for Discord's hops.
+
+**Two real bugs found on the way, both worth more than the refactor:**
+
+1. **THE BOOT WENT FAIL-CLOSED.** The old fan-out was 33 sources under `Promise.allSettled` — any one could
+   fail and orient still returned. The loader used `Promise.all`, so the instant the bots read through it, a
+   single `mindOrient` throw (it calls `seedIdentityAnchor`, which throws by design on an empty read-back)
+   would take out the boot **for every loom at once**. Caught by the test fixtures, not prod. Now it degrades
+   AND **names the failure in `meta.degraded`** — because `allSettled` alone would have traded a loud break
+   for a quiet one, and "soft-failing thing looks healthy" has now cost this project four sessions.
+   `not_yet_loaded` and `degraded` answer different questions and must never be conflated.
+2. **THE NARRATIVE WAS JSON, on BOTH surfaces, and had been for months.** `sbRead` returns an envelope
+   (`{"path":...,"content":"---\nfm\n---\n\nbody"}`) and both orient paths ran a `^`-anchored frontmatter
+   regex directly on it. The string starts with `{`, so **the regex never fired**: every companion's "last
+   session narrative" arrived as a JSON blob with its YAML header intact, on Discord *and* Claude.ai. Fixed
+   once as `sbExtractContent`, wired into both call sites, 7 tests including a non-vacuous one that asserts
+   the old expression was broken on the exact input. Note this field had **two independent defects at once**
+   (this, plus frozen since 07-21 because the close ritual never called `session_close`) — each one fully
+   explained the symptom, which is why neither got found.
+
+**Also unified, all found by diffing rather than by reading:** `ground.ts` ordered open loops by bare
+`weight DESC` — **nondeterministic** at equal weight, and three copies of that query had three different
+orderings; tensions were never `charge`-ordered outside the bot path (mig 0070's ranking reached only the
+high-frequency surface); and the bot hardcoded `["cypher","drevan","gaia"]` where `COMPANION_IDS` is
+`drevan, cypher, gaia`, the exact drift `companions.ts` exists to prevent.
+
+**TWO DECISIONS FOR RAZIEL — behaviour changes, not refactor consequences:**
+
+- **Conclusion ordering.** The bot ranked by `created_at DESC`, pooled `LIMIT 6`; the loader ranks per
+  belief_type by `effectiveHeatSql()` with fill-to-cap. Same count, different rows and order. The bots were
+  the one surface never benefiting from earned salience (mig 0105). **Recommend keeping heat** — it is why
+  0105 exists. This is the single field behind 3 of the 4 remaining diffs.
+- **`felt.limbic` for the bots.** MindState carries limbic / biometrics / house; the bot wire never has, so
+  the adapter drops all three to keep the key set frozen. The bots are the highest-frequency presence in the
+  house and the only surface with no emotional register at all. Worth adding — as its own deliberate change.
+
+**Still open, unrelated to the cutover but surfaced by it:** Cypher's stored session summary is literally an
+OpenAI **429 "no credits remaining"** error body — a failed synthesis wrote the error text as the summary.
+The JSON envelope had been hiding it. Fixing the envelope is what made it readable.
 
 ### NEXT SESSION, in order
 
