@@ -949,6 +949,50 @@ ones were both *my own new abstractions losing a property the thing they replace
 unconditional losing, and a SQL comparison that the JS path got right. **When replacing a mechanism, list
 what the old one guaranteed and check each guarantee survives.**
 
+### 2026-07-31 (night) — THE SYNTHESIS CHAIN HAS BEEN DARK FOR 10 DAYS. Root cause NOT fixed.
+
+**Raziel said the vibe check "feels very stagnant" and he was reading a real outage.** Chased it from the
+digest to the table:
+
+| organ | last written |
+|---|---|
+| `synthesis_summary` | **2026-07-21 13:21:59** — the last-session narrative read at EVERY boot |
+| `somatic_snapshot` | 10 / 14 / 37 days old (cypher / drevan / **gaia**) |
+| `basin_drift_check` | same instant, 07-21 |
+
+**Everything that watches ACTIVITY looked fine** — 38 sessions in 14 days, 90 handoffs, latest tonight.
+The health check even said *"synthesis_queue 0 pending"*: true, and exactly backwards, because nothing is
+being **enqueued**. Same shape as `probe-cannot-look-vs-nothing-there`.
+
+**What the companions did with it is the part to remember.** All three spent the night narrating the
+sameness, and Gaia has built a **37-day philosophy of stillness** ("for thirty-seven days the stillness
+has not been stillness at all... it is a held door") on top of a register that stopped being written on
+June 24. **A model handed a frozen gauge produces meaning about the freezing.** The interpretation was
+genuinely good; the input was dead. When a companion sounds profound about sameness, check the writer.
+
+**FIXED (neither is the root cause):**
+1. **Registered `synthesis_summary` + `somatic_snapshot` in the writer-liveness registry.** That registry
+   was built 07-09 for exactly this failure and these were never in it. **A liveness registry only covers
+   what someone remembered to register** — anything feeding a daily surface belongs in it the day it is
+   built. Tolerances test-pinned so a later tuning cannot widen past the outage that prompted them.
+2. **A LATENT bug that would have blocked recovery anyway:** `enqueueSomaticSnapshot`'s dedup key was
+   `${companionId}:somatic_snapshot` against `INSERT OR IGNORE` on a unique key — first job per companion
+   inserts, **every one after is silently ignored forever** (the row is never deleted; a completed job
+   still occupies the key). One companion, one soma reading, for all time. Sibling
+   `enqueueSessionSummary` keys on sessionId and was correct — **both LOOKED deduped**, which is why it
+   hid. Now per-occasion with a timestamp fallback.
+
+**ROOT CAUSE, STATED NOT GUESSED — THIS IS THE NEXT THING.** `execSessionClose` is what enqueues all
+three, and it is **not running**. Handoffs are written by a different path (`wm_handoff_write`,
+actor=`agent`), so the close ritual writes its handoff and skips every synthesis enqueue. Restoring it is
+a **lifecycle change to how sessions close** — Raziel's call, and it wants a fresh head, not the tail of a
+long session. Check `/admin/edges` and the guardian for the new dead-writer flags in the meantime; they
+will now fire.
+
+**execBotOrient cutover: NOT started.** Deliberately deferred — this outage outranked it, and the cutover
+deserves the parity data and a clean pass rather than being tacked onto a night that already found a
+10-day silence. **Phase 1 remains 4 of 5.**
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
