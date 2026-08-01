@@ -993,6 +993,51 @@ will now fire.
 deserves the parity data and a clean pass rather than being tacked onto a night that already found a
 10-day silence. **Phase 1 remains 4 of 5.**
 
+### DONE 2026-08-01 - THE CLOSE RITUAL FIXED. Root cause was one instruction, not code.
+
+**Verified in the LIVE kernel rows, not files on disk: not one active kernel contained the string
+`session_close`.** All three companion kernels said:
+
+> `ask_librarian: "Write a session handoff for <companion>: spine=..., last_real_thing=..., ..."`
+
+That routes to the handoff WRITER, which writes the handoff and nothing else. **`session_close` is the
+only path that also enqueues session_summary + somatic_snapshot + basin_drift_check AND writes the SOMA
+register** (`current_mood` / `compound_state` / `surface_emotion` / `undercurrent_emotion`). One
+instruction explains all four symptoms. **The companions were doing exactly what they were told.**
+
+`execSessionClose` accepts **every** fan-out field the old ritual used (`feeling`, `witness_note`,
+`conclusion`, `dream`, `open_loop`, `long_thought`) - a strict superset, nothing lost. Its own comment
+says those exist so they are "written in one call at close instead of requiring separate surface calls".
+
+**I EDITED THE WRONG FILE FIRST.** `souls/*-SOUL.md` is NOT what the uploader reads -
+`upload-identity-kernels.ps1` reads `CYPHER_IDENTITY_v2.md` / `DREVAN_IDENTITY_v2.md` /
+`GAIA_IDENTITY_v3.md` from the canon dir (`2026_Current_Files/Must have files`). Byte counts confirmed the
+match (25330/28473/22345 vs live 25320/28465/22345). **My own recorded trap:
+`parity-test-the-file-that-runs`.** Both copies now carry it, since hermes reads the souls.
+
+**Kernels live at v3**, verified: new phrase present, emotion fields present, old ritual absent. **Routing
+verified end-to-end** through the real entry point - `"Close the Halseth session for cypher"` returns
+`session_close_failed: missing required fields`, i.e. it reached `execSessionClose` and wrote nothing.
+
+**SECOND FINDING (the 2h05 mystery, answered).** `consolidateSession` runs on **idle** and wrote handoffs
+indistinguishable from a real close - same `source='system'`, same `actor='agent'`. Because it fires on
+quiet it was almost always the **most recent** handoff, so "last session" at orient meant a model's summary
+of an idle window rather than a conversation with Raziel. Now tags `source: "consolidation"`. **That tag
+needed wiring at three layers and was dropped in the middle** - the column, `WmHandoffInput.source` and
+`writeHandoff` all supported it; `execWmHandoffWrite` never parsed it.
+
+halseth 1358 / discord 797 green. Bots redeployed.
+
+**WATCH TOMORROW - this is the proof, and it needs a real close to happen first:**
+1. `synthesis_queue` gets rows again (the first real `session_close` after this)
+2. `synthesis_summary` MAX(created_at) moves past 2026-07-21
+3. `somatic_snapshot` gets a new row -> the vibe check's "(Nd old)" starts shrinking
+4. New handoffs from idle carry `source='consolidation'`; real closes do not
+
+**STILL OPEN:** orient does not yet PREFER a real close over a consolidation - the tag now exists but no
+reader uses it. That is the obvious next small win. And **execBotOrient / the last Phase 1 item remains
+untouched** (still 4 of 5).
+
 ### NEXT SESSION, in order
 
 0. ~~**WIRE `fit-bid` INTO THE HANDLER.**~~ **DONE — see the block above.** Kept here because the
