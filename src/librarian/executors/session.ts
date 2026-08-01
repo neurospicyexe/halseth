@@ -876,7 +876,8 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // Same pattern as drift check: surface failure in the response rather than silently losing the job.
   let somatic_warning: string | undefined;
   try {
-    await enqueueSomaticSnapshot(ctx.req.companion_id, ctx.env);
+    // Pass the session id so the dedup key is per-CLOSE, not per-companion (see enqueueSomaticSnapshot).
+    await enqueueSomaticSnapshot(ctx.req.companion_id, ctx.env, resolvedSessionId);
   } catch (e: unknown) {
     somatic_warning = "somatic_snapshot enqueue failed — SOMA state may not sync until next session close";
     console.error("[session_close] somatic_snapshot enqueue failed:", String(e));

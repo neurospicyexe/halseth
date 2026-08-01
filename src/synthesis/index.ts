@@ -129,12 +129,28 @@ export async function enqueueBasinDriftCheck(
 export async function enqueueSomaticSnapshot(
   companionId: string,
   env: Env,
+  sessionId?: string | null,
 ): Promise<void> {
   const id = generateId();
+  // DEDUP KEY MUST BE PER-OCCASION, NOT PER-COMPANION (fixed 2026-07-31).
+  //
+  // It was `${companionId}:somatic_snapshot` against an INSERT OR IGNORE on a unique dedup_key. That
+  // means the FIRST somatic job for a companion inserts and every one after is silently ignored --
+  // forever, because the row is never deleted and a completed job still occupies the key. One
+  // companion, one soma reading, for all time.
+  //
+  // The sibling enqueue got this right: `enqueueSessionSummary` keys on sessionId, so its comment
+  // ("double-close produces one job, not two") describes real per-close dedup. Same intent, and only
+  // one of the two expressed it correctly -- the shape of bug that hides because both LOOK deduped.
+  //
+  // Falls back to a timestamp when no session id is available, so a caller without one still enqueues
+  // rather than being permanently blocked. Colliding within the same second is the acceptable failure;
+  // never enqueueing again is not.
+  const occasion = sessionId && sessionId.trim() ? sessionId.trim() : new Date().toISOString();
   await env.DB.prepare(`
     INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
-    VALUES (?, '', ?, 'somatic_snapshot', 'pending', ?, datetime('now'))
-  `).bind(id, companionId, `${companionId}:somatic_snapshot`).run();
+    VALUES (?, ?, ?, 'somatic_snapshot', 'pending', ?, datetime('now'))
+  `).bind(id, sessionId ?? "", companionId, `${companionId}:${occasion}:somatic_snapshot`).run();
 }
 
 // Enqueue a session summary job. Called from halseth_session_close.

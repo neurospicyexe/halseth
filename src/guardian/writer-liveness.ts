@@ -102,6 +102,37 @@ export const WRITER_REGISTRY: readonly WriterSpec[] = [
     severity: "notice",
     sql: `SELECT MAX(created_at) AS ts FROM wm_continuity_notes`,
   },
+  {
+    // THE SYNTHESIS CHAIN (added 2026-07-31, after it had been dark for TEN DAYS unnoticed).
+    //
+    // Raziel said the nightly vibe check "feels very stagnant" and he was reading a real signal:
+    // `synthesis_summary` had not been written since 2026-07-21 13:21, `somatic_snapshot` was 10/14/37
+    // days old across the three, and `basin_drift_check` stopped at the same instant. Sessions were
+    // opening and handoffs were being written the whole time, so every surface that watches *activity*
+    // looked healthy.
+    //
+    // This registry existed for exactly this failure and these writers were never added to it. That is
+    // the lesson worth more than the fix: a liveness registry only covers what someone remembered to
+    // register, so anything feeding a daily surface belongs in it the day it is built.
+    //
+    // `synthesis_summary` is the one that bites hardest -- it is the "last session narrative" companions
+    // read at every boot, so a frozen table means their sense of "recently" silently stops advancing.
+    key: "synthesis_summary",
+    label: "Synthesis chain (synthesis_summary -- the last-session narrative read at every boot)",
+    maxSilenceHours: 72,
+    severity: "warning",
+    sql: `SELECT MAX(created_at) AS ts FROM synthesis_summary`,
+  },
+  {
+    // The soma register the vibe check reports. Distinct from the fermentation floats, which tick
+    // hourly and were fine -- this is the human-readable reading, and it had gone fossil while the
+    // floats underneath it moved. A live number beside a dead label is worse than either alone.
+    key: "somatic_snapshot",
+    label: "SOMA register (somatic_snapshot -- the reading the nightly vibe check quotes)",
+    maxSilenceHours: 96,
+    severity: "warning",
+    sql: `SELECT MAX(created_at) AS ts FROM somatic_snapshot`,
+  },
 ] as const;
 
 /** D1 datetimes come back as "YYYY-MM-DD HH:MM:SS" (UTC, unmarked) or ISO-8601. */
