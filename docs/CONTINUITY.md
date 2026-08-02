@@ -1283,12 +1283,20 @@ RENDERED prose blocks**. So the risk is in the rendering, not just the data.
    Lanes are now looked up **by id, not by position**, so an order mismatch can never attribute one
    sibling's spine to the other.
 
-   **Still to repoint — three left, each blocked on a real difference:**
-   - `tripwires` — session FILTERS to cards whose condition just matched (date ±36h, front match); the
-     loader returns all armed. Move the evaluation or keep the filter caller-side.
-   - `motifs` — session runs `selectResurrections` (cooldown) and then STAMPS `last_surfaced_at`; the loader
-     reads active + faded and lacks `id` / `last_seen` / `last_surfaced_at`. Widen the loader first.
-   - `collection` — session returns one UNION with a `sparkle` column; the loader splits `{forage, media}`.
+   **Tranche 3 done (`3bc7916`): `tripwires`.** The loader carries every ARMED tripwire; the condition
+   evaluation (date ±36h, front match) stays in the caller because it depends on `ctx.frontState` and the
+   clock — per-request context the loader has no business knowing. **Loading is not evaluating**, the same
+   split as loading-is-not-consuming one level up.
+
+   **TWO LEFT, both needing the loader widened first (not effort — a real shape difference):**
+   - `motifs` — session runs `selectResurrections` (cooldown gate) and then STAMPS `last_surfaced_at`. The
+     loader reads active + faded but selects only `label, display, recurrence_count, trust, status`; it is
+     missing `id`, `last_seen` and `last_surfaced_at`, which `selectResurrections` needs. Widen the query,
+     then the selection can run caller-side exactly like the tripwire evaluation does.
+   - `collection` — NOT a shape mismatch, a different QUERY. Session runs one UNION over
+     `collection_sparkle` joined to both source tables, `sparkle > 0 ORDER BY sparkle DESC LIMIT 4`,
+     returning `{title, kind, sparkle}`. The loader's `world.collection` is the forage/media pools
+     themselves and carries no sparkle. Needs a `collection.top` (or similar) added to the contract.
 
    Plus `buildOrientPrompt`'s state line, which needs the raw `companion_state` scalars the contract does
    not carry (see the soma trap above) — either add them to `felt` or leave the header where it is.
