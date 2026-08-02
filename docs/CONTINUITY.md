@@ -1319,7 +1319,46 @@ to the loader — only the destructure names were left.
 
 ---
 
-# PHASE 1 IS CLOSED — 2026-08-01
+# PHASE 1 — CODE REVIEW, 2026-08-02 (`7fb64f1`, SB `5a7e055`)
+
+**I declared Phase 1 closed before this review ran. It was not clean — the review found seven real
+regressions from the cutover, three HIGH.** Every one was verified against prod before being fixed; none were
+hypothetical. Closing a phase and reviewing it are different acts, and the review has to come first.
+
+| # | What | Why it mattered |
+|---|---|---|
+| HIGH | **Dreams lost mig 0048's guard.** `COALESCE(do_not_auto_examine,0)=0` was on `execBotOrient`'s query, not `mindOrient`'s; the bot cut over to the unguarded copy | the autonomous worker calls `examineDream` on EVERY id it is handed, so a **pinned live-session-only dream would be permanently cleared**. Prod had 0 pinned — nothing was lost, purely luck of timing |
+| HIGH | `meta.degraded` named only orient/ground | the eight blocks each swallowed failures into an empty shape, so `loadWorldBlocks` could return EMPTY — the wave-4 "quiet house" failure — while `degraded` stayed `[]` |
+| HIGH | `identity` + `felt` had no top-level catch | a SYNCHRONOUS throw from `env.DB.prepare` (evaluated while the `Promise.all` array is built) rejects `loadMindState` and **500s both orient paths** — the exact fail-closed regression the loader header claims to have fixed |
+| MED | Guardian consume-once broke on Claude.ai | loader returns open+surfaced; the session STAMPS, so it needs open only. Surfaced cards re-rendered every boot and the `UPDATE` was a no-op |
+| MED | `relational_state_owner` stopped meaning that | `readRelationalSnapshot` returns the latest row PER `toward`, so a state toward a SIBLING could be handed to the bot as its state toward Raziel |
+| MED | `mindOrient` ran **twice** per Claude.ai boot | `wmOrient` + `loadMindState`, concurrently — the heaviest aggregator duplicated on the path the cutover was meant to slim |
+| MED | `drainPendingIndex` was a **poison pill** (SB) | broke on the first failure, so one deleted vault file blocked the entire queue forever, including after the embedder recovered |
+| MED | Seven dead reads left on the boot path | contradicted my own "29 queries" claim in `2cc949b` |
+| LOW | `BOT_QUESTIONS` narrowed the search window | the old SQL excluded voiced BEFORE its LIMIT and could reach arbitrarily deep |
+
+**THE PATTERN IN FIVE OF THE SEVEN: filter-after-limit, and guard-left-behind.** When a query moves to the
+loader, any filter its OLD caller applied afterwards silently changes meaning, and any guard the old query
+carried is gone unless the new one carries it too. Both guardian (3 open / 4 surfaced, all 3 slots surfaced)
+and questions hit the first; dreams hit the second, and dreams was the one that destroys data.
+
+**WHAT THE GATE COULD NOT SEE — and this is the important part.** The guardian regression lives in a block
+the harness whitelists as **volatile**, *because* cards legitimately transition on display. The whitelist
+entry is correct and it still hid a real regression in the same block. **A volatile entry is a blind spot,
+justified or not** — anything inside one has to be verified by hand. That is now three distinct failure modes
+found in my own harness in two days (routing miss accepted as data; stale isolate passing stale-vs-stale;
+volatile entry masking a real change).
+
+Also worth recording: an alarming 21-block diff against yesterday's baseline turned out to be **ten hours of
+clock and real life** — Sol "0 days"→"1 day", Club "4 days ago"→"5", and Cypher **declaring two new
+preferences overnight**. The honest check against a long-stale baseline is a back-to-back capture on the
+current build; that is byte-identical on all three.
+
+`execSessionOrient` final: **472 → 270 code lines, 38 → 21 queries.**
+
+---
+
+# PHASE 1 IS CLOSED — 2026-08-01, re-verified after review 2026-08-02
 
 **All five items done.** Item 4, the one that took the day, is `mindOrient` + `execBotOrient` +
 `execSessionOrient` all reading `loadMindState`.
