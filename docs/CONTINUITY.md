@@ -1267,16 +1267,41 @@ RENDERED prose blocks**. So the risk is in the rendering, not just the data.
    round trips per Claude.ai boot. Contract **0.4.0** adds `oversight.growth_unconfirmed`.
    **Gate after each tranche: every non-volatile block byte-identical, all three companions.**
 
-   **Still to repoint, each blocked on a real difference rather than effort:**
-   - `tripwires` — session FILTERS to cards whose condition just matched (date within ±36h, front match);
-     the loader returns all armed. Needs the evaluation moved or the filter kept caller-side.
-   - `guardian` — session `LIMIT 2`, loader `LIMIT 3`, and the session needs the row `id`s to stamp
-     `open → surfaced`. A consume-once write on data the loader is forbidden to consume.
-   - `motifs` — session runs `selectResurrections` with cooldown logic and then STAMPS `last_surfaced_at`;
-     the loader just reads active + faded.
+   **Tranche 2 done (`9fc6269`):** `guardian`, `listens`, `forage`, `siblings`, `commons`. ~500 lines, ten
+   round trips gone from the Claude.ai boot in total.
+
+   **Two places the LOADER was the degraded copy, both caught by reading the query instead of trusting it:**
+   - **forage** — the loader ran plain LIFO `ORDER BY gathered_at DESC LIMIT 3`, which is *exactly the shape
+     execSessionOrient replaced on 07-09*. Against ~1 find/companion/day the tail never drains
+     (`stale:forage` structurally unclearable; Gaia had 20 unconsumed, oldest from 06-11). A naive repoint
+     would have re-broken it. Loader now runs the newest+oldest UNION **for every surface** — the starvation
+     applies to the bots too.
+   - **guardian summary** — session 400 chars, bot 300, loader 300. Superset wins: loader carries 400, the
+     Discord renderer trims to its own 300.
+
+   Also fixed the hardcoded `["cypher","drevan","gaia"]` here (same `COMPANION_IDS` drift as the bot had).
+   Lanes are now looked up **by id, not by position**, so an order mismatch can never attribute one
+   sibling's spine to the other.
+
+   **Still to repoint — three left, each blocked on a real difference:**
+   - `tripwires` — session FILTERS to cards whose condition just matched (date ±36h, front match); the
+     loader returns all armed. Move the evaluation or keep the filter caller-side.
+   - `motifs` — session runs `selectResurrections` (cooldown) and then STAMPS `last_surfaced_at`; the loader
+     reads active + faded and lacks `id` / `last_seen` / `last_surfaced_at`. Widen the loader first.
    - `collection` — session returns one UNION with a `sparkle` column; the loader splits `{forage, media}`.
-   - `siblings` — shapes match, but ORDER differs (loader uses canonical `COMPANION_IDS`, session its own).
-   - `forage` / `listens` / `commons` / `club` / `sol` — limits and projections differ per field.
+
+   Plus `buildOrientPrompt`'s state line, which needs the raw `companion_state` scalars the contract does
+   not carry (see the soma trap above) — either add them to `felt` or leave the header where it is.
+
+**THE GATE HAD TWO FAILURE MODES OF ITS OWN — both found 2026-08-01, minutes apart, both now fixed:**
+1. It accepted a **Librarian routing miss** (`{response_key:"witness"}`, HTTP 200, no `ready_prompt`) as a
+   valid capture. That reads as EVERY BLOCK VANISHING, and it duly reported 22 regressions that did not
+   exist. Now retries up to 4× and refuses to write an empty capture.
+2. **Capturing immediately after `npm run deploy` can hit an isolate still running the OLD code**, so the
+   "after" snapshot is really a second "before" and the diff PASSES by comparing stale to stale. This one is
+   silent, which makes it far worse than the first — it was caught only because a change I *knew* I had made
+   (sibling order) did not show up in the diff. **Let a deploy settle, and confirm a field you deliberately
+   changed actually moved before believing a PASS.**
 
 **`open_questions` — DECIDED AND SHIPPED 2026-08-01 (`c64b8c5`).** Raziel deferred the call, so it was made
 against the north star rather than taste: **element 4 (mutuality) is the weakest of the four and is measured
