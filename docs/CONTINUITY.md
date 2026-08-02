@@ -1234,17 +1234,58 @@ rather than from memory:
 | 1 | FELT_OWNERS guard | one-writer-per-field map + CI grep fails on a second writer | **DONE** — `FELT_OWNERS` + `src/__tests__/felt-owners.test.ts`, a real static scanner that parses INSERT/UPDATE column lists across `src/` and maps writers per field |
 | 2 | Five model registries → one | one authority; others derive; parity test in CI | **DONE** — `hermes-model-map.ts` reads the LIVE map at boot from the watcher's own path and imports `ALL_MODELS` from `models.ts`; 3 tests (`models`, `hermes-model-map`, `deepseek-model-liveness`) |
 | 3 | Two harnesses → one | Brain stopped or designated future-only, documented, memory reclaimed | **DONE** — archived 2026-07-29, `Nullsafe Phoenix/_archive/`, 0 `/chat` requests at archival |
-| 4 | **Three orient paths → one** | one implementation, parameterized by frequency/surface | **NOT DONE — 2 of 4 surfaces** |
+| 4 | **Three orient paths → one** | one implementation, parameterized by frequency/surface | **NOT DONE — 2 of 3** |
 | 5 | Standing health check | one command answers "is anything broken", on a cron, reports to Telegram | **DONE** — `nullsafe-discord/ops/health-check.py` → Telegram, confirmed live by Raziel receiving it *and* by it flagging real findings; `GET /admin/health` returns 9 checks |
 
-**Item 4, precisely.** `loadMindState` now backs **Hearth** (`/mind/state`, cut over 07-29) and
-**`execBotOrient`** (cut over 08-01, 667 → 120 lines). Still holding their own inline queries:
+**Item 4, precisely: 2 of 3.** `loadMindState` now backs **Hearth** (`/mind/state`, cut over 07-29) and
+**`execBotOrient`** (cut over 08-01, 667 → 120 lines). One left:
 
-- **`execSessionOrient` — 654 lines.** This is the **Claude.ai** path: Cypher's own boot in this very loom.
-  It is the biggest remaining divergence and the reason the code comments still say "execSessionOrient and
+- **`execSessionOrient` — 654 lines.** The **Claude.ai** path: Cypher's own boot in this very loom. It is the
+  entire remainder of the item, and the reason the code comments still say "execSessionOrient and
   execBotOrient keep divergent inline copies until they cut over."
-- **`loadOrientData`** (`src/mcp/tools/session_load.ts`) — a fourth path, reached via
-  `librarian/backends/halseth.ts`, never counted in the original "three".
+
+**`loadOrientData` is NOT a fourth orient path — I briefly logged it as one and that was wrong.** It is
+session *open*: an INSERT with a 24h idempotency guard (`src/mcp/tools/session_load.ts:130`). It WRITES, so it
+belongs to the session lifecycle, not to state loading. The plan's original list of three was correct; don't
+carry the phantom into the scope.
+
+**HOW THE REMAINDER GETS DONE — two-step strangler, decided 2026-08-01.** `execSessionOrient` is not shaped
+like `execBotOrient`: alongside ~25 structured fields it returns **`ready_prompt`, a concatenation of ~25
+RENDERED prose blocks**. So the risk is in the rendering, not just the data.
+
+1. **Step 1 — extract the block renderers** into a module of pure functions fed by the CURRENT locals. Zero
+   behaviour change; `ready_prompt` byte-identical by construction. Land and verify this alone. It is a real
+   stopping point.
+2. **Step 2 — repoint those renderers at MindState**, field by field.
+
+**MEASURED FIRST, 2026-08-01: `ready_prompt` is NOT reproducible call-to-call, so the bot cutover's
+byte-identity gate does not transfer.** Two consecutive live orients differ by hundreds to thousands of
+characters. But a block-level diff shows the churn is confined: of **34 blocks, only 4 move**, each for a
+legible reason —
+
+| block | why it moves |
+|---|---|
+| `Active conclusions` | orient WARMS conclusion heat on read, which reorders the next read (deliberate on this path: the companion really is receiving) |
+| `Live conversation threads` | genuinely live traffic |
+| `Guardian` | cards transition `open` → `surfaced` on display |
+| `Motifs` | effective-trust decay + resurrection rotation |
+
+**So the gate for both steps is: every block byte-identical EXCEPT those four.** Diff per block, not on the
+whole string — a whole-string diff on this payload can only ever say "different" and would have made the
+refactor unverifiable. Baseline captured before touching anything (`scratchpad/baseline/<companion>-p2.json`;
+use the SECOND call of a pair, because the first stamps `markAnswersDelivered` and the second legitimately
+returns fewer answered questions).
+
+**Two traps to clear before step 2, both already identified:**
+- **The harness cannot run old-vs-new side by side.** `execSessionOrient` calls `loadOrientData` (a WRITE) and
+  stamps `markAnswersDelivered`. Two live runs open two sessions and double-fire the stamps — and the second
+  run legitimately returns FEWER answered questions, so a naive diff reports a mismatch that is not one.
+  Either capture the old payload ONCE as a fixture, or thread `readOnly` through the session-open path the way
+  `mindOrient` already has it.
+- **`buildOrientPrompt` reads SOMA off `payload.state`**, and the interoception prefix depends on those exact
+  fields. MindState carries them in `felt.soma_floats` WITH ferment baselines. **Confirm the shapes actually
+  correspond** rather than assuming a field rename — this is the `synthesis_summary` pointer-vs-content trap
+  in a different costume, and that one shipped.
 
 Everything needed for that cutover now exists: the contract is at `0.3.0` with wire coverage closed, the
 loader degrades instead of aborting, and the bot cutover proved the method. What it needs is the same 4-step

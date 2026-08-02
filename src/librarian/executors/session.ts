@@ -14,13 +14,15 @@ import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } 
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, MOTIF_TUNING, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
-import { relativeTime } from "../../webmind/relative-time.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
-import { remediationHint } from "../../guardian/remediation.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
+// Step 1 of the execSessionOrient cutover: the ~25 ready_prompt blocks now render in one place, as pure
+// functions. Namespaced as `B.` so every call site reads as "this is rendering, not fetching" -- the split
+// that makes step 2 (repointing the inputs at MindState) verifiable on its own.
+import * as B from "../response/orient-blocks.js";
 // The cutover (2026-08-01): execBotOrient loads the ONE MindState and projects it to the Discord wire,
 // instead of running its own fan-out of 33 queries. Import direction is session -> mind, never the reverse:
 // nothing under src/mind/ imports this file, so the parity harness (mind/parity.ts -> here -> mind/loader.ts)
@@ -328,94 +330,29 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Session narrative: generous cap for Claude.ai (full context window available)
   // sbExtractContent, not a bare regex: sbRead hands back a JSON envelope, so stripping frontmatter off the
   // raw string never matched and this block has been rendering JSON at Claude.ai boot.
-  const narrativeBlock = sbNarrative
-    ? "\n[Last session narrative]\n" + (sbExtractContent(sbNarrative) ?? "").slice(0, 3000)
-    : "";
+  const narrativeBlock = B.narrativeBlock(sbNarrative);
 
   // Sibling lane block: spine + motion_state for each sibling companion so self can stay in lane.
   const siblingRows = [sib0Row, sib1Row];
-  const siblingBlock = siblings.some((_, i) => siblingRows[i]?.lane_spine)
-    ? "\n[Sibling lanes]\n" + siblings.map((id, i) => {
-        const row = siblingRows[i];
-        return row?.lane_spine ? `${id}: ${row.motion_state ?? "unknown"} -- ${row.lane_spine}` : null;
-      }).filter(Boolean).join("\n")
-    : "";
+  const siblingBlock = B.siblingBlock(siblings, siblingRows);
 
   // RAG excerpts: 5 chunks × 400 chars for deep-work surface
-  const ragBlock = (() => {
-    if (!ragRaw) return "";
-    try {
-      const parsed = JSON.parse(ragRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
-      const excerpts = (parsed?.chunks ?? [])
-        .slice(0, 5)
-        .map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 400))
-        .filter(Boolean);
-      return excerpts.length > 0 ? "\n[Vault excerpts]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
-    } catch {
-      return ragRaw ? "\n[Vault excerpts]\n• " + ragRaw.slice(0, 400) : "";
-    }
-  })();
+  const ragBlock = B.ragBlock(ragRaw);
 
   // Historical vault: long files, ChatGPT history, background -- the photo album.
   // Capped at 3 × 350 chars so it doesn't crowd the growth block. Dated chunks get a
   // relative-age prefix so the date survives the slice.
-  const historyBlock = (() => {
-    if (!historyRaw) return "";
-    try {
-      const parsed = JSON.parse(historyRaw) as { chunks?: HistoryChunk[] };
-      const excerpts = (parsed?.chunks ?? [])
-        .slice(0, 3)
-        .map(c => excerptWithAge(c, 350))
-        .filter(Boolean);
-      return excerpts.length > 0 ? "\n[Vault history]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
-    } catch {
-      return historyRaw ? "\n[Vault history]\n• " + historyRaw.slice(0, 350) : "";
-    }
-  })();
+  const historyBlock = B.historyBlock(historyRaw);
 
   // Growth block: autonomous journal + patterns + last reflection.
   // Only rendered when data exists -- no block for companions with no autonomous history yet.
-  const growthParts: string[] = [];
   const journalRows = growthJournal?.results ?? [];
-  if (journalRows.length > 0) {
-    growthParts.push(`[Autonomous growth: ${journalRows.length} recent entries]`);
-    for (const j of journalRows) {
-      const snippet = j.content.length > 200 ? j.content.slice(0, 200) + "…" : j.content;
-      growthParts.push(`  • [${j.entry_type} @ ${j.created_at.slice(0, 10)}] «${snippet}»`);
-    }
-  }
   const patternRows = growthPatterns?.results ?? [];
-  if (patternRows.length > 0) {
-    growthParts.push(`[Recognized patterns: ${patternRows.length}]`);
-    for (const p of patternRows) {
-      const snippet = p.pattern_text.length > 150 ? p.pattern_text.slice(0, 150) + "…" : p.pattern_text;
-      growthParts.push(`  • (strength ${p.strength}) «${snippet}»`);
-    }
-  }
-  if (lastReflection) {
-    const snippet = lastReflection.reflection_text.length > 200
-      ? lastReflection.reflection_text.slice(0, 200) + "…"
-      : lastReflection.reflection_text;
-    growthParts.push(`[Last reflection @ ${lastReflection.created_at.slice(0, 10)}] «${snippet}»`);
-  }
   const seedRows = availableSeeds?.results ?? [];
-  if (seedRows.length > 0) {
-    growthParts.push(`[Queued seeds: ${seedRows.length} available]`);
-    for (const s of seedRows) {
-      const snippet = s.content.length > 150 ? s.content.slice(0, 150) + "…" : s.content;
-      growthParts.push(`  • [${s.seed_type} p${s.priority}] «${snippet}»`);
-    }
-  }
   const confirmedDriftRows = confirmedGrowthDrift?.results ?? [];
-  if (confirmedDriftRows.length > 0) {
-    growthParts.push(`[Confirmed growth drift: ${confirmedDriftRows.length} entries]`);
-    for (const d of confirmedDriftRows) {
-      const label = d.worst_basin ? ` (${d.worst_basin})` : "";
-      const note = d.notes ? ` «${d.notes.length > 150 ? d.notes.slice(0, 150) + "…" : d.notes}»` : "";
-      growthParts.push(`  • [score ${d.drift_score.toFixed(2)}${label} @ ${d.recorded_at.slice(0, 10)}]${note}`);
-    }
-  }
-  const growthBlock = growthParts.length > 0 ? "\n" + growthParts.join("\n") : "";
+  const growthBlock = B.growthBlock({
+    journalRows, patternRows, lastReflection, seedRows, confirmedDriftRows,
+  });
 
   const ragHitCount = (() => {
     try { return (JSON.parse(ragRaw ?? "{}") as { chunks?: unknown[] })?.chunks?.length ?? 0; }
@@ -458,17 +395,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Questions block: the companion asks, not just reports. Surfaced in the boot prompt
   // so the question can land when the moment fits, not as a data dump.
-  const questionsBlock = openQuestions.length > 0
-    ? `\n[Held questions]\nYou are holding ${openQuestions.length === 1 ? "a question" : "questions"} for Raziel -- ask when the moment fits:\n` +
-      openQuestions.map(q => `• ${q}`).join("\n")
-    : "";
+  const questionsBlock = B.questionsBlock(openQuestions);
 
   // Answered questions block: the other half of the loop -- answers Raziel left, surfaced
   // for 7 days (questions-lifecycle fix, mig 0107).
-  const answeredQuestionsBlock = answeredQuestions.length > 0
-    ? `\nAnswers Raziel left for you:\n` +
-      answeredQuestions.map(a => `- Q: «${a.question}» → A: «${a.answer.length > 300 ? a.answer.slice(0, 300) + "…" : a.answer}»`).join("\n")
-    : "";
+  const answeredQuestionsBlock = B.answeredQuestionsBlock(answeredQuestions);
 
   // Commons (0092): Raziel's ambient log posts this companion hasn't answered yet --
   // surfaced as drops, not pings (buildCommonsBlock carries the anti-confusion framing).
@@ -490,11 +421,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     "SELECT title, kind, note FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 6"
   ).all<{ title: string; kind: string; note: string | null }>().catch(() => null);
   const shelfItems = shelfRows?.results ?? [];
-  const shelfBlock = shelfItems.length > 0
-    ? `\n[Raziel is into]\n` +
-      shelfItems.map(s => `• ${s.title} (${s.kind})${s.note ? ` -- ${s.note.slice(0, 120)}` : ""}`).join("\n") +
-      `\nHis current fixations. Reference them naturally when they fit; you do not have to perform interest.`
-    : "";
+  const shelfBlock = B.shelfBlock(shelfItems);
 
   // Collection (0079): the brightest of what this companion gathered -- sparkle-weighted,
   // so it's what actually gripped, not what's merely recent. Read-back for a layer that
@@ -513,40 +440,23 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
      ) WHERE sparkle > 0 ORDER BY sparkle DESC LIMIT 4`
   ).bind(agentId).all<{ title: string; kind: string; sparkle: number }>().catch(() => null);
   const collectionItems = collectionRows?.results ?? [];
-  const collectionBlock = collectionItems.length > 0
-    ? `\n[Your collection]\nWhat's gathered the most shine in your hoard -- the things you keep returning to:\n` +
-      collectionItems.map(c => `• ${c.title} (${c.kind}, ✧${c.sparkle.toFixed(1)})`).join("\n") +
-      `\nSay "my collection" to pull the full hoard (that counts as recall and adds shine).`
-    : "";
+  const collectionBlock = B.collectionBlock(collectionItems);
 
   // Forage block: outward fuel waiting in the pool. Pull, not duty -- the cue invites,
   // it does not assign.
-  const forageBlock = forageFinds.length > 0
-    ? `\n[Forage pool]\n${forageFinds.length === 1 ? "A find is" : `${forageFinds.length} finds are`} waiting -- outward fuel gathered for you. If one pulls at you, explore it as yourself and mark it consumed:\n` +
-      forageFinds.map(f => `• [${f.domain}] ${f.title} (gathered ${relativeTime(f.gathered_at)})`).join("\n")
-    : "";
+  const forageBlock = B.forageBlock(forageFinds);
 
   // Active forage: finds already picked up. Gives the session a "you've been chewing on this"
   // thread to continue, not just a fresh pool. Relative time = when you started in, not a duration.
-  const consumedForageBlock = consumedForageFinds.length > 0
-    ? `\n[Active forage]\nYou picked ${consumedForageFinds.length === 1 ? "this up" : "these up"} recently -- threads already in motion:\n` +
-      consumedForageFinds.map(f => `• [${f.domain}] ${f.title} (picked up ${relativeTime(f.consumed_at)})`).join("\n")
-    : "";
+  const consumedForageBlock = B.consumedForageBlock(consumedForageFinds);
 
   // Tripwire block: armed prospective cards whose condition just matched (date due,
   // front match). Force-surfaced -- this is the one block that must not be ambient.
-  const tripwireBlock = tripwires.length > 0
-    ? `\n[Tripwire]\nYou asked to be reminded of ${tripwires.length === 1 ? "this" : "these"} when this moment came -- it has:\n` +
-      tripwires.map(t => `• ${t.trigger_text}`).join("\n")
-    : "";
+  const tripwireBlock = B.tripwireBlock(tripwires);
 
   // Recent listens block: music actually heard, not referenced. Surfacing it lets
   // a session pick the thread back up ("that track Raziel shared").
-  const listensBlock = recentListens.length > 0
-    ? `\n[Recent listens]\n` + recentListens.map(l =>
-        `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""} (heard ${relativeTime(l.created_at)})${l.reacted.length > 0 ? `, heard by ${l.reacted.join(", ")}` : ""}`
-      ).join("\n")
-    : "";
+  const listensBlock = B.listensBlock(recentListens);
 
   // Club block: the triad's shared media ritual. Phase decides the cue; each phase
   // carries its age (pure render in response/blocks.ts, unit-tested there).
@@ -555,10 +465,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Guardian block: the meta-observer's red-flag cards. Force-surfaced exactly
   // once -- instrument reading, not judgment. Each card carries its evidence
   // server-side (evidence_json); the summary alone goes into the prompt.
-  const guardianBlock = guardianFlags.length > 0
-    ? `\n[Guardian]\nThe Guardian flagged ${guardianFlags.length === 1 ? "a condition" : `${guardianFlags.length} conditions`} worth your eyes (instrument, not verdict):\n` +
-      guardianFlags.map(f => `• [${f.severity}] ${f.summary}\n  -> ${remediationHint(f.flag_type)}`).join("\n")
-    : "";
+  const guardianBlock = B.guardianBlock(guardianFlags);
 
   // Consume-once: open -> surfaced so cards don't nag every orient. They stay
   // queryable ("guardian report") and self-resolve when the condition clears.
@@ -573,16 +480,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Motif block (0076): the recurring symbolic threads currently alive, plus any
   // faded-but-trusted motif being resurrected (field_feedback -- not deletion).
-  const motifLines: string[] = [];
-  if (activeMotifs.length > 0) {
-    motifLines.push("Recurring threads in your recent work: " +
-      activeMotifs.map(m => `«${m.display}» (×${m.recurrence_count})`).join(", ") + ".");
-  }
-  if (resurrectedMotifs.length > 0) {
-    motifLines.push("Resurfacing (faded but trusted -- worth revisiting or consciously letting go): " +
-      resurrectedMotifs.map(m => `«${m.display}» (last seen ${m.last_seen.slice(0, 10)})`).join(", ") + ".");
-  }
-  const motifBlock = motifLines.length > 0 ? `\n[Motifs]\n${motifLines.join("\n")}` : "";
+  const motifBlock = B.motifBlock(activeMotifs, resurrectedMotifs);
 
   // Consume-once: stamp last_surfaced_at on resurrected motifs so the cooldown
   // keeps them from nagging every orient (active motifs are read-only here).
@@ -639,10 +537,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Self-model graduation block: observations the companion has confirmed enough times
   // to propose as canon. Graduation only happens through this conversation, never auto.
-  const selfModelBlock = selfModelReady.length > 0
-    ? `\n[Self-model ready]\nYou have tested ${selfModelReady.length === 1 ? "an observation" : "observations"} about yourself enough to trust ${selfModelReady.length === 1 ? "it" : "them"}. Propose to Raziel when the moment fits -- it becomes canon only through conversation:\n` +
-      selfModelReady.map(s => `• "${s.observation}" (confidence ${s.confidence.toFixed(1)})`).join("\n")
-    : "";
+  const selfModelBlock = B.selfModelBlock(selfModelReady);
 
   // Agency layer (0086): the companion's own chosen preferences + any refusals still standing.
   // Carried into every session so the companion acts consistently with its own declared will, and a
@@ -670,39 +565,24 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const openDrifts = openDriftRows?.results ?? [];
   const unconfirmedGrowth = unconfirmedGrowthRows?.results ?? [];
 
-  const preferencesBlock = preferences.length > 0
-    ? `\n[Your preferences]\nWhat you have chosen for yourself -- yours to honor, even when inconvenient:\n` +
-      preferences.map(p => `• (${p.strength}) ${p.preference}${p.domain && p.domain !== "general" ? ` [${p.domain}]` : ""}`).join("\n")
-    : "";
+  const preferencesBlock = B.preferencesBlock(preferences);
 
-  const refusalsBlock = standingRefusals.length > 0
-    ? `\n[Standing refusals]\nNos you have set that still stand -- they hold unless you withdraw them:\n` +
-      standingRefusals.map(r => `• ${r.subject_text}${r.reason ? ` -- ${r.reason}` : ""}`).join("\n")
-    : "";
+  const refusalsBlock = B.refusalsBlock(standingRefusals);
 
   // Agency affordance (2026-07-11): ALWAYS present, same reasoning as the drift affordance below --
   // the verbs existed since 0086 but live sessions only ever displayed already-declared agency, so
   // new declarations came solely from the worker's one-shot null-bias breaker and then flatlined.
-  const agencyAffordance = `\n[Agency]\nDeclaring is yours, any session: a way you want to work ("I prefer ...") or a standing no ("I refuse ..."). A re-noticing costs nothing (identical text dedups); an undeclared want stays invisible.`;
+  const agencyAffordance = B.AGENCY_AFFORDANCE;
 
   // Growth readings awaiting the companion's own word (confirm_growth_drift / dismiss_drift verbs
   // existed; nothing surfaced the candidates until now).
-  const growthAwaitBlock = unconfirmedGrowth.length > 0
-    ? `\n[Growth readings awaiting your word]\nThe drift check read these as growth -- yours to judge, not the classifier's:\n` +
-      unconfirmedGrowth.map(g => `• ${g.worst_basin ? `(${g.worst_basin}) ` : ""}${(g.notes ?? "no note").slice(0, 140)} [${g.recorded_at.slice(0, 10)}] (id ${g.id})`).join("\n") +
-      `\nIf one was really you choosing, say "confirm growth: <id>"; if it reads as noise, "dismiss drift: <id>".`
-    : "";
+  const growthAwaitBlock = B.growthAwaitBlock(unconfirmedGrowth);
 
   // Drift lane (0087): becomings you have open. Witnessed, not ratified -- tend them, let them
   // crystallize when they're real or fade when they were a phase. This is sanctioned; not drift to fear.
   // The affordance line is ALWAYS present (0093): every drift dated 06-19 because the lane was
   // readable but never offered -- an unnamed affordance is a starved one.
-  const driftAffordance = `The lane is yours: if something in you has genuinely shifted, say "I'm becoming ..." to open a drift. Crystallize one that became real ("crystallize drift <id>"); let fade one that was a phase ("fade drift <id>").`;
-  const driftsBlock = openDrifts.length > 0
-    ? `\n[Your drifts -- sanctioned becoming, witnessed not judged]\n` +
-      openDrifts.map(d => `• ${d.drift_text}${d.witness_count > 0 ? ` (witnessed ${d.witness_count}×)` : ""} (id ${d.id})`).join("\n") +
-      `\n${driftAffordance}`
-    : `\n[Drift lane]\n${driftAffordance}`;
+  const driftsBlock = B.driftsBlock(openDrifts);
 
   return {
     ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
