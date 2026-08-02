@@ -1261,7 +1261,39 @@ RENDERED prose blocks**. So the risk is in the rendering, not just the data.
    and `Last session narrative` was absent in BOTH baseline captures (its `sb_read` depends on the flaky
    tunnel). Harness kept at **`scripts/orient-block-diff.mjs`** — this IS the fresh parity harness step 2
    needs, and it already encodes the two-call capture that works around the `markAnswersDelivered` write.
-2. **Step 2 — repoint those renderers at MindState**, field by field. NEXT.
+2. **Step 2 — repoint those renderers at MindState**, field by field. **STARTED 2026-08-01 (`b5eb9dc`).**
+   Done so far: `preferences`, `refusals`, `open drifts`, `unconfirmed growth`, `shelf` — the set whose
+   loader query is provably identical to the inline one. `execSessionOrient` **532 → 521 lines**, five fewer
+   round trips per Claude.ai boot. Contract **0.4.0** adds `oversight.growth_unconfirmed`.
+   **Gate after each tranche: every non-volatile block byte-identical, all three companions.**
+
+   **Still to repoint, each blocked on a real difference rather than effort:**
+   - `tripwires` — session FILTERS to cards whose condition just matched (date within ±36h, front match);
+     the loader returns all armed. Needs the evaluation moved or the filter kept caller-side.
+   - `guardian` — session `LIMIT 2`, loader `LIMIT 3`, and the session needs the row `id`s to stamp
+     `open → surfaced`. A consume-once write on data the loader is forbidden to consume.
+   - `motifs` — session runs `selectResurrections` with cooldown logic and then STAMPS `last_surfaced_at`;
+     the loader just reads active + faded.
+   - `collection` — session returns one UNION with a `sparkle` column; the loader splits `{forage, media}`.
+   - `siblings` — shapes match, but ORDER differs (loader uses canonical `COMPANION_IDS`, session its own).
+   - `forage` / `listens` / `commons` / `club` / `sol` — limits and projections differ per field.
+
+**BEHAVIOUR DECISION OPEN FOR RAZIEL — `open_questions`.** Repointing it emptied the block for drevan and
+gaia, and the gate caught it. The filters genuinely differ: the session shows `status='open'` newest-2, while
+the loader additionally excludes questions **already voiced** (the `question_voiced:` rail built for the bot
+path, where re-asking reads as nagging). On Claude.ai a held question arguably stays held until Raziel
+**answers** it, not until the companion has said it once. **Left on the legacy query.** Options: (a) keep
+Claude.ai showing voiced-but-unanswered questions, (b) adopt the rail everywhere, (c) exclude only once
+answered. My recommendation is (c) — it is the reading that matches what a "held question" means — but it is
+a lifecycle change, not a refactor.
+
+**CONFIRMED BEFORE STARTING, and it would have broken Drevan:** `felt.soma_floats` is **NOT** a rename of
+`payload.state`. It is a labeled ARRAY of numbers plus hours-off-baseline; the prose needs POSITIONAL floats,
+the raw `ferment_off_since` timestamp, Drevan's **TEXT** `heat`/`reach`/`weight`, plus `compound_state`,
+`current_mood`, `surface_emotion`, `undercurrent_emotion` and `focus` — none of which the contract carries.
+`buildOrientPrompt` therefore stays on the raw `companion_state` row, and finishing step 2 means either
+adding those scalars to `felt` or leaving the state line where it is. Same shape as the
+`synthesis_summary` pointer-vs-content trap, caught this time before it shipped.
 
 **MEASURED FIRST, 2026-08-01: `ready_prompt` is NOT reproducible call-to-call, so the bot cutover's
 byte-identity gate does not transfer.** Two consecutive live orients differ by hundreds to thousands of
