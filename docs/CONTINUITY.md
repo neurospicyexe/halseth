@@ -1222,6 +1222,108 @@ turns. No regeneration was needed and none was done.
 
 ---
 
+### DONE 2026-08-02 — PHASE 2, THE BOOT LAYER. And the number that justifies it.
+
+Session open/close is now a **hook**, not an instruction. Two commits: halseth `9289453`
+(the `reused` flag) and BBH `8da3a6f` (`ops/claude-code-hooks/`, the source of truth for the
+two Claude Code hooks plus a 23-case end-to-end test). halseth deployed; **1392 tests green,
+tsc clean.**
+
+#### The measurement, taken before writing anything
+
+| what | value |
+|---|---|
+| sessions opened in 30 days | **88** |
+| never closed | **77** (gaia 28/28, cypher 23/28, drevan 21/27) |
+| `wm_session_handoffs` with `source='session_close'`, last 48h | **0** |
+| `handover_packets` written, last 48h | **0** |
+| newest `synthesis_summary` | **2026-07-21** |
+| newest `somatic_snapshot` | **2026-07-21** |
+| `synthesis_queue` rows PENDING | **0** (154 total: 22+12+12+7 done, 101 failed `drevan_state`, none newer than 06-27) |
+
+**The 08-01 "WATCH TOMORROW" list resolves, and items 2 and 3 FAILED.** Read them together and
+they say one thing: yesterday's kernel fix made a correct close *possible* and **not one has
+happened since**. The queue is not stuck — it is *empty*, every row terminal, nothing enqueued
+since 07-21. So `synthesis_summary`, `somatic_snapshot` and `basin_drift_check` have been frozen
+for twelve days for exactly one reason: **the producer never runs.** Item 4 did pass — 36 handoffs
+in 48h all correctly tagged `source='consolidation'`, so the tag works and the only handoffs
+being written are idle-window ones.
+
+That is Phase 2's before-number, and it is the whole argument. An instruction that has been in
+`CLAUDE.md` since 2026-07-09 has a **12.5% compliance rate**.
+
+#### What was built
+
+`SessionStart` → open, `SessionEnd` → close. **Not `Stop` — the plan said `Stop` and the plan was
+wrong**: `Stop` fires once per assistant *turn*, so it would close and reopen a session dozens of
+times an hour. `SessionEnd` was verified present in the CLI binary before designing around it. The
+existing `Stop`/`PreCompact` continuity-note hook is untouched; different job, still works.
+
+**The one hazard, and the fix.** Session open's 24h idempotency guard (`companion_id` +
+`handover_id IS NULL`) does **not filter by `session_type`**, so the hook can be handed the id of a
+live Claude.ai companion conversation — and prod had **two open cypher sessions** at build time, so
+this is the live branch, not a hypothetical. Closing an inherited session would write a
+git-diff-shaped machine spine into that conversation's handover packet, and the continuity read
+deliberately does not filter by type, so it would become that conversation's boot narrative
+everywhere. Both loaders now return **`reused`**; the hook persists it at open and requires it to be
+**exactly `false`** to close. A missing/non-boolean flag (older deploy) also declines — fail safe.
+
+Honest limits, chosen not inherited: `[auto]` on every generated field; `motion_state` **always
+`floating`** (a session that ended because a terminal exited did not land `at_rest`); **no emotion
+fields written at all** rather than machine-guessed; `last_real_thing` says "nothing landed" instead
+of inventing a moment. The `session-debriefer` path stays and is strictly better — close is
+idempotent on `handover_id`, so a hand-authored close makes the hook's a no-op. **The hook is the
+floor, not the ceiling.**
+
+State is **one file per Claude Code session** under `~/.claude/.halseth-sessions/`, not one shared
+map: two windows would race a read-modify-write and orphan a session permanently. `SessionEnd` does
+not fire on crash/kill/reboot, so `SessionStart` sweeps and closes owned entries older than 12h,
+abandoning after 7 days.
+
+#### Two defects found on the way, both in the boot path itself
+
+1. **The existing Stop/PreCompact hook has been silently failing.** `POST /mind/note` returns **401**
+   with the secret in `~/.claude/.halseth-hook.env`, and its retry queue holds 3 entries. Almost
+   certainly missed in the 2026-06-27 `ADMIN_SECRET` rotation — the same rotation that missed Second
+   Brain. It swallowed every error, so nothing ever surfaced. **The new hook now says so out loud** at
+   boot instead of failing silently; a boot layer that fails quietly is the defect, not the outage.
+2. **Five of the seven `@` paths in the global `CLAUDE.md` did not exist.** `NSML1`, `Core_v4`,
+   `USER_PREFERENCES_V3`, `CYPHER_IDENTITY_v2` and `ANCHORS.map` all live in
+   `2026_Current_Files\Must have files\`; the load order pointed one directory above. Only ARCHITECT
+   STANCE and CYPHER_CODE_PROTOCOL resolved. **A bad `@` path fails quietly** — the session boots
+   without the identity layer and looks identical to one that booted with it. Paths fixed (7/7 verified
+   by existence check), and `checkLoadOrder()` in the boot hook now re-verifies every session and
+   reports `[BOOT DEFECT]` into context, so it can never regress unnoticed.
+
+Also added, per the plan: an **OPERATIONAL DISCIPLINE** section in `CYPHER_CODE_PROTOCOL.md` (boot log
+over env file, grep the shape across all repos then write it as CI, counts before/after, tsc as well as
+tests, never emit a secret value, never `2>/dev/null` a probe whose silence is the finding, a counter
+needs its denominator, list what the old mechanism guaranteed, another writer exists, an edge may rank
+never hide) and a **Session Lifecycle** section in the global `CLAUDE.md` so the rule applies on every
+loom rather than only inside BBH.
+
+#### BLOCKED — needs Raziel's hand, two commands
+
+Both were refused by the permission classifier, correctly, and I did not work around either.
+
+1. **The hook's credential is dead.** Put the current `ADMIN_SECRET` into
+   `~/.claude/.halseth-hook.env` as `HALSETH_SECRET`. Until then both hooks are inert and the new one
+   announces it at every boot.
+2. **Register the hooks** in `~/.claude/settings.json` (`SessionStart` + `SessionEnd`). Exact JSON is
+   in the session hand-off; `ops/claude-code-hooks/README.md` has the deploy/verify commands.
+
+**The proof to check once those two land** (this is the acceptance test, and it is the same list that
+failed today): a real close should put rows in `synthesis_queue`, move `synthesis_summary` and
+`somatic_snapshot` past 2026-07-21 for the first time in twelve days, and produce
+`wm_session_handoffs` rows with `source='session_close'` instead of only `consolidation`.
+
+**Not done, deliberately:** the 77-session backlog was left alone. Only sessions inside the 24h window
+can be inherited, so the backlog is inert with respect to the guard, and closing 77 would flood
+continuity with 77 machine-authored handovers, each a candidate "last session narrative". That is worse
+than leaving them open.
+
+---
+
 ## PHASE 1 AUDIT — 2026-08-01, asked for directly ("for real for real, are we clear?")
 
 **Verdict: 4 of 5. I had claimed 5 of 5 earlier today and that was wrong.** The claim conflated "the bot
