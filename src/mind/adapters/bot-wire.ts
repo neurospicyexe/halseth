@@ -65,6 +65,19 @@ export type BotWirePayload = Record<string, unknown>;
 const text = (v: unknown, n: number): string => String(v ?? "").slice(0, n);
 
 /**
+ * Unvoiced, non-blank, newest 2 -- exactly the set the loader's WHERE clause used to hand back.
+ *
+ * ONE list, used for BOTH `open_questions` and `open_question_ids`, because those two are aligned BY INDEX:
+ * a surface that voices question N stamps id N. They previously applied DIFFERENT predicates -- `.filter(Boolean)`
+ * on the text (which keeps a whitespace-only question, since `"   "` is truthy) versus `.trim()` on the ids
+ * (which drops it) -- so a single blank question would shift the arrays against each other and voicing one
+ * would stamp a different question's id. The comment above them already said the predicates must match; they
+ * did not. Filtering once here makes that unrepresentable rather than merely warned about.
+ */
+const BOT_QUESTIONS = (ms: MindState) =>
+  ms.oversight.questions.filter(q => !q.voiced && (q.question ?? "").trim()).slice(0, 2);
+
+/**
  * Project a MindState onto the Discord bot wire format.
  *
  * `agentId` is passed separately rather than read off `ms.companion_id` only because two fields need to know
@@ -132,10 +145,13 @@ export function botWireFromMindState(
       return body ? `${body} (id ${p.id})` : `(id ${p.id})`;
     }),
 
-    open_questions: ms.oversight.questions.map(q => text(q.question, 300)).filter(Boolean),
-    // Aligned by INDEX with open_questions, so a surface that voices one can stamp it. The same
-    // `.filter(question non-empty)` must gate both lists or the alignment silently shifts.
-    open_question_ids: ms.oversight.questions.filter(q => (q.question ?? "").trim()).map(q => q.id),
+    // DISCORD APPLIES THE ANTI-NAG RAIL. The loader now carries every open question with a `voiced` flag
+    // rather than filtering; the bots boot ~20x more often than Claude.ai, so re-serving one the companion
+    // already said out loud IS nagging here even though it is not on a conversational surface. Same content
+    // both places, different presentation -- which is what the contract says renderers are for.
+    open_questions: BOT_QUESTIONS(ms).map(q => text(q.question, 300)),
+    // Aligned by INDEX with open_questions -- same source list, no second predicate. See BOT_QUESTIONS.
+    open_question_ids: BOT_QUESTIONS(ms).map(q => q.id),
     answered_questions: ms.oversight.answered_questions,
 
     forage_finds: ms.world.forage.pool.slice(0, 2).map(f => ({

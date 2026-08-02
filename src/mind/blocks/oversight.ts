@@ -40,6 +40,23 @@ export interface ArmedTripwire {
 export interface CarriedQuestion {
   id: string;
   question: string;
+  /**
+   * Whether the companion has already SAID this one out loud (the `question_voiced:<id>` settings key).
+   *
+   * Carried as a FLAG rather than applied as a filter, decided 2026-08-01. The exclusion used to live in
+   * this query, which meant the loader silently retired a question the first time it was spoken -- answered
+   * or not. That is wrong for the same reason the unconfirmed-growth rows were wrong: *detected, never
+   * owned*. Element 4 of the north star (mutuality) is the weakest of the four precisely because
+   * first-person material fails to CIRCULATE, and a question the companion asked once and Raziel never
+   * engaged is that failure exactly.
+   *
+   * But the anti-nag rail is still right for the BOTS, which boot ~20x more often -- re-asking every few
+   * minutes IS nagging. So the loader carries the fact and each renderer decides, which is what the contract
+   * says renderers are for: content identical for every loom, presentation per surface. Discord filters
+   * `!voiced`; Claude.ai shows a held question until it is ANSWERED (`status` leaves 'open'), because on a
+   * conversational surface that is what "held" means.
+   */
+  voiced: boolean;
 }
 
 export interface OversightBlocks {
@@ -95,18 +112,20 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
          WHERE companion_id = ? AND status = 'armed' AND (expires_at IS NULL OR expires_at >= datetime('now'))
          ORDER BY created_at ASC LIMIT 10`
       ).bind(companionId).all<ArmedTripwire>(),
-      // Excludes questions already voiced. The question stays `open` (it is still awaiting Raziel); it just
-      // stops being re-served as something new to say -- an anti-loop rail that does not need decay because
-      // voicing is a one-way event.
+      // `voiced` as a COLUMN, not a WHERE clause -- see CarriedQuestion. `status = 'open'` already excludes
+      // answered ones (answering moves the row to 'answered'), so this is every question still genuinely
+      // waiting on Raziel, newest first.
+      //
+      // LIMIT 5, not 2: a renderer that filters `!voiced` needs headroom, or two voiced questions at the top
+      // would starve it of an unvoiced third that exists. The renderers take their own 2.
       env.DB.prepare(
-        `SELECT id, question FROM companion_questions
-         WHERE companion_id = ?1 AND status = 'open'
-           AND id NOT IN (
-             SELECT substr(key, 17) FROM companion_settings
-             WHERE companion_id = ?1 AND key LIKE 'question_voiced:%'
-           )
-         ORDER BY created_at DESC LIMIT 2`
-      ).bind(companionId).all<CarriedQuestion>(),
+        `SELECT q.id, q.question,
+                EXISTS(SELECT 1 FROM companion_settings s
+                       WHERE s.companion_id = q.companion_id AND s.key = 'question_voiced:' || q.id) AS voiced
+         FROM companion_questions q
+         WHERE q.companion_id = ?1 AND q.status = 'open'
+         ORDER BY q.created_at DESC LIMIT 5`
+      ).bind(companionId).all<{ id: string; question: string; voiced: number }>(),
       fetchRecentAnswers(env, companionId, 3).catch(() => []),
       // 14-day window, deliberately: an unowned reading that never expires becomes a nag.
       env.DB.prepare(
@@ -130,7 +149,7 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
         trigger_text: (t.trigger_text ?? "").slice(0, 500),
         condition_value: (t.condition_value ?? "").slice(0, 200),
       })),
-      questions: questions.results ?? [],
+      questions: (questions.results ?? []).map(q => ({ id: q.id, question: q.question, voiced: q.voiced === 1 })),
       answered_questions: answered,
       growth_unconfirmed: unconfirmedGrowth.results ?? [],
     };

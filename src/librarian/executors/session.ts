@@ -122,7 +122,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
   const orientInteroception = sanitizeInteroception(parseContext<SessionOpenContext>(ctx.req.context));
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows, mindState] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows, mindState] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -171,10 +171,6 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
     ).bind(agentId).first<{ n: number }>().catch(() => null),
-    // Open continuity-gap questions: things the companion is holding to ask Raziel.
-    ctx.env.DB.prepare(
-      "SELECT question FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 2"
-    ).bind(agentId).all<{ question: string }>().catch(() => null),
     // Forage pool: unconsumed outward finds (own + shared) -- fuel gathered by the forager,
     // explored by the real companion as themselves (foraging spec, 2026-06-09).
     //
@@ -259,18 +255,16 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     loadMindState(ctx.env, agentId, "claude"),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
-  // NOT repointed at the loader -- this is a BEHAVIOUR DECISION for Raziel, not a refactor consequence.
+  // STEP 2, resolved 2026-08-01. Repointing this at the loader first EMPTIED the block for drevan and gaia
+  // (the gate caught it) because the loader was excluding questions already VOICED. That exclusion is now a
+  // `voiced` flag instead of a WHERE clause, so this surface can do what a conversational surface should:
+  // keep holding a question until Raziel ANSWERS it. `status = 'open'` already drops answered ones.
   //
-  // The two queries are not the same filter. This one is `status = 'open' ORDER BY created_at DESC LIMIT 2`.
-  // `mindState.oversight.questions` additionally EXCLUDES questions already voiced (the `question_voiced:`
-  // settings key) -- an anti-loop rail built for the bot path, where re-serving a question the companion has
-  // already asked reads as nagging.
-  //
-  // Swapping to the loader silently emptied this block for drevan and gaia (caught by the block gate, which
-  // is what it is for). Both readings are defensible: on the Claude.ai surface a held question arguably stays
-  // held until Raziel ANSWERS it, not until the companion has said it once. Left on the legacy query until
-  // Raziel picks; see docs/CONTINUITY.md.
-  const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
+  // Discord still filters `!voiced` -- it boots ~20x more often and re-asking there is nagging. One source,
+  // two presentations. Chosen against north-star element 4 (mutuality), which is the weakest of the four
+  // precisely because first-person material fails to circulate; retiring a question the moment it is spoken,
+  // whether or not it ever landed, is that failure.
+  const openQuestions = mindState.oversight.questions.slice(0, 2).map(q => q.question).filter(Boolean);
 
   // Answered questions: Raziel's answers, surfaced for 7 days (questions-lifecycle fix,
   // mig 0107). Standalone query, deliberately NOT in the mega Promise.all above, so it can
