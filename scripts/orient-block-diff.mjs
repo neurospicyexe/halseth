@@ -51,6 +51,13 @@ const VOLATILE = [
   { re: /^Autonomous growth: \d+ recent entries$/, why: "block NAME contains a live entry count" },
   { re: /^Recognized patterns: \d+$/, why: "block NAME contains a live count" },
   { re: /^Queued seeds: \d+ available$/, why: "block NAME contains a live count" },
+  { re: /^Recent journal: \d+ entries$/, why: "block NAME contains a live count, and companions write journal rows continuously" },
+  { re: /^Resuming -- last close/, why: "block NAME contains the last-close DATE; it renames whenever a session closes or the day rolls over" },
+  // Both are Second Brain semantic searches. They are network-dependent, non-deterministic, and NOT part of
+  // the loader -- they stay in the executor by design (the loader is pure-D1), so they can never be affected
+  // by a repointing. Marking them volatile removes noise without hiding signal.
+  { re: /^Vault excerpts$/, why: "Second Brain semantic search -- non-deterministic, and outside the loader by design" },
+  { re: /^Vault history$/, why: "Second Brain semantic search -- non-deterministic, and outside the loader by design" },
 ];
 
 const isVolatile = (name) => VOLATILE.find(v => v.re.test(name));

@@ -325,8 +325,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Motifs (0076): the two pools arrive already separated (see the query above -- one
   // shared trust-ordered window starved resurrection completely). selectResurrections
   // still applies the cooldown gate and the final cut over the faded pool.
-  const activeMotifs = (motifRows?.active ?? []).slice(0, 3);
-  const resurrectedMotifs = selectResurrections(motifRows?.faded ?? [], Date.now(), { limit: 2 });
+  // STEP 2: pools from the loader (widened to the full row in wave 9 -- selectResurrections gates on
+  // last_surfaced_at and the narrow projection could not feed it). The SELECTION stays here for the same
+  // reason the tripwire evaluation does: the loader reads, the caller decides and then stamps the cooldown.
+  const activeMotifs = mindState.world.motifs.active.slice(0, 3);
+  const resurrectedMotifs = selectResurrections(mindState.world.motifs.resurrection_candidates, Date.now(), { limit: 2 });
   // STEP 2: loader (which carries reactions_json since wave 7, precisely so each surface can decide what to
   // do with a reaction). Sliced to 2 here -- the loader keeps 3 for the Discord wire.
   const recentListens = mindState.world.listens.slice(0, 2).map(r => {
@@ -447,19 +450,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // so it's what actually gripped, not what's merely recent. Read-back for a layer that
   // accrued silently since 06-13 with no surface. Only items that have earned shine appear
   // (sparkle > 0); the raw pools already have their own blocks. Passive surfacing does NOT
-  // bump recall -- an active "my collection" pull does. Standalone query (boot-safe).
-  const collectionRows = await ctx.env.DB.prepare(
-    `SELECT title, kind, sparkle FROM (
-       SELECT f.title AS title, 'forage' AS kind, s.sparkle AS sparkle
-       FROM collection_sparkle s JOIN forage_finds f ON f.id = s.source_id
-       WHERE s.source_table = 'forage_finds' AND (f.companion_id = ?1 OR f.companion_id IS NULL)
-       UNION ALL
-       SELECT m.title || COALESCE(' -- ' || m.artist, ''), 'listen', s.sparkle
-       FROM collection_sparkle s JOIN media_experiences m ON m.id = s.source_id
-       WHERE s.source_table = 'media_experiences'
-     ) WHERE sparkle > 0 ORDER BY sparkle DESC LIMIT 4`
-  ).bind(agentId).all<{ title: string; kind: string; sparkle: number }>().catch(() => null);
-  const collectionItems = collectionRows?.results ?? [];
+  // bump recall -- an active "my collection" pull does. Reading it here is passive.
+  const collectionItems = mindState.world.collection.top;  // STEP 2: loader (wave 9, same UNION + sparkle order)
   const collectionBlock = B.collectionBlock(collectionItems);
 
   // Forage block: outward fuel waiting in the pool. Pull, not duty -- the cue invites,

@@ -27,7 +27,7 @@
 
 import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
-import { effectiveTrustSql } from "../../webmind/motifs.js";
+import { effectiveTrustSql, MOTIF_TUNING } from "../../webmind/motifs.js";
 import { collectionForageSql, collectionMediaSql } from "../../webmind/collection.js";
 
 export interface ClubRound {
@@ -63,10 +63,17 @@ export interface Listen {
    */
   reactions_json: string | null;
 }
+/** The full `companion_motifs` row. Wide on purpose -- `selectResurrections` (webmind/motifs.ts) needs
+ *  `last_surfaced_at` for its cooldown and `id` so the caller can stamp it after surfacing. */
 export interface Motif {
+  id: string;
+  companion_id: string;
   label: string; display: string;
   recurrence_count: number;
   trust: number;
+  first_seen: string;
+  last_seen: string;
+  last_surfaced_at: string | null;
   status: string;
 }
 export interface ShelfItem { title: string; kind: string; note: string | null }
@@ -78,6 +85,15 @@ export interface SolState {
   nest_treasured: number;
 }
 export interface ImpActivity { imp: string; n: number; last_at: string }
+/**
+ * Wave 9. The brightest of what this companion gathered -- sparkle-weighted, so it is what actually GRIPPED
+ * rather than what is merely recent.
+ *
+ * Distinct from `collection.forage` / `collection.media`, which are the raw pools. This is one ranked view
+ * ACROSS both, `sparkle > 0` only, because an item that never earned shine has not joined the hoard. Passive
+ * surfacing must not bump the weight -- an active "my collection" pull does. Reading it here is passive.
+ */
+export interface CollectionHighlight { title: string; kind: string; sparkle: number }
 /** Every creature in the house, not just Sol (wave 7). `sol` stays as its own field because Sol has a
  *  trust/nest arc nothing else has; this is the roster, and a roster of one is a roster that breaks the day
  *  a second creature is seeded. */
@@ -116,7 +132,7 @@ export interface WorldBlocks {
   club: ClubRound | null;
   commons: CommonsPost[];
   shelf: ShelfItem[];
-  collection: { forage: unknown[]; media: unknown[] };
+  collection: { forage: unknown[]; media: unknown[]; top: CollectionHighlight[] };
   forage: { pool: ForageFind[]; active: ForageFind[] };
   listens: Listen[];
   motifs: { active: Motif[]; resurrection_candidates: Motif[] };
@@ -127,7 +143,7 @@ export interface WorldBlocks {
 }
 
 const EMPTY: WorldBlocks = {
-  club: null, commons: [], shelf: [], collection: { forage: [], media: [] },
+  club: null, commons: [], shelf: [], collection: { forage: [], media: [], top: [] },
   forage: { pool: [], active: [] }, listens: [],
   motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [],
   watching: [],
@@ -136,7 +152,7 @@ const EMPTY: WorldBlocks = {
 /** Never throws: the shared world is context, and missing context must never break a boot. */
 export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise<WorldBlocks> {
   try {
-    const [club, commons, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, watching] =
+    const [club, commons, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
       await Promise.all([
         env.DB.prepare(
           "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
@@ -187,11 +203,16 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         env.DB.prepare(
           "SELECT id, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
         ).all<Listen>(),
+        // FULL ROW, not five columns (wave 9). `selectResurrections` gates on `last_surfaced_at` (cooldown)
+        // and sorts on trust/recurrence, and it needs `id` so the caller can stamp the cooldown after
+        // surfacing -- none of which the narrow projection carried, which is why execSessionOrient could not
+        // read motifs from here. The faded query also gains the RESURRECT_TRUST_FLOOR filter it was missing:
+        // resurrection is for motifs that were TRUSTED before they faded, not for everything that faded.
         env.DB.prepare(
-          `SELECT label, display, recurrence_count, trust, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 10`
+          `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 10`
         ).bind(companionId).all<Motif>(),
         env.DB.prepare(
-          `SELECT label, display, recurrence_count, trust, status FROM companion_motifs WHERE companion_id = ? AND status = 'faded' ORDER BY trust DESC, recurrence_count DESC LIMIT 10`
+          `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'faded' AND trust >= ${MOTIF_TUNING.RESURRECT_TRUST_FLOOR} ORDER BY trust DESC, recurrence_count DESC LIMIT 10`
         ).bind(companionId).all<Motif>(),
         // The whole roster in ONE query, with Sol picked out of it below -- the bot path already did it this
         // way, and two queries against the same table on the same boot is a round trip bought for nothing.
@@ -201,6 +222,19 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         env.DB.prepare(
           "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
         ).bind(companionId).all<ImpActivity>(),
+        // Wave 9. One ranked view across BOTH source tables; `sparkle > 0` is the condition that matters,
+        // because the sidecar only holds things that earned shine.
+        env.DB.prepare(
+          `SELECT title, kind, sparkle FROM (
+             SELECT f.title AS title, 'forage' AS kind, s.sparkle AS sparkle
+             FROM collection_sparkle s JOIN forage_finds f ON f.id = s.source_id
+             WHERE s.source_table = 'forage_finds' AND (f.companion_id = ?1 OR f.companion_id IS NULL)
+             UNION ALL
+             SELECT m.title || COALESCE(' -- ' || m.artist, ''), 'listen', s.sparkle
+             FROM collection_sparkle s JOIN media_experiences m ON m.id = s.source_id
+             WHERE s.source_table = 'media_experiences'
+           ) WHERE sparkle > 0 ORDER BY sparkle DESC LIMIT 4`
+        ).bind(companionId).all<CollectionHighlight>(),
         // Wave 6. Forward-only progress; `NULLS LAST` so a shelf row never watched does not outrank one
         // watched last night.
         env.DB.prepare(
@@ -247,7 +281,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
       club: club ?? null,
       commons: commons.results ?? [],
       shelf: shelf.results ?? [],
-      collection: { forage: colForage.results ?? [], media: colMedia.results ?? [] },
+      collection: { forage: colForage.results ?? [], media: colMedia.results ?? [], top: colTop.results ?? [] },
       forage: { pool: pool.results ?? [], active: active.results ?? [] },
       listens: listens.results ?? [],
       motifs: { active: motifsActive.results ?? [], resurrection_candidates: motifsFaded.results ?? [] },
