@@ -1306,13 +1306,51 @@ The 31 are not all orient — that function also opens the session, seeds, and w
 the loader.** What remains inline is: the session-open payload, the two Second Brain searches, the
 consume-once writes, and `buildOrientPrompt`'s state line.
 
-**THE ONE THING LEFT IN ITEM 4:** `buildOrientPrompt` still reads the raw `companion_state` row for the
-header, because the contract does not carry those scalars — positional floats, the raw `ferment_off_since`
-timestamp, Drevan's **TEXT** `heat`/`reach`/`weight`, `compound_state`, `current_mood`, `surface_emotion`,
-`undercurrent_emotion`, `focus`. Either add them to `felt` (a `felt.state` block) or leave the header
-sourcing its own row. This is a genuine design choice, not leftover work: the contract deliberately models
-felt state as LABELED floats with baselines, and the prose renderer wants the raw row. Whichever way it goes,
-decide it rather than let it drift.
+**THE LAST DESIGN CHOICE — SETTLED 2026-08-01 (`2cc949b`): `buildOrientPrompt` keeps reading the raw
+`companion_state` row, and that is correct, not a compromise.** Checking where the row comes from answered
+it: `loadOrientData` — **session OPEN** — already runs `SELECT * FROM companion_state` and returns it as
+`payload.state`. The header consumes a row the lifecycle has already fetched. Adding a `felt.state` block
+would **add a redundant read**, not remove one, and would duplicate in the contract a shape the contract
+deliberately models better (labeled floats with baselines and drift-from-seed, not positional columns). The
+header was never a fourth aggregator; it is session-open data riding along.
+
+Also removed in the same commit: the two sibling `companion_state` lookups, orphaned when `siblingRows` moved
+to the loader — only the destructure names were left.
+
+---
+
+# PHASE 1 IS CLOSED — 2026-08-01
+
+**All five items done.** Item 4, the one that took the day, is `mindOrient` + `execBotOrient` +
+`execSessionOrient` all reading `loadMindState`.
+
+| surface | before | after |
+|---|---|---|
+| `execBotOrient` | 667 lines, 33 own queries | **120 lines**, adapter over the loader |
+| `execSessionOrient` | 472 code lines, 38 queries | **310 code lines, 29 queries** |
+| Hearth | own aggregator | `/mind/state` |
+
+(Code lines are blanks-and-comments stripped, so the commentary added along the way does not flatter them.
+The 29 remaining queries are not orient — that function also opens the session, seeds, and writes.)
+
+**What made it safe, and what to reuse next time:**
+- **Split rendering from fetching first.** The prose renderers moved out unchanged
+  (`response/orient-blocks.ts`) before a single input was repointed, so each half was provable alone.
+- **The gate must match the payload's nature.** `ready_prompt` is not reproducible call-to-call, so
+  byte-identity of the whole string was never available; a per-BLOCK diff was
+  (`scripts/orient-block-diff.mjs`). Every volatile entry carries its reason, or the list becomes a place to
+  hide failures.
+- **Read the SQL before trusting the loader.** Twice the loader was the DEGRADED copy and a naive repoint
+  would have silently re-broken an authored fix: forage (plain LIFO, the exact shape 07-09 replaced) and
+  guardian summary truncation. "Unify onto the new thing" is not the same as "the new thing is right".
+- **Loading is not consuming, and loading is not evaluating.** Guardian stamps, motif cooldowns and tripwire
+  condition-matching all stay caller-side. The loader reads; the caller decides, then writes.
+- **The harness needs its own gate.** Mine had two bugs: it accepted a routing miss as a valid capture
+  (loud), and it could capture against a stale isolate and pass by comparing stale to stale (silent, and far
+  worse). Confirm a change you KNOW you made actually shows up before believing a PASS.
+
+**Next: Phase 2** (`docs/PLAN-2026-08-to-12-solid-by-december.md`) — the boot layer: session open/close as a
+hook rather than something either of us has to remember.
 
    Plus `buildOrientPrompt`'s state line, which needs the raw `companion_state` scalars the contract does
    not carry (see the soma trap above) — either add them to `felt` or leave the header where it is.
