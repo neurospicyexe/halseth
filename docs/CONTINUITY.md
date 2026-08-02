@@ -1253,10 +1253,15 @@ carry the phantom into the scope.
 like `execBotOrient`: alongside ~25 structured fields it returns **`ready_prompt`, a concatenation of ~25
 RENDERED prose blocks**. So the risk is in the rendering, not just the data.
 
-1. **Step 1 — extract the block renderers** into a module of pure functions fed by the CURRENT locals. Zero
-   behaviour change; `ready_prompt` byte-identical by construction. Land and verify this alone. It is a real
-   stopping point.
-2. **Step 2 — repoint those renderers at MindState**, field by field.
+1. ~~**Step 1 — extract the block renderers**~~ **DONE 2026-08-01 (`68c68bc`), deployed and gated.**
+   `execSessionOrient` **654 → 532 lines**; ~25 blocks now live in `src/librarian/response/orient-blocks.ts`
+   as pure functions. Every body verbatim. **Gate: 95 non-volatile blocks across three companions, ALL
+   byte-identical, zero unexpected changes.** Two flagged diffs were chased rather than waved off and both
+   proved environmental — `SOMA arc` is rendered by `response/builder.ts`, which the commit never touched,
+   and `Last session narrative` was absent in BOTH baseline captures (its `sb_read` depends on the flaky
+   tunnel). Harness kept at **`scripts/orient-block-diff.mjs`** — this IS the fresh parity harness step 2
+   needs, and it already encodes the two-call capture that works around the `markAnswersDelivered` write.
+2. **Step 2 — repoint those renderers at MindState**, field by field. NEXT.
 
 **MEASURED FIRST, 2026-08-01: `ready_prompt` is NOT reproducible call-to-call, so the bot cutover's
 byte-identity gate does not transfer.** Two consecutive live orients differ by hundreds to thousands of
