@@ -199,6 +199,9 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
 
   return {
     session_id: sessionId,
+    // See loadSessionData: same flag, same reason. Both session-open paths must
+    // report it or a caller that switches between them silently loses the guard.
+    reused: skipInsert,
     companion: {
       id: input.companion_id,
       ...COMPANION_IDENTITY[input.companion_id as CompanionId],
@@ -422,6 +425,12 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
 
   return {
     session_id: sessionId,
+    // True when the idempotency guard handed back a session someone else opened.
+    // Load-bearing for the Claude Code boot hook (2026-08-02): a caller that only
+    // INHERITED a session must not close it, or a machine-authored spine lands on
+    // a live Claude.ai conversation's handover packet. Without this flag the two
+    // cases are indistinguishable from the response.
+    reused: skipInsert,
     companion: {
       id: input.companion_id,
       ...COMPANION_IDENTITY[input.companion_id as CompanionId],

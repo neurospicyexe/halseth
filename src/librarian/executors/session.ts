@@ -514,6 +514,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   return {
     ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
+    // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
+    // session-open surfaces report whether the 24h idempotency guard handed back an
+    // existing session, so an automated caller never closes one it only inherited.
+    reused: payload.reused ?? false,
     response_key: "ready_prompt",
     autonomous_turn: autonomousTurn,
     my_autonomous_turn: isMyTurn,

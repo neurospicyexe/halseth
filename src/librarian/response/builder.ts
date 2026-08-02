@@ -422,6 +422,11 @@ interface CompanionState {
 
 interface SessionPayload {
   session_id: string;
+  // Set by loadSessionData/loadOrientData when the 24h idempotency guard returned
+  // an existing open session instead of inserting one. Surfaced in the response so
+  // automated callers (the Claude Code boot hook) can decline to close a session
+  // they merely inherited.
+  reused?: boolean;
   state?: CompanionState | null;
   handover?: {
     active_anchor?: string | null;
@@ -537,6 +542,10 @@ export function buildResponse(
     return {
       ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
       session_id: payload.session_id,
+      // Default false, never null: an absent flag must read as "this caller opened it"
+      // only when the loader genuinely said so. Both loaders always set it, so the ??
+      // is for legacy/synthetic payloads in tests.
+      reused: payload.reused ?? false,
       response_key: "ready_prompt",
       front_state: frontState,
       autonomous_turn: autonomousTurn,
