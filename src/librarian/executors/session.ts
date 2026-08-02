@@ -284,7 +284,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // when the current front matches. Keyword cards are bot-side only (no message here).
   const nowMs = Date.now();
   const frontLower = (ctx.frontState ?? "").toLowerCase();
-  const tripwires = (armedTriggerRows?.results ?? []).filter(t => {
+  // STEP 2: the loader carries every ARMED tripwire; the evaluation stays here, because it depends on
+  // ctx.frontState and the current clock -- per-request context the loader has no business knowing. Loading
+  // is not evaluating, same split as loading is not consuming.
+  const tripwires = mindState.oversight.tripwires.filter(t => {
     if (t.condition_type === "date") {
       const target = Date.parse(t.condition_value);
       return Number.isFinite(target) && Math.abs(target - nowMs) <= 36 * 3600 * 1000;
