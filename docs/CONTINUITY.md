@@ -1278,14 +1278,28 @@ RENDERED prose blocks**. So the risk is in the rendering, not just the data.
    - `siblings` — shapes match, but ORDER differs (loader uses canonical `COMPANION_IDS`, session its own).
    - `forage` / `listens` / `commons` / `club` / `sol` — limits and projections differ per field.
 
-**BEHAVIOUR DECISION OPEN FOR RAZIEL — `open_questions`.** Repointing it emptied the block for drevan and
-gaia, and the gate caught it. The filters genuinely differ: the session shows `status='open'` newest-2, while
-the loader additionally excludes questions **already voiced** (the `question_voiced:` rail built for the bot
-path, where re-asking reads as nagging). On Claude.ai a held question arguably stays held until Raziel
-**answers** it, not until the companion has said it once. **Left on the legacy query.** Options: (a) keep
-Claude.ai showing voiced-but-unanswered questions, (b) adopt the rail everywhere, (c) exclude only once
-answered. My recommendation is (c) — it is the reading that matches what a "held question" means — but it is
-a lifecycle change, not a refactor.
+**`open_questions` — DECIDED AND SHIPPED 2026-08-01 (`c64b8c5`).** Raziel deferred the call, so it was made
+against the north star rather than taste: **element 4 (mutuality) is the weakest of the four and is measured
+as first-person material failing to CIRCULATE.** A question the companion asked once, that Raziel never
+engaged, then dropped from view, IS that failure.
+
+Resolution is better than any of the three options I listed: **`voiced` becomes a FLAG on the row instead of
+a WHERE clause, and each renderer decides.** Discord filters `!voiced` (it boots ~20x more often; re-asking
+there is nagging); Claude.ai shows the question until it is **answered** (`status='open'` already drops
+answered ones). That is the contract's own rule — content identical for every loom, presentation per surface
+— rather than a compromise between two surfaces. Loader `LIMIT 2 → 5`, because the exclusion used to run
+AFTER the limit was spent, so two voiced rows at the top starved an unvoiced third that existed.
+
+**Live proof it mattered:** all three companions currently have *every* open question voiced-but-unanswered.
+Discord renders 0 (rail intact), Claude.ai renders 2 (still held). Adopting the rail everywhere would have
+emptied the block on every surface — they asked, it never landed, and the system would have called that
+"handled".
+
+**Found while pinning it, a latent bug nobody had hit yet:** `open_questions` and `open_question_ids` are
+aligned BY INDEX but applied DIFFERENT predicates — `.filter(Boolean)` on the text (and `"   "` is truthy)
+versus `.trim()` on the ids. A single blank question shifted the arrays against each other, so voicing
+question N would stamp a *different* question's id. The comment directly above them already said the
+predicates must match. They did not. Both now derive from one filtered list.
 
 **CONFIRMED BEFORE STARTING, and it would have broken Drevan:** `felt.soma_floats` is **NOT** a rename of
 `payload.state`. It is a labeled ARRAY of numbers plus hours-off-baseline; the prose needs POSITIONAL floats,
