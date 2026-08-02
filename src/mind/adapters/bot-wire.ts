@@ -191,7 +191,8 @@ export function botWireFromMindState(
     club_round: ms.world.club,
     watching: ms.world.watching,
     supersede_candidates: ms.beliefs.supersede_candidates,
-    guardian_flags: ms.oversight.guardian_cards.slice(0, 2),
+    // Discord trims the summary to its own 300; the loader carries 400 for the Claude.ai card.
+    guardian_flags: ms.oversight.guardian_cards.slice(0, 2).map(g => ({ ...g, summary: text(g.summary, 300) })),
     motifs: ms.world.motifs.active.slice(0, 3).map(m => ({
       label: m.label, display: text(m.display, 120), recurrence_count: m.recurrence_count, trust: m.trust,
     })),

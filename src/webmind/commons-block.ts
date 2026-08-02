@@ -11,13 +11,17 @@ import { relativeTime } from "./relative-time.js";
 
 export interface CommonsPostRow {
   id: string;
-  context: string;       // 'global' | 'club:<id>' | 'shelf:<id>'
+  /** 'global' | 'club:<id>' | 'shelf:<id>'. NULLABLE -- the column allows null and this type claimed it did
+   *  not, so `contextLabel` would have thrown on `.startsWith` for any post written without one. Nothing hit
+   *  it yet; typing it honestly is what surfaced it. */
+  context: string | null;
   body: string;
   created_at: string;
 }
 
 /** Human label for where a post lives, so the companion has context without it being a ping. */
-function contextLabel(context: string): string {
+function contextLabel(context: string | null): string {
+  if (!context) return "";
   if (context.startsWith("club:")) return " (he left this on a club round)";
   if (context.startsWith("shelf:")) return " (on something he's currently into)";
   return "";

@@ -161,8 +161,24 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         // just for absence of errors.
         env.DB.prepare(collectionForageSql()).bind(companionId, 5).all(),
         env.DB.prepare(collectionMediaSql()).bind(5).all(),
+        // ONE FRESH + ONE AGING, not LIFO. This block shipped as a plain `ORDER BY gathered_at DESC LIMIT 3`
+        // -- which is exactly the shape execSessionOrient REPLACED on 2026-07-09, because pure LIFO against a
+        // forager adding ~1 find/companion/day means the tail is never drained: `stale:forage` ("oldest
+        // unconsumed past 7 days") was structurally unclearable and Gaia had 20 unconsumed finds with the
+        // oldest sitting since 06-11. The loader was the DEGRADED copy again; taking the newest AND the
+        // oldest drains the tail while keeping the pool current. UNION dedups when only one find exists, so
+        // the 2-row shape holds. Adopted for every surface: the starvation applies to the bots too.
         env.DB.prepare(
-          "SELECT id, title, domain, summary, gathered_at AS at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 3"
+          `SELECT id, title, domain, summary, at FROM (
+             SELECT id, title, domain, summary, gathered_at AS at FROM forage_finds
+              WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
+              ORDER BY gathered_at DESC LIMIT 1)
+           UNION
+           SELECT id, title, domain, summary, at FROM (
+             SELECT id, title, domain, summary, gathered_at AS at FROM forage_finds
+              WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
+              ORDER BY gathered_at ASC LIMIT 1)
+           ORDER BY at DESC`
         ).bind(companionId).all<ForageFind>(),
         env.DB.prepare(
           "SELECT id, title, domain, summary, consumed_at AS at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"

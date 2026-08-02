@@ -27,6 +27,7 @@ import * as B from "../response/orient-blocks.js";
 // instead of running its own fan-out of 33 queries. Import direction is session -> mind, never the reverse:
 // nothing under src/mind/ imports this file, so the parity harness (mind/parity.ts -> here -> mind/loader.ts)
 // stays acyclic.
+import { COMPANION_IDS } from "../../companions.js";
 import { loadMindState } from "../../mind/loader.js";
 import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
 
@@ -96,7 +97,11 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
 
 export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
-  const siblings = (["cypher", "drevan", "gaia"] as const).filter(c => c !== agentId);
+  // CANONICAL ORDER. This used to hardcode ["cypher","drevan","gaia"] -- the exact duplicate-of-
+  // COMPANION_IDS drift that companions.ts exists to prevent, and the same one execBotOrient had.
+  // COMPANION_IDS is drevan, cypher, gaia, so adopting it changes the ORDER the two sibling lines render in
+  // for some companions; deliberate, and why `[Sibling lanes]` appears in the gate on this commit.
+  const siblings = COMPANION_IDS.filter(c => c !== agentId);
 
   // Phase 1: gather topic seeds from sources that exist independently of session-close discipline.
   // spine is required by session_close (most reliable); continuity_notes accumulate mid-session.
@@ -294,32 +299,34 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     observation: (r.observation ?? "").slice(0, 600),
     confidence: r.confidence,
   }));
-  const forageFinds = (forageRows?.results ?? []).map(r => ({
+  // STEP 2: loader, which now runs the same newest+oldest UNION this path introduced (it had been the
+  // degraded LIFO copy). `at` is the loader's name for the timestamp -- gathered_at here, consumed_at below.
+  const forageFinds = mindState.world.forage.pool.map(r => ({
     id: r.id,
     title: (r.title ?? "").slice(0, 150),
     domain: r.domain,
     summary: (r.summary ?? "").slice(0, 400),
-    gathered_at: r.gathered_at,
+    gathered_at: r.at ?? "",
   }));
-  const consumedForageFinds = (consumedForageRows?.results ?? []).map(r => ({
+  const consumedForageFinds = mindState.world.forage.active.map(r => ({
     id: r.id,
     title: (r.title ?? "").slice(0, 150),
     domain: r.domain,
     summary: (r.summary ?? "").slice(0, 400),
-    consumed_at: r.consumed_at,
+    consumed_at: r.at ?? "",
   }));
-  const guardianFlags = (guardianFlagRows?.results ?? []).map(f => ({
-    id: f.id,
-    flag_type: f.flag_type,
-    severity: f.severity,
-    summary: (f.summary ?? "").slice(0, 400),
-  }));
+  // STEP 2: loader. Same filter (status IN open/surfaced), same LIMIT 3, same 400-char summary. The ids
+  // still come through, which is what the consume-once open -> surfaced stamp below needs -- the loader
+  // READS the cards, this executor CONSUMES them. That split is the contract, not a workaround.
+  const guardianFlags = mindState.oversight.guardian_cards;
   // Motifs (0076): the two pools arrive already separated (see the query above -- one
   // shared trust-ordered window starved resurrection completely). selectResurrections
   // still applies the cooldown gate and the final cut over the faded pool.
   const activeMotifs = (motifRows?.active ?? []).slice(0, 3);
   const resurrectedMotifs = selectResurrections(motifRows?.faded ?? [], Date.now(), { limit: 2 });
-  const recentListens = (mediaRows?.results ?? []).map(r => {
+  // STEP 2: loader (which carries reactions_json since wave 7, precisely so each surface can decide what to
+  // do with a reaction). Sliced to 2 here -- the loader keeps 3 for the Discord wire.
+  const recentListens = mindState.world.listens.slice(0, 2).map(r => {
     let reactions: Record<string, string> = {};
     try { reactions = JSON.parse(r.reactions_json ?? "{}") as Record<string, string>; } catch { /* malformed -> empty */ }
     return {
@@ -342,7 +349,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const narrativeBlock = B.narrativeBlock(sbNarrative);
 
   // Sibling lane block: spine + motion_state for each sibling companion so self can stay in lane.
-  const siblingRows = [sib0Row, sib1Row];
+  // STEP 2: lanes from the loader, looked up BY ID rather than by position -- the renderer pairs
+  // siblings[i] with siblingRows[i], so an order mismatch here would attribute one sibling's spine to the
+  // other. Same list and same order by construction, but the lookup makes that not matter.
+  const siblingRows = siblings.map(id =>
+    mindState.relational.siblings.find(s => s.companion_id === id) ?? null);
   const siblingBlock = B.siblingBlock(siblings, siblingRows);
 
   // RAG excerpts: 5 chunks × 400 chars for deep-work surface
@@ -420,7 +431,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
        AND id NOT IN (SELECT reply_to FROM commons_posts WHERE author = ?1 AND reply_to IS NOT NULL)
      ORDER BY created_at DESC LIMIT 5`
   ).bind(agentId).all<CommonsPostRow>().catch(() => null);
-  const commonsPosts: CommonsPostRow[] = commonsRows?.results ?? [];
+  const commonsPosts: CommonsPostRow[] = mindState.world.commons;  // STEP 2: loader (same query, LIMIT 5)
   const commonsBlock = buildCommonsBlock(commonsPosts);
 
   // Shelf (0094): Raziel's active fixations, so the triad can reference what he's into in

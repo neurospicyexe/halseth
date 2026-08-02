@@ -139,7 +139,11 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
     return {
       guardian_cards: (flags.results ?? []).map(f => ({
         ...f,
-        summary: (f.summary ?? "").slice(0, 300),
+        // 400, the superset: execSessionOrient kept 400 and the bot kept 300. Per-field superset means the
+        // loader carries the fuller text and the DISCORD renderer trims to its own 300 -- the same
+        // one-source-two-presentations rule as `voiced`. Truncating in the loader would have silently
+        // shortened the Claude.ai card.
+        summary: (f.summary ?? "").slice(0, 400),
         remediation: remediationHint(f.flag_type),
       })),
       tripwires: (triggers.results ?? []).map(t => ({

@@ -14,6 +14,10 @@
 //   node scripts/orient-block-diff.mjs capture <dir>    # snapshot all three companions
 //   node scripts/orient-block-diff.mjs diff <a> <b>     # compare two snapshot dirs
 //
+// DO NOT capture the "after" snapshot in the same breath as `npm run deploy`. Cloudflare can still serve the
+// previous isolate for a few seconds, so the snapshot is really a second "before" and the diff passes by
+// comparing stale to stale. Let the deploy settle, or confirm a field you KNOW you changed actually moved.
+//
 // CAPTURE TAKES TWO CALLS PER COMPANION AND KEEPS THE SECOND. The first stamps `markAnswersDelivered`, so the
 // second legitimately returns fewer answered questions -- comparing a first call against a second would report
 // a mismatch that is not one. This is the same "the harness cannot run old-vs-new live" trap that
@@ -63,14 +67,38 @@ function splitBlocks(prompt) {
   return out;
 }
 
-async function orient(companion, secret) {
+/**
+ * A CAPTURE MUST BE A REAL ORIENT OR NOTHING.
+ *
+ * Both of the harness's own failure modes, hit on 2026-08-01 within minutes of each other:
+ *
+ *  1. The Librarian occasionally misroutes "orient" and answers
+ *     `{response_key:"witness", witness:"I don't know how to handle that yet."}` -- HTTP 200, no
+ *     `ready_prompt`. Recorded as a capture, that reads as EVERY BLOCK VANISHING, and the diff dutifully
+ *     reported 22 regressions that did not exist.
+ *  2. Capturing immediately after `npm run deploy` can hit a worker isolate still running the OLD code, so
+ *     the "after" snapshot is really a second "before" -- the diff then compares stale to stale and PASSES
+ *     for the wrong reason. That is the more dangerous one: flaw 1 shouts, flaw 2 is silent.
+ *
+ * A gate that cannot tell "no data" from "changed data" is not a gate. Retry on an empty payload, and fail
+ * loudly rather than writing one to disk.
+ */
+async function orient(companion, secret, attempt = 1) {
   const res = await fetch(`${URL_BASE}/librarian`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
     body: JSON.stringify({ companion_id: companion, request: "orient" }),
   });
   if (!res.ok) throw new Error(`orient ${companion}: HTTP ${res.status}`);
-  return res.json();
+  const body = await res.json();
+  if (!body?.ready_prompt) {
+    if (attempt >= 4) {
+      throw new Error(`orient ${companion}: no ready_prompt after ${attempt} attempts -- last response: ${JSON.stringify(body).slice(0, 200)}`);
+    }
+    console.warn(`  retry ${companion} (attempt ${attempt}): no ready_prompt -- ${JSON.stringify(body).slice(0, 120)}`);
+    return orient(companion, secret, attempt + 1);
+  }
+  return body;
 }
 
 async function capture(dir) {
