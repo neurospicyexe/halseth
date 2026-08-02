@@ -127,7 +127,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
   const orientInteroception = sanitizeInteroception(parseContext<SessionOpenContext>(ctx.req.context));
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows, mindState] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows, mindState] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -141,13 +141,6 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
     semanticSearch(ctx.env, ragQuery).catch(() => null),
-    // Sibling lane: PK lookup on companion_state -- no heap scan, no index needed.
-    ctx.env.DB.prepare(
-      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
-    ).bind(siblings[0]).first<{ motion_state: string; lane_spine: string }>().catch(() => null),
-    ctx.env.DB.prepare(
-      "SELECT motion_state, lane_spine FROM companion_state WHERE companion_id = ?"
-    ).bind(siblings[1]).first<{ motion_state: string; lane_spine: string }>().catch(() => null),
     // Growth: last 3 journal entries from autonomous work
     ctx.env.DB.prepare(
       "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
