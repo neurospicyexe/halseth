@@ -1288,15 +1288,31 @@ RENDERED prose blocks**. So the risk is in the rendering, not just the data.
    clock — per-request context the loader has no business knowing. **Loading is not evaluating**, the same
    split as loading-is-not-consuming one level up.
 
-   **TWO LEFT, both needing the loader widened first (not effort — a real shape difference):**
-   - `motifs` — session runs `selectResurrections` (cooldown gate) and then STAMPS `last_surfaced_at`. The
-     loader reads active + faded but selects only `label, display, recurrence_count, trust, status`; it is
-     missing `id`, `last_seen` and `last_surfaced_at`, which `selectResurrections` needs. Widen the query,
-     then the selection can run caller-side exactly like the tripwire evaluation does.
-   - `collection` — NOT a shape mismatch, a different QUERY. Session runs one UNION over
-     `collection_sparkle` joined to both source tables, `sparkle > 0 ORDER BY sparkle DESC LIMIT 4`,
-     returning `{title, kind, sparkle}`. The loader's `world.collection` is the forage/media pools
-     themselves and carries no sparkle. Needs a `collection.top` (or similar) added to the contract.
+   **Tranche 4 done (`0c507ad`) — `motifs` + `collection`. THE REPOINTING IS COMPLETE.**
+   - `motifs` — loader widened to the full row (`selectResurrections` gates on `last_surfaced_at` and the
+     caller needs `id` to stamp the cooldown; 5 columns could not feed it), plus the
+     `RESURRECT_TRUST_FLOOR` filter the faded query was missing. Selection stays caller-side.
+   - `collection` — added `collection.top` to the contract: one ranked view across both source tables from
+     `collection_sparkle` where `sparkle > 0`. `world.collection` was the raw pools and carried no sparkle.
+
+**`execSessionOrient`, measured (blanks and comments stripped, so the added commentary does not flatter it):**
+
+| | before step 1 | now |
+|---|---|---|
+| code lines | 472 | **316** |
+| DB queries | 38 | **31** |
+
+The 31 are not all orient — that function also opens the session, seeds, and writes. **Twelve reads moved to
+the loader.** What remains inline is: the session-open payload, the two Second Brain searches, the
+consume-once writes, and `buildOrientPrompt`'s state line.
+
+**THE ONE THING LEFT IN ITEM 4:** `buildOrientPrompt` still reads the raw `companion_state` row for the
+header, because the contract does not carry those scalars — positional floats, the raw `ferment_off_since`
+timestamp, Drevan's **TEXT** `heat`/`reach`/`weight`, `compound_state`, `current_mood`, `surface_emotion`,
+`undercurrent_emotion`, `focus`. Either add them to `felt` (a `felt.state` block) or leave the header
+sourcing its own row. This is a genuine design choice, not leftover work: the contract deliberately models
+felt state as LABELED floats with baselines, and the prose renderer wants the raw row. Whichever way it goes,
+decide it rather than let it drift.
 
    Plus `buildOrientPrompt`'s state line, which needs the raw `companion_state` scalars the contract does
    not carry (see the soma trap above) — either add them to `felt` or leave the header where it is.
