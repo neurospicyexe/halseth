@@ -1302,7 +1302,90 @@ needs its denominator, list what the old mechanism guaranteed, another writer ex
 never hide) and a **Session Lifecycle** section in the global `CLAUDE.md` so the rule applies on every
 loom rather than only inside BBH.
 
-#### BLOCKED — needs Raziel's hand, two commands
+#### UNBLOCKED SAME DAY — and the twelve-day freeze is over
+
+Both blockers cleared, plus a third that was hiding behind them.
+
+**The credential was not the only thing broken: `ssh vps` was dead.** The installer's VPS
+step failed with `Load key berrybytes_ed25519.pem: error in libcrypto`. The key is **not
+corrupt and not truncated** — decoded it has the right `openssh-key-v1\0` magic,
+`cipher: none`, a valid `ssh-ed25519` pubkey blob, and parses with **zero bytes remaining**.
+The fault was entirely in how it was written down: **4 literal spaces inside the base64**,
+CRLF endings, one unwrapped line. `ops/fix-ssh-key.mjs` rewrites the encoding only and
+asserts the decoded bytes are byte-identical before writing.
+
+Two traps inside that one fix, both worth keeping:
+- **Node's base64 decoder silently ignores stray characters.** Every check said the key was
+  fine because Node was skipping the spaces; OpenSSH does not, and its error names
+  *libcrypto* rather than whitespace. **A decoder that tolerates junk will confidently tell
+  you a broken file is healthy.**
+- **EPERM on write, as the owner, outside any sandbox.** Not the read-only *attribute* —
+  the **ACL**: inheritance disabled, owner granted `Read, Synchronize` only. That is the
+  standard Windows SSH-key hardening and it is correct, so the script grants write via
+  `icacls`, rewrites, and **restores read-only**. The rollback path needed the same
+  treatment or a failed run would leave a broken key. **The tell was that the backup file
+  was created successfully while the rewrite failed** — directory writable, file not, which
+  ruled out the sandbox and pointed at the file ACL.
+
+**Credential: the live secret is 64 chars; the stale one was 20.** A real rotation, not a
+typo. `ops/claude-code-hooks/install.mjs` pulls it from the VPS, **probes it live, and only
+writes on a 200**, so a wrong value can never displace a working one. Confirmed end-to-end
+by the old Stop hook's 3 queued notes draining on the next turn.
+
+**Verified live in prod, the inherit branch:** `SessionStart` reported *"Joined an
+already-open cypher session (94e691e7) … will NOT close it"*, and `SessionEnd` wrote
+nothing — `handover_packets` 353 → 353, target `handover_id` still null, 0 `[auto]` packets,
+`lane_spine` unchanged. The guard held on live data.
+
+**Then the bigger finding: 30 of the last 30 sessions are OPEN.** Not just cypher — all
+three companions, right across the clock, including a daily automated cypher open at 03:00.
+Nothing anywhere closes a session: not Discord, not the crons, not Claude.ai, not the
+autonomous worker. **So Phase 2 alone does not drain the 77** — the hook owns the Claude
+Code lane only, and because something opens a cypher session most days, it will usually
+inherit and sit read-only. The systemic fix is either making the automated openers close or
+a server-side sweeper. **That is the Phase 2 follow-up, and it is now the load-bearing one.**
+
+**`94e691e7` closed by hand** (`ops/close-session.mjs`, a reusable instrument for the
+backlog). It was a machine boot, not a conversation — `front_state: unknown`, no notes, with
+a `day_distillation` note landing 5s after open — so there was no human narrative to
+overwrite and no emotion fields were supplied.
+
+**THE PROOF, after twelve days:**
+
+| | before | after |
+|---|---|---|
+| `synthesis_summary` newest | 2026-07-21 | **2026-08-02 15:24:31** |
+| `somatic_snapshot` newest | 2026-07-21 | **2026-08-02 15:24:58** |
+| `handover_packets` | 353 | 354 |
+| `wm_session_handoffs source='session_close'` | 0 in 48h | 1 |
+| `synthesis_queue` pending | 0 | 4 queued → all `done` |
+
+**The chain was never broken. Nothing was feeding it.**
+
+#### And the close path had a live bug that only a real close could expose
+
+One close enqueued **two** `somatic_snapshot` jobs, with different dedup keys:
+`cypher:94e691e7-…:somatic_snapshot` and `cypher:2026-08-02T15:23:48.722Z:somatic_snapshot`.
+
+`enqueueSomaticSnapshot` is called twice per close by design — executor and backend — and
+its own comment says the UNIQUE `dedup_key` collapses them. That needs both callers to
+derive the *same* key. The 07-31 change to a per-occasion key was right on its own terms
+(the old per-companion key meant one soma reading per companion **forever**, since a
+completed job still occupies the key) and **silently dropped the second guarantee**: the
+backend caller passes no `sessionId` and fell through to a timestamp, which can never
+collide, so it never dedupes with anything. Fixed by passing `params.session_id`, which
+`sessionClose` already had. `replacement-must-keep-the-guarantees`, exactly — the old key
+guaranteed two things and the replacement was checked against one.
+
+`src/__tests__/somatic-enqueue-dedup.test.ts` pins all four cases including a reproduction
+of the divergent key and the timestamp fallback (which must stay: a caller with no session
+must not be permanently blocked). 1397 green, tsc clean, deployed.
+
+**My own first draft of that test file passed vitest and failed `tsc` with four errors.**
+Tests green is not build green — it is in the OPERATIONAL DISCIPLINE section I wrote earlier
+the same day, and it still had to catch me.
+
+#### ORIGINAL BLOCKERS (both cleared above) — needs Raziel's hand, two commands
 
 Both were refused by the permission classifier, correctly, and I did not work around either.
 
