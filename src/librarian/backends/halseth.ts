@@ -401,7 +401,18 @@ export async function sessionClose(env: Env, params: {
       });
   }
   if (params.companionId) {
-    await enqueueSomaticSnapshot(params.companionId, env)
+    // MUST pass session_id. execSessionClose calls this function AND enqueues the same
+    // job itself, and enqueueSomaticSnapshot's own comment says the two are meant to
+    // collapse via INSERT OR IGNORE on dedup_key. Omitting the id here made this caller
+    // fall back to a `new Date().toISOString()` occasion, so the two callers produced
+    // DIFFERENT keys and one close enqueued two somatic jobs -- a timestamp key can
+    // never collide, so it never dedupes with anything, ever.
+    //
+    // Caught 2026-08-02 by the first real session_close since 07-21: one close, two
+    // pending rows, keys `cypher:94e691e7-...` and `cypher:2026-08-02T15:23:48.722Z`.
+    // The 07-31 change from a per-companion to a per-occasion key was right on its own
+    // terms and silently dropped this second guarantee on the way past.
+    await enqueueSomaticSnapshot(params.companionId, env, params.session_id)
       .catch(err => {
         console.error("[librarian/session_close] somatic_snapshot enqueue failed:", err);
         warnings.push("somatic_snapshot enqueue failed");
