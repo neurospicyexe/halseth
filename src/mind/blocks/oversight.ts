@@ -57,11 +57,28 @@ export interface OversightBlocks {
    * the route layer's job; the loader is a window, not a hand.
    */
   answered_questions: WmAnsweredQuestion[];
+  /**
+   * Wave 8. Drift readings the checker classified as GROWTH but nobody has owned yet.
+   *
+   * Distinct from `pressure_flags` (drift_type = 'pressure') and from `growth_confirmed`
+   * (caleth_confirmed = 1) — this is the middle state, and it was unreachable for weeks: the auto-confirm
+   * gate (in_motion + healthy floats) rarely passes and no surface listed the unconfirmed rows, so growth
+   * was *detected and never owned*. Only `execSessionOrient` ever showed them; putting it in the contract is
+   * what lets any surface offer "confirm growth: <id>".
+   */
+  growth_unconfirmed: UnconfirmedGrowth[];
+}
+
+export interface UnconfirmedGrowth {
+  id: string;
+  worst_basin: string | null;
+  notes: string | null;
+  recorded_at: string;
 }
 
 export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Promise<OversightBlocks> {
   try {
-    const [flags, triggers, questions, answered] = await Promise.all([
+    const [flags, triggers, questions, answered, unconfirmedGrowth] = await Promise.all([
       // companion_id IS NULL means house-wide, so it belongs to everyone's oversight.
       env.DB.prepare(
         // `IN ('open','surfaced')` -- NOT `= 'open'`, which is what this block shipped with on 07-31 and
@@ -91,6 +108,13 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
          ORDER BY created_at DESC LIMIT 2`
       ).bind(companionId).all<CarriedQuestion>(),
       fetchRecentAnswers(env, companionId, 3).catch(() => []),
+      // 14-day window, deliberately: an unowned reading that never expires becomes a nag.
+      env.DB.prepare(
+        `SELECT id, worst_basin, notes, recorded_at FROM companion_basin_history
+         WHERE companion_id = ? AND drift_type = 'growth' AND caleth_confirmed = 0 AND dismissed_at IS NULL
+           AND recorded_at > datetime('now','-14 days')
+         ORDER BY recorded_at DESC LIMIT 2`
+      ).bind(companionId).all<UnconfirmedGrowth>(),
     ]);
 
     return {
@@ -108,9 +132,10 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
       })),
       questions: questions.results ?? [],
       answered_questions: answered,
+      growth_unconfirmed: unconfirmedGrowth.results ?? [],
     };
   } catch (err) {
     console.warn("[mind/oversight] load failed, degrading to empty", { companionId, error: String(err) });
-    return { guardian_cards: [], tripwires: [], questions: [], answered_questions: [] };
+    return { guardian_cards: [], tripwires: [], questions: [], answered_questions: [], growth_unconfirmed: [] };
   }
 }

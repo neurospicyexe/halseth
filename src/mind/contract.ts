@@ -26,10 +26,11 @@ import type { OversightBlocks } from "./blocks/oversight.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 
-/** 0.3.0 -- wave 6 added five blocks (world.watching, beliefs.supersede_candidates,
- *  relational.siblings, relational.recent_witness, oversight.answered_questions). MINOR: additive only,
- *  renderers ignore unknown blocks. */
-export const MINDSTATE_CONTRACT_VERSION = "0.3.0";
+/** 0.4.0 -- wave 8 added `oversight.growth_unconfirmed` (growth readings detected but not yet owned), the
+ *  last field `execSessionOrient` rendered that no other surface could see. MINOR: additive only, renderers
+ *  ignore unknown blocks. 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
+ *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
+export const MINDSTATE_CONTRACT_VERSION = "0.4.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -160,6 +161,9 @@ export interface MindState {
     questions: OversightBlocks["questions"];
     /** Wave 6. What Raziel answered -- the closing half of the questions loop. */
     answered_questions: OversightBlocks["answered_questions"];
+    /** Wave 8. Growth readings detected but not yet owned -- the middle state between a pressure flag and
+     *  confirmed growth, previously visible on the Claude.ai surface alone. */
+    growth_unconfirmed: OversightBlocks["growth_unconfirmed"];
   };
 
   /** The world around the house. */

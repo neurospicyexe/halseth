@@ -36,6 +36,17 @@ const VOLATILE = [
   { re: /^Motifs$/, why: "effective-trust decay + resurrection rotation, and resurrected motifs get last_surfaced_at stamped" },
   { re: /^SOMA arc$/, why: "new limbic/soma rows are written during the day; rendered by response/builder.ts, NOT by the extracted blocks" },
   { re: /^Last session narrative$/, why: "input is an sb_read over the Second Brain tunnel, which is intermittently unavailable -- absent vs present is an availability difference, not a rendering one" },
+  { re: /^\(head\)$/, why: "the interoception line renders live SOMA floats, which the ferment tick moves between calls" },
+  { re: /^Active forage$/, why: "relativeTime() on consumed_at -- 'picked up 9 hours ago' becomes 10 with no data change" },
+  { re: /^Forage pool$/, why: "relativeTime() on gathered_at, same as Active forage" },
+  // These two carry a live COUNT in the block NAME, so when the count moves the key itself changes and the
+  // differ sees a renamed block rather than an edited one. Worth knowing about this harness: a block whose
+  // header is data cannot be compared by name alone.
+  { re: /^Active threads: \d+$/, why: "block NAME contains a live thread count; a changed count renames the key" },
+  { re: /^Confirmed growth drift: \d+ entries$/, why: "block NAME contains a live entry count; drift rows accrue daily" },
+  { re: /^Autonomous growth: \d+ recent entries$/, why: "block NAME contains a live entry count" },
+  { re: /^Recognized patterns: \d+$/, why: "block NAME contains a live count" },
+  { re: /^Queued seeds: \d+ available$/, why: "block NAME contains a live count" },
 ];
 
 const isVolatile = (name) => VOLATILE.find(v => v.re.test(name));

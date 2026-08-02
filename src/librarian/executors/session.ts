@@ -122,7 +122,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
   const orientInteroception = sanitizeInteroception(parseContext<SessionOpenContext>(ctx.req.context));
-  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, sib0Row, sib1Row, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, openQuestionRows, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows, mindState] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -253,8 +253,23 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       "SELECT id, title, domain, summary, consumed_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>().catch(() => null),
+    // STEP 2 of the cutover: the one loader, running alongside the legacy fetches while the blocks
+    // migrate to it. Appended at the END of this positional destructure on purpose -- inserting
+    // anywhere else silently reassigns every variable after it.
+    loadMindState(ctx.env, agentId, "claude"),
   ]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
+  // NOT repointed at the loader -- this is a BEHAVIOUR DECISION for Raziel, not a refactor consequence.
+  //
+  // The two queries are not the same filter. This one is `status = 'open' ORDER BY created_at DESC LIMIT 2`.
+  // `mindState.oversight.questions` additionally EXCLUDES questions already voiced (the `question_voiced:`
+  // settings key) -- an anti-loop rail built for the bot path, where re-serving a question the companion has
+  // already asked reads as nagging.
+  //
+  // Swapping to the loader silently emptied this block for drevan and gaia (caught by the block gate, which
+  // is what it is for). Both readings are defensible: on the Claude.ai surface a held question arguably stays
+  // held until Raziel ANSWERS it, not until the companion has said it once. Left on the legacy query until
+  // Raziel picks; see docs/CONTINUITY.md.
   const openQuestions = (openQuestionRows?.results ?? []).map(r => r.question).filter(Boolean);
 
   // Answered questions: Raziel's answers, surfaced for 7 days (questions-lifecycle fix,
@@ -416,11 +431,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Shelf (0094): Raziel's active fixations, so the triad can reference what he's into in
   // normal conversation -- what makes it "my stuff is in there", not a dead list. Ambient:
-  // reference naturally when it fits, never perform interest. Standalone query (boot-safe).
-  const shelfRows = await ctx.env.DB.prepare(
-    "SELECT title, kind, note FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 6"
-  ).all<{ title: string; kind: string; note: string | null }>().catch(() => null);
-  const shelfItems = shelfRows?.results ?? [];
+  // reference naturally when it fits, never perform interest.
+  const shelfItems = mindState.world.shelf;  // STEP 2: loader (same query, LIMIT 6)
   const shelfBlock = B.shelfBlock(shelfItems);
 
   // Collection (0079): the brightest of what this companion gathered -- sparkle-weighted,
@@ -539,31 +551,18 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // to propose as canon. Graduation only happens through this conversation, never auto.
   const selfModelBlock = B.selfModelBlock(selfModelReady);
 
-  // Agency layer (0086): the companion's own chosen preferences + any refusals still standing.
-  // Carried into every session so the companion acts consistently with its own declared will, and a
-  // "no" keeps its weight across sessions. Fetched apart from the positional Promise.all above.
-  const [prefRows, standingRefusalRows, openDriftRows, unconfirmedGrowthRows] = await Promise.all([
-    ctx.env.DB.prepare(
-      "SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT 12"
-    ).bind(agentId).all<{ domain: string; preference: string; strength: string }>().catch(() => null),
-    ctx.env.DB.prepare(
-      "SELECT subject_text, reason FROM companion_refusals WHERE companion_id = ? AND status = 'standing' ORDER BY created_at DESC LIMIT 5"
-    ).bind(agentId).all<{ subject_text: string; reason: string | null }>().catch(() => null),
-    // Sanctioned drift lane (0087): the companion's own open becomings, with how many times witnessed.
-    ctx.env.DB.prepare(
-      "SELECT id, drift_text, json_array_length(witness_log) AS witness_count FROM companion_drifts WHERE companion_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 5"
-    ).bind(agentId).all<{ id: string; drift_text: string; witness_count: number }>().catch(() => null),
-    // Unconfirmed growth readings (2026-07-11): the drift check classifies growth, but the
-    // auto-confirm gate (in_motion + healthy floats) rarely passes and nothing ever surfaced the
-    // unconfirmed rows -- so caleth_confirmed=0 growth was unreachable: detected, never owned.
-    ctx.env.DB.prepare(
-      "SELECT id, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'growth' AND caleth_confirmed = 0 AND dismissed_at IS NULL AND recorded_at > datetime('now','-14 days') ORDER BY recorded_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; worst_basin: string | null; notes: string | null; recorded_at: string }>().catch(() => null),
-  ]);
-  const preferences = prefRows?.results ?? [];
-  const standingRefusals = standingRefusalRows?.results ?? [];
-  const openDrifts = openDriftRows?.results ?? [];
-  const unconfirmedGrowth = unconfirmedGrowthRows?.results ?? [];
+  // Agency layer (0086): the companion's own chosen preferences + any refusals still standing, plus the
+  // sanctioned drift lane (0087) and the growth readings awaiting the companion's own word (2026-07-11).
+  // Carried into every session so the companion acts consistently with its own declared will, and a "no"
+  // keeps its weight across sessions.
+  //
+  // STEP 2: all four from the loader -- same queries, same limits, same ordering as the inline copies
+  // they replace. `growth_unconfirmed` was added to the contract for this (wave 8); it was the last field
+  // execSessionOrient rendered that no other surface could see.
+  const preferences = mindState.identity.preferences;
+  const standingRefusals = mindState.identity.refusals;
+  const openDrifts = mindState.growth.drifts_open;
+  const unconfirmedGrowth = mindState.oversight.growth_unconfirmed;
 
   const preferencesBlock = B.preferencesBlock(preferences);
 
