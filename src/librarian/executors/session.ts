@@ -127,14 +127,20 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Phase 2: all sources in parallel -- sibling lane queries use idx_sessions_companion_created,
   // each returning LIMIT 1 (one index entry + one rowid lookup per sibling).
   const orientInteroception = sanitizeInteroception(parseContext<SessionOpenContext>(ctx.req.context));
-  const [payload, wmResult, sbNarrative, ragRaw, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, forageRows, armedTriggerRows, selfModelReadyRows, mediaRows, clubRow, guardianFlagRows, motifRows, solRow, consumedForageRows, mindState] = await Promise.all([
+  // ONE mindOrient per boot. `wmOrient` (which is mindOrient, consuming) feeds the continuity block, and
+  // loadMindState needs the same data -- so start it once here and give both the SAME in-flight promise.
+  // Previously each ran its own, so the heaviest aggregator in the system executed twice, concurrently, on
+  // every Claude.ai boot.
+  const wmOrientPromise = wmOrient(ctx.env, agentId).catch(() => null);
+
+  const [payload, wmResult, sbNarrative, ragRaw, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, selfModelReadyRows, clubRow, solRow, mindState] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
       session_type: ctx.req.session_type ?? "work",
       ...orientInteroception,
     }),
-    wmOrient(ctx.env, agentId).catch(() => null),
+    wmOrientPromise,
     ctx.env.DB.prepare(
       "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(agentId).first<{ full_ref: string }>()
@@ -169,89 +175,22 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     ctx.env.DB.prepare(
       `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
     ).bind(agentId).first<{ n: number }>().catch(() => null),
-    // Forage pool: unconsumed outward finds (own + shared) -- fuel gathered by the forager,
-    // explored by the real companion as themselves (foraging spec, 2026-06-09).
-    //
-    // ONE FRESH + ONE AGING (2026-07-09). This was `ORDER BY gathered_at DESC LIMIT 2`: pure
-    // LIFO, two slots, against a forager that adds ~1 find per companion per day. The tail could
-    // therefore NEVER be reached -- new finds permanently outrank old ones. Guardian's
-    // `stale:forage` ("oldest unconsumed past 7 days") was structurally unclearable, and Gaia had
-    // 20 unconsumed finds with the oldest sitting since 2026-06-11.
-    //
-    // Taking the newest AND the oldest drains the tail while keeping the pool current. UNION
-    // dedups when only one unconsumed find exists, so the LIMIT 2 shape is preserved.
-    ctx.env.DB.prepare(
-      `SELECT id, title, domain, summary, gathered_at FROM (
-         SELECT id, title, domain, summary, gathered_at FROM forage_finds
-          WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
-          ORDER BY gathered_at DESC LIMIT 1)
-       UNION
-       SELECT id, title, domain, summary, gathered_at FROM (
-         SELECT id, title, domain, summary, gathered_at FROM forage_finds
-          WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
-          ORDER BY gathered_at ASC LIMIT 1)`
-    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; gathered_at: string }>().catch(() => null),
-    // Prospective triggers (0070): armed date/front cards evaluated below against now +
-    // current front. Surfacing does NOT consume -- a card stays armed until dismissed.
-    ctx.env.DB.prepare(
-      "SELECT id, trigger_text, condition_type, condition_value FROM companion_triggers WHERE companion_id = ? AND status = 'armed' AND (expires_at IS NULL OR expires_at >= datetime('now')) LIMIT 10"
-    ).bind(agentId).all<{ id: string; trigger_text: string; condition_type: string; condition_value: string }>().catch(() => null),
     // Self-model observations ready to graduate (0070) -- human-gated proposal surface.
     ctx.env.DB.prepare(
       "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
     ).bind(agentId).all<{ id: string; observation: string; confidence: number }>().catch(() => null),
-    // Recent listens: shared-experience layer (media_experiences, migration 0071).
-    ctx.env.DB.prepare(
-      "SELECT id, title, artist, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 2"
-    ).all<{ id: string; title: string; artist: string | null; reactions_json: string; created_at: string }>().catch(() => null),
     // Club: current non-closed round with winner title + candidate count (0072).
     ctx.env.DB.prepare(
       "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
     ).first<{ id: string; status: string; opened_at: string | null; activated_at: string | null; discussing_at: string | null; winner_title: string | null; candidate_count: number }>().catch(() => null),
-    // Guardian red-flag cards (0073): open flags force-surface once, then drop to
-    // 'surfaced' (consume-once, mirroring 0070 tripwires). Resolution is the
-    // Guardian's job when the condition clears, or Raziel's via "guardian ack".
-    ctx.env.DB.prepare(
-      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status = 'open' ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3"
-    ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>().catch(() => null),
-    // Motifs (0076): recurring symbolic threads (active) + faded high-trust ones
-    // eligible for resurrection. Active surfaces read-only; resurrection is
-    // consume-once via last_surfaced_at cooldown (selectResurrections owns the gate).
-    //
-    // TWO windows, not one (HOLE 9, fixed 2026-07-26). This was a single
-    // `status IN ('active','faded') ORDER BY trust DESC LIMIT 20`, and active motifs
-    // outnumber faded ~11:1 while saturating the trust ceiling -- in prod all 20 slots
-    // went to active rows for all three companions, so the faded subset handed to
-    // selectResurrections was ALWAYS empty and resurrection had never fired once in five
-    // weeks (0 of 1,173 rows ever stamped, 66 of them eligible). Pools that compete for
-    // one ordered window are not two pools. The trust floor is applied in SQL as well so
-    // the faded window is spent only on genuine candidates; selectResurrections still
-    // owns the cooldown gate and the final cut.
-    (async () => {
-      const [act, fad] = await Promise.all([
-        ctx.env.DB.prepare(
-          `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'active' ORDER BY ${effectiveTrustSql()} DESC, recurrence_count DESC LIMIT 10`
-        ).bind(agentId).all<MotifRow>(),
-        ctx.env.DB.prepare(
-          `SELECT id, companion_id, label, display, recurrence_count, trust, first_seen, last_seen, last_surfaced_at, status FROM companion_motifs WHERE companion_id = ? AND status = 'faded' AND trust >= ${MOTIF_TUNING.RESURRECT_TRUST_FLOOR} ORDER BY trust DESC, recurrence_count DESC LIMIT 10`
-        ).bind(agentId).all<MotifRow>(),
-      ]);
-      return { active: act?.results ?? [], faded: fad?.results ?? [] };
-    })().catch(() => null),
     // Sol (0078): the companion corvid. Fetched by name so orient knows Sol's current disposition.
     ctx.env.DB.prepare(
       "SELECT id, name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
     ).first<{ id: string; name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string }>().catch(() => null),
-    // Active forage: finds already picked up (consumed). The pool above is what's waiting;
-    // this is what the companion is mid-chew on -- continuity across sessions.
-    ctx.env.DB.prepare(
-      "SELECT id, title, domain, summary, consumed_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; title: string; domain: string; summary: string; consumed_at: string }>().catch(() => null),
     // STEP 2 of the cutover: the one loader, running alongside the legacy fetches while the blocks
     // migrate to it. Appended at the END of this positional destructure on purpose -- inserting
     // anywhere else silently reassigns every variable after it.
-    loadMindState(ctx.env, agentId, "claude"),
-  ]);
+    loadMindState(ctx.env, agentId, "claude", { orient: wmOrientPromise }),]);
   const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
   // STEP 2, resolved 2026-08-01. Repointing this at the loader first EMPTIED the block for drevan and gaia
   // (the gate caught it) because the loader was excluding questions already VOICED. That exclusion is now a
@@ -314,7 +253,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // STEP 2: loader. Same filter (status IN open/surfaced), same LIMIT 3, same 400-char summary. The ids
   // still come through, which is what the consume-once open -> surfaced stamp below needs -- the loader
   // READS the cards, this executor CONSUMES them. That split is the contract, not a workaround.
-  const guardianFlags = mindState.oversight.guardian_cards;
+  // `status === 'open'` ONLY. This path CONSUMES the cards (stamps open -> surfaced below), so it must not
+  // be handed already-surfaced ones: the UPDATE would be a no-op and the same card would re-render at every
+  // boot forever, crowding the LIMIT-3 window. The bot path does not stamp, so it keeps both. One source,
+  // two presentations -- the same rule as `voiced` on held questions.
+  const guardianFlags = mindState.oversight.guardian_cards.filter(g => g.status === "open").slice(0, 3);
   // Motifs (0076): the two pools arrive already separated (see the query above -- one
   // shared trust-ordered window starved resurrection completely). selectResurrections
   // still applies the cooldown gate and the final cut over the faded pool.
@@ -422,14 +365,6 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Commons (0092): Raziel's ambient log posts this companion hasn't answered yet --
   // surfaced as drops, not pings (buildCommonsBlock carries the anti-confusion framing).
-  // Standalone query, deliberately NOT in the mega Promise.all above, so it can never
-  // shift that positional destructure (boot-path safety).
-  const commonsRows = await ctx.env.DB.prepare(
-    `SELECT id, context, body, created_at FROM commons_posts
-     WHERE author = 'raziel'
-       AND id NOT IN (SELECT reply_to FROM commons_posts WHERE author = ?1 AND reply_to IS NOT NULL)
-     ORDER BY created_at DESC LIMIT 5`
-  ).bind(agentId).all<CommonsPostRow>().catch(() => null);
   const commonsPosts: CommonsPostRow[] = mindState.world.commons;  // STEP 2: loader (same query, LIMIT 5)
   const commonsBlock = buildCommonsBlock(commonsPosts);
 
@@ -1078,6 +1013,7 @@ export async function execBotOrient(
       rag_excerpts: parseExcerpts(ragRaw, 250, false),
       history_excerpts: parseExcerpts(historyRaw, 250, true),
       continuity_notes,
+      owner: ctx.env.SYSTEM_OWNER,
     },
     agentId,
   );

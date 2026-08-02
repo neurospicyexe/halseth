@@ -123,9 +123,20 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     env.DB.prepare(
       "SELECT drift_score, drift_type, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND caleth_confirmed = 1 ORDER BY recorded_at DESC LIMIT 3"
     ).bind(agentId).all<WmBasinHistoryRow>(),
-    // Dreams: unexamined things carried since last session -- surface until examined
+    // Dreams: unexamined things carried since last session -- surface until examined.
+    //
+    // `COALESCE(do_not_auto_examine, 0) = 0` IS LOAD-BEARING AND WAS MISSING HERE (restored 2026-08-02).
+    // mig 0048 added that flag for live-session-only dreams that must survive the autonomous worker. The
+    // worker takes every id in `unexamined_dreams` and calls `examineDream` on all of them
+    // (autonomous-worker/src/phases/write.ts), so a pinned dream reaching this list is a pinned dream
+    // permanently cleared. execBotOrient's own query HAD the guard; when the bot cut over to the loader it
+    // started reading this copy instead, and the guard silently stopped applying to the one consumer that
+    // destroys what it reads. Caught by review before any pinned dream existed -- prod had zero at the time.
+    //
+    // LIMIT 5, not 3: the bot path carried 5 and now sources from here. Restoring the wider window rather
+    // than narrowing what the worker sees.
     env.DB.prepare(
-      "SELECT * FROM companion_dreams WHERE companion_id = ? AND examined = 0 ORDER BY created_at DESC LIMIT 3"
+      "SELECT * FROM companion_dreams WHERE companion_id = ? AND examined = 0 AND COALESCE(do_not_auto_examine, 0) = 0 ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmDream>(),
     // Relational snapshot: most recent state per relationship target
     readRelationalSnapshot(env, agentId),

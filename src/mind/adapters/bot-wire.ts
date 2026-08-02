@@ -56,6 +56,9 @@ export interface BotWireExtras {
    * MindState carries. A pure projection cannot express "one note this companion has never been shown".
    */
   continuity_notes: string[];
+  /** `env.SYSTEM_OWNER`. An input, not derivable from MindState -- and load-bearing; see
+   *  `relational_state_owner` below. */
+  owner: string;
 }
 
 /** The flat wire payload. Deliberately `Record<string, unknown>`-shaped at the boundary: the authority on
@@ -103,7 +106,14 @@ export function botWireFromMindState(
 
     identity_anchor: ms.identity.anchor?.anchor_summary ? text(ms.identity.anchor.anchor_summary, 300) : null,
     active_tensions: ms.carried.tensions.map(t => text(t.tension_text, 150)).filter(Boolean).slice(0, 3),
-    relational_state_owner: ms.relational.snapshot.map(s => text(s.state_text, 150)).filter(Boolean).slice(0, 1),
+    // FILTERED BY `toward` (2026-08-02). `readRelationalSnapshot` returns the latest row PER TARGET
+    // (ROW_NUMBER partitioned by `toward`), ordered noted_at DESC -- so `snapshot[0]` is the most recent
+    // state toward ANYONE, not toward Raziel. `toward` is caller-supplied, so a state written toward a
+    // SIBLING more recently would have been handed to the bot as its state toward the owner. The field is
+    // named `relational_state_owner`; it has to actually mean that.
+    relational_state_owner: ms.relational.snapshot
+      .filter(s => (s.toward ?? "").toLowerCase() === extras.owner.toLowerCase())
+      .map(s => text(s.state_text, 150)).filter(Boolean).slice(0, 1),
     incoming_notes: ms.relational.triad_incoming.slice(0, 3).map(n => ({
       from: n.from_id,
       content: text(n.content, 200),

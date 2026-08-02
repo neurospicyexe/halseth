@@ -40,7 +40,7 @@ function stateWith(questions: Array<{ id: string; question: string; voiced: bool
 }
 
 const botQuestions = (questions: Parameters<typeof stateWith>[0]) =>
-  botWireFromMindState(stateWith(questions), { synthesis_summary: null, rag_excerpts: [], history_excerpts: [], continuity_notes: [] }, "cypher");
+  botWireFromMindState(stateWith(questions), { synthesis_summary: null, rag_excerpts: [], history_excerpts: [], continuity_notes: [], owner: "Raziel" }, "cypher");
 
 describe("held questions -- Discord filters voiced, Claude.ai does not", () => {
   it("Discord drops questions already voiced", () => {

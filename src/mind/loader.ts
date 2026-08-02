@@ -26,7 +26,24 @@ import { loadSessionNarrative } from "./blocks/continuity.js";
 import { loadRelationalBlocks } from "./blocks/relational.js";
 import { loadBeliefExtras } from "./blocks/beliefs.js";
 
-export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom): Promise<MindState> {
+/**
+ * `opts.orient` lets a caller that ALREADY runs mindOrient hand its result in instead of making the loader
+ * run a second one (2026-08-02).
+ *
+ * execSessionOrient calls `wmOrient` for its continuity block AND loadMindState in the same `Promise.all`, so
+ * the heaviest aggregator in the system (~28 queries plus the home-events read) was executing TWICE per
+ * Claude.ai boot, concurrently -- on the very path the cutover was meant to slim down. Not a correctness bug
+ * (all writes are readOnly-gated and seedIdentityAnchor is ON CONFLICT DO NOTHING), purely double work.
+ *
+ * Takes a PROMISE, not a value, so the caller can start it and pass the same in-flight promise to both
+ * consumers: one execution, full parallelism, no serialization penalty.
+ */
+export async function loadMindState(
+  env: Env,
+  companionId: WmAgentId,
+  loom: Loom,
+  opts: { orient?: Promise<Awaited<ReturnType<typeof mindOrient>> | null> } = {},
+): Promise<MindState> {
   /**
    * NOTHING IN HERE MAY ABORT A BOOT.
    *
@@ -45,8 +62,34 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
    * empty block and an unavailable block are different facts and must not render the same.
    */
   const degraded: string[] = [];
+
+  /**
+   * Run a block loader so that NOTHING it does can reject `loadMindState`, and so that a failure is NAMED.
+   *
+   * Two review findings (2026-08-02) that were really one hole:
+   *  * `identity` and `felt` had no top-level try/catch, unlike the other six. Their per-statement
+   *    `.catch(() => null)` does not cover a SYNCHRONOUS throw from `env.DB.prepare(...)` (evaluated while
+   *    the `Promise.all` array is being built) or anything thrown after the await. Such a throw rejects this
+   *    function -- and `loadMindState` is unguarded inside both `execBotOrient`'s and `execSessionOrient`'s
+   *    own `Promise.all`, so BOTH orient paths 500. Exactly the fail-closed regression this file's header
+   *    claims to have fixed, and the degradation test only ever mocked the two aggregators throwing.
+   *  * `meta.degraded` only reported orient/ground. The eight blocks each swallowed their own failure into
+   *    an empty shape, so `loadWorldBlocks` could hit its catch and return EMPTY -- the wave-4 "read as a
+   *    quiet house" failure -- while `degraded` stayed `[]` and every consumer read healthy.
+   *
+   * Takes a THUNK, not a promise, so a synchronous throw is caught too.
+   */
+  const guard = async <T>(name: string, run: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await run();
+    } catch (err) {
+      console.error(`[mind/loader] block '${name}' failed, degrading`, { companionId, error: String(err) });
+      degraded.push(name);
+      return fallback;
+    }
+  };
   const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras] = await Promise.all([
-    mindOrient(env, companionId, { readOnly: true }).catch((err: unknown) => {
+    (opts.orient ?? mindOrient(env, companionId, { readOnly: true })).catch((err: unknown) => {
       console.error("[mind/loader] mindOrient failed, degrading", { companionId, error: String(err) });
       degraded.push("orient");
       return null;
@@ -60,23 +103,23 @@ export async function loadMindState(env: Env, companionId: WmAgentId, loom: Loom
     // taking the contract from 30 unfilled blocks to 21. Own modules under blocks/ rather than more
     // inline queries here, because these are the CANONICAL implementations -- when execSessionOrient
     // cuts over, its inline copies get deleted and it calls these.
-    loadIdentityBlocks(env, companionId),
-    loadFeltFermentBlocks(env, companionId),
+    guard("identity", () => loadIdentityBlocks(env, companionId), { shared_kernel: null, companion_kernel: null, self_model: [], preferences: [], refusals: [], agency_affordance: "" }),
+    guard("felt", () => loadFeltFermentBlocks(env, companionId), { soma_floats: [], drives: [], ferment_events: [], ferment_at: null }),
     // Wave 3 (2026-08-01): growth (7), 21 unfilled -> 14. This is the wave that unblocks the bot cutover
     // -- 13 of execBotOrient's 40 keys mapped to blocks the loader could not fill.
-    loadGrowthBlocks(env, companionId),
+    guard("growth", () => loadGrowthBlocks(env, companionId), { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [] }),
     // Wave 4: the shared world (9). 14 unfilled -> 5.
-    loadWorldBlocks(env, companionId),
+    guard("world", () => loadWorldBlocks(env, companionId), { club: null, commons: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [] }),
     // Wave 5: oversight (3). With session_narrative and the worldview alias, NOT_YET_LOADED hits ZERO.
-    loadOversightBlocks(env, companionId),
-    loadSessionNarrative(env, companionId),
+    guard("oversight", () => loadOversightBlocks(env, companionId), { guardian_cards: [], tripwires: [], questions: [], answered_questions: [], growth_unconfirmed: [] }),
+    guard("narrative", () => loadSessionNarrative(env, companionId), null),
     // Wave 6: the five blocks that existed ONLY on the Discord wire. NOT_YET_LOADED hitting zero measured
     // design-doc coverage, not the bot's wire coverage -- seven of its fields had no contract home at all.
     // Five were cheap D1 reads and belong here; the other two (rag_excerpts, history_excerpts) plus the
     // sbRead that hydrates the session narrative stay in the bot adapter, because the loader stays pure-D1
     // and must not make every loom's boot depend on the Second Brain tunnel.
-    loadRelationalBlocks(env, companionId),
-    loadBeliefExtras(env, companionId),
+    guard("relational", () => loadRelationalBlocks(env, companionId), { siblings: [], recent_witness: [] }),
+    guard("beliefs", () => loadBeliefExtras(env, companionId), { supersede_candidates: [] }),
   ]);
 
   // Non-null views. `orient`/`ground` are the only two sources that can be wholly absent (the blocks each

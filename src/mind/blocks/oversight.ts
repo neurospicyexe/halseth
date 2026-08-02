@@ -28,6 +28,19 @@ export interface GuardianCard {
   summary: string;
   /** What to actually do about it. Never null -- see the header. */
   remediation: string;
+  /**
+   * `open` | `surfaced`. Carried, NOT filtered on -- the two surfaces need different sets and only one of
+   * them consumes (2026-08-02).
+   *
+   * `execSessionOrient` STAMPS open -> surfaced after rendering, so it must see `open` only; handing it
+   * surfaced cards makes its `UPDATE ... AND status = 'open'` a no-op, so the same card re-renders at every
+   * Claude.ai boot forever while eating the LIMIT-3 window new cards need. `execBotOrient` does not stamp,
+   * so it wants both. Prod when this was found: 3 open, 4 surfaced.
+   *
+   * The block gate could not catch this: it whitelists `Guardian` as volatile *because* cards legitimately
+   * transition on display. A volatile entry hides real changes in the same block -- justified or not.
+   */
+  status: string;
 }
 
 export interface ArmedTripwire {
@@ -103,9 +116,15 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
         // `surfaced` once any surface has shown it; filtering to `open` alone means a flag disappears from
         // the loader the moment it is first displayed, while still being unresolved. Surfaced is not
         // handled.
-        `SELECT id, flag_type, severity, summary FROM guardian_flags
+        //
+        // LIMIT 8, not 3 (2026-08-02): both renderers FILTER after the limit, so a small window starves them.
+        // Prod had 3 open and 4 surfaced, and the 3 slots were filled entirely by surfaced cards -- so
+        // execSessionOrient, which correctly wants `open` only, would have shown NOTHING while three open
+        // cards sat just below the cut. Exactly the same filter-after-limit shape as the voiced questions.
+        // Severity ordering is unchanged, so the bot's top-2 is byte-identical.
+        `SELECT id, flag_type, severity, summary, status FROM guardian_flags
          WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced')
-         ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3`
+         ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 8`
       ).bind(companionId).all<Omit<GuardianCard, "remediation">>(),
       env.DB.prepare(
         `SELECT id, trigger_text, condition_type, condition_value FROM companion_triggers
@@ -124,7 +143,7 @@ export async function loadOversightBlocks(env: Env, companionId: WmAgentId): Pro
                        WHERE s.companion_id = q.companion_id AND s.key = 'question_voiced:' || q.id) AS voiced
          FROM companion_questions q
          WHERE q.companion_id = ?1 AND q.status = 'open'
-         ORDER BY q.created_at DESC LIMIT 5`
+         ORDER BY q.created_at DESC LIMIT 10`
       ).bind(companionId).all<{ id: string; question: string; voiced: number }>(),
       fetchRecentAnswers(env, companionId, 3).catch(() => []),
       // 14-day window, deliberately: an unowned reading that never expires becomes a nag.
