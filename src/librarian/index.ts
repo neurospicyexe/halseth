@@ -120,6 +120,12 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     request: b.request,
     context: contextNormalized,
     session_type: (b.session_type as LibrarianRequest["session_type"]) ?? "work",
+    // Surface (mig 0113): trimmed, capped, never defaulted. A missing surface must stay missing --
+    // substituting a shared placeholder would recreate the cross-surface collision it exists to
+    // stop. Length cap because this value is a dedup key, not free text.
+    surface: typeof b.surface === "string" && b.surface.trim()
+      ? b.surface.trim().slice(0, 200)
+      : undefined,
   };
 
   const log = createLogger({ component: "librarian", companion_id: req.companion_id });

@@ -6,6 +6,11 @@ export interface LibrarianRequest {
   request: string;
   context?: string;
   session_type?: "checkin" | "hangout" | "work" | "ritual" | "companion-work";
+  /** Where the caller is speaking from -- 'claude-code:<cwd>', 'claude-ai:<thread>',
+   *  'discord:<channel_id>'. Sessions dedup per (companion, surface) since mig 0113, so a
+   *  Claude.ai thread, a Claude Code session and a Discord channel no longer collapse onto
+   *  whichever opened first. Omitted => dedup skipped (fresh session, never a takeover). */
+  surface?: string;
 }
 
 export interface ExecutorContext {

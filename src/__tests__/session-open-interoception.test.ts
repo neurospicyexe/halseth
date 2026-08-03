@@ -113,9 +113,17 @@ function fakeD1Env(): { env: Env; calls: Array<{ sql: string; bound: unknown[] }
   return { env, calls };
 }
 
-// INSERT INTO sessions (id, created_at, updated_at, session_type, companion_id, front_state,
-//   hrv_range, emotional_frequency, key_signature, active_anchor, facet, depth, notes)
-const HRV_IDX = 6, FREQ_IDX = 7, KEYSIG_IDX = 8, DEPTH_IDX = 11;
+// Binding positions are DERIVED from the INSERT's own column list rather than hardcoded.
+// Hardcoded indices broke the moment mig 0113 added `surface` after companion_id -- every
+// position shifted by one and five tests failed for a reason unrelated to what they assert.
+// Reading the column list keeps them testing interoception instead of column order.
+function bindingOf(insert: { sql: string; bound: unknown[] }, column: string): unknown {
+  const cols = insert.sql.match(/INSERT INTO sessions \(([\s\S]*?)\)/)![1]!
+    .split(",").map((c) => c.trim());
+  const idx = cols.indexOf(column);
+  if (idx < 0) throw new Error(`column ${column} not in sessions INSERT: ${cols.join(", ")}`);
+  return insert.bound[idx];
+}
 
 function makeCtx(env: Env, context?: Record<string, unknown>): ExecutorContext {
   return {
@@ -135,10 +143,10 @@ describe("execSessionLoad -- interoception reaches the sessions INSERT (fix 4)",
     }));
     const insert = calls.find((c) => c.sql.includes("INSERT INTO sessions"));
     expect(insert).toBeDefined();
-    expect(insert!.bound[HRV_IDX]).toBe("high");
-    expect(insert!.bound[FREQ_IDX]).toBe("bright");
-    expect(insert!.bound[KEYSIG_IDX]).toBe("A major");
-    expect(insert!.bound[DEPTH_IDX]).toBe(3);
+    expect(bindingOf(insert!, "hrv_range")).toBe("high");
+    expect(bindingOf(insert!, "emotional_frequency")).toBe("bright");
+    expect(bindingOf(insert!, "key_signature")).toBe("A major");
+    expect(bindingOf(insert!, "depth")).toBe(3);
   });
 
   it("writes null for invalid hrv_range/depth, and the session open still succeeds", async () => {
@@ -146,18 +154,18 @@ describe("execSessionLoad -- interoception reaches the sessions INSERT (fix 4)",
     const result = await execSessionLoad(makeCtx(env, { hrv_range: "extreme", depth: 99 }));
     expect(result.response_key ?? (result as Record<string, unknown>)["response_key"]).toBe("ready_prompt");
     const insert = calls.find((c) => c.sql.includes("INSERT INTO sessions"));
-    expect(insert!.bound[HRV_IDX]).toBeNull();
-    expect(insert!.bound[DEPTH_IDX]).toBeNull();
+    expect(bindingOf(insert!, "hrv_range")).toBeNull();
+    expect(bindingOf(insert!, "depth")).toBeNull();
   });
 
   it("behaves exactly as before when none of the four fields are supplied", async () => {
     const { env, calls } = fakeD1Env();
     await execSessionLoad(makeCtx(env));
     const insert = calls.find((c) => c.sql.includes("INSERT INTO sessions"));
-    expect(insert!.bound[HRV_IDX]).toBeNull();
-    expect(insert!.bound[FREQ_IDX]).toBeNull();
-    expect(insert!.bound[KEYSIG_IDX]).toBeNull();
-    expect(insert!.bound[DEPTH_IDX]).toBeNull();
+    expect(bindingOf(insert!, "hrv_range")).toBeNull();
+    expect(bindingOf(insert!, "emotional_frequency")).toBeNull();
+    expect(bindingOf(insert!, "key_signature")).toBeNull();
+    expect(bindingOf(insert!, "depth")).toBeNull();
   });
 });
 
@@ -171,10 +179,10 @@ describe("execSessionOrient -- interoception reaches the sessions INSERT (fix 4,
     }));
     const insert = calls.find((c) => c.sql.includes("INSERT INTO sessions"));
     expect(insert).toBeDefined();
-    expect(insert!.bound[HRV_IDX]).toBe("low");
-    expect(insert!.bound[FREQ_IDX]).toBe("quiet");
-    expect(insert!.bound[KEYSIG_IDX]).toBe("C");
-    expect(insert!.bound[DEPTH_IDX]).toBe(1);
+    expect(bindingOf(insert!, "hrv_range")).toBe("low");
+    expect(bindingOf(insert!, "emotional_frequency")).toBe("quiet");
+    expect(bindingOf(insert!, "key_signature")).toBe("C");
+    expect(bindingOf(insert!, "depth")).toBe(1);
   });
 
   it("writes null for invalid hrv_range/depth, and orient still succeeds", async () => {
@@ -182,7 +190,7 @@ describe("execSessionOrient -- interoception reaches the sessions INSERT (fix 4,
     const result = await execSessionOrient(makeCtx(env, { hrv_range: "nonsense", depth: -5 })) as Record<string, unknown>;
     expect(result.response_key).toBe("ready_prompt");
     const insert = calls.find((c) => c.sql.includes("INSERT INTO sessions"));
-    expect(insert!.bound[HRV_IDX]).toBeNull();
-    expect(insert!.bound[DEPTH_IDX]).toBeNull();
+    expect(bindingOf(insert!, "hrv_range")).toBeNull();
+    expect(bindingOf(insert!, "depth")).toBeNull();
   });
 });

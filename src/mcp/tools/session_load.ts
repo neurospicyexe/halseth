@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
-import { generateId } from "../../db/queries.js";
+import { generateId, findOpenSession } from "../../db/queries.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 
@@ -120,6 +120,10 @@ export interface SessionLoadInput {
   depth?: number;
   notes?: string;
   prior_handover_id?: string;
+  /** Where this session is spoken from -- 'claude-code:<cwd>', 'claude-ai:<thread>',
+   *  'discord:<channel_id>'. Sessions dedup per (companion, surface) since mig 0113 so parallel
+   *  surfaces stay independent. Omitted => dedup SKIPPED (a fresh session, never a takeover). */
+  surface?: string;
 }
 
 // ── Orient: session creation + identity anchoring ────────────────────────────
@@ -130,35 +134,31 @@ export type SessionOrientInput = SessionLoadInput;
 export async function loadOrientData(env: Env, input: SessionOrientInput) {
   const now = new Date().toISOString();
 
-  // Idempotency guard: reuse open session for same companion within 24h.
+  // Idempotency guard: reuse open session for same companion AND SURFACE within 24h.
   // "Open" = handover_id IS NULL. Prevents flood from bots restarting frequently
   // and orient calls firing unconditionally on every Claude.ai session start.
+  // Surface-scoped since mig 0113 -- see findOpenSession for why NULL surface skips dedup.
   let sessionId = generateId();
   let skipInsert = false;
   let storedEmotionalFrequency: string | null = null;
-  if (input.companion_id) {
-    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const existing = await env.DB.prepare(
-      "SELECT id, emotional_frequency FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(input.companion_id, windowStart).first<{ id: string; emotional_frequency: string | null }>();
-    if (existing) {
-      sessionId = existing.id;
-      skipInsert = true;
-      storedEmotionalFrequency = existing.emotional_frequency ?? null;
-    }
+  const existing = await findOpenSession(env, input.companion_id, input.surface);
+  if (existing) {
+    sessionId = existing.id;
+    skipInsert = true;
+    storedEmotionalFrequency = existing.emotional_frequency ?? null;
   }
 
   const stmts: ReturnType<typeof env.DB.prepare>[] = [];
   if (!skipInsert) {
     stmts.push(env.DB.prepare(`
       INSERT INTO sessions (
-        id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
+        id, created_at, updated_at, session_type, companion_id, surface, front_state, hrv_range,
         emotional_frequency, key_signature, active_anchor, facet, depth, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       sessionId, now, now,
       input.session_type ?? "work",
-      input.companion_id, input.front_state,
+      input.companion_id, input.surface ?? null, input.front_state,
       input.hrv_range ?? null, input.emotional_frequency ?? null,
       input.key_signature ?? null, input.active_anchor ?? null,
       input.facet ?? null, input.depth ?? null, input.notes ?? null,
@@ -284,18 +284,14 @@ export async function loadLightGroundData(env: Env, input: SessionGroundInput) {
 export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const now = new Date().toISOString();
 
-  // Idempotency guard: reuse open session for same companion within 24h.
+  // Idempotency guard: reuse open session for same companion AND SURFACE within 24h.
+  // Surface-scoped since mig 0113 -- see findOpenSession.
   let sessionId = generateId();
   let skipInsert = false;
-  if (input.companion_id) {
-    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const existing = await env.DB.prepare(
-      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(input.companion_id, windowStart).first<{ id: string }>();
-    if (existing) {
-      sessionId = existing.id;
-      skipInsert = true;
-    }
+  const existing = await findOpenSession(env, input.companion_id, input.surface);
+  if (existing) {
+    sessionId = existing.id;
+    skipInsert = true;
   }
   // Note: loadSessionData is a legacy path; emotional_frequency is not in its
   // return shape, so no storedEmotionalFrequency needed here.
@@ -305,13 +301,14 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   if (!skipInsert) {
     sessionStatements.push(env.DB.prepare(`
       INSERT INTO sessions (
-        id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
+        id, created_at, updated_at, session_type, companion_id, surface, front_state, hrv_range,
         emotional_frequency, key_signature, active_anchor, facet, depth, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       sessionId, now, now,
       input.session_type ?? "work",
       input.companion_id,
+      input.surface ?? null,
       input.front_state,
       input.hrv_range ?? null,
       input.emotional_frequency ?? null,
@@ -462,6 +459,7 @@ export function registerSessionLoadTools(server: McpServer, env: Env): void {
       depth:               z.number().int().min(0).max(3).optional(),
       notes:               z.string().optional(),
       prior_handover_id:   z.string().optional().describe("If returning from a prior session, provide its handover packet ID. Marks that packet as returned."),
+      surface:             z.string().optional().describe("Where this session is spoken from, e.g. 'claude-code:<cwd>', 'claude-ai:<thread>', 'discord:<channel_id>'. Sessions dedup per (companion, surface) so parallel surfaces stay independent. Omitting SKIPS dedup and always opens a new session."),
     },
     async (input) => {
       const payload = await loadSessionData(env, input);

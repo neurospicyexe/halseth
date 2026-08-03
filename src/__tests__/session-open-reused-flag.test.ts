@@ -43,10 +43,13 @@ interface Statement {
   all<T = unknown>(): Promise<{ results: T[] }>;
 }
 
-// The guard query, verbatim in shape from both loaders. Matching on the distinctive
-// `handover_id IS NULL` clause rather than the whole string keeps the two loaders'
-// slightly different SELECT lists (one also reads emotional_frequency) both covered.
-const OPEN_SESSION_GUARD = /SELECT id(, emotional_frequency)? FROM sessions WHERE companion_id = \? AND handover_id IS NULL/;
+// The guard query. Both loaders now share ONE implementation (db/queries.ts findOpenSession,
+// mig 0113) instead of the two slightly different SELECT lists this used to straddle. Matching on
+// the distinctive `handover_id IS NULL` clause rather than the whole string survives whitespace
+// and column-list changes; `surface = ?` is asserted so this fake can never satisfy a query that
+// dropped the surface key -- if the guard regressed to companion-only, these tests would fail
+// rather than quietly keep passing.
+const OPEN_SESSION_GUARD = /FROM sessions[\s\S]*?companion_id = \?[\s\S]*?surface = \?[\s\S]*?handover_id IS NULL/;
 
 function makeStatement(
   sql: string,
@@ -85,10 +88,16 @@ function fakeD1Env(existingOpenSessionId: string | null): { env: Env; calls: Arr
   return { env, calls };
 }
 
+// A surface is REQUIRED to exercise reuse at all since mig 0113: the guard is keyed on
+// (companion, surface) and skips dedup entirely when the caller does not say where it is
+// speaking from. A ctx without one can only ever open a fresh session -- which is the point of
+// the nullable column, and is asserted separately in sessions-per-surface.test.ts.
+const SURFACE = "claude-code:C--dev-Bigger-Better-Halseth";
+
 function makeCtx(env: Env): ExecutorContext {
   return {
     env,
-    req: { companion_id: "cypher", request: "open my session" },
+    req: { companion_id: "cypher", request: "open my session", surface: SURFACE },
     entry: { triggers: [], tools: ["halseth_session_load"], response_key: "ready_prompt" } as PatternEntry,
     frontState: "cypher-front",
     pluralAvailable: false,

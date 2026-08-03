@@ -161,6 +161,7 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0104` | `ref_type`/`ref_id`/`reason` on `inter_companion_notes` -- notes become moves on shared objects (question/tension/council); `idx_inter_notes_ref`. Measured via `GET /inter-companion-notes/moves` (moved_pct). |
 | -- | `0105` | Earned salience: `heat`/`last_access_at` on `companion_journal` + `companion_conclusions`, `archived` on journal only; `idx_companion_journal_archived`. Extends mig 0074 heat mechanic; recall/orient warm what they surface; nightly salience-prune archives cold machine rows (24h self-gate, manual trigger `POST /mind/salience/prune`). |
 | -- | `0106` | 0106_conversation_threads.sql — thread spine: conversation_threads + thread_ledger (live-conversation spine: seed/ledger/state/ref, one active per channel, idempotent ledger). |
+| -- | `0113` | `sessions.surface` (nullable, no default) + partial index — **sessions are per-surface, not per-companion.** The 24h idempotency guard keyed on `companion_id` alone, so a Claude.ai thread, a Claude Code session and a Discord channel all resolved to whichever opened first and the rest silently joined; that also froze the close path (the boot hook won't spine an inherited session), leaving 167 sessions open. Three divergent copies of the guard collapsed into one helper, `findOpenSession` in `src/db/queries.ts` — **add no fourth.** NULL surface SKIPS dedup rather than falling back to a shared bucket, so an un-migrated caller opens its own session instead of hijacking one. Callers pass `claude-code:<cwd-slug>` / `claude-ai:<thread>` / `discord:<channel>` / `consolidation:<companion>`. |
 
 ## BBH Companion State Tables (migration 0020+)
 
@@ -214,9 +215,12 @@ Key docs:
   loader for all boot surfaces (session_orient / bot_orient / mindOrient / Hearth chat).
 - Root `../CLAUDE.md` -- suite-wide phase plan and migration freeze.
 
-**Migration freeze:** no new inner-life organs/tables until the MindState loader lands.
-When touching any boot surface (orient/ground/bot_orient), re-verify against the coverage
-matrix -- ground.ts read dead tables for ~4 months because nothing checked.
+**Migration freeze: LIFTED 2026-08-01.** It was conditioned on the MindState loader landing, and it
+did -- Phase 1 closed 5/5, all three orient paths run on `loadMindState`. The freeze text sat here
+unqualified afterwards and read as still-live to anyone who found it (0113 was written against it).
+The standing rule it protected still holds: when touching any boot surface (orient/ground/bot_orient),
+re-verify against the coverage matrix -- ground.ts read dead tables for ~4 months because nothing
+checked.
 
 ## Security
 

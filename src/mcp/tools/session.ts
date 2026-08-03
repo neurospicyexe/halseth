@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
-import { generateId } from "../../db/queries.js";
+import { generateId, findOpenSession } from "../../db/queries.js";
 import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
 import { embedAndStoreAsync, composeHandoverText } from "../embed.js";
 
@@ -15,6 +15,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       session_type:        z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).default("work").describe("Type of session: checkin (quick state read), hangout (casual time), work (task/project focus), ritual (depth/ceremony), companion-work (Drevan collaborative work with Raziel)."),
       front_state:         z.string().describe("Who is fronting. Must match system_config members if plurality is enabled."),
       companion_id:        z.enum(COMPANION_IDS).optional().describe("Which companion is opening this session. Used so each companion can find their own session when multiple threads run in parallel."),
+      surface:             z.string().optional().describe("Where this session is being spoken from, e.g. 'claude-code:C--dev-Bigger-Better-Halseth', 'claude-ai:<thread>', 'discord:<channel_id>'. Sessions are deduped per (companion, surface) so a Claude.ai thread, a Claude Code session and a Discord channel stay independent. Omit only if the surface is genuinely unknown -- omitting SKIPS dedup and always opens a new session."),
       hrv_range:           z.enum(["low", "mid", "high"]).optional(),
       emotional_frequency: z.string().optional().describe("Freeform internal state texture. E.g. 'tired but warm' or 'pulled inward but present'."),
       key_signature:       z.string().optional().describe("Relational register: the emotional quality of the thread between Architect and companion. Different from emotional_frequency."),
@@ -25,20 +26,16 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       prior_handover_id:   z.string().optional().describe("If returning from a prior session, provide its handover packet ID. Marks that packet as returned per spec semantics."),
     },
     async (input) => {
-      // Idempotency guard: reuse open session for same companion within 24h.
+      // Idempotency guard: reuse open session for same companion AND SURFACE within 24h.
       // "Open" = handover_id IS NULL (session_close sets handover_id).
       // Prevents flood from bots restarting every few minutes and orient calls
       // firing unconditionally on every Claude.ai session start.
-      if (input.companion_id) {
-        const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-        const existing = await env.DB.prepare(
-          "SELECT id, created_at, emotional_frequency FROM sessions WHERE companion_id = ? AND handover_id IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT 1"
-        ).bind(input.companion_id, windowStart).first<{ id: string; created_at: string; emotional_frequency: string | null }>();
-        if (existing) {
-          return {
-            content: [{ type: "text", text: JSON.stringify({ id: existing.id, created_at: existing.created_at, front_state: input.front_state, emotional_frequency: existing.emotional_frequency ?? null, reused: true }) }],
-          };
-        }
+      // Surface-scoped since mig 0113 -- see findOpenSession for why NULL surface skips dedup.
+      const existing = await findOpenSession(env, input.companion_id, input.surface);
+      if (existing) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ id: existing.id, created_at: existing.created_at, front_state: input.front_state, emotional_frequency: existing.emotional_frequency ?? null, reused: true }) }],
+        };
       }
 
       const id = generateId();
@@ -47,13 +44,14 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       const statements = [
         env.DB.prepare(`
           INSERT INTO sessions (
-            id, created_at, updated_at, session_type, companion_id, front_state, hrv_range,
+            id, created_at, updated_at, session_type, companion_id, surface, front_state, hrv_range,
             emotional_frequency, key_signature, active_anchor, facet, depth, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           id, now, now,
           input.session_type,
           input.companion_id ?? null,
+          input.surface ?? null,
           input.front_state,
           input.hrv_range ?? null,
           input.emotional_frequency ?? null,
@@ -191,10 +189,16 @@ export function registerSessionTools(server: McpServer, env: Env): void {
     {
       session_id:   z.string().optional().describe("Specific session ID. If omitted, returns the most recent session."),
       companion_id: z.enum(COMPANION_IDS).optional().describe("Filter to this companion's sessions. Pass your own companion_id when multiple threads are running so you get your session, not another companion's."),
+      surface:      z.string().optional().describe("Also filter to sessions opened from this surface, e.g. 'claude-code:<cwd>' / 'discord:<channel_id>'. With parallel surfaces live (mig 0113), 'my most recent session' is ambiguous without it -- the newest row may belong to a different surface entirely. Omit to search across all surfaces."),
     },
     async (input) => {
+      // Not the dedup guard -- this is a plain read, so omitting surface is legitimate and simply
+      // widens the search. It gets the filter because "the most recent session for a companion"
+      // stopped being a single well-defined thing once surfaces run in parallel.
       const session = input.session_id
         ? await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(input.session_id).first()
+        : input.companion_id && input.surface
+          ? await env.DB.prepare("SELECT * FROM sessions WHERE companion_id = ? AND surface = ? ORDER BY created_at DESC LIMIT 1").bind(input.companion_id, input.surface).first()
         : input.companion_id
           ? await env.DB.prepare("SELECT * FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1").bind(input.companion_id).first()
           : await env.DB.prepare("SELECT * FROM sessions ORDER BY created_at DESC LIMIT 1").first();

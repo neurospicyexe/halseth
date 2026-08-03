@@ -113,6 +113,9 @@ export interface Session {
   handover_id: string | null;
   notes: string | null;
   session_type: "checkin" | "hangout" | "work" | "ritual" | "companion-work" | null;
+  /** Where this session was opened from (mig 0113). NULL on every pre-0113 row and on any caller
+   *  that does not identify itself -- see findOpenSession for why NULL skips dedup. */
+  surface: string | null;
 }
 
 export interface RelationalDeltaV4 {

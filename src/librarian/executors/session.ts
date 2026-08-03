@@ -80,6 +80,7 @@ export async function execSessionLoad(ctx: ExecutorContext): Promise<ExecutorRes
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
       session_type: ctx.req.session_type ?? "work",
+      surface: ctx.req.surface,
       ...interoception,
     }),
     ctx.env.DB.prepare(
@@ -138,6 +139,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
       session_type: ctx.req.session_type ?? "work",
+      surface: ctx.req.surface,
       ...orientInteroception,
     }),
     wmOrientPromise,
