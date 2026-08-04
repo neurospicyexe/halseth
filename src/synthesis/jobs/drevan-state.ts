@@ -292,7 +292,11 @@ export async function runDrevanState(env: Env): Promise<void> {
 
   const [handovers, deltas] = await Promise.all([
     env.DB.prepare(
-      `SELECT session_id, spine, motion_state, created_at FROM handover_packets WHERE session_id IN (${placeholders}) ORDER BY created_at DESC`
+      // close_kind IS NULL (mig 0114): synthesis is about what was lived. A backfilled close is
+      // archaeology -- 30 of Drevan's sessions carry one -- and its motion_state is a placeholder,
+      // not a reading. Feeding "a job opened this row" in as material for his state is the same
+      // defect as consolidateSession narrating an error as interior (fixed 2026-08-03).
+      `SELECT session_id, spine, motion_state, created_at FROM handover_packets WHERE session_id IN (${placeholders}) AND close_kind IS NULL ORDER BY created_at DESC`
     ).bind(...sessionIds).all<HandoverRow>(),
     env.DB.prepare(
       `SELECT session_id, delta_text, agent, valence, created_at FROM relational_deltas WHERE session_id IN (${placeholders}) AND (agent = 'drevan' OR companion_id = 'drevan') AND delta_text IS NOT NULL ORDER BY created_at DESC LIMIT 30`

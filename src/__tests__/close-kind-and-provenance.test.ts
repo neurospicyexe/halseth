@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { OPENED_BY } from "../db/queries.js";
 import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
+import { matchFastPath } from "../librarian/router.js";
 
 const readSource = (rel: string) => readFile(resolve(rel), "utf8");
 
@@ -27,6 +28,24 @@ const LATEST_HANDOVER_READERS = [
   "src/librarian/backends/halseth.ts",
   "src/mcp/tools/session.ts",
   "src/mcp/tools/session_load.ts",
+];
+
+/**
+ * Synthesis reads handovers to narrate what was lived. A backfilled spine is archaeology and its
+ * motion_state is a placeholder, so these must be filtered too -- feeding "a job opened this row"
+ * into a companion's state synthesis is the consolidateSession defect (machine text narrated as
+ * interior) in a different job.
+ */
+const SYNTHESIS_HANDOVER_READERS = [
+  "src/synthesis/jobs/drevan-state.ts",
+  "src/synthesis/jobs/somatic-snapshot.ts",
+];
+
+/** Display surfaces: showing a reconstruction here is CORRECT. Listed so nobody "fixes" them. */
+const UNFILTERED_BY_DESIGN = [
+  "src/handlers/history.ts",
+  "src/handlers/sessions.ts",
+  "src/handlers/handovers.ts",
 ];
 
 /** Every file that INSERTs a session row. */
@@ -61,6 +80,30 @@ describe("backfilled closes cannot be read as live ones", () => {
     const src = await readSource("src/mcp/tools/session.ts");
     expect(src).toMatch(/FROM handover_packets WHERE session_id = \?/);
   });
+
+  it("every synthesis handover read filters close_kind IS NULL", async () => {
+    for (const file of SYNTHESIS_HANDOVER_READERS) {
+      const src = await readSource(file);
+      const reads = [...src.matchAll(/FROM handover_packets\s+WHERE[^`"']*/gi)];
+      expect(reads.length, `${file} should still read handover_packets`).toBeGreaterThan(0);
+      for (const [read] of reads) {
+        expect(
+          /close_kind IS NULL/i.test(read),
+          `${file} synthesizes from an unfiltered handover read: "${read.slice(0, 120)}". A backfilled spine would become material for a companion's state.`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("display surfaces stay unfiltered on purpose", async () => {
+    for (const file of UNFILTERED_BY_DESIGN) {
+      const src = await readSource(file);
+      expect(
+        /close_kind IS NULL/i.test(src),
+        `${file} lists handovers for a human to look at -- hiding reconstructions there loses the history on purpose written down`,
+      ).toBe(false);
+    }
+  });
 });
 
 describe("session provenance", () => {
@@ -71,7 +114,7 @@ describe("session provenance", () => {
       expect(inserts.length, `${file} should still contain a session INSERT`).toBeGreaterThan(0);
       for (const [, cols] of inserts) {
         expect(
-          cols.replace(/\s+/g, " "),
+          String(cols ?? "").replace(/\s+/g, " "),
           `a session INSERT in ${file} omits opened_by -- an unattributable session row is how 187 of them became unattributable`,
         ).toContain("opened_by");
       }
@@ -100,7 +143,7 @@ describe("session_open is lifecycle-only", () => {
   it("no read-shaped phrase triggers session_open", () => {
     for (const phrase of READ_SHAPED) {
       expect(
-        FAST_PATH_PATTERNS.session_open.triggers,
+        FAST_PATH_PATTERNS.session_open!.triggers,
         `"${phrase}" must not open a session`,
       ).not.toContain(phrase);
     }
@@ -108,17 +151,35 @@ describe("session_open is lifecycle-only", () => {
 
   it("those phrases route to triad_state_read instead of being dropped", () => {
     for (const phrase of READ_SHAPED) {
-      expect(FAST_PATH_PATTERNS.triad_state_read.triggers, `"${phrase}" lost its route`).toContain(phrase);
+      expect(FAST_PATH_PATTERNS.triad_state_read!.triggers, `"${phrase}" lost its route`).toContain(phrase);
     }
   });
 
   it("triad_state_read reaches no tool that writes", () => {
-    expect(FAST_PATH_PATTERNS.triad_state_read.tools).toEqual(["triad_state_read"]);
+    expect(FAST_PATH_PATTERNS.triad_state_read!.tools).toEqual(["triad_state_read"]);
+  });
+
+  // List membership is not routing: FAST_PATH_PATTERNS is scanned in key order and ANCHORED_GUARDS
+  // run first, so the real router has to be asked.
+  it("the real router sends each read-shaped phrase somewhere that does not open a session", () => {
+    for (const phrase of READ_SHAPED) {
+      const hit = matchFastPath(phrase);
+      expect(hit, `"${phrase}" no longer matches any fast path`).not.toBeNull();
+      expect(hit!.key, `"${phrase}" still routes to a session INSERT`).not.toBe("session_open");
+      expect(hit!.entry.tools).not.toContain("halseth_session_load");
+      expect(hit!.entry.tools).not.toContain("halseth_session_orient");
+    }
+  });
+
+  it("the real router still opens a session for explicit lifecycle phrases", () => {
+    for (const phrase of ["open my session", "start session"]) {
+      expect(matchFastPath(phrase)?.key, phrase).toBe("session_open");
+    }
   });
 
   it("session_open keeps its explicit lifecycle triggers", () => {
     for (const phrase of ["open my session", "open session", "new session", "start session"]) {
-      expect(FAST_PATH_PATTERNS.session_open.triggers).toContain(phrase);
+      expect(FAST_PATH_PATTERNS.session_open!.triggers).toContain(phrase);
     }
   });
 });

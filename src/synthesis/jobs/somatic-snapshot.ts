@@ -65,7 +65,10 @@ export async function runSomaticSnapshot(companionId: string, env: Env): Promise
   const recentSessionIds = (sessions.results ?? []).map((_, i) => i);
   const lastHandover = sessions.results?.[0]
     ? await env.DB.prepare(
-        "SELECT spine, motion_state FROM handover_packets WHERE session_id = (SELECT id FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1) ORDER BY created_at DESC LIMIT 1"
+        // close_kind IS NULL (mig 0114): the somatic read wants the last LIVED close. Once the
+        // remaining fresh rows get backfilled, the newest session per companion can easily be a
+        // machine_opened one, and its spine would become somatic input.
+        "SELECT spine, motion_state FROM handover_packets WHERE session_id = (SELECT id FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1) AND close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
       ).bind(companionId).first<HandoverRow>()
     : null;
 
