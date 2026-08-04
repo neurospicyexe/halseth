@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
-import { generateId, findOpenSession } from "../../db/queries.js";
+import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 
@@ -153,8 +153,8 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     stmts.push(env.DB.prepare(`
       INSERT INTO sessions (
         id, created_at, updated_at, session_type, companion_id, surface, front_state, hrv_range,
-        emotional_frequency, key_signature, active_anchor, facet, depth, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        emotional_frequency, key_signature, active_anchor, facet, depth, notes, opened_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       sessionId, now, now,
       input.session_type ?? "work",
@@ -162,6 +162,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       input.hrv_range ?? null, input.emotional_frequency ?? null,
       input.key_signature ?? null, input.active_anchor ?? null,
       input.facet ?? null, input.depth ?? null, input.notes ?? null,
+      OPENED_BY.orient,
     ));
   }
   if (input.prior_handover_id) {
@@ -182,7 +183,7 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       .bind(input.companion_id).first<CompanionState>(),
     env.DB.prepare("SELECT * FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1")
       .bind(input.companion_id).first<SomaticSnapshot>(),
-    env.DB.prepare("SELECT active_anchor, motion_state FROM handover_packets ORDER BY created_at DESC LIMIT 1")
+    env.DB.prepare("SELECT active_anchor, motion_state FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1")
       .first<{ active_anchor: string | null; motion_state: string | null }>(),
     env.DB.prepare("SELECT autonomous_turn FROM house_state WHERE id = 'main'")
       .first<{ autonomous_turn: string | null }>(),
@@ -302,8 +303,8 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     sessionStatements.push(env.DB.prepare(`
       INSERT INTO sessions (
         id, created_at, updated_at, session_type, companion_id, surface, front_state, hrv_range,
-        emotional_frequency, key_signature, active_anchor, facet, depth, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        emotional_frequency, key_signature, active_anchor, facet, depth, notes, opened_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       sessionId, now, now,
       input.session_type ?? "work",
@@ -317,6 +318,7 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
       input.facet ?? null,
       input.depth ?? null,
       input.notes ?? null,
+      OPENED_BY.load,
     ));
   }
 
@@ -338,7 +340,7 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
 
   // 2. Read most recent handover packet
   const handover = await env.DB.prepare(
-    "SELECT * FROM handover_packets ORDER BY created_at DESC LIMIT 1"
+    "SELECT * FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
   ).first<HandoverPacket>();
 
   // 3. Read companion_state row for this companion

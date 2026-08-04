@@ -44,10 +44,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "summary",
     raw: true,
   },
+  // LIFECYCLE ONLY. session_open INSERTs a session row, and until 2026-08-04 this trigger list also
+  // held six state-READ phrases -- "current state", "how am i", "what's my state", "where am i",
+  // "show my state", "check my state". Any agent or cron that asked a state-shaped question opened a
+  // lifecycle row that nothing would ever close; that is a large share of the 187 stale open sessions
+  // (the same trap the consolidation cron hit on 08-03, fixed there by routing to triad_state_read).
+  // Those six now live on triad_state_read, which reads and writes nothing.
+  // Do not put a read-shaped phrase back on this key.
   session_open: {
     triggers: [
       "open my session", "open session", "new session", "start session", "good morning", "checking in", "load me in",
-      "current state", "how am i", "what's my state", "where am i", "show my state", "check my state",
     ],
     tools: ["halseth_session_load"],
     pre_fetch: ["plural_get_current_front"],
@@ -1325,6 +1331,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "triad pulse", "check triad", "read triad", "triad status",
       "where are drevan and gaia", "where are cypher and gaia", "where are drevan and cypher",
       "where are the others", "companion states", "all companion states",
+      // Moved off session_open 2026-08-04: these read a state, so they must not open a session.
+      "current state", "how am i", "what's my state", "where am i", "show my state", "check my state",
     ],
     tools: ["triad_state_read"],
     response_key: "summary",

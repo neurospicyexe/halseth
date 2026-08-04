@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
-import { generateId, findOpenSession } from "../../db/queries.js";
+import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
 import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
 import { embedAndStoreAsync, composeHandoverText } from "../embed.js";
 
@@ -45,8 +45,8 @@ export function registerSessionTools(server: McpServer, env: Env): void {
         env.DB.prepare(`
           INSERT INTO sessions (
             id, created_at, updated_at, session_type, companion_id, surface, front_state, hrv_range,
-            emotional_frequency, key_signature, active_anchor, facet, depth, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            emotional_frequency, key_signature, active_anchor, facet, depth, notes, opened_by
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           id, now, now,
           input.session_type,
@@ -60,6 +60,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
           input.facet ?? null,
           input.depth ?? null,
           input.notes ?? null,
+          OPENED_BY.mcp,
         ),
       ];
 
@@ -222,7 +223,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
             "SELECT * FROM handover_packets WHERE session_id = ? ORDER BY created_at DESC LIMIT 1"
           ).bind(input.session_id).first()
         : await env.DB.prepare(
-            "SELECT * FROM handover_packets ORDER BY created_at DESC LIMIT 1"
+            "SELECT * FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
           ).first();
 
       if (!packet) {

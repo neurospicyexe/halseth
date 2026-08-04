@@ -43,7 +43,7 @@ export async function taskList(env: Env, companionId: string, status?: string) {
 
 export async function handoverRead(env: Env) {
   return env.DB.prepare(
-    "SELECT * FROM handover_packets ORDER BY created_at DESC LIMIT 1"
+    "SELECT * FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
   ).first();
 }
 

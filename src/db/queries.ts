@@ -70,9 +70,27 @@ export async function findOpenSession(
   ).bind(companionId, surface, windowStart).first<OpenSessionMatch>();
 }
 
+// ── Who opened this session (mig 0114) ───────────────────────────────────────
+//
+// A session row records WHERE it was opened from (surface, mig 0113) but recorded nothing about
+// WHAT called it -- which is why 187 stale rows could not be attributed to a caller after the fact.
+// Set at every INSERT site. Add a tag here rather than passing free strings at call sites.
+export const OPENED_BY = {
+  /** halseth_session_open (MCP tool; Discord bots, direct use) */
+  mcp: "mcp:session_open",
+  /** loadOrientData -- the two-call boot sequence, step 1 */
+  orient: "librarian:session_orient",
+  /** loadSessionData -- the legacy single-call boot */
+  load: "librarian:session_load",
+} as const;
+
 // Returns the most recent handover packet, or null.
+//
+// close_kind IS NULL (mig 0114) restricts this to closes that were authored live. A backfilled
+// close is archaeology: real, searchable, but it is not "the last thing that happened", and letting
+// one win a global ORDER BY created_at DESC is how a reconstruction becomes a boot narrative.
 export async function getLatestHandover(env: Env): Promise<HandoverPacket | null> {
   return env.DB.prepare(
-    "SELECT * FROM handover_packets ORDER BY created_at DESC LIMIT 1"
+    "SELECT * FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
   ).first<HandoverPacket>();
 }
