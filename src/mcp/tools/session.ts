@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
-import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
+import { generateId, findOpenSession, OPENED_BY, findExistingClose, clearSupersededClose } from "../../db/queries.js";
 import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
 import { embedAndStoreAsync, composeHandoverText } from "../embed.js";
 
@@ -97,16 +97,17 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       active_anchor:   z.string().optional(),
     },
     async (input) => {
-      // Check idempotency: if session already has a handover_id, return it.
-      const existing = await env.DB.prepare(
-        "SELECT handover_id FROM sessions WHERE id = ?"
-      ).bind(input.session_id).first<{ handover_id: string | null }>();
-
-      if (existing?.handover_id) {
+      // Idempotency, with one exception: a MACHINE close steps aside for an authored one.
+      // The stale-session sweep closes abandoned sessions; if someone comes back to that thread and
+      // writes the real narrative, silently answering "already closed" would discard it.
+      const existing = await findExistingClose(env, input.session_id);
+      if (existing && !existing.supersedable) {
         return {
           content: [{ type: "text", text: JSON.stringify({ handover_id: existing.handover_id, already_closed: true }) }],
         };
       }
+      const superseded = existing?.supersedable ? existing : null;
+      if (superseded) await clearSupersededClose(env, input.session_id, superseded.handover_id);
 
       const handoverId = generateId();
       const now = new Date().toISOString();
@@ -177,6 +178,7 @@ export function registerSessionTools(server: McpServer, env: Env): void {
       }
 
       const payload: Record<string, unknown> = { handover_id: handoverId, closed_at: now };
+      if (superseded) payload["superseded"] = { handover_id: superseded.handover_id, close_kind: superseded.close_kind };
       if (warnings.length) payload["warnings"] = warnings;
       return {
         content: [{ type: "text", text: JSON.stringify(payload) }],

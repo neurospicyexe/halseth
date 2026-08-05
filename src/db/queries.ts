@@ -84,6 +84,57 @@ export const OPENED_BY = {
   load: "librarian:session_load",
 } as const;
 
+// ── Close precedence (mig 0114, extended 2026-08-04 for the stale sweep) ──────
+//
+// An authored close always beats a machine one. The stale-session sweep writes a close that only
+// counts what it can see; if a person or a companion later writes the real narrative for that same
+// session, the machine version must get out of the way instead of making the real one impossible.
+// Without this, the sweep would be unsafe by construction: return to a two-day-old Claude.ai thread,
+// say /close, and your narrative would be silently discarded as "already closed".
+//
+// Only kinds that ASSERT NOTHING are superseded. 'reconstructed' holds hand-written content, so it
+// is left alone -- overwriting it would destroy the very thing the backfill was for.
+export const SUPERSEDABLE_CLOSE_KINDS = ["auto_stale", "empty", "machine_opened"] as const;
+
+export interface ExistingClose {
+  handover_id: string;
+  close_kind: string | null;
+  /** true when an authored close may replace this one */
+  supersedable: boolean;
+}
+
+export async function findExistingClose(env: Env, sessionId: string): Promise<ExistingClose | null> {
+  const row = await env.DB.prepare(
+    `SELECT s.handover_id AS handover_id, h.close_kind AS close_kind
+       FROM sessions s LEFT JOIN handover_packets h ON h.id = s.handover_id
+      WHERE s.id = ?`
+  ).bind(sessionId).first<{ handover_id: string | null; close_kind: string | null }>();
+  if (!row?.handover_id) return null;
+  return {
+    handover_id: row.handover_id,
+    close_kind: row.close_kind,
+    supersedable: row.close_kind !== null
+      && (SUPERSEDABLE_CLOSE_KINDS as readonly string[]).includes(row.close_kind),
+  };
+}
+
+/**
+ * Clear a machine close so an authored one can take its place. Unlinks the session first, then
+ * drops the packet -- that order can never leave `sessions.handover_id` pointing at a deleted row.
+ * The vector goes best-effort: a stray vector for a deleted packet resolves to nothing at read time.
+ */
+export async function clearSupersededClose(env: Env, sessionId: string, handoverId: string): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("UPDATE sessions SET handover_id = NULL WHERE id = ?").bind(sessionId),
+    env.DB.prepare("DELETE FROM handover_packets WHERE id = ?").bind(handoverId),
+  ]);
+  try {
+    await env.VECTORIZE.deleteByIds([`handover_packets:${handoverId}`]);
+  } catch (err) {
+    console.error("[close-precedence] vector delete failed (row already gone):", String(err));
+  }
+}
+
 // Returns the most recent handover packet, or null.
 //
 // close_kind IS NULL (mig 0114) restricts this to closes that were authored live. A backfilled

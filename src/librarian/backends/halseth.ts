@@ -11,7 +11,7 @@ import {
   loadGroundData, SessionGroundInput,
   loadLightGroundData,
 } from "../../mcp/tools/session_load.js";
-import { generateId } from "../../db/queries.js";
+import { generateId, findExistingClose, clearSupersededClose } from "../../db/queries.js";
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
@@ -331,8 +331,11 @@ export async function sessionClose(env: Env, params: {
   motion_state: string; active_anchor?: string; notes?: string; spiral_complete?: boolean;
   somaFields?: CompanionStateUpdate; companionId?: string;
 }): Promise<{ id: string; spine: string }> {
-  const existing = await env.DB.prepare("SELECT handover_id FROM sessions WHERE id = ?").bind(params.session_id).first<{ handover_id: string | null }>();
-  if (existing?.handover_id) return { id: existing.handover_id, spine: params.spine };
+  // Same precedence rule as the MCP close path (both writers, per fix-landed-on-a-different-writer):
+  // an authored close supersedes a machine one (the stale-session sweep's), and never the reverse.
+  const existing = await findExistingClose(env, params.session_id);
+  if (existing && !existing.supersedable) return { id: existing.handover_id, spine: params.spine };
+  if (existing?.supersedable) await clearSupersededClose(env, params.session_id, existing.handover_id);
   const handoverId = generateId();
   const now = new Date().toISOString();
 
