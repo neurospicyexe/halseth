@@ -11,6 +11,7 @@ import {
   openConversation,
   appendTurn,
   landConversation,
+  fadeConversation,
   getActiveConversation,
   listConversations,
 } from "../webmind/conversations.js";
@@ -169,6 +170,49 @@ export async function postConversationLand(
     return json(result, 200);
   } catch (err) {
     console.error("[mind/conversations/land] POST error", { id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/conversations/:id/fade   body: { reason }
+//
+// Retire a thread without authoring a resolution. Distinct from /land on purpose: /land is a
+// companion saying a topic finished, /fade is a counter saying it ran past its budget. A caller
+// that only knows the second must never be made to fake the first.
+export async function postConversationFade(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { id } = params;
+  if (!id) return json({ error: "id is required" }, 400);
+
+  let body: { reason?: string };
+  try {
+    body = await request.json() as { reason?: string };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.reason || typeof body.reason !== "string") {
+    return json({ error: "reason is required" }, 400);
+  }
+
+  try {
+    const result = await fadeConversation(env, id, body.reason);
+
+    if (!result.ok) {
+      if (result.reason === "not_found") return json({ error: "Conversation not found" }, 404);
+      if (result.reason === "terminal") return json({ ok: false, reason: "terminal" }, 409);
+      return json({ ok: false, reason: result.reason }, 400);
+    }
+
+    return json(result, 200);
+  } catch (err) {
+    console.error("[mind/conversations/fade] POST error", { id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

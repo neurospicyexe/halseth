@@ -236,6 +236,38 @@ export async function landConversation(env: Env, threadId: string, input: {
   return { ok: true };
 }
 
+/**
+ * Retire an active thread WITHOUT authoring a resolution (2026-08-05).
+ *
+ * `landConversation` requires a `resolution` sentence, which is the right contract when a
+ * companion decides a topic is finished -- and the wrong one for a caller that only knows a
+ * COUNTER tripped. The commons turn budget is exactly that caller: it can prove a thread ran
+ * past its budget and can prove nothing about what the thread was about. Making it invent a
+ * resolution would put a machine-authored summary into the record as if a companion had
+ * written it (the counter-not-narrator rule, `docs/close-the-187-2026-08-04.md`).
+ *
+ * So this writes state='faded' and a short REASON CODE into `resolution` -- `[faded: <code>]`,
+ * bracketed so it can never be mistaken for a companion's sentence -- and leaves `landed_by`
+ * NULL, because nobody landed it. Same CAS discipline as land/fade-on-read: the WHERE guard
+ * means a concurrent land by a companion always wins over a budget fade.
+ */
+export async function fadeConversation(env: Env, threadId: string, reason: string):
+  Promise<{ ok: boolean; reason?: string }> {
+  const code = reason.trim().slice(0, 40).replace(/[\]\n]/g, " ") || "unspecified";
+  const updateResult = await env.DB.prepare(
+    "UPDATE conversation_threads SET state = 'faded', resolution = ? WHERE id = ? AND state IN ('open','moving')"
+  ).bind(`[faded: ${code}]`, threadId).run();
+
+  if (updateResult.meta.changes === 0) {
+    const recheck = await env.DB.prepare(
+      "SELECT id FROM conversation_threads WHERE id = ?"
+    ).bind(threadId).first();
+    return recheck ? { ok: false, reason: "terminal" } : { ok: false, reason: "not_found" };
+  }
+
+  return { ok: true };
+}
+
 export async function getActiveConversation(env: Env, channelId: string):
   Promise<{ thread: ConvoThread; ledger: LedgerRow[] } | null> {
   const thread = await env.DB.prepare(

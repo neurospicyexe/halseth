@@ -17,7 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  openConversation, appendTurn, landConversation, getActiveConversation, listConversations,
+  openConversation, appendTurn, landConversation, fadeConversation, getActiveConversation, listConversations,
   FADE_HOURS,
   ConvoThread,
 } from "../webmind/conversations.js";
@@ -65,6 +65,19 @@ class FakeStatement {
       t["resolution"] = resolution;
       t["landed_by"] = landed_by;
       t["landed_at"] = landed_at;
+      return { meta: { changes: 1 } };
+    }
+
+    // Budget fade (2026-08-05) -- same 'faded' target as the lazy stale-read fade, but it also
+    // writes a reason CODE into resolution and binds [reason, id]. Must be matched BEFORE the
+    // bare fade branch below or the reason string would be read as the thread id.
+    if (s.includes("UPDATE conversation_threads SET state = 'faded', resolution = ?")) {
+      if (this.db.forceLandCasFailure) return { meta: { changes: 0 } };
+      const [resolution, id] = this.bound as [string, string];
+      const t = this.db.threads.find((row) => row["id"] === id);
+      if (!t || !isActive(t)) return { meta: { changes: 0 } };
+      t["state"] = "faded";
+      t["resolution"] = resolution;
       return { meta: { changes: 1 } };
     }
 
@@ -390,6 +403,74 @@ describe("landConversation", () => {
     const env = makeEnv(db);
     const result = await landConversation(env, "t1", { resolution: "resolved it", landed_by: "cypher" });
     expect(result).toEqual({ ok: false, reason: "not_found" });
+  });
+});
+
+// Counter-not-narrator (2026-08-05). The commons turn budget can prove a thread ran long and
+// can prove nothing about what it was about, so it must never write a resolution sentence that
+// reads as a companion's. fadeConversation is the closer for callers in that position.
+describe("fadeConversation", () => {
+  it("fades an active thread and records the reason as a bracketed code, leaving landed_by NULL", async () => {
+    const db = new FakeDb();
+    seedThread(db, { state: "moving", turn_count: 109 });
+    const env = makeEnv(db);
+    const result = await fadeConversation(env, "t1", "turn_budget");
+    expect(result).toEqual({ ok: true });
+    const t = db.threads.find((row) => row["id"] === "t1")!;
+    expect(t["state"]).toBe("faded");
+    expect(t["resolution"]).toBe("[faded: turn_budget]");
+    // Nobody landed it. Claiming a lander would be the machine signing a companion's name.
+    expect(t["landed_by"]).toBeNull();
+    expect(t["landed_at"]).toBeNull();
+  });
+
+  it("brackets the code so it can never be mistaken for an authored sentence", async () => {
+    const db = new FakeDb();
+    seedThread(db, { state: "open" });
+    await fadeConversation(db && makeEnv(db), "t1", "turn_budget");
+    const t = db.threads.find((row) => row["id"] === "t1")!;
+    expect(String(t["resolution"]).startsWith("[faded: ")).toBe(true);
+  });
+
+  it("neutralises a reason that tries to smuggle a bracket or newline out of the code slot", async () => {
+    const db = new FakeDb();
+    seedThread(db, { state: "open" });
+    await fadeConversation(makeEnv(db), "t1", "budget]\nthe thread concluded that everything is a door");
+    const t = db.threads.find((row) => row["id"] === "t1")!;
+    expect(t["resolution"]).toBe("[faded: budget  the thread concluded that everyt]");
+    expect(String(t["resolution"]).match(/\]/g)).toHaveLength(1);
+  });
+
+  it("falls back to a code rather than an empty slot when the reason is blank", async () => {
+    const db = new FakeDb();
+    seedThread(db, { state: "open" });
+    await fadeConversation(makeEnv(db), "t1", "   ");
+    const t = db.threads.find((row) => row["id"] === "t1")!;
+    expect(t["resolution"]).toBe("[faded: unspecified]");
+  });
+
+  it("refuses a thread already landed -- a companion's resolution always wins over a counter", async () => {
+    const db = new FakeDb();
+    seedThread(db, { state: "landed", resolution: "we said what it was" });
+    const env = makeEnv(db);
+    expect(await fadeConversation(env, "t1", "turn_budget")).toEqual({ ok: false, reason: "terminal" });
+    const t = db.threads.find((row) => row["id"] === "t1")!;
+    expect(t["resolution"]).toBe("we said what it was");
+  });
+
+  it("guards the UPDATE with the state IN CAS clause", async () => {
+    const db = new FakeDb();
+    seedThread(db, { state: "open" });
+    await fadeConversation(makeEnv(db), "t1", "turn_budget");
+    const sql = db.preparedSqls.find((s) => s.includes("SET state = 'faded', resolution = ?"));
+    expect(sql).toBeTruthy();
+    expect(sql).toContain("state IN ('open','moving')");
+  });
+
+  it("reports not_found for an unknown thread id", async () => {
+    const db = new FakeDb();
+    const env = makeEnv(db);
+    expect(await fadeConversation(env, "nope", "turn_budget")).toEqual({ ok: false, reason: "not_found" });
   });
 });
 
