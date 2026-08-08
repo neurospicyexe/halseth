@@ -10,6 +10,7 @@ import { generateId } from "../db/queries";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { assertWritten } from "../lib/result.js";
 import { createLogger } from "../lib/log.js";
+import { PREFERENCE_STRENGTH_ORDER_SQL } from "../lib/preference-order.js";
 
 export interface RefusalRow {
   id: string; companion_id: string; subject_type: string; subject_ref: string | null;
@@ -112,9 +113,12 @@ export async function setPreference(
 
 export async function readPreferences(env: Env, companion_id: string, includeRetired = false, limit = 100): Promise<PreferenceRow[]> {
   const capped = Math.min(Math.max(1, limit), 200);
+  // Same ordering as the boot block (lib/preference-order.ts). If these two drift, the list Raziel
+  // reviews is not the list the companion actually carries -- `strength DESC` on a TEXT column sorted
+  // 'high' LAST, so both surfaces agreed only in being wrong together.
   const sql = includeRetired
-    ? "SELECT * FROM companion_preferences WHERE companion_id = ? ORDER BY strength DESC, created_at DESC LIMIT ?"
-    : "SELECT * FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT ?";
+    ? `SELECT * FROM companion_preferences WHERE companion_id = ? ORDER BY ${PREFERENCE_STRENGTH_ORDER_SQL} LIMIT ?`
+    : `SELECT * FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY ${PREFERENCE_STRENGTH_ORDER_SQL} LIMIT ?`;
   return (await env.DB.prepare(sql).bind(companion_id, capped).all<PreferenceRow>()).results ?? [];
 }
 

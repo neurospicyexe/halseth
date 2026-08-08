@@ -21,6 +21,7 @@
 
 import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
+import { PREFERENCE_STRENGTH_ORDER_SQL } from "../../lib/preference-order.js";
 
 export interface SelfModelEntry { id: string; observation: string; confidence: number }
 export interface PreferenceEntry { domain: string; preference: string; strength: string }
@@ -77,8 +78,11 @@ export async function loadIdentityBlocks(env: Env, companionId: WmAgentId): Prom
     env.DB.prepare(
       "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2",
     ).bind(companionId).all<SelfModelEntry>().catch(() => null),
+    // LIMIT 12 with a strength ordering means this cap decides which preferences a companion
+    // carries into every session. `strength DESC` sorted TEXT lexicographically (medium > low >
+    // high), so it was cutting the strongest first -- see lib/preference-order.ts.
     env.DB.prepare(
-      "SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY strength DESC, created_at DESC LIMIT 12",
+      `SELECT domain, preference, strength FROM companion_preferences WHERE companion_id = ? AND status = 'active' ORDER BY ${PREFERENCE_STRENGTH_ORDER_SQL} LIMIT 12`,
     ).bind(companionId).all<PreferenceEntry>().catch(() => null),
     env.DB.prepare(
       "SELECT subject_text, reason FROM companion_refusals WHERE companion_id = ? AND status = 'standing' ORDER BY created_at DESC LIMIT 5",
