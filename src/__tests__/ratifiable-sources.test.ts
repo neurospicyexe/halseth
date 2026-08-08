@@ -73,19 +73,53 @@ describe("no read path reintroduces the autonomous-only filter", () => {
     // A plain string containing ${RATIFIABLE_PENDING_SQL} compiles fine and ships the literal text
     // "${RATIFIABLE_PENDING_SQL}" into SQL, where it either errors or gets caught and returns 0. tsc
     // cannot catch this, so it is checked here.
+    // The check is "which quote is OPEN at the interpolation", which needs a scanner, not
+    // last-index arithmetic. The nearest-quote-wins version this replaces flagged any template
+    // whose SQL contained a quoted literal before the interpolation -- e.g. a
+    // `SUM(CASE WHEN source = 'autonomous' ...)` column ahead of the WHERE clause -- which is
+    // exactly the shape of correct code. A guard that fires on correct code gets deleted.
+    /** The innermost still-open string context at `index`, or "code" if none. */
+    function contextAt(text: string, index: number): "code" | "'" | '"' | "`" {
+      const stack: Array<"code" | "'" | '"' | "`"> = ["code"];
+      const braces: number[] = [0];
+      for (let i = 0; i < index; i++) {
+        const c = text[i];
+        const top = stack[stack.length - 1];
+        if (c === "\\" && top !== "code") { i++; continue; }        // escape inside a string
+        if (top === "code") {
+          if (c === "'" || c === '"' || c === "`") { stack.push(c); braces.push(0); }
+          else if (c === "{") braces[braces.length - 1] = (braces[braces.length - 1] ?? 0) + 1;
+          else if (c === "}") {
+            if ((braces[braces.length - 1] ?? 0) === 0 && stack.length > 1) { stack.pop(); braces.pop(); }
+            else braces[braces.length - 1] = (braces[braces.length - 1] ?? 0) - 1;
+          } else if (c === "/" && text[i + 1] === "/") { i = text.indexOf("\n", i); if (i < 0) break; }
+          else if (c === "/" && text[i + 1] === "*") { i = text.indexOf("*/", i) + 1; if (i < 1) break; }
+        } else if (top === "`") {
+          if (c === "`") { stack.pop(); braces.pop(); }
+          else if (c === "$" && text[i + 1] === "{") { stack.push("code"); braces.push(0); i++; }
+        } else if (c === top) { stack.pop(); braces.pop(); }
+      }
+      return stack[stack.length - 1] ?? "code";
+    }
+
     const bad: string[] = [];
     for (const f of FILES) {
       const text = readFileSync(f, "utf8");
-      if (!text.includes("${RATIFIABLE_PENDING_SQL}")) continue;
-      // Find the statement each interpolation sits in and require a backtick before it.
-      for (const chunk of text.split("${RATIFIABLE_PENDING_SQL}").slice(0, -1)) {
-        const openQuote = Math.max(chunk.lastIndexOf("`"), -1);
-        const openDouble = chunk.lastIndexOf('"');
-        const openSingle = chunk.lastIndexOf("'");
-        if (openQuote < Math.max(openDouble, openSingle)) bad.push(f.replace(SRC, "src"));
+      let at = text.indexOf("${RATIFIABLE_PENDING_SQL}");
+      while (at >= 0) {
+        if (contextAt(text, at) !== "`") bad.push(f.replace(SRC, "src"));
+        at = text.indexOf("${RATIFIABLE_PENDING_SQL}", at + 1);
       }
     }
     expect(bad).toEqual([]);
+
+    // The guard is not vacuous: a plain-string interpolation IS caught, a template one is not,
+    // and a quoted SQL literal earlier in the same template does not fool it.
+    const ctxOfMarker = (src: string) => contextAt(src, src.indexOf("${RATIFIABLE_PENDING_SQL}"));
+    expect(ctxOfMarker('const s = "WHERE ${RATIFIABLE_PENDING_SQL}"')).toBe('"');
+    expect(ctxOfMarker("const s = 'WHERE ${RATIFIABLE_PENDING_SQL}'")).toBe("'");
+    expect(ctxOfMarker("const s = `WHERE ${RATIFIABLE_PENDING_SQL}`")).toBe("`");
+    expect(ctxOfMarker("const s = `WHEN x = 'a' AND ${RATIFIABLE_PENDING_SQL}`")).toBe("`");
   });
 
   it("the clearing pass is DELIBERATELY excluded -- widening what a model may DISPOSE OF is Raziel's call", () => {

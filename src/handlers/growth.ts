@@ -246,11 +246,14 @@ export async function getGrowthPendingCount(request: Request, env: Env): Promise
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  // NO source filter, deliberately. The first draft here filtered source = 'autonomous' and
-  // reported 10 when 55 were actually waiting: 45 of them carry source = 'reflection' (the
-  // worker's reflect phase). Both are machine-written and both need a human, and the Hearth
-  // page lists them together with working accept/decline. A count that disagrees with the
-  // surface it points at is worse than no count.
+  // Counts the SAME predicate the list serves (`RATIFIABLE_PENDING_SQL`), not a hand-written one.
+  // Original note, still true: the first draft filtered source = 'autonomous' and reported 10 when
+  // 55 were waiting, because 45 carried source = 'reflection'. That was fixed by dropping the
+  // filter entirely -- correct on the data of the day, but it left the count and the list keyed on
+  // two different rules, so a pending row from any THIRD source would be counted here and be
+  // unlistable (hence unratifiable) there: the 2026-08-01 bug pointing the other way. Both sides
+  // now read one constant. 2026-08-08: zero rows differ between the two predicates in prod, so
+  // this is a no-op on today's data and a guarantee going forward.
   const rows = await env.DB.prepare(
     `SELECT companion_id,
             COUNT(*) AS pending,
@@ -258,7 +261,7 @@ export async function getGrowthPendingCount(request: Request, env: Env): Promise
             SUM(CASE WHEN source = 'autonomous' THEN 1 ELSE 0 END) AS from_autonomous,
             SUM(CASE WHEN source = 'reflection' THEN 1 ELSE 0 END) AS from_reflection
      FROM growth_journal
-     WHERE review_status = 'pending'
+     WHERE ${RATIFIABLE_PENDING_SQL}
      GROUP BY companion_id`
   ).all<{ companion_id: string; pending: number; oldest_at: string; from_autonomous: number; from_reflection: number }>();
 
