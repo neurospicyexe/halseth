@@ -688,9 +688,14 @@ export async function getMindSearch(
   // Opt-in continuity: recent prior turns widen recall via dual-vector retrieval.
   // Absent -> single-vector, identical to prior behaviour.
   const recentContext = url.searchParams.get("recent_context");
+  // mode=recall (2026-08-10): the relevance-only retrieval shape, for "what did we actually say" rather than
+  // "give me something to think about". The bots' per-message recall is the caller that needs it -- the default
+  // pool mix spends 30% of every payload on deliberately query-blind material. Opt-in, so an unset mode keeps
+  // the previous behaviour exactly.
+  const mode = url.searchParams.get("mode")?.trim() || null;
 
   try {
-    const result = await dualVectorSearch(env, query, recentContext);
+    const result = await dualVectorSearch(env, query, recentContext, null, null, mode);
 
     if (agentId && isValidAgentId(agentId)) {
       const hitCount = (() => {

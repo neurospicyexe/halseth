@@ -277,6 +277,7 @@ export async function semanticSearch(
   query: string,
   mood?: string | null,
   contentType?: string | null,
+  mode?: string | null,
 ): Promise<string | null> {
   const augment = mood ? MOOD_AUGMENT[mood] : null;
   const augmented = augment ? `${query} ${augment}` : query;
@@ -288,6 +289,10 @@ export async function semanticSearch(
   // material) so "search the corpus for X" returns only origin-layer hits. Unscoped searches
   // still get a guaranteed corpus slot via the Second Brain side; this is the explicit deep dive.
   if (contentType) args.content_type = contentType;
+  // mode=recall asks the OTHER retrieval shape: relevance only, absolute cosine floor, honest empty.
+  // For "what did we actually say" the default pool mix spends 30% of the payload on deliberately
+  // query-blind material, and pool 2 scores 1.000 so it outranks every genuine hit. See SB retrieval.ts.
+  if (mode) args.mode = mode;
   return callTool(env, "sb_search", args);
 }
 
@@ -366,16 +371,17 @@ export async function dualVectorSearch(
   recentContext?: string | null,
   mood?: string | null,
   contentType?: string | null,
+  mode?: string | null,
 ): Promise<string | null> {
   const trimmed = (recentContext ?? "").trim().slice(-CONTINUITY_CONTEXT_CHAR_LIMIT).trimStart();
   if (!trimmed) {
     // No continuity context -> single-vector, identical to prior behaviour.
-    return semanticSearch(env, query, mood, contentType);
+    return semanticSearch(env, query, mood, contentType, mode);
   }
   const continuityQuery = `${query}\n\nRecent conversation context:\n${trimmed}`;
   const [primaryRaw, continuityRaw] = await Promise.all([
-    semanticSearch(env, query, mood, contentType),
-    semanticSearch(env, continuityQuery, mood, contentType),
+    semanticSearch(env, query, mood, contentType, mode),
+    semanticSearch(env, continuityQuery, mood, contentType, mode),
   ]);
   if (!primaryRaw) return continuityRaw;
   if (!continuityRaw) return primaryRaw;
