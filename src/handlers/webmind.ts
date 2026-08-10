@@ -1336,9 +1336,23 @@ export async function getMindCommonsSupply(
     //                       three land within the same minute at 06:03 and then nothing for 24h, so on its
     //                       own the supply is dry for three-quarters of the day, which is most of when the
     //                       looping actually happens.
-    //   discord_session  -- per-session notes, ~380 rows and written throughout the day. Already distilled
-    //                       (NOT the raw `discord-live` chatter barred from Second Brain's novelty pools --
-    //                       different layer entirely), and it passes the same presence test.
+    //   discord_session  -- per-session witness notes. A THIN fill tier, and the count is misleading until
+    //                       filtered: of 55 rows in a 7-day window, 28 were `[metronome/...]` machine status
+    //                       readouts, 13 were `[sibling:cypher] explored ...` broadcasts of another
+    //                       companion's autonomous run (written IDENTICALLY into two companions' notes), 11
+    //                       were other bracketed machine tags, and exactly 3 were genuine session content.
+    //
+    // Hence the bracket exclusion below, and it is not cosmetic. Serving a `[sibling:cypher] explored`
+    // note to Drevan is re-reading a broadcast he already received -- an echo dressed as fresh material,
+    // which is the precise failure this whole change exists to end. And `[metronome/task_check] Open stack is
+    // mostly queued and healthy` as "shared life" is the commons discussing its own plumbing, which is why
+    // `claude_code_session` was excluded in the first place; without this filter it would have walked back in
+    // through the fill tier. A genuine session note does not open with a machine tag.
+    //
+    // HONEST SUPPLY NUMBERS after filtering: ~15 day distillations + ~3 session notes per 7 days. Because
+    // consumption is per-reader, each note serves up to 2 siblings, so ~36 reader-slots a week -- roughly
+    // DOUBLE the 2-finds-plus-1-question it replaces, not the twenty-fold the raw row count suggested. The
+    // bigger change is qualitative: shared interiority instead of a scraped link.
     //
     // `archived = 0` and the 7-day window keep this to genuinely live material; a fortnight-old evening is
     // history, and opening on it reads as the drift it would be.
@@ -1348,6 +1362,9 @@ export async function getMindCommonsSupply(
         WHERE n.agent_id != ?
           AND n.note_type IN ('day_distillation', 'discord_session')
           AND n.archived = 0
+          -- Machine-tagged notes are not lived experience. See the note above: this single condition is what
+          -- keeps metronome readouts and sibling-exploration broadcasts out of the commons.
+          AND n.content NOT LIKE '[%'
           AND n.created_at > datetime('now', '-7 days')
           AND NOT EXISTS (
                 SELECT 1 FROM commons_note_reads r
