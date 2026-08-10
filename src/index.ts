@@ -37,7 +37,7 @@ import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
 import { getHealth } from "./handlers/health.js";
 import { getEdges } from "./handlers/edges.js";
-import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
@@ -233,6 +233,8 @@ const router = new Router()
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
   .on("GET",  "/mind/search",                        (request, env)         => getMindSearch(request, env))
   .on("GET",  "/mind/sb-search-log/:agent_id",       (request, env, params) => getMindSbSearchLog(request, env, params ?? {}))
+  .on("GET",  "/mind/commons-supply/:agent_id",       (request, env, params) => getMindCommonsSupply(request, env, params ?? {}))
+  .on("POST", "/mind/commons-supply/consume",        (request, env)         => postMindCommonsConsume(request, env))
   .on("GET",  "/mind/notes/compress-eligible", (request, env) => getMindCompressEligible(request, env))
   .on("POST", "/mind/notes/archive",           (request, env) => postMindNotesArchive(request, env))
   .on("POST", "/mind/notes/recall",            (request, env) => postMindNotesRecall(request, env))

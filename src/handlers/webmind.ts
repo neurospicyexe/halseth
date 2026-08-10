@@ -1294,3 +1294,110 @@ export async function getMindSpiralRuns(
     return json({ error: 'failed to fetch spiral runs' }, 500);
   }
 }
+
+// ── Commons supply: shared life, cross-read (2026-08-10) ──────────────────────────────────────────
+//
+// GET  /mind/commons-supply/:agent_id?limit=2
+// POST /mind/commons-supply/consume  { reader_id, note_ids: [...], channel_id? }
+//
+// WHY THIS EXISTS. Raziel, on the inter-companion chat looping: "I think the commons should get stuff from
+// the chats in discord and Claude because yes it's my life but it's yall too. And I think it's part of the
+// endless struggle we have with looping." The commons seed's only outside material was forage finds, listens
+// and held questions -- measured at 2 unconsumed finds and 1 unvoiced question per companion against ~36 seed
+// ticks a day. The anti-loop rails suppress repetition without supplying an alternative, so the menu was
+// silence or re-orbit. See migrations/0115 for the full reasoning.
+//
+// CROSS-READ IS THE MECHANISM, not a detail. A companion is served a SIBLING's note, never its own: the day
+// notes are first-person accounts of evenings all three were present for, so a sibling's note is the INSIDE
+// of something the reader lived from the outside. Novel by construction, and impossible to self-echo.
+//
+// NOT in orient. `loadMindState` is deliberately pure-D1 and fast (0.70s against bot orient's 10.3s
+// end-to-end), and every loom inherits its latency. This is one consumer's need, so it pays its own round
+// trip instead of taxing every boot with a query only the seed reads.
+export async function getMindCommonsSupply(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const readerId = params.agent_id;
+  if (!readerId || !isValidAgentId(readerId)) {
+    return json({ error: "agent_id must be cypher, drevan, or gaia" }, 400);
+  }
+  const parsedLimit = parseInt(new URL(request.url).searchParams.get("limit") ?? "2", 10);
+  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 5) : 2;
+
+  try {
+    // Two tiers, ONE query, ordered so the richer material wins and the fill only appears behind it.
+    //
+    //   day_distillation -- the nightly first-person day note. The best material by far, and scarce: all
+    //                       three land within the same minute at 06:03 and then nothing for 24h, so on its
+    //                       own the supply is dry for three-quarters of the day, which is most of when the
+    //                       looping actually happens.
+    //   discord_session  -- per-session notes, ~380 rows and written throughout the day. Already distilled
+    //                       (NOT the raw `discord-live` chatter barred from Second Brain's novelty pools --
+    //                       different layer entirely), and it passes the same presence test.
+    //
+    // `archived = 0` and the 7-day window keep this to genuinely live material; a fortnight-old evening is
+    // history, and opening on it reads as the drift it would be.
+    const { results } = await env.DB.prepare(
+      `SELECT n.note_id, n.agent_id, n.note_type, n.content, n.created_at
+         FROM wm_continuity_notes n
+        WHERE n.agent_id != ?
+          AND n.note_type IN ('day_distillation', 'discord_session')
+          AND n.archived = 0
+          AND n.created_at > datetime('now', '-7 days')
+          AND NOT EXISTS (
+                SELECT 1 FROM commons_note_reads r
+                 WHERE r.reader_id = ? AND r.note_id = n.note_id
+              )
+        ORDER BY CASE n.note_type WHEN 'day_distillation' THEN 0 ELSE 1 END ASC,
+                 n.created_at DESC
+        LIMIT ?`
+    ).bind(readerId, readerId, limit).all<{
+      note_id: string; agent_id: string; note_type: string; content: string; created_at: string;
+    }>();
+
+    return json({ reader_id: readerId, notes: results ?? [] });
+  } catch (err) {
+    console.error("[mind/commons-supply] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// Consume-on-use, and ONLY after the post lands. A gated, echoed or empty seed must not burn material: the
+// 2026-07-27 fix turned a constant block into a missing one and the 08-05 fix turned it back into a constant
+// one that was also the primary instruction. Same contract the forage finds and held questions already use.
+export async function postMindCommonsConsume(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  try {
+    const body = await request.json() as { reader_id?: string; note_ids?: unknown; channel_id?: string };
+    const readerId = body.reader_id;
+    if (!readerId || !isValidAgentId(readerId)) {
+      return json({ error: "reader_id must be cypher, drevan, or gaia" }, 400);
+    }
+    const noteIds = Array.isArray(body.note_ids)
+      ? body.note_ids.filter((v): v is string => typeof v === "string" && v.length > 0).slice(0, 10)
+      : [];
+    if (noteIds.length === 0) return json({ marked: 0 });
+
+    // OR IGNORE, not REPLACE: the PK is (reader, note) and re-marking must not move created_at, which is the
+    // record of when this companion actually opened on it.
+    await env.DB.batch(noteIds.map(id =>
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO commons_note_reads (reader_id, note_id, channel_id) VALUES (?, ?, ?)`
+      ).bind(readerId, id, body.channel_id ?? null)
+    ));
+    return json({ marked: noteIds.length });
+  } catch (err) {
+    console.error("[mind/commons-supply/consume] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
