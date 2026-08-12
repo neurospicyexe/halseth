@@ -229,7 +229,11 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
 }
 
 // GET /mind/growth/journal/:companion_id
-// ?limit=N (max 100), ?pending=1 (only autonomous + awaiting review)
+// ?limit=N (max 100), ?offset=N, ?pending=1 (only autonomous + awaiting review),
+// ?status=accepted (reconsolidation sampling)
+// Returns { journal, total, limit, offset, has_more } -- total/has_more added 2026-08-12, because
+// limit was capped at 100 with no offset and every companion sat AT the cap, so Hearth's "view the
+// full list" could only ever show a first page it had no way to describe as partial.
 /**
  * GET /mind/growth/pending-count
  *
@@ -285,20 +289,49 @@ export async function getGrowthJournal(
   if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
 
   const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10), 100);
+  const rawLimit = parseInt(url.searchParams.get("limit") ?? "20", 10);
+  const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 20, 100);
+  const rawOffset = parseInt(url.searchParams.get("offset") ?? "0", 10);
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
   const pendingOnly = url.searchParams.get("pending") === "1";
   const acceptedOnly = url.searchParams.get("status") === "accepted";
 
-  const sql = pendingOnly
-    ? `SELECT * FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL} ORDER BY created_at DESC LIMIT ?`
+  // One predicate per view mode, used for BOTH the page and its total. Reusing a single global
+  // count across three differently-filtered views is the bug this file has already recorded twice
+  // (see getGrowthPendingCount): a total that disagrees with the list it labels is worse than none.
+  const where = pendingOnly
+    ? `companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
     : acceptedOnly
-      // ?status=accepted -- reconsolidation sampling (worker reflect phase).
-      // ASC: oldest canon first; the stalest memories are the candidates.
-      ? "SELECT * FROM growth_journal WHERE companion_id = ? AND review_status = 'accepted' ORDER BY created_at ASC LIMIT ?"
-      : "SELECT * FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?";
+      ? "companion_id = ? AND review_status = 'accepted'"
+      : "companion_id = ?";
 
-  const rows = await env.DB.prepare(sql).bind(companion_id, limit).all();
-  return json({ journal: rows.results });
+  // ASC for the queue, because a backlog drains from the OLDEST end and `DESC LIMIT n` cuts off
+  // precisely the rows that have waited longest. With 39 pending that was academic; the moment a
+  // queue exceeds the cap, newest-first makes its tail unreachable, which is the whole complaint.
+  // ?status=accepted is likewise ASC -- reconsolidation wants the stalest canon first.
+  const order = pendingOnly || acceptedOnly ? "created_at ASC, id ASC" : "created_at DESC, id DESC";
+
+  // `id` breaks ties: created_at is not unique in growth_journal (the nightly reflect phase writes
+  // several rows in the same second), and a non-deterministic ORDER BY under LIMIT/OFFSET
+  // duplicates rows on one page and skips them on the next.
+  const rows = await env.DB.prepare(
+    `SELECT * FROM growth_journal WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`
+  ).bind(companion_id, limit, offset).all();
+
+  const totalRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM growth_journal WHERE ${where}`
+  ).bind(companion_id).first<{ n: number }>();
+  const total = totalRow?.n ?? 0;
+
+  return json({
+    journal: rows.results,
+    total,
+    limit,
+    offset,
+    // Explicit, so a consumer never has to infer "is there more?" from a full page -- the inference
+    // that made `length >= limit` mean both "exactly limit rows exist" and "hundreds do".
+    has_more: offset + (rows.results?.length ?? 0) < total,
+  });
 }
 
 async function setReviewStatus(

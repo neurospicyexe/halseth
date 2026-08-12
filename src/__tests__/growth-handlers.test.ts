@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { postGrowthPattern, postGrowthMarker, getUnmaterialized, patchVaultPath } from "../handlers/growth.js";
+import { postGrowthPattern, postGrowthMarker, getUnmaterialized, patchVaultPath, getGrowthJournal } from "../handlers/growth.js";
 
 type Row = Record<string, unknown>;
 
@@ -274,5 +274,101 @@ describe("patchVaultPath", () => {
     expect(res.status).toBe(200);
     expect(body.vault_path).toBe(null);
     expect(updateSql).toContain("vault_path = NULL");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getGrowthJournal paging (2026-08-12)
+//
+// The list was `LIMIT ?` with no offset and a hard cap of 100, and all three companions sat AT
+// the cap -- so Hearth's "view the full list" showed a first page it could not describe as
+// partial. These tests pin the three properties that made the old shape unfixable from outside:
+// a total on the SAME predicate as the page, a deterministic order under OFFSET, and a queue
+// that drains from its oldest end.
+// ---------------------------------------------------------------------------
+
+function authedGet(url: string): Request {
+  return new Request(url, { headers: { "Authorization": "Bearer test-secret" } });
+}
+
+/** Captures the SELECT that returns rows and the COUNT that labels them, plus their bindings. */
+function makeJournalEnv(rowCount: number, total: number) {
+  const seen = { listSql: "", listBinds: [] as unknown[], countSql: "", countBinds: [] as unknown[] };
+  const rows = Array.from({ length: rowCount }, (_, i) => ({ id: `j${i}`, companion_id: "cypher" }));
+  const env = makeEnv((sql: string) => {
+    if (sql.startsWith("SELECT COUNT(*)")) {
+      seen.countSql = sql;
+      return { bind: (...b: unknown[]) => { seen.countBinds = b; return { first: async () => ({ n: total }) }; } };
+    }
+    if (sql.startsWith("SELECT * FROM growth_journal")) {
+      seen.listSql = sql;
+      return { bind: (...b: unknown[]) => { seen.listBinds = b; return { all: async () => ({ results: rows }) }; } };
+    }
+    return makeStmt([]);
+  });
+  return { env, seen };
+}
+
+describe("getGrowthJournal paging", () => {
+  it("returns total/offset/has_more and pages with OFFSET", async () => {
+    const { env, seen } = makeJournalEnv(100, 247);
+    const res = await getGrowthJournal(
+      authedGet("https://test.local/mind/growth/journal/cypher?limit=100&offset=100"),
+      env,
+      { companion_id: "cypher" },
+    );
+    const body = await res.json() as any;
+    expect(res.status).toBe(200);
+    expect(body.total).toBe(247);
+    expect(body.offset).toBe(100);
+    expect(body.limit).toBe(100);
+    // 100 + 100 < 247 -- there is a third page, and the caller is told so rather than inferring it
+    // from a full page (the inference that could not distinguish "exactly 100" from "hundreds").
+    expect(body.has_more).toBe(true);
+    expect(seen.listSql).toContain("OFFSET ?");
+    expect(seen.listBinds).toEqual(["cypher", 100, 100]);
+  });
+
+  it("has_more is false on the last page", async () => {
+    const { env } = makeJournalEnv(47, 247);
+    const res = await getGrowthJournal(
+      authedGet("https://test.local/x?limit=100&offset=200"), env, { companion_id: "cypher" });
+    const body = await res.json() as any;
+    expect(body.has_more).toBe(false);
+  });
+
+  it("breaks ORDER BY ties on id, so a row cannot repeat on one page and vanish from the next", async () => {
+    const { env, seen } = makeJournalEnv(20, 20);
+    await getGrowthJournal(authedGet("https://test.local/x"), env, { companion_id: "cypher" });
+    expect(seen.listSql).toContain("created_at DESC, id DESC");
+  });
+
+  it("counts on the SAME predicate as the page it labels (pending view)", async () => {
+    const { env, seen } = makeJournalEnv(17, 17);
+    await getGrowthJournal(
+      authedGet("https://test.local/x?pending=1"), env, { companion_id: "cypher" });
+    // Both statements must carry the ratifiable filter; a total from a wider WHERE would name a
+    // number the list cannot show -- the disagreement this file has already recorded twice.
+    expect(seen.listSql).toContain("review_status");
+    expect(seen.countSql).toContain("review_status");
+    expect(seen.countBinds).toEqual(["cypher"]);
+  });
+
+  it("orders the ratification queue oldest-first, so the backlog's tail is reachable", async () => {
+    const { env, seen } = makeJournalEnv(5, 5);
+    await getGrowthJournal(authedGet("https://test.local/x?pending=1"), env, { companion_id: "cypher" });
+    expect(seen.listSql).toContain("created_at ASC");
+  });
+
+  it("clamps limit to 100 and rejects a negative or unparseable offset", async () => {
+    const { env, seen } = makeJournalEnv(100, 500);
+    await getGrowthJournal(
+      authedGet("https://test.local/x?limit=99999&offset=-5"), env, { companion_id: "cypher" });
+    expect(seen.listBinds).toEqual(["cypher", 100, 0]);
+
+    const b = makeJournalEnv(20, 20);
+    await getGrowthJournal(
+      authedGet("https://test.local/x?limit=abc&offset=xyz"), b.env, { companion_id: "cypher" });
+    expect(b.seen.listBinds).toEqual(["cypher", 20, 0]);
   });
 });
