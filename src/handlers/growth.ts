@@ -23,7 +23,7 @@ import { authGuard } from "../lib/auth.js";
 import { nextPhase, phaseAdvances, advanceChargeSql, type ChargeSignal } from "../webmind/charge.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { storeVector, embedAndStoreAsync } from "../mcp/embed.js";
-import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
+import { RATIFIABLE_PENDING_SQL, VAULT_WORTHY_SQL } from "../lib/ratifiable.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const MAX_TEXT = 8000;
@@ -763,11 +763,13 @@ export async function getUnmaterialized(
   const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "50", 10), 200);
 
   const [journal, patterns, markers, orphaned] = await Promise.all([
-    // Only ACCEPTED journal entries materialize to the vault. Pending entries are
-    // not canon yet; declined entries never become canon. Ratification gates the
-    // vault, not just the orient surface.
+    // Accepted canon, PLUS unraised nightly reflections (2026-08-12). Ratification still gates
+    // canon; it no longer gates searchability. A reflection the companion did not raise is a log
+    // that will never be accepted, so gating the vault on acceptance would make every future
+    // nightly self-read unfindable. Declined rows are still excluded: declining is a verdict.
+    // One constant, shared with the orphan sweep below -- see VAULT_WORTHY_SQL.
     env.DB.prepare(
-      "SELECT id, entry_type, content, tags_json, source, created_at, prehended_ids, evidence_json, novelty FROM growth_journal WHERE companion_id = ? AND vault_path IS NULL AND review_status = 'accepted' ORDER BY created_at DESC LIMIT ?",
+      `SELECT id, entry_type, content, tags_json, source, created_at, prehended_ids, evidence_json, novelty FROM growth_journal WHERE companion_id = ? AND vault_path IS NULL AND ${VAULT_WORTHY_SQL} ORDER BY created_at DESC LIMIT ?`,
     ).bind(companion_id, limit).all(),
     env.DB.prepare(
       "SELECT id, pattern_text, evidence_json, strength, prehended_ids, created_at, updated_at FROM growth_patterns WHERE companion_id = ? AND vault_path IS NULL ORDER BY updated_at DESC LIMIT ?",
@@ -775,12 +777,15 @@ export async function getUnmaterialized(
     env.DB.prepare(
       "SELECT id, marker_type, description, related_pattern_id, prehended_ids, created_at FROM growth_markers WHERE companion_id = ? AND vault_path IS NULL ORDER BY created_at DESC LIMIT ?",
     ).bind(companion_id, limit).all(),
-    // Orphaned: journal rows that WERE materialized but are no longer canon
-    // (pending or declined yet still carry a vault_path -- e.g. materialized
-    // before ratification, or before this gate existed). The materializer deletes
-    // these files and clears vault_path so the vault holds only ratified growth.
+    // Orphaned: rows that WERE materialized but no longer belong in the vault (declined, or an
+    // entry the companion has since raised so it is awaiting a verdict rather than sitting as a
+    // log). The materializer deletes these files and clears vault_path.
+    //
+    // Derived as the exact complement of the feed above, NOT restated. These two are a
+    // write/delete pair over the same rows: if they disagreed by one row, the materializer would
+    // write that file and this sweep would delete it on every single run, forever.
     env.DB.prepare(
-      "SELECT id, vault_path FROM growth_journal WHERE companion_id = ? AND vault_path IS NOT NULL AND review_status != 'accepted' ORDER BY created_at DESC LIMIT ?",
+      `SELECT id, vault_path FROM growth_journal WHERE companion_id = ? AND vault_path IS NOT NULL AND NOT ${VAULT_WORTHY_SQL} ORDER BY created_at DESC LIMIT ?`,
     ).bind(companion_id, limit).all(),
   ]);
 

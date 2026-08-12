@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { postGrowthPattern, postGrowthMarker, getUnmaterialized, patchVaultPath, getGrowthJournal } from "../handlers/growth.js";
+import { ESCALATION_TAG, VAULT_WORTHY_SQL } from "../lib/ratifiable.js";
 
 type Row = Record<string, unknown>;
 
@@ -168,7 +169,7 @@ describe("postGrowthMarker dedupe + thoughtform", () => {
 });
 
 describe("getUnmaterialized", () => {
-  it("materializes only ACCEPTED journal, and surfaces orphaned (non-accepted but materialized) rows", async () => {
+  it("feeds the vault from accepted canon + unraised logs, and sweeps the exact complement", async () => {
     let queriesSeen: string[] = [];
     const env = makeEnv((sql: string) => {
       queriesSeen.push(sql);
@@ -193,12 +194,23 @@ describe("getUnmaterialized", () => {
     expect(body.patterns).toEqual([{ id: "p1" }]);
     expect(body.markers).toEqual([{ id: "m1" }]);
     expect(body.orphaned).toEqual([{ id: "orph1", vault_path: "Companions/cypher/growth/journal/x.md" }]);
-    // The journal-materialize query gates on accepted; the three materialize
-    // queries filter vault_path IS NULL; the orphaned query filters IS NOT NULL.
+    // The three materialize queries filter vault_path IS NULL; the orphaned query filters IS NOT
+    // NULL.
     const journalMaterialize = queriesSeen.find(q => q.includes("FROM growth_journal") && q.includes("vault_path IS NULL"));
-    expect(journalMaterialize).toContain("review_status = 'accepted'");
     const orphanedQ = queriesSeen.find(q => q.includes("FROM growth_journal") && q.includes("IS NOT NULL"));
-    expect(orphanedQ).toContain("review_status != 'accepted'");
+
+    // Accepted canon materializes, and so does an UNRAISED nightly reflection (2026-08-12): those
+    // are logs that will never be accepted, so gating the vault on acceptance would make every
+    // future nightly self-read unsearchable.
+    expect(journalMaterialize).toContain("review_status = 'accepted'");
+    expect(journalMaterialize).toContain(ESCALATION_TAG);
+
+    // The load-bearing invariant, and the reason this is asserted structurally instead of as a
+    // literal: the feed and the sweep are a write/delete pair over the same rows. The sweep must be
+    // the exact complement of the feed -- `NOT (feed predicate)` -- because a disagreement of one
+    // row means the materializer writes that file and the sweep deletes it on every run, forever.
+    expect(orphanedQ).toContain(`NOT ${VAULT_WORTHY_SQL}`);
+    expect(journalMaterialize).toContain(VAULT_WORTHY_SQL);
   });
 });
 
