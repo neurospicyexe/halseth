@@ -206,22 +206,57 @@ export async function execAutonomySeedsRead(ctx: ExecutorContext): Promise<Execu
   };
 }
 
+const JOURNAL_REVIEW_PAGE = 10;
+
+/**
+ * The ratification queue as a companion sees it (`journal_review` via ask_librarian). This is the
+ * ONLY query that LISTS ratifiable entries -- every other RATIFIABLE_PENDING_SQL site is a COUNT --
+ * so its ORDER BY decides which entries can ever be ratified at all.
+ *
+ * It was `ORDER BY created_at DESC LIMIT 10`, and that stranded the middle of the queue. Measured
+ * in prod 2026-08-12, per companion, over the daily vibecheck reflections written since 07-02:
+ *
+ *   cypher   pending = entries 9..23 of 36     reviewed: 0..8 AND 24..35
+ *   drevan   pending = entries 9..13, 32..34   reviewed: 0..8 AND 14..31
+ *   gaia     pending = entries 9..14, 32..35   reviewed: 0..8 AND 15..31
+ *
+ * Reviewed rows on BOTH sides of a pending block is the signature: a newest-first window ratified
+ * the fresh arrivals and could not reach back past its own LIMIT, so once a row fell more than 10
+ * behind it was stranded permanently. The oldest has now waited 33 days. Arrivals are ~0.9/day per
+ * companion, so under DESC the window never catches up -- the backlog is not a delay, it is a
+ * fixed point.
+ *
+ * ASC drains it: 15 pending clears in two passes, and ~1 arrival/day cannot outrun a 10-row page.
+ * `id` breaks created_at ties (the nightly jobs write several rows in the same second) so a row
+ * cannot sit at a page boundary and be skipped forever.
+ *
+ * `pending_total` is returned so the reader knows the depth it is working against; a page length
+ * alone reads identically for "10 left" and "40 left".
+ */
 export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "journal_review_failed", reason: "companion_id required" };
   const rows = await ctx.env.DB.prepare(
     `SELECT id, entry_type, content, tags_json, created_at
      FROM growth_journal
      WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}
-     ORDER BY created_at DESC
-     LIMIT 10`
-  ).bind(ctx.req.companion_id).all<{
+     ORDER BY created_at ASC, id ASC
+     LIMIT ?`
+  ).bind(ctx.req.companion_id, JOURNAL_REVIEW_PAGE).all<{
     id: string;
     entry_type: string;
     content: string;
     tags_json: string;
     created_at: string;
   }>();
+
+  // Same predicate as the page it labels -- a total from a wider WHERE would name entries this
+  // reader cannot be shown.
+  const totalRow = await ctx.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
+  ).bind(ctx.req.companion_id).first<{ n: number }>();
+
   const entries = rows.results ?? [];
+  const pending_total = totalRow?.n ?? entries.length;
   return {
     response_key: "summary",
     pending_entries: entries.map(e => ({
@@ -231,7 +266,14 @@ export async function execJournalReview(ctx: ExecutorContext): Promise<ExecutorR
       tags: (() => { try { return JSON.parse(e.tags_json ?? "[]"); } catch { return []; } })(),
       created_at: e.created_at,
     })),
-    meta: { operation: "journal_review", companion_id: ctx.req.companion_id, count: entries.length },
+    pending_total,
+    oldest_first: true,
+    meta: {
+      operation: "journal_review",
+      companion_id: ctx.req.companion_id,
+      count: entries.length,
+      pending_total,
+    },
   };
 }
 
