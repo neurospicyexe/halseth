@@ -36,14 +36,16 @@ function evaluate(sql: string, row: Row): boolean {
   return Function(`"use strict";return (${js});`)() as boolean;
 }
 
-const rows: Record<string, Row> = {
+// `satisfies` rather than `: Record<string, Row>` -- the annotation widens the keys and every
+// `rows.plainReflection` becomes `Row | undefined` under this repo's strict index checks.
+const rows = {
   raisedReflection:   { source: "reflection",  review_status: "pending",  tags: RAISED },
   plainReflection:    { source: "reflection",  review_status: "pending",  tags: PLAIN },
   acceptedReflection: { source: "reflection",  review_status: "accepted", tags: PLAIN },
   declinedReflection: { source: "reflection",  review_status: "declined", tags: PLAIN },
   pendingAutonomous:  { source: "autonomous",  review_status: "pending",  tags: [] },
   acceptedAutonomous: { source: "autonomous",  review_status: "accepted", tags: [] },
-};
+} satisfies Record<string, Row>;
 
 describe("the ratification queue", () => {
   it("holds an autonomous entry unconditionally", () => {
