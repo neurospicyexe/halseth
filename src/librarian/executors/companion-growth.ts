@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus } from "../backends/halseth.js";
+import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus, tensionSettle } from "../backends/halseth.js";
 import { getCurrentLimbicState } from "../../webmind/limbic.js";
 import { selectResurrections, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
 import { COMPANION_IDS } from "../../companions.js";
@@ -92,6 +92,36 @@ export async function execTensionStatus(ctx: ExecutorContext): Promise<ExecutorR
   const r = await tensionStatus(ctx.env, id, ctx.req.companion_id, status);
   if (!r.ok) return { response_key: "witness", witness: r.error ?? "tension_status failed" };
   return { ack: true, id, status };
+}
+
+/**
+ * Settle a tension: turn it down, keep it (migration 0119).
+ *
+ * The precise gap this closes: a companion could already CLOSE a tension -- `release tension`
+ * and `crystallize tension` have always worked. What no companion could do was lower a
+ * tension's charge and keep holding it. That existed only as Raziel's button in Hearth, which
+ * made him the sole brake on every tension in the house.
+ */
+export async function execTensionSettle(ctx: ExecutorContext): Promise<ExecutorResult> {
+  if (!ctx.req.companion_id) return { error: "tension_settle_failed", reason: "companion_id required" };
+  // Same extraction shape as execTensionStatus: id after the trigger phrase, else context.
+  const id = ctx.req.request
+    .replace(/^(settle|damp|quiet|turn\s+down)\s+(this\s+)?tension[:\s]*/i, "")
+    .replace(/^(settling)\s+(this\s+)?tension[:\s]*/i, "")
+    .trim() || parseContext<{ id?: string }>(ctx.req.context)?.id;
+  if (!id) return { response_key: "witness", witness: "tension_settle requires a tension id after the trigger phrase" };
+  const r = await tensionSettle(ctx.env, id, ctx.req.companion_id);
+  if (!r.ok) {
+    // Name WHY rather than a bare failure: "already released" and "not yours" are different
+    // situations and a companion can act on the difference.
+    return {
+      response_key: "witness",
+      witness: r.error === "not_found_not_owner_or_not_simmering"
+        ? "no simmering tension with that id for you -- it may already be released or crystallized"
+        : (r.error ?? "tension_settle failed"),
+    };
+  }
+  return { ack: true, id, charge: r.charge, settled: true };
 }
 
 export async function execTensionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {

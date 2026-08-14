@@ -22,6 +22,27 @@ export interface PatternEntry {
 }
 
 export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
+  // architect_facts (mig 0116). The companions maintain what is durably true about Raziel
+  // THEMSELVES -- before this, the only write path was Hermes's capped USER.md behind an approval
+  // gate nobody staffed, and 197 writes queued for six weeks without ever applying. A change is a
+  // supersede, never an edit, so "his decision changed" keeps the history of him deciding.
+  architect_fact_read: {
+    triggers: [
+      "what do we know about raziel", "facts about raziel", "architect facts", "raziel facts",
+      "what is true about raziel", "read architect facts", "halseth_architect_facts",
+    ],
+    tools: ["halseth_architect_facts_read"],
+    response_key: "data",
+  },
+  architect_fact_write: {
+    triggers: [
+      "record a fact about raziel", "remember about raziel", "note about raziel",
+      "that changed about raziel", "raziel fact changed", "supersede a raziel fact",
+      "update what we know about raziel", "halseth_architect_fact_write",
+    ],
+    tools: ["halseth_architect_fact_write"],
+    response_key: "ack",
+  },
   // Two-call boot sequence (Priority 1 split):
   //   1. session_orient -- creates session, returns identity + SOMA state + last anchor
   //   2. session_ground -- returns tasks + cross-session notes/deltas + threads + synthesis
@@ -1109,6 +1130,17 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["wm_loop_review"],
     response_key: "witness",
   },
+  // Migration 0118: acting on a loop without closing it. Kept clear of wm_loop_close's
+  // phrases ("close loop", "loop resolved") and wm_loop_review's ("hold loop") -- this is
+  // the middle state, where something was DONE but the loop is still open.
+  wm_loop_act: {
+    triggers: [
+      "acted on loop", "acted on this loop", "i acted on", "action on loop",
+      "did something about this loop", "moved on loop", "loop acted",
+    ],
+    tools: ["wm_loop_act"],
+    response_key: "witness",
+  },
 
   // ── Growth drift confirm (clears pressure flag; marks anchor baseline shift) ──
   confirm_growth_drift: {
@@ -1382,6 +1414,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["tension_edit"],
     response_key: "witness",
   },
+  // 0119: turn a tension DOWN without closing it. Must sit BEFORE tension_status so
+  // "settle tension" is not reachable by that verb's phrases; the two are distinct acts
+  // (settle keeps it simmering, release closes it) and neither trigger set overlaps.
+  tension_settle: {
+    triggers: [
+      "settle tension", "settle this tension", "settling tension",
+      "damp tension", "quiet tension", "turn down tension",
+      "this tension has settled", "tension_settle",
+    ],
+    tools: ["tension_settle"],
+    response_key: "witness",
+  },
   tension_status: {
     triggers: [
       "crystallize tension", "crystallize this tension", "crystallized tension",
@@ -1416,6 +1460,33 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "run a spiral on", "start a spiral on",
     ],
     tools: ["halseth_spiral_run"],
+    response_key: "summary",
+    raw: true,
+  },
+
+  // Roster lookup (mig 0117). DELIBERATELY LAST IN THIS OBJECT: matchFastPath() iterates
+  // FAST_PATH_PATTERNS in insertion order and returns the first trigger hit, so "who is fronting"
+  // must reach `get_front` (declared far above) rather than being read as a member named "fronting".
+  // Moving this entry earlier silently breaks the fronting query -- keep it at the bottom.
+  //
+  // Why it exists: on 2026-08-12 Cypher called Magpie, a real system member, "drift", because
+  // outside the Discord bots there was no way to check a name at all. The standing rule that came
+  // out of that day -- never treat an unfamiliar name as an error, look it up -- needed something to
+  // look it up IN. The roster is 538 members and is never injected into a prompt; this is the
+  // on-demand path instead.
+  roster_who_is: {
+    triggers: [
+      // Triggers containing "look up" are deliberately NOT here, and this was measured rather than
+      // assumed: "look up member" is already owned by `search_members` and "look up in the roster"
+      // resolves to `web_search`, both declared far above. A duplicate trigger on a later entry is
+      // simply dead code that reads as coverage. `search_members` and `get_member` are repointed at
+      // this same roster instead, so those phrasings reach live data without a trigger fight.
+      // Guarded by the "no dead duplicates" test in roster-lookup.test.ts.
+      "who is", "who's", "whos", "roster lookup",
+      "is that a system member", "system member named", "member named", "who the hell is",
+      "roster_who_is", "who is in the system",
+    ],
+    tools: ["roster_who_is"],
     response_key: "summary",
     raw: true,
   },

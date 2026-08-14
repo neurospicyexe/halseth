@@ -19,6 +19,10 @@ export interface Env {
   COORDINATION_ENABLED: string; // "true" | "false"
   SYSTEM_NAME:         string;
   SYSTEM_OWNER:        string;
+  // Raziel's PluralKit system id. NOT a secret -- the member list is public and unauthenticated,
+  // which is why the roster lookup (mig 0117) could ship while FRONTING stays blocked on the
+  // SimplyPlural replacement's API. Unset => roster lookups answer "unavailable", never "not found".
+  PLURALKIT_SYSTEM_ID?: string;
 
   // Bridge — cross-instance data sharing with partner's Halseth deployment.
   BRIDGE_URL?:    string;  // partner's base URL; bridge disabled if unset or empty
@@ -201,6 +205,10 @@ export interface Task {
   created_at: string;
   updated_at: string;
   created_by: string | null;
+  /** Migration 0119: who closed it. NULL = unknown (pre-0119 rows), never guessed. */
+  completed_by?: string | null;
+  /** Migration 0119: when it closed. Cleared on reopen, unlike updated_at. */
+  completed_at?: string | null;
 }
 
 export interface CalendarEvent {

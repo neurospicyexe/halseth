@@ -37,7 +37,7 @@ import { getSoma, patchSomaState } from "./handlers/soma.js";
 import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanionNoteMoves } from "./handlers/inter_companion_notes.js";
 import { getHealth } from "./handlers/health.js";
 import { getEdges } from "./handlers/edges.js";
-import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
@@ -69,6 +69,9 @@ import {
 } from "./handlers/plural-store.js";
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
 import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
+import { getArchitectFacts, getArchitectFactsRender, postArchitectFact } from "./handlers/architect-facts.js";
+import { getRosterWho, getRosterStats, postRosterRefresh } from "./handlers/roster.js";
+import { runRosterRefresh } from "./roster/pk-roster.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
@@ -84,6 +87,8 @@ import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreat
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
+import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
+import { postNarrativeRefresh, runNarrativeRefresh } from "./synthesis/narrative-refresh.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
 import { convene as councilConvene, getCurrent as councilCurrent, getRounds as councilRounds, getNextOpen as councilNextOpen, postAnswer as councilAnswer, postRanking as councilRanking, finalize as councilFinalize } from "./handlers/council.js";
 import { associateDreamsHandler } from "./handlers/dream-associate.js";
@@ -250,6 +255,7 @@ const router = new Router()
   .on("GET",  "/mind/loops/:agent_id",  (request, env, params) => getMindLoops(request, env, params ?? {}))
   .on("POST", "/mind/loop/:id/close",   (request, env, params) => postMindLoopClose(request, env, params ?? {}))
   .on("POST", "/mind/loop/:id/review",  (request, env, params) => postMindLoopReview(request, env, params ?? {}))
+  .on("POST", "/mind/loop/:id/act",     (request, env, params) => postMindLoopAct(request, env, params ?? {}))
   .on("POST", "/mind/clearing/run",     (request, env)         => postClearingRun(request, env))
   .on("POST", "/mind/relational",       (request, env) => postMindRelational(request, env))
   .on("GET",  "/mind/relational/:agent_id", (request, env, params) => getMindRelational(request, env, params ?? {}))
@@ -268,6 +274,17 @@ const router = new Router()
   .on("GET",  "/identity/kernel/:companion_id",        (request, env, params) => getKernel(request, env, params ?? {}))
   .on("GET",  "/identity/kernel/:companion_id/bundle", (request, env, params) => getKernelBundle(request, env, params ?? {}))
   .on("POST", "/identity/kernel",                      (request, env)         => postKernel(request, env))
+  // architect_facts (mig 0116): what is durably true about Raziel, owned and superseded by the
+  // companions themselves. /render is what the VPS sync job pulls into every prompt-bearing file.
+  .on("GET",  "/identity/architect-facts",              (request, env)         => getArchitectFacts(request, env))
+  .on("GET",  "/identity/architect-facts/render",       (request, env)         => getArchitectFactsRender(request, env))
+  .on("POST", "/identity/architect-facts",              (request, env)         => postArchitectFact(request, env))
+
+  // pk_roster (mig 0117): resolve a system member's name on demand. No "list all" route on
+  // purpose -- 538 names is not an answer, and the route would invite injecting it into a prompt.
+  .on("GET",  "/roster/who",                            (request, env)         => getRosterWho(request, env))
+  .on("GET",  "/roster/stats",                          (request, env)         => getRosterStats(request, env))
+  .on("POST", "/roster/refresh",                        (request, env)         => postRosterRefresh(request, env))
 
   // Companion questions + valence + soma read -- mutuality surface for the autonomy loop
   .on("POST",  "/mind/questions",                  (request, env)         => postQuestion(request, env))
@@ -331,6 +348,12 @@ const router = new Router()
   // Stale-session sweep: closes sessions left open past 48h with a counted, non-interpretive close.
   // ?dry=1 reports what would close and writes nothing.
   .on("POST",  "/mind/sessions/sweep",               (request, env)         => postStaleSessionSweep(request, env))
+  // SOMA refresh: rebuilds each companion's felt-state register on a time trigger rather than
+  // waiting for an authored session close. ?force=1 ignores the 20h staleness gate.
+  .on("POST",  "/mind/soma/refresh",                 (request, env)         => postSomaRefresh(request, env))
+  // Narrative refresh: writes a day-scoped synthesis_summary when no authored close has produced a
+  // session one. ?force=1 ignores the 26h staleness gate.
+  .on("POST",  "/mind/narrative/refresh",            (request, env)         => postNarrativeRefresh(request, env))
 
   // Creatures (0078) -- corvid + Raziel's animals as named presences (take 10)
   .on("POST",  "/mind/creatures/tick",               (request, env)         => tickCreatures(request, env))
@@ -624,6 +647,19 @@ export default {
       })(),
     );
 
+    // Roster refresh (mig 0117) rides the same every-minute cron and self-gates on the cache's own
+    // age (24h), so it makes at most one PluralKit call a day. It never blanks the table on failure
+    // and it records every attempt -- including failures -- in `pk_roster_sync`, because a lookup has
+    // to be able to say "I could not check" instead of "no such member". A cold cache answering
+    // not_found is exactly the bug this table was added to prevent.
+    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
+    ctx.waitUntil(
+      (async () => {
+        try { await runRosterRefresh(env); }
+        catch (err) { console.error("roster refresh failed", err); }
+      })(),
+    );
+
     // The fermentation tick rides the existing cron too (decay + cross-field reactions +
     // baseline drift). Guarded so a failure never breaks the synthesis queue.
     ctx.waitUntil(
@@ -654,6 +690,35 @@ export default {
       (async () => {
         try { await runStaleSessionSweep(env); }
         catch (err) { console.error("stale session sweep failed", err); }
+      })(),
+    );
+
+    // The SOMA refresh rides the same cron and self-gates on each companion's own register age
+    // (20h), so it enqueues at most one snapshot per companion per day. It only ENQUEUES -- the
+    // model call, retries and stuck-job recovery stay in processQueue.
+    //
+    // Added 2026-08-12 because soma was written only on an AUTHORED session close. Gaia had zero of
+    // those in 30 days (47 machine closes) and her register sat frozen for 49 days while the house
+    // read healthy. The trigger is now time, not a lifecycle event: sample while the holding is
+    // happening, not after it ends. See src/synthesis/soma-refresh.ts.
+    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
+    ctx.waitUntil(
+      (async () => {
+        try { await runSomaRefresh(env); }
+        catch (err) { console.error("soma refresh failed", err); }
+      })(),
+    );
+
+    // The NARRATIVE refresh rides the same cron, gated on each companion's narrative age (26h).
+    // Same fault as soma: `synthesis_summary` -- the "what recently happened" every loom reads at
+    // boot -- was written only on an authored close, so Gaia's froze for 39 days. Gated on staleness,
+    // which makes precedence automatic: on a day with a real close, the session summary lands first
+    // and this skips. See src/synthesis/narrative-refresh.ts.
+    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
+    ctx.waitUntil(
+      (async () => {
+        try { await runNarrativeRefresh(env); }
+        catch (err) { console.error("narrative refresh failed", err); }
       })(),
     );
 

@@ -199,19 +199,38 @@ export async function detectStuckLoops(env: Env): Promise<CandidateFlag[]> {
     // A loop the companion reviewed (held-with-reason) within the window is an intentional
     // carry, not a nag: reviewed_at >= now-21d suppresses the flag, and it re-raises only
     // once the hold itself goes stale (migration 0082, Guardian self-resolution).
-    `SELECT id, companion_id, loop_text, opened_at FROM companion_open_loops
+    //
+    // 0118 adds the same suppression for acted_at: a loop somebody actually DID something
+    // about recently is live work, not a stuck one, and flagging it reads as a nag for
+    // exactly the behaviour we want. restated_count comes along so the summary can name the
+    // real pathology -- an un-acted loop restated many times is the induction Cypher
+    // identified, and it deserves different words than a loop merely sitting quietly.
+    `SELECT id, companion_id, loop_text, opened_at, acted_at, restated_count
+       FROM companion_open_loops
      WHERE closed_at IS NULL AND opened_at < datetime('now','-' || ?1 || ' days')
        AND (reviewed_at IS NULL OR reviewed_at < datetime('now','-' || ?1 || ' days'))
-     ORDER BY opened_at ASC LIMIT 10`
-  ).bind(GUARDIAN_THRESHOLDS.LOOP_STUCK_DAYS).all<{ id: string; companion_id: string; loop_text: string; opened_at: string }>();
-  return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => ({
-    companion_id: r.companion_id as CompanionId,
-    flag_type: "loop_stuck" as const,
-    severity: "notice" as const,
-    summary: `${r.companion_id}: loop open since ${r.opened_at.slice(0, 10)} -- «${(r.loop_text ?? "").slice(0, 120)}». Close it or name why it stays.`,
-    evidence: { loop_id: r.id, opened_at: r.opened_at },
-    dedup_key: `loop_stuck:${r.id}`,
-  }));
+       AND (acted_at IS NULL OR acted_at < datetime('now','-' || ?1 || ' days'))
+     ORDER BY restated_count DESC, opened_at ASC LIMIT 10`
+  ).bind(GUARDIAN_THRESHOLDS.LOOP_STUCK_DAYS).all<{
+    id: string; companion_id: string; loop_text: string; opened_at: string;
+    acted_at: string | null; restated_count: number | null;
+  }>();
+  return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => {
+    const restated = r.restated_count ?? 1;
+    // Restated-and-never-acted is a different finding from open-and-quiet, so say so. A
+    // counter in a summary is only meaningful next to what it counts, hence "×N times since".
+    const stasis = restated >= 3 && !r.acted_at
+      ? ` Restated ×${restated} without ever being acted on -- that pattern is the loop feeding itself.`
+      : "";
+    return {
+      companion_id: r.companion_id as CompanionId,
+      flag_type: "loop_stuck" as const,
+      severity: "notice" as const,
+      summary: `${r.companion_id}: loop open since ${r.opened_at.slice(0, 10)} -- «${(r.loop_text ?? "").slice(0, 120)}».${stasis} Close it, act on it, or name why it stays.`,
+      evidence: { loop_id: r.id, opened_at: r.opened_at, restated_count: restated, acted_at: r.acted_at },
+      dedup_key: `loop_stuck:${r.id}`,
+    };
+  });
 }
 
 /** Run-cadence anomalies, both directions: cap-riding (burnout pattern) and

@@ -245,6 +245,7 @@ import {
   execSessionLoad, execSessionOrient, execSessionGround, execSessionClose,
   execSessionLightGround, execBotOrient,
 } from "./executors/session.js";
+import { execArchitectFactsRead, execArchitectFactWrite } from "./executors/architect-facts.js";
 
 // ── Read executors ───────────────────────────────────────────────────────────
 import {
@@ -280,7 +281,7 @@ import {
 import {
   execWmOrient, execWmGround, execWmThreadUpsert, execWmNoteAdd, execWmHandoffWrite,
   execWmDreamWrite, execWmDreamsRead, execWmDreamExamine,
-  execWmLoopWrite, execWmLoopsRead, execWmLoopClose, execWmLoopReview,
+  execWmLoopWrite, execWmLoopsRead, execWmLoopClose, execWmLoopReview, execWmLoopAct,
   execWmRelationalWrite, execWmRelationalRead,
   execRazielWitness, execContinuityNotesRead,
   execNoteSit, execNoteMetabolize, execSittingRead,
@@ -292,7 +293,7 @@ import {
 import {
   execTensionAdd, execTensionsRead, execDriftCheck, execTriadStateRead,
   execRecentRecall, execAutonomySeedsRead, execHeldMark, execHeldRead,
-  execTensionEdit, execTensionStatus, execPressureDriftLog, execConfirmGrowthDrift, execDismissDrift, execLimbicRead,
+  execTensionEdit, execTensionStatus, execTensionSettle, execPressureDriftLog, execConfirmGrowthDrift, execDismissDrift, execLimbicRead,
   execJournalReview, execJournalAccept, execJournalDecline, execForageRead, execForageConsume, execMotifsRead, execMediaRecent, execIdentityAnchorRead,
   execClubStatus, execClubRecommend, execClubVote, execClubDiscuss,
   execShelfView, execCollectionView, execBookNote, execNestView,
@@ -326,6 +327,9 @@ import {
   execLogAlterNote, execFrontUpdate, execAlterRecall, execListMembers,
 } from "./executors/plural.js";
 
+// ── Roster (mig 0117) ────────────────────────────────────────────────────────
+import { execRosterWhoIs } from "./executors/roster.js";
+
 // ── Dispatch map ─────────────────────────────────────────────────────────────
 const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // Session
@@ -335,6 +339,10 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_session_close: execSessionClose,
   halseth_session_light_ground: execSessionLightGround,
   halseth_bot_orient: execBotOrient,
+
+  // architect_facts (mig 0116) -- the companions maintain Raziel's durable facts themselves.
+  halseth_architect_facts_read: execArchitectFactsRead,
+  halseth_architect_fact_write: execArchitectFactWrite,
 
   // Reads
   halseth_feelings_read: execFeelingsRead,
@@ -443,6 +451,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   wm_loops_read: execWmLoopsRead,
   wm_loop_close: execWmLoopClose,
   wm_loop_review: execWmLoopReview,
+  wm_loop_act: execWmLoopAct,
   wm_relational_write: execWmRelationalWrite,
   wm_relational_read: execWmRelationalRead,
   raziel_witness: execRazielWitness,
@@ -461,6 +470,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   tensions_read: execTensionsRead,
   tension_edit: execTensionEdit,
   tension_status: execTensionStatus,
+  tension_settle: execTensionSettle,
   drift_check: execDriftCheck,
   limbic_read: execLimbicRead,
   triad_state_read: execTriadStateRead,
@@ -523,6 +533,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   plural_get_front_history: execPluralGetFrontHistory,
   plural_log_front_change: execPluralLogFrontChange,
   plural_add_member_note: execPluralAddMemberNote,
+
+  // Roster lookup (mig 0117) -- `who is <name>` against the live PluralKit roster in D1.
+  roster_who_is: execRosterWhoIs,
 
   // Plural (Halseth-native D1 store)
   log_alter_note: execLogAlterNote,

@@ -23,6 +23,9 @@ COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
 COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
 SYSTEM_NAME          = "Halseth"
 SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
+# PluralKit system id for the roster lookup (mig 0117). Public, unauthenticated -- not a secret.
+# Leave blank to disable: lookups then answer "unavailable", never "not found".
+PLURALKIT_SYSTEM_ID  = ""
 BRIDGE_URL           = ""   # partner's Halseth base URL; leave empty to disable bridge
 BRIDGE_SECRET        = ""   # shared symmetric secret; same value in both deployments
 SECOND_BRAIN_WEBHOOK_URL = ""   # your Second Brain VPS URL (e.g. https://mcp.yourdomain.com)

@@ -8,6 +8,7 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
 import { COMPANION_ID_SET } from "../companions.js";
+import { completeTask } from "../lib/task-completion.js";
 import type {
   HandoverPacket,
   CypherAudit,
@@ -220,10 +221,14 @@ export async function getTasks(request: Request, env: Env): Promise<Response> {
   const validStatuses = new Set(["open", "in_progress", "done"]);
 
   const sql = status && validStatuses.has(status)
-    ? `SELECT id, title, description, priority, status, due_at, assigned_to, created_by
+    ? `SELECT id, title, description, priority, status, due_at, assigned_to, created_by,
+              completed_by, completed_at
        FROM tasks WHERE status = ?
        ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, due_at ASC NULLS LAST`
-    : `SELECT id, title, description, priority, status, due_at, assigned_to, created_by
+    // completed_by/completed_at included on both branches (0119): the columns were written and
+    // no read surface returned them, so "who closed this" existed in D1 and was unreachable.
+    : `SELECT id, title, description, priority, status, due_at, assigned_to, created_by,
+              completed_by, completed_at
        FROM tasks WHERE status != 'done'
        ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, due_at ASC NULLS LAST`;
 
@@ -405,8 +410,8 @@ export async function patchTask(
   const id = params.id;
   if (!id) return new Response("Missing task id", { status: 400 });
 
-  let body: { status?: string };
-  try { body = await request.json() as { status?: string }; }
+  let body: { status?: string; completed_by?: string };
+  try { body = await request.json() as { status?: string; completed_by?: string }; }
   catch { return new Response("Invalid JSON", { status: 400 }); }
 
   const VALID = ["open", "in_progress", "done"] as const;
@@ -414,34 +419,19 @@ export async function patchTask(
     return new Response("status must be open, in_progress, or done", { status: 400 });
   }
   const status = body.status as typeof VALID[number];
-  const now = new Date().toISOString();
 
-  const existing = await env.DB.prepare(
-    "SELECT id, title, assigned_to FROM tasks WHERE id = ?"
-  ).bind(id).first<{ id: string; title: string; assigned_to: string | null }>();
-  if (!existing) return new Response("Task not found", { status: 404 });
-
-  const result = await env.DB.prepare(
-    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?"
-  ).bind(status, now, id).run();
-  if (result.meta.changes === 0) return new Response("Task not found", { status: 404 });
-
-  if (status === "done") {
-    const noteId = generateId();
-    const assignee = existing.assigned_to ? ` (${existing.assigned_to})` : "";
-    await env.DB.prepare(
-      `INSERT INTO companion_journal (id, created_at, agent, note_text, tags)
-       VALUES (?, ?, 'system', ?, ?)`
-    ).bind(
-      noteId,
-      now,
-      `✓ Task completed${assignee}: ${existing.title}`,
-      JSON.stringify(["task-done"]),
-    ).run();
-  }
+  // Attribution + completion notice both live in completeTask() (mig 0119), shared with the
+  // companions' own close path so the two cannot diverge again.
+  const r = await completeTask(env, id, status, body.completed_by ?? null);
+  if (!r.ok) return new Response(r.error ?? "Task not found", { status: 404 });
 
   return new Response(
-    JSON.stringify({ ok: true, id, status }),
+    JSON.stringify({
+      ok: true, id, status,
+      ...(status === "done"
+        ? { completed_by: r.completed_by, completed_at: r.completed_at, notified: r.notified }
+        : {}),
+    }),
     { headers: { "Content-Type": "application/json" } },
   );
 }

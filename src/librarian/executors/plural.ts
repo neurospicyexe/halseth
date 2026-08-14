@@ -8,6 +8,8 @@ import {
 import { buildResponse } from "../response/builder.js";
 import type { ResponseKey } from "../response/budget.js";
 import { triggerMatches } from "../lib/trigger.js";
+import { lookupMember, renderLookup } from "../../roster/pk-roster.js";
+import { extractLookupName } from "./roster.js";
 
 export async function execPluralGetCurrentFront(ctx: ExecutorContext): Promise<ExecutorResult> {
   const result = await getCurrentFront(ctx.env);
@@ -19,18 +21,50 @@ export async function execPluralGetCurrentFront(ctx: ExecutorContext): Promise<E
   return buildResponse(ctx.req.companion_id, ctx.entry.response_key as ResponseKey, { session_id: "" }, text);
 }
 
+/**
+ * REPOINTED 2026-08-13 to the live roster (mig 0117), with nullsafe-plural-v2 kept only as a
+ * fallback.
+ *
+ * Why: plural-v2 serves member lookups from a BAKED-IN `src/members.json` -- 512 entries carrying
+ * `name` and `pk` only, **no pronouns**. The live PluralKit roster is 538 members with 463 pronouns.
+ * So this path was answering from a snapshot 26 members short of reality and structurally unable to
+ * report anyone's pronouns. (It also declared its return type as `{name, pk, description}` while the
+ * worker returns `{member_id, name}`, so two of three fields were always undefined.)
+ *
+ * Leaving the old path as the fallback rather than deleting it: if the roster cache is cold, a stale
+ * hit still beats nothing -- but it is second, and the roster's own `unavailable` status is preserved
+ * when both miss, so "could not look" never renders as "no such member".
+ */
 export async function execPluralGetMember(ctx: ExecutorContext): Promise<ExecutorResult> {
   const trigger = ctx.entry.triggers.find(t => triggerMatches(ctx.req.request, t));
-  const name = trigger ? extractMemberName(ctx.req.request, trigger) : null;
+  const name = extractLookupName(ctx.req.request, ctx.entry.triggers, ctx.req.context)
+    ?? (trigger ? extractMemberName(ctx.req.request, trigger) : null);
   if (!name) {
     return { response_key: "witness", witness: "couldn't identify a member name; try 'tell me about Ash'" };
   }
-  const member = await getMember(ctx.env, name);
-  if (!member) {
-    return { response_key: "witness", witness: `couldn't find member '${name}'` };
+
+  const lookup = await lookupMember(ctx.env, name);
+  if (lookup.status === "found" || lookup.status === "ambiguous" || lookup.status === "candidates") {
+    return {
+      data: { ...lookup, summary: renderLookup(lookup) },
+      meta: { operation: "plural_get_member", source: "pk_roster", status: lookup.status },
+    };
   }
-  // raw: true -- full member record, no shaping
-  return { data: member, meta: { operation: "plural_get_member" } };
+
+  // Roster says absent or unreachable -- try the legacy static list before answering, then report
+  // the ROSTER's status if it also misses, because that status carries the not_found/unavailable
+  // distinction the legacy path cannot express.
+  const member = await getMember(ctx.env, name);
+  if (member) {
+    return {
+      data: member,
+      meta: { operation: "plural_get_member", source: "plural-v2-static", warning: "stale snapshot; no pronouns recorded in this source" },
+    };
+  }
+  return {
+    data: { ...lookup, summary: renderLookup(lookup) },
+    meta: { operation: "plural_get_member", source: "pk_roster", status: lookup.status },
+  };
 }
 
 export async function execPluralUpdateMemberDescription(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -45,10 +79,33 @@ export async function execPluralUpdateMemberDescription(ctx: ExecutorContext): P
   return { ack: true, id: updateResult.member_id, name: updateResult.name };
 }
 
+/**
+ * REPOINTED 2026-08-13 to the live roster (mig 0117). Same reason as `execPluralGetMember`.
+ *
+ * Second defect fixed here: this used to pass `ctx.req.request` -- the ENTIRE request sentence --
+ * as the search query, so "search members for Magpie" was substring-matched against member names
+ * and matched nothing. The name is extracted now.
+ */
 export async function execPluralSearchMembers(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const members = await searchMembers(ctx.env, ctx.req.request);
-  // raw: true -- full member array
-  return { data: members, meta: { operation: "plural_search_members" } };
+  const name = extractLookupName(ctx.req.request, ctx.entry.triggers, ctx.req.context);
+  if (!name) {
+    return { response_key: "witness", witness: "couldn't read a name to search for; try 'find member Magpie'" };
+  }
+  const lookup = await lookupMember(ctx.env, name);
+  if (lookup.status === "not_found") {
+    // Legacy static list as a last look before reporting absence.
+    const legacy = await searchMembers(ctx.env, name);
+    if (legacy.length) {
+      return {
+        data: legacy,
+        meta: { operation: "plural_search_members", source: "plural-v2-static", warning: "stale snapshot; no pronouns recorded in this source" },
+      };
+    }
+  }
+  return {
+    data: { ...lookup, summary: renderLookup(lookup) },
+    meta: { operation: "plural_search_members", source: "pk_roster", status: lookup.status },
+  };
 }
 
 export async function execPluralGetFrontHistory(ctx: ExecutorContext): Promise<ExecutorResult> {

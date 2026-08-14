@@ -142,12 +142,30 @@ export interface WmOpenLoop {
   weight: number;
   opened_at: string;
   closed_at: string | null;
+  /** Migration 0082: held-open-on-purpose stamp; suppresses loop_stuck for 21d. */
+  reviewed_at?: string | null;
+  /** Migration 0118: when the companion actually DID something. NULL = un-acted. */
+  acted_at?: string | null;
+  acted_note?: string | null;
+  /** Migration 0118: times this same loop was re-observed. 1 = written once. */
+  restated_count?: number;
+  last_restated_at?: string | null;
+  /** Migration 0118: present-tense weight after decay (see effectiveWeightSql). */
+  effective_weight?: number;
 }
 
 export interface WmLoopInput {
   companion_id: WmAgentId;
   loop_text: string;
   weight?: number;
+}
+
+/** Result of opening a loop: `restated` distinguishes a fresh loop from a re-observation. */
+export interface WmLoopWriteResult {
+  id: string;
+  opened_at: string;
+  restated: boolean;
+  restated_count: number;
 }
 
 // ── Sit & Resolve ─────────────────────────────────────────────────────────────

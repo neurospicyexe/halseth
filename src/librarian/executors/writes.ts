@@ -212,7 +212,9 @@ export async function execTaskAdd(ctx: ExecutorContext): Promise<ExecutorResult>
 export async function execTaskUpdateStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ id: string; status: string }>(ctx.req.context);
   if (!p || !p.id || !p.status) return { response_key: "witness", witness: "task_update_status requires { id, status } in context" };
-  const r = await taskUpdateStatus(ctx.env, p.id, p.status);
+  // Attribute the close to the companion doing it (mig 0119), so the others are told who
+  // finished it and this companion is not mailed about their own action.
+  const r = await taskUpdateStatus(ctx.env, p.id, p.status, ctx.req.companion_id ?? null);
   if ("error" in r) return { response_key: "witness", witness: r.error };
   return { ack: true, id: r.id, status: r.status };
 }

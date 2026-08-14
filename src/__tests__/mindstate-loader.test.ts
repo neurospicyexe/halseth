@@ -103,7 +103,10 @@ describe("MindState contract shape", () => {
   it("orient-only and ground-only blocks both arrive (sits from ground, tensions from orient)", async () => {
     const { env } = fakeEnv([
       { match: /FROM companion_journal cj\s+JOIN companion_journal_sits/i, rows: [{ note_id: "s1", content: "sitting", sit_text: null, sat_at: "2026-07-01T00:00:00Z", created_at: "2026-07-01T00:00:00Z" }] },
-      { match: /FROM companion_tensions WHERE companion_id = \? AND status = 'simmering'/i, rows: [{ id: "t1", tension_text: "hm", status: "simmering", first_noted_at: "2026-07-01T00:00:00Z", last_surfaced_at: null, notes: null }] },
+      // \s+ not a literal space: the query went multi-line in 0119 when the decayed-charge
+      // expression was added, and a matcher that breaks on reformatting tests the whitespace
+      // rather than the query.
+      { match: /FROM companion_tensions\s+WHERE companion_id = \? AND status = 'simmering'/i, rows: [{ id: "t1", tension_text: "hm", status: "simmering", first_noted_at: "2026-07-01T00:00:00Z", last_surfaced_at: null, notes: null }] },
     ]);
     const ms = await loadMindState(env, "drevan", "discord");
     expect(ms.carried.sits.map((s) => s.note_id)).toEqual(["s1"]);

@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmReviewLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
+import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteDream, wmReadDreams, wmExamineDream, wmWriteLoop, wmReadLoops, wmCloseLoop, wmReviewLoop, wmActOnLoop, wmWriteRelationalState, wmReadRelationalHistory, wmSitNote, wmMetabolizeNote, wmReadSittingNotes, wmNoteEdit } from "../backends/webmind.js";
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 import { listConversations, landConversation, getActiveConversation } from "../../webmind/conversations.js";
 import { resolveNoteProvenance, attributionNote } from "../../mind/note-provenance.js";
@@ -255,6 +255,25 @@ export async function execWmLoopReview(ctx: ExecutorContext): Promise<ExecutorRe
   if (!p?.id) return { error: "wm_loop_review_failed", reason: "missing required field: id" };
   const r = await wmReviewLoop(ctx.env, p.id, ctx.req.companion_id as WmAgentId, p.reason ?? "");
   return { ack: true, ok: r.ok };
+}
+
+/**
+ * Migration 0118: "I acted on this loop" -- the third thing a companion can do with an open
+ * loop, alongside closing it and holding it. Accepts the note either from structured context
+ * or from the request text after the trigger, since a companion writing this in prose is the
+ * expected case.
+ */
+export async function execWmLoopAct(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ id: string; note?: string; acted_note?: string }>(ctx.req.context);
+  if (!p?.id) return { error: "wm_loop_act_failed", reason: "missing required field: id" };
+  const note = (p.note ?? p.acted_note ?? "").trim();
+  const r = await wmActOnLoop(ctx.env, p.id, ctx.req.companion_id as WmAgentId, note);
+  if (!r.ok) {
+    // Distinguish "no such loop / not yours / already closed" from a silent no-op -- an ack
+    // on a write that changed nothing is how a dead mechanism stays invisible.
+    return { error: "wm_loop_act_failed", reason: "no open loop with that id for this companion" };
+  }
+  return { ack: true, ok: true };
 }
 
 // ── Relational State ──────────────────────────────────────────────────────────

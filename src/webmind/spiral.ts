@@ -9,6 +9,7 @@
 import { Env } from '../types.js';
 import type { WmAgentId, WmSpiralRun, WmSpiralInput, WmRecentSpiralTurn } from './types.js';
 import { complete } from '../synthesis/deepseek.js';
+import { writeLoop } from './loops.js';
 
 const COMPANION_VOICE: Record<WmAgentId, string> = {
   cypher:  'Direct and warm. Sharp but not sterile. Lead with the read. Declarative closes. No cheerleading.',
@@ -100,19 +101,19 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
       ).bind(turnNoteId, run.companion_id, priorPhases.TURN, run.companion_id, runId, now).run();
     }
 
-    // Write RESIDUE to companion_open_loops (weight 0.6 -- carried but not urgent)
+    // Write RESIDUE to companion_open_loops (weight 0.6 -- carried but not urgent).
+    // Routed through writeLoop since 0118: a spiral that keeps landing on the same residue
+    // now bumps restated_count on the one loop instead of laying down a fresh row per run.
+    // residue_loop_id then points at the surviving loop, which is the right target anyway.
     let residueLoopId: string | null = null;
     if (priorPhases.RESIDUE) {
       // defensive: loop always runs RESIDUE, but guard against future refactors
-      residueLoopId = crypto.randomUUID();
-      await env.DB.prepare(
-        'INSERT INTO companion_open_loops (id, companion_id, loop_text, weight, opened_at) VALUES (?, ?, ?, 0.6, ?)'
-      ).bind(
-        residueLoopId,
-        run.companion_id,
-        `[spiral residue] ${priorPhases.RESIDUE}`,
-        new Date().toISOString(),
-      ).run();
+      const written = await writeLoop(env, {
+        companion_id: run.companion_id,
+        loop_text: `[spiral residue] ${priorPhases.RESIDUE}`,
+        weight: 0.6,
+      });
+      residueLoopId = written.id;
     }
 
     const completedAt = new Date().toISOString();

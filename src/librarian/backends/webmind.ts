@@ -10,7 +10,7 @@ import { upsertThread } from '../../webmind/threads.js';
 import { addNote } from '../../webmind/notes.js';
 import { writeHandoff } from '../../webmind/handoffs.js';
 import { writeDream, readDreams, examineDream } from '../../webmind/dreams.js';
-import { writeLoop, readLoops, closeLoop, reviewLoop } from '../../webmind/loops.js';
+import { writeLoop, readLoops, closeLoop, reviewLoop, actOnLoop } from '../../webmind/loops.js';
 import { writeRelationalState, readRelationalHistory } from '../../webmind/relational.js';
 import { sitNote, metabolizeNote, readSittingNotes } from '../../webmind/sits.js';
 
@@ -74,6 +74,11 @@ export async function wmCloseLoop(env: Env, id: string, agentId: WmAgentId) {
 
 export async function wmReviewLoop(env: Env, id: string, agentId: WmAgentId, reason: string) {
   return reviewLoop(env, id, agentId, reason);
+}
+
+/** Migration 0118: record that a loop was ACTED on without closing it. */
+export async function wmActOnLoop(env: Env, id: string, agentId: WmAgentId, note: string) {
+  return actOnLoop(env, id, agentId, note);
 }
 
 export async function wmWriteRelationalState(env: Env, input: WmRelationalStateInput) {

@@ -14,6 +14,7 @@ import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql, SURFACE_BUMP } from "./heat.js";
+import { effectiveChargeSql } from "../librarian/backends/halseth.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
@@ -111,7 +112,14 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       // did, so the low-frequency surfaces got the unranked version. Per-field superset: the bot was the
       // richer copy here, exactly as it was for listens provenance. first_noted_at stays as the tiebreak so
       // equal-charge order is unchanged.
-      "SELECT id, tension_text, status, charge, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = 'simmering' ORDER BY charge DESC, first_noted_at ASC"
+      // 0119: ordered by DECAYED charge, so a tension nobody has touched in weeks yields its
+      // slot to a live one instead of pinning the top forever. The stored `charge` is still
+      // selected unchanged -- what decays is its claim on the present, not the record.
+      `SELECT id, tension_text, status, charge, first_noted_at, last_surfaced_at, notes,
+              ${effectiveChargeSql()} AS effective_charge
+         FROM companion_tensions
+        WHERE companion_id = ? AND status = 'simmering'
+        ORDER BY ${effectiveChargeSql()} DESC, first_noted_at ASC`
     ).bind(agentId).all<WmTensionRow>(),
     // Self-defense: unconfirmed pressure drift flags -- surface for self-correction
     env.DB.prepare(

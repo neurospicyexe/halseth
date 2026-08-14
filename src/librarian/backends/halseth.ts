@@ -15,6 +15,7 @@ import { generateId, findExistingClose, clearSupersededClose } from "../../db/qu
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
+import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
@@ -319,11 +320,23 @@ export async function taskAdd(env: Env, params: {
   return { id, title: params.title, status: "open" };
 }
 
-export async function taskUpdateStatus(env: Env, id: string, status: string): Promise<{ id: string; status: string } | { error: string }> {
-  const now = new Date().toISOString();
-  const result = await env.DB.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").bind(status, now, id).run();
-  if (result.meta.changes === 0) return { error: "Task not found" };
-  return { id, status };
+/**
+ * The companions' task-status writer. Delegates to completeTask() (mig 0119) so this path and
+ * Hearth's PATCH produce the same record of the same event -- they had already diverged, and
+ * only Hearth's copy wrote a completion notice.
+ *
+ * `actor` is the closing companion, so a task they finish is attributed to them rather than
+ * landing as "someone closed this".
+ */
+export async function taskUpdateStatus(
+  env: Env, id: string, status: string, actor?: string | null,
+): Promise<{ id: string; status: string } | { error: string }> {
+  if (!(TASK_STATUSES as readonly string[]).includes(status)) {
+    return { error: "status must be open, in_progress, or done" };
+  }
+  const r = await completeTask(env, id, status as TaskStatus, actor);
+  if (!r.ok) return { error: r.error ?? "Task not found" };
+  return { id: r.id, status: r.status };
 }
 
 export async function sessionClose(env: Env, params: {
@@ -552,6 +565,67 @@ export async function tensionStatus(
   ).bind(status, id, companionId).run();
   if (!r.meta.changes) return { ok: false, error: "not_found_or_not_owner" };
   return { ok: true };
+}
+
+/**
+ * Settle a tension: turn its charge DOWN without closing it (2026-08-14).
+ *
+ * The gap this fills, stated exactly. A companion could already CLOSE a tension -- `release
+ * tension: <id>` and `crystallize tension: <id>` both work and always have. What no companion
+ * could do was turn one DOWN and keep it. Dropping charge while leaving the tension simmering
+ * existed only as a button in Hearth (`charge_delta: -2`, 2026-07-02), so Raziel was the sole
+ * brake on every tension in the house. That is the thing he asked not to be.
+ *
+ * Same delta as Hearth's button so the two surfaces cannot disagree about what settling means.
+ * Clamped 0-10 in SQL. Bumps last_surfaced_at, which is load-bearing in two places that would
+ * otherwise read a settle as "nothing happened": the inter_companion_notes moves calculation
+ * (a note on a tension counts as MOVED when last_surfaced_at advances past it) and the ingest
+ * high-water-mark cursor.
+ *
+ * Only touches a simmering tension -- settling something already crystallized or released is a
+ * no-op, reported as such rather than silently acked.
+ */
+export const TENSION_SETTLE_DELTA = -2;
+
+/**
+ * Charge half-life in days (migration 0119). Lazy decay at READ -- no writer, no cron, same
+ * shape as heat.ts, motifs.ts and loops.ts.
+ *
+ * Anchored on `COALESCE(settled_at, first_noted_at)` and NOT on `last_surfaced_at`, because
+ * last_surfaced_at is bumped by the machinery that READS the tension (weekly dialectic, nightly
+ * reflection, ingest cursor). Anchoring there would mean being looked at refreshes a tension's
+ * claim on the present -- the ratchet in a new hiding place. Engagement refreshes; attention
+ * does not. Full reasoning in the 0119 header.
+ *
+ * 21 days: a tension nobody has touched in three weeks carries half the weight of one being
+ * worked now, so a live newcomer can overtake a long-simmering one without erasing it. The
+ * stored `charge` is never rewritten -- what decays is its claim on the present.
+ */
+export const CHARGE_HALF_LIFE_DAYS = 21;
+
+/** SQL for present-tense charge. Bare `charge` stays the authored value. */
+export function effectiveChargeSql(): string {
+  return `(charge / (1.0 + (julianday('now') - julianday(COALESCE(settled_at, first_noted_at))) / ${CHARGE_HALF_LIFE_DAYS}.0))`;
+}
+
+export async function tensionSettle(
+  env: Env,
+  id: string,
+  companionId: string,
+): Promise<{ ok: boolean; error?: string; charge?: number }> {
+  const r = await env.DB.prepare(
+    `UPDATE companion_tensions
+        SET charge = MIN(10.0, MAX(0.0, charge + ?)),
+            settled_at = datetime('now'),
+            settle_count = settle_count + 1,
+            last_surfaced_at = datetime('now')
+      WHERE id = ? AND companion_id = ? AND status = 'simmering'`
+  ).bind(TENSION_SETTLE_DELTA, id, companionId).run();
+  if (!r.meta.changes) return { ok: false, error: "not_found_not_owner_or_not_simmering" };
+  const row = await env.DB.prepare(
+    "SELECT charge FROM companion_tensions WHERE id = ?"
+  ).bind(id).first<{ charge: number }>();
+  return { ok: true, charge: row?.charge ?? 0 };
 }
 
 export async function interNoteEdit(
@@ -933,7 +1007,13 @@ export async function queryTensions(
     // longest. This is mig 0070's ranking, and it had reached only execBotOrient -- so the Claude.ai path
     // served tensions in pure chronological order and never benefited from it. Third copy of this query,
     // third ordering found; unified with webmind/orient.ts. first_noted_at stays as the tiebreak.
-    "SELECT id, tension_text, status, charge, first_noted_at, last_surfaced_at, notes FROM companion_tensions WHERE companion_id = ? AND status = ? ORDER BY charge DESC, first_noted_at ASC"
+    // 0119: decayed charge, matching orient.ts -- both surfaces must agree on what outranks
+    // what, or the same tension leads on one and is buried on the other.
+    `SELECT id, tension_text, status, charge, first_noted_at, last_surfaced_at, notes,
+            settled_at, settle_count, ${effectiveChargeSql()} AS effective_charge
+       FROM companion_tensions
+      WHERE companion_id = ? AND status = ?
+      ORDER BY ${effectiveChargeSql()} DESC, first_noted_at ASC`
   ).bind(companionId, status).all();
   return { tensions: rows.results };
 }

@@ -29,6 +29,8 @@ the traps below exist because names lie.
 | `halseth_session_close` | execSessionClose | session.ts | companion_journal, companion_dreams, companion_open_loops, companion_conclusions, feelings, handover_packets, companion_state, sessions | heavy capture write |
 | `halseth_session_light_ground` | execSessionLightGround | session.ts | READ | |
 | `halseth_bot_orient` | execBotOrient | session.ts | READ | |
+| `halseth_architect_facts_read` | execArchitectFactsRead | architect-facts.ts | READ | returns each fact's id, because a companion cannot supersede a row it cannot name |
+| `halseth_architect_fact_write` | execArchitectFactWrite | architect-facts.ts | architect_facts | mig 0116. Two writes when superseding: INSERT the new fact, UPDATE the old to `status='retired'`. Never DELETE -- losing lineage is the failure this table replaces |
 | `halseth_feelings_read` | execFeelingsRead | reads.ts | READ | |
 | `halseth_journal_read` | execJournalRead | reads.ts | READ | companion caller: UNION of companion_journal (own reflections) + growth_journal (worker ledger), labeled by `journal` field (2026-07-26; was growth_journal only). No companion_id: human_journal. |
 | `halseth_wound_read` | execWoundRead | reads.ts | READ | |
@@ -122,6 +124,8 @@ the traps below exist because names lie.
 | `wm_loops_read` | execWmLoopsRead | webmind.ts | READ | |
 | `wm_loop_close` | execWmLoopClose | webmind.ts | companion_open_loops (UPDATE) | |
 | `wm_loop_review` | execWmLoopReview | webmind.ts | companion_open_loops (UPDATE) | |
+| `wm_loop_act` | execWmLoopAct | webmind.ts | companion_open_loops (UPDATE acted_at/acted_note) | mig 0118; the middle state between close and hold. Refreshes the weight-decay anchor |
+| `tension_settle` | execTensionSettle | companion-growth.ts | companion_tensions (UPDATE charge/settled_at/settle_count) | mig 0119; turns a tension DOWN without closing it. Was Hearth-only, so Raziel was the sole brake |
 | `wm_relational_write` | execWmRelationalWrite | webmind.ts | companion_relational_state | append-only |
 | `wm_relational_read` | execWmRelationalRead | webmind.ts | READ | |
 | `raziel_witness` | execRazielWitness | webmind.ts | companion_relational_state | |
@@ -186,16 +190,17 @@ the traps below exist because names lie.
 | `held_read` | execHeldRead | companion-growth.ts | READ | |
 | `identity_anchor_read` | execIdentityAnchorRead | companion-growth.ts | READ | |
 | `plural_get_current_front` | execPluralGetCurrentFront | plural.ts | READ (SimplyPlural external) | |
-| `plural_get_member` | execPluralGetMember | plural.ts | READ (external) | |
+| `plural_get_member` | execPluralGetMember | plural.ts | READ (pk_roster; plural-v2 static list as fallback) | **Repointed 2026-08-13.** plural-v2 answered from a baked-in `members.json`: 512 entries, no pronouns column at all. |
 | `plural_update_member_description` | execPluralUpdateMemberDescription | plural.ts | external SimplyPlural API (not D1) | |
-| `plural_search_members` | execPluralSearchMembers | plural.ts | READ (external) | |
+| `plural_search_members` | execPluralSearchMembers | plural.ts | READ (pk_roster; plural-v2 static list as fallback) | **Repointed 2026-08-13.** Also fixed: it passed the whole request sentence as the search query. |
 | `plural_get_front_history` | execPluralGetFrontHistory | plural.ts | READ (external) | |
 | `plural_log_front_change` | execPluralLogFrontChange | plural.ts | external SimplyPlural API (not D1) | |
 | `plural_add_member_note` | execPluralAddMemberNote | plural.ts | external SimplyPlural API (not D1) | |
 | `log_alter_note` | execLogAlterNote | plural.ts | system_member_notes | Halseth-native D1 |
 | `front_update` | execFrontUpdate | plural.ts | front_events | |
 | `alter_recall` | execAlterRecall | plural.ts | READ | |
-| `list_members` | execListMembers | plural.ts | READ (system_members) | |
+| `list_members` | execListMembers | plural.ts | READ (system_members) | `system_members` is EMPTY; this returns nothing. Not repointed at `pk_roster` on purpose -- "list all 538" is the prompt-flooding shape the roster lookup exists to avoid. |
+| `roster_who_is` | execRosterWhoIs | roster.ts | READ (pk_roster) | mig 0117. Writes only via the cron refresh (`pk_roster`, `pk_roster_sync`), never from the lookup path. |
 
 ## Sibling-table trap clusters
 

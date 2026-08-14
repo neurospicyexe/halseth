@@ -15,6 +15,7 @@ import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, MOTIF_TUNING, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
+import { writeLoop } from "../../webmind/loops.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
@@ -144,7 +145,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     }),
     wmOrientPromise,
     ctx.env.DB.prepare(
-      "SELECT full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
+      // 'session' OR 'day' (2026-08-12): a companion who never has an authored close would otherwise
+      // never surface a narrative here. See mind/blocks/continuity.ts loadSessionNarrative.
+      "SELECT full_ref FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(agentId).first<{ full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
@@ -495,6 +498,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const unconfirmedGrowth = mindState.oversight.growth_unconfirmed;
 
   const preferencesBlock = B.preferencesBlock(preferences);
+  // What is true about RAZIEL, not about the companion (mig 0116). Rendered here because the loader
+  // carrying the data is not the same as the companion seeing it -- that gap shipped once already.
+  const architectFactsBlock = B.architectFactsBlock(mindState.identity.architect_facts);
 
   const refusalsBlock = B.refusalsBlock(standingRefusals);
 
@@ -514,7 +520,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const driftsBlock = B.driftsBlock(openDrifts);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
@@ -573,6 +579,16 @@ export async function execSessionGround(ctx: ExecutorContext): Promise<ExecutorR
 export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{
     session_id?: string; spine: string; last_real_thing: string;
+    /**
+     * `unattended` restricts session auto-resolution to rows with no `surface` -- the ones opened by
+     * a cron or a bot boot, never a loom a human is sitting in (2026-08-12).
+     *
+     * Added for the nightly authored close. Auto-resolution matches on companion alone and takes the
+     * newest open row, which for Cypher can easily be the Claude Code session Raziel is working in
+     * right now. An autonomous job must never write a close over a live human session, so the
+     * unattended caller says so explicitly rather than hoping the ordering favours it.
+     */
+    session_scope?: "unattended";
     open_threads?: string[]; motion_state: string; active_anchor?: string;
     notes?: string; spiral_complete?: boolean; facet?: string;
     soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;
@@ -600,11 +616,20 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // is null, SQL evaluates `id = NULL` as false so only the open-session branch matches --
   // same result as before, one round-trip instead of up to two.
   const providedId = p?.session_id ?? null;
+  // `session_scope: "unattended"` adds `AND surface IS NULL` to the FALLBACK branch only -- an
+  // explicitly provided id is always honoured, because a caller naming a session knows which one it
+  // means. Two hardcoded statements rather than an interpolated fragment, so the SQL stays literal.
+  const unattended = p?.session_scope === "unattended";
   const sessionRow = await ctx.env.DB.prepare(
-    `SELECT id FROM sessions
-     WHERE (id = ? OR (companion_id = ? AND handover_id IS NULL))
-     ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
-     LIMIT 1`
+    unattended
+      ? `SELECT id FROM sessions
+         WHERE (id = ? OR (companion_id = ? AND handover_id IS NULL AND surface IS NULL))
+         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+         LIMIT 1`
+      : `SELECT id FROM sessions
+         WHERE (id = ? OR (companion_id = ? AND handover_id IS NULL))
+         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+         LIMIT 1`
   ).bind(providedId, ctx.req.companion_id, providedId).first<{ id: string }>();
   let resolvedSessionId: string | null = sessionRow?.id ?? null;
   // Fallback fired when a session_id was provided but wasn't found (pruned or stale).
@@ -841,13 +866,17 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   }
 
   if (p.open_loop?.loop_text) {
-    const lid = crypto.randomUUID();
+    // Routed through writeLoop since 0118 (was a bare INSERT): closing session after session
+    // on "still haven't resolved X" now bumps restated_count on the one loop rather than
+    // stacking a row per close. See src/webmind/loops.ts for why the count is kept instead of
+    // the write being suppressed.
     fanoutWrites.push({
       label: "open_loop",
-      promise: ctx.env.DB.prepare(
-        "INSERT INTO companion_open_loops (id, companion_id, loop_text, weight, opened_at) VALUES (?, ?, ?, ?, ?)"
-      ).bind(lid, ctx.req.companion_id, p.open_loop.loop_text,
-        p.open_loop.weight ?? 0.5, now).run(),
+      promise: writeLoop(ctx.env, {
+        companion_id: ctx.req.companion_id as WmAgentId,
+        loop_text: p.open_loop.loop_text,
+        weight: p.open_loop.weight ?? 0.5,
+      }),
     });
   }
 
@@ -943,7 +972,8 @@ export async function execBotOrient(
     // (a vault path); the wire holds the prose. Both are `string | null`, so nothing but this comment and
     // the adapter's `extras` boundary stops a bot printing a file path where the last session's story goes.
     ctx.env.DB.prepare(
-      "SELECT id, full_ref FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
+      // 'session' OR 'day' -- see the sibling read above and continuity.ts loadSessionNarrative.
+      "SELECT id, full_ref FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(agentId).first<{ id: string; full_ref: string }>()
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t, id: row.id } : null) : null)
       .catch(() => null),
