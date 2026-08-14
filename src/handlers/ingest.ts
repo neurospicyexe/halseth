@@ -11,7 +11,7 @@
 // GET /ingest/tensions
 
 import type { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, VALID_COMPANIONS } from "../lib/auth.js";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -370,6 +370,18 @@ export async function getIngestTensions(
   const since         = url.searchParams.get("since") ?? undefined;
   const updatedSince  = url.searchParams.get("updated_since") ?? undefined;
   const limit         = clampLimit(url.searchParams.get("limit"));
+  const companionId   = url.searchParams.get("companion_id") ?? undefined;
+  const status        = url.searchParams.get("status") ?? undefined;
+
+  // `companion_id` was ACCEPTED AND IGNORED until 2026-08-14: Hearth's fetchTensions has always
+  // sent it, so every per-companion tension view was silently showing all three companions.
+  if (companionId !== undefined && !VALID_COMPANIONS.has(companionId)) {
+    return json({ error: "invalid companion_id" }, 400);
+  }
+  const validStatuses = ["simmering", "crystallized", "released"];
+  if (status !== undefined && !validStatuses.includes(status)) {
+    return json({ error: "status must be simmering|crystallized|released" }, 400);
+  }
 
   if (since !== undefined && isNaN(Date.parse(since))) {
     return json({ error: "invalid since parameter" }, 400);
@@ -381,6 +393,20 @@ export async function getIngestTensions(
   const conditions: string[] = [];
   const bindings: unknown[]  = [];
   let orderCol = "first_noted_at";
+
+  if (companionId !== undefined) {
+    conditions.push("companion_id = ?");
+    bindings.push(companionId);
+  }
+  // `status` is OPT-IN and the default stays unfiltered on purpose. This is also the
+  // second-brain sync path (`since` / `updated_since`), and a status change TO released is
+  // exactly what that sweep exists to carry -- defaulting to simmering here would hide those
+  // rows and break status syncing quietly, weeks before anyone noticed. A dashboard that wants
+  // only live tensions asks for them; a sync that wants everything keeps getting everything.
+  if (status !== undefined) {
+    conditions.push("status = ?");
+    bindings.push(status);
+  }
 
   if (updatedSince !== undefined) {
     // Update sweep: only tensions that have been touched since last check.
@@ -399,7 +425,7 @@ export async function getIngestTensions(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, companion_id, tension_text, status, first_noted_at, last_surfaced_at, notes
+      SELECT id, companion_id, tension_text, status, first_noted_at, last_surfaced_at, notes, charge
       FROM companion_tensions
       ${where}
       ORDER BY ${orderCol} ${orderDir}
