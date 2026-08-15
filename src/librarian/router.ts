@@ -286,7 +286,7 @@ import {
   execRazielWitness, execContinuityNotesRead,
   execNoteSit, execNoteMetabolize, execSittingRead,
   execWmNoteEdit,
-  execConversationList, execConversationLand,
+  execConversationList, execConversationLand, execConversationCapture,
 } from "./executors/webmind.js";
 
 // ── Companion growth executors ───────────────────────────────────────────────
@@ -442,6 +442,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   wm_thread_upsert: execWmThreadUpsert,
   conversation_list: execConversationList,
   conversation_land: execConversationLand,
+  conversation_capture: execConversationCapture,
   wm_note_add: execWmNoteAdd,
   wm_handoff_write: execWmHandoffWrite,
   wm_dream_write: execWmDreamWrite,
@@ -544,6 +545,20 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   list_members:   execListMembers,
 };
 
+// ── Close-intent guard ─────────────────────────────────────────────────────────
+// Keys whose executors INSERT a session row. A close-shaped request must never execute
+// one of these (2026-08-15, task 6473947d). Live failure: "close session c3571d8c ..."
+// missed the fast path, the classifier guessed a session-opening key, and the INSERT
+// created a NULL-surface shell session that the close's latest-open fallback then closed
+// instead of the real one. The intent is unambiguous -- only the classifier's guess was
+// wrong -- so the guard REROUTES to session_close rather than refusing. Fast-path (tier 1)
+// matches are untouched: no close phrasing can substring-match an opening trigger.
+const SESSION_OPENING_KEYS = new Set(["session_open", "session_orient"]);
+
+export function isCloseShaped(request: string): boolean {
+  return /\bclos(?:e|ed|ing)\b/i.test(request) && /\bsession\b/i.test(request);
+}
+
 export class LibrarianRouter {
   constructor(private env: Env) {}
 
@@ -577,14 +592,20 @@ export class LibrarianRouter {
       };
     }
 
+    // Close-intent guard: a classifier guess must never open a session on a close-shaped
+    // request. See SESSION_OPENING_KEYS above for the incident this encodes.
+    const guardedKey = patternKey && SESSION_OPENING_KEYS.has(patternKey) && isCloseShaped(req.request)
+      ? "session_close"
+      : patternKey;
+
     // Tier 3: fast-path check on classifier result (classifier now sees all keys including fast-path)
-    if (patternKey && patternKey !== "unknown") {
-      const fastEntry = FAST_PATH_PATTERNS[patternKey];
+    if (guardedKey && guardedKey !== "unknown") {
+      const fastEntry = FAST_PATH_PATTERNS[guardedKey];
       if (fastEntry) {
         return this.execute(req, fastEntry);
       }
       // Tier 3b: KV lookup for non-fast-path keys
-      const kvEntry = await this.env.LIBRARIAN_KV.get(patternKey, "json") as PatternEntry | null;
+      const kvEntry = await this.env.LIBRARIAN_KV.get(guardedKey, "json") as PatternEntry | null;
       if (kvEntry) {
         return this.execute(req, kvEntry);
       }

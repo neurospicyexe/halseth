@@ -449,6 +449,11 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       // because "halseth" sits between the words -- these explicit forms are required.
       "close the halseth session", "close this halseth session",
       "close halseth session",
+      // 2026-08-15 (task 6473947d): "close the session" / "close my session" missed this list,
+      // fell to the classifier, which guessed session_open -- an INSERT on a close-shaped
+      // request (the mig-0114 shape). The router now also guards this; the trigger is the
+      // primary fix, the guard is the belt.
+      "close the session", "close my session",
     ],
     tools: ["halseth_session_close"],
     response_key: "witness",
@@ -996,6 +1001,19 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   conversation_list: {
     triggers: ["open conversations", "live conversations", "conversation threads", "what conversations are open"],
     tools: ["conversation_list"],
+    response_key: "witness",
+  },
+  // Capture (2026-08-15, coherence-review D3): the named write for "this exchange should
+  // survive this conversation". Claude.ai has no hooks, so capture is companion-driven --
+  // this verb is the mechanism, the orient affordance line is the reminder. Content rides
+  // context.content, never the request string.
+  conversation_capture: {
+    triggers: [
+      "capture this exchange", "capture the exchange", "capture exchange",
+      "capture this conversation", "capture the conversation", "capture conversation",
+      "conversation capture", "ledger this exchange", "capture this",
+    ],
+    tools: ["conversation_capture"],
     response_key: "witness",
   },
   conversation_land: {

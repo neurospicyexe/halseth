@@ -15,7 +15,9 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   // Write gate: if thread_key is set, return the existing note if one was written
   // in the last 10 minutes. Prevents Claude Code Stop hooks and Discord synthesis
   // from flooding the same thread with near-identical notes.
-  if (input.thread_key) {
+  // bypass_write_gate: intentional per-exchange writers (conversation_capture) share a
+  // thread_key across many distinct writes -- the gate would silently drop their content.
+  if (input.thread_key && !input.bypass_write_gate) {
     const recent = await env.DB.prepare(
       `SELECT note_id, content, created_at FROM wm_continuity_notes
        WHERE agent_id = ? AND archived = 0 AND thread_key = ?

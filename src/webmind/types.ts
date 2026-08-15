@@ -10,7 +10,7 @@ export type WmThreadLane = "bond" | "life" | "growth" | "creative" | "ops";
 // triad_log: written by Hearth /phoenix/chat triad mode on session close. Scribe is
 // cypher (the auditor) since wm_continuity_notes.agent_id is constrained to a single
 // companion -- the participating triad is encoded in the content prefix instead.
-export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc" | "spiral_turn" | "triad_log";
+export type WmNoteType = "continuity" | "reflection" | "memory_anchor" | "ops" | "soma_arc" | "spiral_turn" | "triad_log" | "conversation_capture";
 export type WmSalience = "low" | "normal" | "high";
 
 export interface WmIdentityAnchor {
@@ -229,6 +229,16 @@ export interface WmNoteInput {
   actor?: WmActor;
   source?: string;
   correlation_id?: string;
+  /**
+   * Skip the 10-minute per-thread_key write gate (2026-08-15, D3 capture verb).
+   *
+   * The gate exists to dedup HOOK floods (Claude Code Stop hooks, Discord synthesis) that
+   * re-write near-identical notes onto one thread. conversation_capture shares a thread_key
+   * per session BY DESIGN, and every capture is an intentional, distinct write -- the gate
+   * would silently return the previous note and DROP the new content, which is worse than
+   * either accepting or rejecting it. Only deliberate per-exchange writers set this.
+   */
+  bypass_write_gate?: boolean;
 }
 
 // ── Orient/Ground response shapes ────────────────────────────────────────────

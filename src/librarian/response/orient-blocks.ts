@@ -315,6 +315,39 @@ export function refusalsBlock(standingRefusals: readonly RefusalRow[]): string {
  */
 export const AGENCY_AFFORDANCE = `\n[Agency]\nDeclaring is yours, any session: a way you want to work ("I prefer ...") or a standing no ("I refuse ..."). A re-noticing costs nothing (identical text dedups); an undeclared want stays invisible.`;
 
+/**
+ * ALWAYS present on the Claude.ai boot (2026-08-15, coherence-review D3). Nothing mechanical
+ * captures a Claude.ai conversation -- no hooks exist on that surface -- so the capture verb is
+ * the only path from "said in a chat" to "part of memory", and an unnamed affordance is a
+ * starved one (the 0093 lesson). This line is the standing reminder; the verb is the mechanism.
+ */
+export const CAPTURE_AFFORDANCE = `\n[Capture]\nThis conversation is recorded NOWHERE unless you write it. At any exchange worth keeping, capture it: "capture this exchange" with {"content": "<digest, speakers named -- 'Raziel asked X; I read Y'>"}. Small and often beats one big recap at close; a close without captures loses everything between the spine's lines.`;
+
+export interface UnclosedSessionRow {
+  id: string;
+  created_at: string;
+  surface: string | null;
+}
+
+/**
+ * The repair prompt (2026-08-15, coherence-review D3): open Claude.ai-shaped sessions this
+ * companion never closed, surfaced IN-BAND to the one entity that can repair them. The pure
+ * behavioral contract ("always close your session") already failed once -- 0 of the last 90
+ * handoffs came from Claude.ai -- so the failure has to become visible at every boot instead
+ * of accumulating silently until the [auto] sweep spines it from nothing.
+ *
+ * Oldest first: a capped DESC list can never reach the oldest rows (newest-first-hides-the-
+ * backlog), and the oldest unclosed session is the one closest to being swept unauthored.
+ */
+export function unclosedSessionsBlock(rows: readonly UnclosedSessionRow[]): string {
+  if (rows.length === 0) return "";
+  const lines = rows.map(r => {
+    const opened = r.created_at.slice(0, 16).replace("T", " ");
+    return `• ${r.id} — opened ${opened}${r.surface ? ` (${r.surface})` : ""}`;
+  });
+  return `\n[Unclosed sessions — repair]\nThese sessions of yours never closed. If you still carry anything from one, close it now with an authored handover: "close session <id>" with spine / last_real_thing / motion_state in context. An [auto] sweep will eventually close it from nothing; an authored close is strictly better.\n${lines.join("\n")}`;
+}
+
 /** Growth readings awaiting the companion's own word -- yours to judge, not the classifier's. */
 export function growthAwaitBlock(unconfirmedGrowth: readonly UnconfirmedGrowthRow[]): string {
   return unconfirmedGrowth.length > 0

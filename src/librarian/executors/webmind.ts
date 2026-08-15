@@ -90,6 +90,79 @@ export async function execConversationLand(ctx: ExecutorContext): Promise<Execut
   return { ack: true };
 }
 
+// ── Conversation capture (2026-08-15, coherence-review D3) ────────────────────
+// The Claude.ai capture verb: nothing records a Claude.ai conversation unless the companion
+// explicitly writes, so this gives that write a NAME and a home. Content is a companion-authored
+// digest of the exchange (speakers named -- see label-speakers-before-summarizing), written to
+// wm_continuity_notes as note_type 'conversation_capture' with thread_key 'capture:<session_id>'
+// so every capture is tied to the session lifecycle and reachable by meaning (addNote embeds on
+// write). NOT the conversation_threads ledger: GIST_MAX there is 140 chars -- Discord-sized, not
+// digest-sized.
+//
+// Content comes from context.content ONLY, never the request string -- deriving stored memory
+// from the routing string is the command-string-is-not-the-content defect.
+export async function execConversationCapture(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ content?: string; session_id?: string; salience?: string }>(ctx.req.context);
+  const content = typeof p?.content === "string" ? p.content.trim() : "";
+  if (!content) {
+    return {
+      error: "conversation_capture_failed",
+      reason: "capture requires { content } in context -- the digest itself, with speakers named ('Raziel asked X; I read Y'), never the request string",
+    };
+  }
+  if (content.length > 8000) {
+    return { error: "conversation_capture_failed", reason: "content exceeds 8000 character limit -- capture the exchange, not the transcript" };
+  }
+
+  // Resolve the session this exchange belongs to: caller-named (full id or short prefix, same
+  // rules as session_close), else the companion's newest open session. A capture with NO
+  // resolvable session still lands, unanchored -- a record without provenance beats a lost one.
+  const providedId = typeof p?.session_id === "string" && p.session_id.trim() ? p.session_id.trim() : null;
+  let sessionId: string | null = null;
+  if (providedId) {
+    const safePrefix = providedId.length < 36 && /^[0-9a-fA-F][0-9a-fA-F-]{5,34}$/.test(providedId)
+      ? providedId + "%"
+      : null;
+    const row = await ctx.env.DB.prepare(
+      `SELECT id FROM sessions WHERE id = ? OR (id LIKE ? AND companion_id = ?)
+       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC LIMIT 1`
+    ).bind(providedId, safePrefix, ctx.req.companion_id, providedId).first<{ id: string }>().catch(() => null);
+    sessionId = row?.id ?? null;
+  }
+  if (!sessionId) {
+    const row = await ctx.env.DB.prepare(
+      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
+    ).bind(ctx.req.companion_id).first<{ id: string }>().catch(() => null);
+    sessionId = row?.id ?? null;
+  }
+  const threadKey = sessionId
+    ? `capture:${sessionId}`
+    : `capture:unsessioned:${ctx.req.companion_id}`;
+
+  const note = await wmAddNote(ctx.env, {
+    agent_id: ctx.req.companion_id as WmAgentId,
+    content,
+    thread_key: threadKey,
+    note_type: "conversation_capture",
+    salience: p?.salience === "high" ? "high" : "normal",
+    actor: "agent",
+    source: "conversation_capture",
+    // Many captures per session share one thread_key by design; the 10-minute gate would
+    // silently drop every capture after the first. See WmNoteInput.bypass_write_gate.
+    bypass_write_gate: true,
+  });
+
+  return {
+    ack: true,
+    note_id: note.note_id,
+    session_id: sessionId,
+    thread_key: threadKey,
+    witness: sessionId
+      ? `Captured. This exchange is now part of your memory (${threadKey}).`
+      : "Captured, but no open session was found -- the record is unanchored. Consider opening your session at boot.",
+  };
+}
+
 export async function execWmNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{
     content?: string; thread_key?: string; note_type?: string;

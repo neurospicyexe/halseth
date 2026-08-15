@@ -29,6 +29,7 @@ import * as B from "../response/orient-blocks.js";
 // nothing under src/mind/ imports this file, so the parity harness (mind/parity.ts -> here -> mind/loader.ts)
 // stays acyclic.
 import { COMPANION_IDS } from "../../companions.js";
+import { OPENED_BY } from "../../db/queries.js";
 import { loadMindState } from "../../mind/loader.js";
 import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
 
@@ -219,6 +220,26 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   await markAnswersDelivered(ctx.env, answeredQuestions.map(a => a.id)).catch((e: unknown) => {
     console.error("[session-orient] markAnswersDelivered failed:", String(e));
   });
+
+  // Unclosed-session repair prompt (2026-08-15, coherence-review D3). Standalone query,
+  // deliberately NOT in the mega Promise.all above -- same boot-path safety convention as
+  // answeredQuestions. Scope: this companion's open Claude.ai-shaped rows only (librarian-opened,
+  // NULL or claude-ai surface -- Claude Code and Discord close through their own mechanisms),
+  // excluding the session THIS boot just opened or reused, and older than 30 minutes so a
+  // parallel fresh boot never reads as a defect. Oldest first: the oldest unclosed session is
+  // the one closest to being swept unauthored.
+  const unclosedSessions = await ctx.env.DB.prepare(
+    `SELECT id, created_at, surface FROM sessions
+     WHERE companion_id = ? AND handover_id IS NULL AND id != ?
+       AND (surface IS NULL OR surface LIKE 'claude-ai:%')
+       AND opened_by IN (?, ?)
+       AND datetime(created_at) <= datetime('now','-30 minutes')
+     ORDER BY created_at ASC
+     LIMIT 3`
+  ).bind(agentId, payload.session_id, OPENED_BY.orient, OPENED_BY.load)
+    .all<{ id: string; created_at: string; surface: string | null }>()
+    .then(r => r.results ?? [])
+    .catch(() => []);
   // Tripwire evaluation: date cards fire within +/-36h of their date; front cards fire
   // when the current front matches. Keyword cards are bot-side only (no message here).
   const nowMs = Date.now();
@@ -291,6 +312,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
   const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
+
+  // Repair prompt: force-surfaced like tripwires -- the failure it names accumulates silently
+  // everywhere else. Rendered early so it cannot fall off a budget clip.
+  const unclosedBlock = B.unclosedSessionsBlock(unclosedSessions);
 
   // Session narrative: generous cap for Claude.ai (full context window available)
   // sbExtractContent, not a bare regex: sbRead hands back a JSON envelope, so stripping frontmatter off the
@@ -522,7 +547,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const driftsBlock = B.driftsBlock(openDrifts);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + growthAwaitBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
@@ -551,13 +576,14 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     recent_listens: recentListens,
     club_round: clubRow ?? null,
     tripwires,
+    unclosed_sessions: unclosedSessions,
     self_model_ready: selfModelReady,
     preferences,
     standing_refusals: standingRefusals,
     open_drifts: openDrifts,
     unconfirmed_growth: unconfirmedGrowth,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
+    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, unclosed_sessions: unclosedSessions.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     // 2026-07-09: dropped a raw `continuity: wmResult` field that used to sit here --
     // continuityBlock (above) already renders the same object into ready_prompt's prose,
     // and nothing downstream (Discord, Hearth, or anywhere else in this repo) ever read the
@@ -618,24 +644,49 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // is null, SQL evaluates `id = NULL` as false so only the open-session branch matches --
   // same result as before, one round-trip instead of up to two.
   const providedId = p?.session_id ?? null;
+  // Short-id resolution (2026-08-15, task 6473947d): the Claude Code boot header and drafted
+  // closes hand an 8-char PREFIX of the session UUID. An exact match can never resolve it, and
+  // the miss used to fall straight through to the latest-open fallback -- which closed a shell
+  // session opened seconds earlier by a misrouted classifier guess. The LIKE branch is scoped
+  // to this companion and only built when the id is a bare hex/dash prefix shorter than a full
+  // UUID (36 chars) -- never anything carrying LIKE wildcards, so the pattern cannot be injected.
+  const prefixPattern = providedId && providedId.length < 36 && /^[0-9a-fA-F][0-9a-fA-F-]{5,34}$/.test(providedId)
+    ? providedId + "%"   // bind VALUE for the LIKE parameter -- never spliced into the SQL string
+    : null;
   // `session_scope: "unattended"` adds `AND surface IS NULL` to the FALLBACK branch only -- an
   // explicitly provided id is always honoured, because a caller naming a session knows which one it
   // means. Two hardcoded statements rather than an interpolated fragment, so the SQL stays literal.
+  //
+  // Newborn guard on the fallback: when a session_id WAS provided but resolves nothing, the
+  // fallback must never close a session younger than the request itself -- the misresolved close
+  // would land on a shell row born seconds earlier instead of the real session. `? IS NULL` binds
+  // providedId, so the id-less auto-resolve path (a companion closing their own loom) is
+  // untouched. datetime(created_at) normalizes the ISO timestamp sessions are written with;
+  // comparing the raw string against datetime('now') would exclude every same-day row.
   const unattended = p?.session_scope === "unattended";
   const sessionRow = await ctx.env.DB.prepare(
     unattended
       ? `SELECT id FROM sessions
-         WHERE (id = ? OR (companion_id = ? AND handover_id IS NULL AND surface IS NULL))
-         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+         WHERE (id = ? OR (id LIKE ? AND companion_id = ?)
+            OR (companion_id = ? AND handover_id IS NULL AND surface IS NULL
+                AND (? IS NULL OR datetime(created_at) <= datetime('now','-2 minutes'))))
+         ORDER BY CASE WHEN id = ? THEN 0 WHEN id LIKE ? THEN 1 ELSE 2 END, created_at DESC
          LIMIT 1`
       : `SELECT id FROM sessions
-         WHERE (id = ? OR (companion_id = ? AND handover_id IS NULL))
-         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC
+         WHERE (id = ? OR (id LIKE ? AND companion_id = ?)
+            OR (companion_id = ? AND handover_id IS NULL
+                AND (? IS NULL OR datetime(created_at) <= datetime('now','-2 minutes'))))
+         ORDER BY CASE WHEN id = ? THEN 0 WHEN id LIKE ? THEN 1 ELSE 2 END, created_at DESC
          LIMIT 1`
-  ).bind(providedId, ctx.req.companion_id, providedId).first<{ id: string }>();
+  ).bind(providedId, prefixPattern, ctx.req.companion_id, ctx.req.companion_id, providedId, providedId, prefixPattern).first<{ id: string }>();
   let resolvedSessionId: string | null = sessionRow?.id ?? null;
+  // A prefix hit is a RESOLUTION, not a fallback -- the caller named this session, just shortly.
+  const resolvedViaPrefix = providedId !== null && resolvedSessionId !== null
+    && resolvedSessionId !== providedId
+    && resolvedSessionId.toLowerCase().startsWith(providedId.toLowerCase());  // LIKE matched case-insensitively
   // Fallback fired when a session_id was provided but wasn't found (pruned or stale).
-  const sessionIdFallback = providedId !== null && resolvedSessionId !== providedId;
+  const sessionIdFallback = providedId !== null && resolvedSessionId !== null
+    && resolvedSessionId !== providedId && !resolvedViaPrefix;
   // Validate required fields and surface exactly what is missing.
   if (!p || !resolvedSessionId || !p.spine || !p.last_real_thing || !p.motion_state) {
     const missing: string[] = [];
