@@ -8,6 +8,7 @@ import {
   postConversationTurn,
   postConversationLand,
   getConversationActive,
+  getConversationByMessage,
   listConversationsHandler,
 } from "../handlers/conversations.js";
 import type { Env } from "../types.js";
@@ -95,6 +96,22 @@ class FakeStatement {
       const [id] = this.bound as [string];
       const found = this.db.threads.find((t) => t["id"] === id);
       return (found ?? null) as T | null;
+    }
+
+    // getTurnByMessage: ledger row joined to its thread, newest first.
+    if (s.includes("FROM thread_ledger tl") && s.includes("JOIN conversation_threads ct")) {
+      const [message_id] = this.bound as [string];
+      const rows = this.db.ledger
+        .filter((l) => l["message_id"] === message_id)
+        .sort((a, b) => String(b["said_at"]).localeCompare(String(a["said_at"])));
+      const l = rows[0];
+      if (!l) return null;
+      const t = this.db.threads.find((row) => row["id"] === l["thread_id"]);
+      if (!t) return null;
+      return {
+        author: l["author"], thread_id: l["thread_id"],
+        channel_id: t["channel_id"], said_at: l["said_at"],
+      } as unknown as T;
     }
 
     return null;
@@ -358,5 +375,58 @@ describe("listConversationsHandler", () => {
     const openBody = await openRes.json() as { conversations: Array<{ channel_id: string }> };
     expect(openBody.conversations).toHaveLength(1);
     expect(openBody.conversations[0]!.channel_id).toBe("c6");
+  });
+});
+
+// ── message lookup (floor rework 2026-08-15: durable reply-to fallback) ─────
+
+describe("getConversationByMessage", () => {
+  it("401s without auth", async () => {
+    const env = makeEnv(new FakeDb());
+    const res = await getConversationByMessage(
+      req("GET", "/mind/conversations/message/m1", undefined, null), env, { message_id: "m1" },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("400s without message_id", async () => {
+    const env = makeEnv(new FakeDb());
+    const res = await getConversationByMessage(
+      req("GET", "/mind/conversations/message/", undefined), env, {},
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("resolves a recorded message to its author and channel", async () => {
+    const db = new FakeDb();
+    const env = makeEnv(db);
+    const open = await postConversation(
+      req("POST", "/mind/conversations", { channel_id: "chan-9", seed_text: "seed", seed_author: "raziel" }), env,
+    );
+    const { thread } = await open.json() as { thread: { id: string } };
+    await postConversationTurn(
+      req("POST", `/mind/conversations/${thread.id}/turns`, { author: "cypher", gist: "a reply", message_id: "sent-42" }),
+      env, { id: thread.id },
+    );
+
+    const res = await getConversationByMessage(
+      req("GET", "/mind/conversations/message/sent-42", undefined), env, { message_id: "sent-42" },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { turn: { author: string; thread_id: string; channel_id: string } | null };
+    expect(body.turn).not.toBeNull();
+    expect(body.turn!.author).toBe("cypher");
+    expect(body.turn!.thread_id).toBe(thread.id);
+    expect(body.turn!.channel_id).toBe("chan-9");
+  });
+
+  it("returns { turn: null } for a message nothing recorded — an answer, not an error", async () => {
+    const env = makeEnv(new FakeDb());
+    const res = await getConversationByMessage(
+      req("GET", "/mind/conversations/message/ghost", undefined), env, { message_id: "ghost" },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { turn: unknown };
+    expect(body.turn).toBeNull();
   });
 });

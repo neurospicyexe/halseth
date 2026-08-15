@@ -14,6 +14,7 @@ import {
   fadeConversation,
   getActiveConversation,
   listConversations,
+  getTurnByMessage,
 } from "../webmind/conversations.js";
 
 function json(data: unknown, status = 200): Response {
@@ -232,6 +233,30 @@ export async function getConversationActive(request: Request, env: Env): Promise
     return json(result, 200);
   } catch (err) {
     console.error("[mind/conversations/active] GET error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/conversations/message/:message_id — resolve a Discord message id to the ledger
+// turn that recorded it (author + thread + channel). The bots' durable reply-to fallback:
+// their in-process sentIds set is volatile, the ledger is not. `{ turn: null }` is a real
+// answer ("nothing recorded this message"), not an error.
+export async function getConversationByMessage(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const { message_id } = params;
+  if (!message_id) return json({ error: "message_id is required" }, 400);
+
+  try {
+    const turn = await getTurnByMessage(env, message_id);
+    return json({ turn }, 200);
+  } catch (err) {
+    console.error("[mind/conversations/message] GET error", { message_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

@@ -295,6 +295,30 @@ export async function getActiveConversation(env: Env, channelId: string):
   return { thread, ledger: ledgerRes.results ?? [] };
 }
 
+/**
+ * Resolve a Discord message id to the ledger turn that recorded it (2026-08-15, floor rework).
+ *
+ * This is the durable half of the bots' reply-to detection: the in-process `sentIds` set is
+ * volatile (capped at 500, lost on restart), while every companion reply in a tracked channel
+ * already writes its sent message id onto the ledger via convoTurn. The bot asks "who authored
+ * the message being replied to" and compares the author to itself.
+ *
+ * message_id is not globally unique in the schema (unique only per thread), but a Discord
+ * snowflake can only ever be recorded once in practice; take the newest row if plural.
+ */
+export async function getTurnByMessage(env: Env, messageId: string):
+  Promise<{ author: string; thread_id: string; channel_id: string; said_at: string } | null> {
+  const row = await env.DB.prepare(`
+    SELECT tl.author, tl.thread_id, ct.channel_id, tl.said_at
+    FROM thread_ledger tl
+    JOIN conversation_threads ct ON ct.id = tl.thread_id
+    WHERE tl.message_id = ?
+    ORDER BY tl.said_at DESC
+    LIMIT 1
+  `).bind(messageId).first<{ author: string; thread_id: string; channel_id: string; said_at: string }>();
+  return row ?? null;
+}
+
 export async function listConversations(env: Env, opts: {
   state?: string; days?: number; limit?: number;
 }): Promise<ConvoThread[]> {

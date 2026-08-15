@@ -38,7 +38,7 @@ import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanion
 import { getHealth } from "./handlers/health.js";
 import { getEdges } from "./handlers/edges.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
-import { postConversation, getConversationActive, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
+import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -231,6 +231,7 @@ const router = new Router()
   // Thread spine — durable conversation threads (migration 0106)
   .on("POST", "/mind/conversations",                 (request, env)         => postConversation(request, env))
   .on("GET",  "/mind/conversations/active",          (request, env)         => getConversationActive(request, env))
+  .on("GET",  "/mind/conversations/message/:message_id", (request, env, params) => getConversationByMessage(request, env, params ?? {}))
   .on("GET",  "/mind/conversations",                 (request, env)         => listConversationsHandler(request, env))
   .on("POST", "/mind/conversations/:id/turns",       (request, env, params) => postConversationTurn(request, env, params ?? {}))
   .on("POST", "/mind/conversations/:id/land",        (request, env, params) => postConversationLand(request, env, params ?? {}))
