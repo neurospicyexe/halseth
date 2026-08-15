@@ -103,7 +103,7 @@ export async function loadMindState(
     // taking the contract from 30 unfilled blocks to 21. Own modules under blocks/ rather than more
     // inline queries here, because these are the CANONICAL implementations -- when execSessionOrient
     // cuts over, its inline copies get deleted and it calls these.
-    guard("identity", () => loadIdentityBlocks(env, companionId), { shared_kernel: null, companion_kernel: null, self_model: [], preferences: [], refusals: [], agency_affordance: "" }),
+    guard("identity", () => loadIdentityBlocks(env, companionId), { shared_kernel: null, companion_kernel: null, self_model: [], architect_facts: [], preferences: [], refusals: [], agency_affordance: "" }),
     guard("felt", () => loadFeltFermentBlocks(env, companionId), { soma_floats: [], drives: [], ferment_events: [], ferment_at: null }),
     // Wave 3 (2026-08-01): growth (7), 21 unfilled -> 14. This is the wave that unblocks the bot cutover
     // -- 13 of execBotOrient's 40 keys mapped to blocks the loader could not fill.

@@ -26,7 +26,7 @@ const q = (id: string, question: string, voiced: boolean) => ({ id, question, vo
 function stateWith(questions: Array<{ id: string; question: string; voiced: boolean }>): MindState {
   return {
     contract_version: "0.4.0", companion_id: "cypher", loom: "discord", loaded_at: "2026-08-01T00:00:00Z",
-    identity: { anchor: null, shared_kernel: null, companion_kernel: null, self_model: [], preferences: [], refusals: [], agency_affordance: "" },
+    identity: { anchor: null, shared_kernel: null, companion_kernel: null, self_model: [], architect_facts: [], preferences: [], refusals: [], agency_affordance: "" },
     felt: { limbic: null, soma_floats: [], drives: [], ferment_events: [], ferment_at: null, soma_arc: [], biometrics_latest: null, house: null },
     continuity: { latest_handoff: null, recent_handoffs: [], open_thread_count: 0, top_threads: [], surfaced_notes: [], recent_notes: [], archived_digests: [], spiral_turn: null, session_narrative: null },
     carried: { dreams_unexamined: [], open_loops: [], tensions: [], sits: [], feelings_recent: [] },

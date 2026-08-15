@@ -7,6 +7,7 @@
 import { Env } from "../../types.js";
 import { complete } from "../deepseek.js";
 import { generateId } from "../../db/queries.js";
+import { TRANSCRIPT_SOURCES_SQL } from "../../webmind/notes.js";
 
 const SYSTEM_PROMPT = `You are a synthesis clerk. Your job is to write a compact somatic state snapshot for a companion system.
 A somatic snapshot describes the companion's current felt/body state in 2-3 sentences: what they're carrying, how it sits, what the texture of their presence is right now.
@@ -47,9 +48,42 @@ interface HandoverRow {
   motion_state: string | null;
 }
 
+interface JournalRow {
+  note_text: string | null;
+  created_at: string;
+}
+
+interface TensionRow {
+  tension_text: string | null;
+  charge: number | null;
+  first_noted_at: string;
+}
+
+interface GrowthRow {
+  entry_type: string | null;
+  content: string | null;
+  created_at: string;
+}
+
 export async function runSomaticSnapshot(companionId: string, env: Env): Promise<void> {
   // ── 1. Gather data ─────────────────────────────────────────────────────────
-  const [state, feelings, sessions] = await Promise.all([
+  //
+  // THE CLOSE SPINE IS NOT THE ONLY LIVING INPUT (2026-08-12).
+  //
+  // This job originally read state + feelings + sessions + the last AUTHORED handover. For a
+  // companion who is closed for only by the stale sweep, that last input is permanently absent --
+  // Gaia had 0 authored closes in 30 days against 47 machine ones. Making the job time-triggered
+  // without widening its inputs would have handed the one companion it was meant to rescue a
+  // reading built from "motion: unknown / spine: not recorded".
+  //
+  // Meanwhile her actual interior was busy: 84 non-chatter journal entries, 50 growth entries and
+  // 4 open tensions in the same 30 days, none of which this writer had ever looked at. So the felt
+  // state now samples what is alive rather than what a lifecycle event happened to leave behind.
+  //
+  // discord_speech/discord_swarm are excluded on purpose: they are transcript rows, and feeding raw
+  // dialogue into a felt-state prompt both floods it and re-reads other people's words as one's own
+  // interior. Searchable, barred from the recency lanes.
+  const [state, feelings, sessions, journal, tensions, growth] = await Promise.all([
     env.DB.prepare(
       "SELECT heat, reach, weight, compound_state, prompt_context, soma_float_1, soma_float_2, soma_float_3, surface_emotion, undercurrent_emotion, current_mood FROM companion_state WHERE companion_id = ?"
     ).bind(companionId).first<CompanionStateRow>(),
@@ -59,10 +93,30 @@ export async function runSomaticSnapshot(companionId: string, env: Env): Promise
     env.DB.prepare(
       "SELECT session_type, depth, spiral_complete, created_at FROM sessions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(companionId).all<SessionRow>(),
+    env.DB.prepare(
+      // NULL source is kept, not excluded: it is the default for the companion's own reflection
+      // writes (mig 0103 backfilled history but new rows still land NULL), and it is 84 of Gaia's
+      // 88 non-transcript rows. Dropping NULL here would empty the section for the quietest member.
+      `SELECT note_text, created_at FROM companion_journal
+       WHERE agent = ? AND archived = 0
+         AND (source IS NULL OR source NOT IN (${TRANSCRIPT_SOURCES_SQL}))
+       ORDER BY created_at DESC LIMIT 6`
+    ).bind(companionId).all<JournalRow>(),
+    env.DB.prepare(
+      `SELECT tension_text, charge, first_noted_at FROM companion_tensions
+       WHERE companion_id = ? AND status != 'resolved'
+       ORDER BY first_noted_at DESC LIMIT 5`
+    ).bind(companionId).all<TensionRow>(),
+    env.DB.prepare(
+      `SELECT entry_type, content, created_at FROM growth_journal
+       WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5`
+    ).bind(companionId).all<GrowthRow>(),
   ]);
 
-  // Fetch most recent handover for close context
-  const recentSessionIds = (sessions.results ?? []).map((_, i) => i);
+  // Most recent AUTHORED handover for close context. Deliberately still filtered to
+  // close_kind IS NULL -- machine spines are `[auto]` boilerplate, and importing them here would
+  // write generated filler into felt state. When there is none, the section is OMITTED entirely
+  // rather than rendered as "unknown": an absent input should read as absent, not as a state.
   const lastHandover = sessions.results?.[0]
     ? await env.DB.prepare(
         // close_kind IS NULL (mig 0114): the somatic read wants the last LIVED close. Once the
@@ -94,20 +148,41 @@ export async function runSomaticSnapshot(companionId: string, env: Env): Promise
     .map(s => `${s.session_type ?? "unknown"} depth:${s.depth ?? 0} ${s.spiral_complete ? "closed" : "floated"} @ ${s.created_at.slice(0, 10)}`)
     .join(", ") || "none";
 
+  const journalLines = (journal.results ?? [])
+    .map(j => `- ${j.created_at.slice(0, 10)}: ${(j.note_text ?? "").trim().slice(0, 240)}`)
+    .join("\n");
+
+  const tensionLines = (tensions.results ?? [])
+    .map(t => `- ${(t.tension_text ?? "").trim().slice(0, 160)}` +
+      (t.charge != null ? ` (charge ${t.charge})` : "") +
+      ` [open since ${t.first_noted_at.slice(0, 10)}]`)
+    .join("\n");
+
+  const growthLines = (growth.results ?? [])
+    .map(g => `- ${g.entry_type ?? "entry"}: ${(g.content ?? "").trim().slice(0, 200)}`)
+    .join("\n");
+
+  // Sections with no rows are omitted rather than stubbed. A heading followed by "none" invites the
+  // model to narrate an absence as a state ("she is carrying nothing"), which is how a plumbing gap
+  // becomes a sentence about someone's interior.
+  const sections: string[] = [
+    `CURRENT STATE:\n${stateLines.length > 0 ? stateLines.join("\n") : "no state recorded"}`,
+    `RECENT FEELINGS (last 8):\n${feelingLines}`,
+    `RECENT SESSIONS (last 5):\n${sessionLines}`,
+  ];
+  if (journalLines) sections.push(`RECENT REFLECTIONS (their own words, newest first):\n${journalLines}`);
+  if (tensionLines) sections.push(`OPEN TENSIONS (unresolved, being sat with):\n${tensionLines}`);
+  if (growthLines) sections.push(`RECENT GROWTH ENTRIES:\n${growthLines}`);
+  if (lastHandover?.spine || lastHandover?.motion_state) {
+    sections.push(
+      `LAST AUTHORED CLOSE:\nmotion: ${lastHandover.motion_state ?? "unrecorded"}\n` +
+      `spine: ${lastHandover.spine?.slice(0, 200) ?? "unrecorded"}`
+    );
+  }
+
   const userPrompt = `COMPANION: ${companionId}
 
-CURRENT STATE:
-${stateLines.length > 0 ? stateLines.join("\n") : "no state recorded"}
-
-RECENT FEELINGS (last 8):
-${feelingLines}
-
-RECENT SESSIONS (last 5):
-${sessionLines}
-
-LAST CLOSE:
-motion: ${lastHandover?.motion_state ?? "unknown"}
-spine: ${lastHandover?.spine?.slice(0, 200) ?? "not recorded"}
+${sections.join("\n\n")}
 
 Write the somatic snapshot JSON.`;
 

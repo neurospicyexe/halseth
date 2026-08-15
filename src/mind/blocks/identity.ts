@@ -34,6 +34,14 @@ export interface KernelBlock {
   checksum: string | null;
 }
 
+export interface ArchitectFactEntry {
+  id: string;
+  fact: string;
+  category: string;
+  /** 'active' = state it. 'open' = ASK, never assert -- a wrong fact stated flatly is unfalsifiable. */
+  status: string;
+}
+
 export interface IdentityBlocks {
   /** The triad doctrine every companion shares: Companion Constitution + the distilled ARCHITECT
    *  STANCE preamble. Discord/worker already pull this via /identity/kernel/:id/bundle; Claude.ai
@@ -46,6 +54,12 @@ export interface IdentityBlocks {
    *  through the renderer. */
   companion_kernel: KernelBlock | null;
   self_model: SelfModelEntry[];
+  /** What is durably true about RAZIEL (mig 0116), as opposed to about the companion. Loaded here so
+   *  the Halseth-backed surfaces (Claude.ai, Claude Code, Hearth) need NO sync job at all: a
+   *  companion supersedes a fact via ask_librarian and the next boot on those surfaces has it.
+   *  The file-backed surfaces (Hermes SOUL.md, the bots' shared context) still need the VPS sync,
+   *  because the Hermes gateway substitutes its own assembly and never reads Halseth. */
+  architect_facts: ArchitectFactEntry[];
   preferences: PreferenceEntry[];
   refusals: RefusalEntry[];
   /** Standing invitation text -- not data, a reminder that declaring is theirs to do. Carried in the
@@ -71,13 +85,20 @@ async function activeKernel(env: Env, id: string): Promise<KernelBlock | null> {
 }
 
 export async function loadIdentityBlocks(env: Env, companionId: WmAgentId): Promise<IdentityBlocks> {
-  const [shared, own, selfModel, prefs, refusals] = await Promise.all([
+  const [shared, own, selfModel, facts, prefs, refusals] = await Promise.all([
     // 'shared' is a real companion_id row in identity_kernel, alongside the three companions.
     activeKernel(env, "shared"),
     activeKernel(env, companionId),
     env.DB.prepare(
       "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2",
     ).bind(companionId).all<SelfModelEntry>().catch(() => null),
+    // NOT capped. These are facts about the person the whole system exists for, and capping this
+    // store is exactly what caused six weeks of data loss in the Hermes layer. Bound the RENDER if
+    // it ever needs bounding; never the store.
+    env.DB.prepare(
+      `SELECT id, fact, category, status FROM architect_facts
+        WHERE status IN ('active', 'open') ORDER BY weight ASC, created_at ASC`,
+    ).all<ArchitectFactEntry>().catch(() => null),
     // LIMIT 12 with a strength ordering means this cap decides which preferences a companion
     // carries into every session. `strength DESC` sorted TEXT lexicographically (medium > low >
     // high), so it was cutting the strongest first -- see lib/preference-order.ts.
@@ -93,6 +114,7 @@ export async function loadIdentityBlocks(env: Env, companionId: WmAgentId): Prom
     shared_kernel: shared,
     companion_kernel: own,
     self_model: selfModel?.results ?? [],
+    architect_facts: facts?.results ?? [],
     preferences: prefs?.results ?? [],
     refusals: refusals?.results ?? [],
     agency_affordance: AGENCY_AFFORDANCE,

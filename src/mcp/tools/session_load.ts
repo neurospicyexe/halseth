@@ -361,7 +361,9 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
 
   // 5. Read latest synthesis_summary where summary_type='session' for this companion
   const synthRaw = await env.DB.prepare(
-    "SELECT * FROM synthesis_summary WHERE summary_type = 'session' AND companion_id = ? ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
+    // 'session' OR 'day' (2026-08-12) -- see mind/blocks/continuity.ts loadSessionNarrative for why:
+    // a companion with no authored closes has no 'session' row to find, and froze for 39 days.
+    "SELECT * FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
   ).bind(input.companion_id).first<SynthesisSummary>();
 
   // Warm the loaded summary (0074): repeated loads keep it hot, which protects it

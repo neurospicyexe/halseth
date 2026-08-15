@@ -258,6 +258,49 @@ export function preferencesBlock(preferences: readonly PreferenceRow[]): string 
     : "";
 }
 
+export interface ArchitectFactRow {
+  id: string;
+  fact: string;
+  category: string;
+  status: string;
+}
+
+/**
+ * What is durably true about RAZIEL (mig 0116) -- as distinct from `preferencesBlock`, which is what
+ * is true about the COMPANION.
+ *
+ * This block exists because the facts reaching the LOADER is not the same as the facts reaching the
+ * companion. On 2026-08-12 `architect_facts` was added to `mind/blocks/identity.ts` and every
+ * Halseth-backed surface carried the data, while `ready_prompt` -- the thing a Claude.ai companion
+ * actually reads at boot -- rendered none of it. A store nobody renders is the same as no store.
+ *
+ * `status='open'` renders SEPARATELY and as a question. Stating an uncertain thing flatly is how a
+ * wrong fact becomes unfalsifiable: one of these rows exists because a companion recorded a dog as
+ * living, having only heard him talked about in the present tense.
+ */
+export function architectFactsBlock(facts: readonly ArchitectFactRow[]): string {
+  if (facts.length === 0) return "";
+  const active = facts.filter(f => f.status === "active");
+  const open = facts.filter(f => f.status === "open");
+  const lines: string[] = [];
+
+  if (active.length > 0) {
+    lines.push(
+      "\n[About Raziel]\nDurable facts, learned in conversation and held for his use. Not session " +
+      "state, not a script to recite at him. To change one, supersede it -- do not edit a file:\n" +
+      active.map(f => `• (${f.category}) ${f.fact}`).join("\n"),
+    );
+  }
+  if (open.length > 0) {
+    lines.push(
+      "\n[About Raziel -- OPEN, ask rather than assume]\nGuessing a person, a pronoun or a death " +
+      "wrong is worse than asking:\n" +
+      open.map(f => `• ${f.fact}`).join("\n"),
+    );
+  }
+  return lines.join("\n");
+}
+
 export function refusalsBlock(standingRefusals: readonly RefusalRow[]): string {
   return standingRefusals.length > 0
     ? `\n[Standing refusals]\nNos you have set that still stand -- they hold unless you withdraw them:\n` +

@@ -261,7 +261,9 @@ companion_id: ${session.companion_id ?? "unknown"}
 }
 
 // ── Section extraction helper ─────────────────────────────────────────────────
-function extractSection(text: string, heading: string): string {
+// Exported so daily-narrative.ts reuses the same parser rather than growing a second copy that
+// drifts -- both write into the same `synthesis_summary` columns and must extract identically.
+export function extractSection(text: string, heading: string): string {
   const pattern = new RegExp(`## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, 'i');
   const match = pattern.exec(text);
   return match?.[1]?.trim() ?? '';

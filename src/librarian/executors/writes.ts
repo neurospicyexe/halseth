@@ -226,15 +226,45 @@ export async function execTaskList(ctx: ExecutorContext): Promise<ExecutorResult
   if (/in.progress/.test(req)) statusFilter = "in_progress";
   else if (/done|completed|finished/.test(req)) statusFilter = "done";
 
-  const tasks = await taskList(ctx.env, ctx.req.companion_id, statusFilter ?? undefined);
+  const tasks = await taskList(ctx.env, ctx.req.companion_id, statusFilter ?? undefined) as Array<{
+    id: string; title: string; description: string | null; status: string; priority: string;
+    assigned_to: string | null; due_at: string | null; created_at: string;
+  }>;
   const label = statusFilter === "in_progress" ? "in-progress" : statusFilter === "done" ? "done" : "open";
-  const summary = tasks.length === 0
-    ? `No ${label} tasks.`
-    : tasks.map((t: unknown) => {
-        const task = t as { title: string; priority: string; status: string };
-        return `[${task.priority}] ${task.title} (${task.status})`;
-      }).join("\n");
-  return buildResponse(ctx.req.companion_id, ctx.entry.response_key as ResponseKey, { session_id: "" }, summary);
+
+  // Keyword filter: quoted phrases, or terms after "mentioning/about/containing".
+  // An empty match returns [] with total in meta -- absence must be visible, never padded with the full list.
+  const kws: string[] = [];
+  for (const m of ctx.req.request.matchAll(/"([^"]+)"|'([^']+)'/g)) {
+    const phrase = m[1] ?? m[2];
+    if (phrase) kws.push(phrase.toLowerCase());
+  }
+  const tail = req.match(/(?:mentioning|about|containing|matching|related to)\s+(.{3,120})/);
+  if (tail?.[1]) {
+    kws.push(...tail[1].split(/,|\bor\b|\band\b/).map((s) => s.trim()).filter((s) => s.length >= 3));
+  }
+  const filtered = kws.length
+    ? tasks.filter((t) => {
+        const hay = `${t.title} ${t.description ?? ""}`.toLowerCase();
+        return kws.some((k) => hay.includes(k));
+      })
+    : tasks;
+
+  // Full structured rows via the data key (raw passthrough) -- the 800-char summary budget
+  // was silently clipping the newest tasks off the end of the list (found 2026-08-15).
+  return {
+    data: filtered.map((t) => ({
+      id: t.id, title: t.title, description: t.description, status: t.status,
+      priority: t.priority, assigned_to: t.assigned_to, due_at: t.due_at, created_at: t.created_at,
+    })),
+    meta: {
+      operation: "halseth_task_list",
+      status: label,
+      total: tasks.length,
+      returned: filtered.length,
+      ...(kws.length ? { keywords: kws } : {}),
+    },
+  };
 }
 
 export async function execHandoverRead(ctx: ExecutorContext): Promise<ExecutorResult> {

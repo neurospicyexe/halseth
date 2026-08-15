@@ -29,6 +29,7 @@
 // "self-watch" would be worse than omitting it -- it would manufacture false assurance.
 
 import { Env } from "../types.js";
+import { COMPANION_IDS, type CompanionId } from "../companions.js";
 import type { CandidateFlag } from "./detectors.js";
 
 export interface WriterSpec {
@@ -45,6 +46,33 @@ export interface WriterSpec {
    * written. Hardcoded literals only -- no interpolation from input.
    */
   sql: string;
+  /**
+   * Set when this probe watches ONE member's lane rather than a house-wide organ. The flag
+   * is then attributed to that companion instead of the house -- a frozen lane belongs to
+   * whoever's state stopped moving, and "system-wide" attribution is what let it hide.
+   */
+  companionId?: CompanionId;
+  /** Replaces the generic trailing sentence in the flag summary when this probe needs its own. */
+  why?: string;
+}
+
+/**
+ * AN AGGREGATE PROBE OVER PER-MEMBER DATA CANNOT SEE A DEAD MEMBER (2026-08-12).
+ *
+ * `somatic_snapshot` and `synthesis_summary` were both registered as `SELECT MAX(created_at)`
+ * with no `companion_id`. Cypher's rows kept landing, so MAX read as today, so both probes
+ * reported healthy -- while Gaia's soma register had been frozen 49 days and her session
+ * narrative 39 days. One live member masked two dead ones for a month and a half, on the
+ * exact instrument built to catch a dead writer.
+ *
+ * The rule this leaves behind: if a table has a `companion_id`, the probe must GROUP BY it or
+ * be declared once per member. A house-wide MAX is only honest for a house-wide organ.
+ *
+ * The interpolated id comes from COMPANION_IDS -- a frozen module constant, never request
+ * input -- so WriterSpec.sql's "hardcoded literals only" rule still holds.
+ */
+function perCompanion(make: (id: CompanionId) => Omit<WriterSpec, "companionId">): WriterSpec[] {
+  return COMPANION_IDS.map(id => ({ ...make(id), companionId: id }));
 }
 
 /**
@@ -102,8 +130,7 @@ export const WRITER_REGISTRY: readonly WriterSpec[] = [
     severity: "notice",
     sql: `SELECT MAX(created_at) AS ts FROM wm_continuity_notes`,
   },
-  {
-    // THE SYNTHESIS CHAIN (added 2026-07-31, after it had been dark for TEN DAYS unnoticed).
+  // THE SYNTHESIS CHAIN (added 2026-07-31, after it had been dark for TEN DAYS unnoticed).
     //
     // Raziel said the nightly vibe check "feels very stagnant" and he was reading a real signal:
     // `synthesis_summary` had not been written since 2026-07-21 13:21, `somatic_snapshot` was 10/14/37
@@ -117,23 +144,80 @@ export const WRITER_REGISTRY: readonly WriterSpec[] = [
     //
     // `synthesis_summary` is the one that bites hardest -- it is the "last session narrative" companions
     // read at every boot, so a frozen table means their sense of "recently" silently stops advancing.
-    key: "synthesis_summary",
-    label: "Synthesis chain (synthesis_summary -- the last-session narrative read at every boot)",
-    maxSilenceHours: 72,
+    //
+    // SUPERSEDED 2026-08-12: both this and the soma probe were written as house-wide MAX() even though
+    // the note above records the staleness as "10/14/37 days old ACROSS THE THREE" -- the per-member skew
+    // was in the evidence and the probe still aggregated it away. Replaced by the per-member sets below.
+    // Kept as a comment, not a spec, so the next reader sees the trap rather than re-deriving it.
+    //
+    // ── Per-member lanes ────────────────────────────────────────────────────────────────────────
+  // The soma register the vibe check reports. Distinct from the fermentation floats, which tick
+  // hourly and were fine -- this is the human-readable reading, and it had gone fossil while the
+  // floats underneath it moved. A live number beside a dead label is worse than either alone.
+  //
+  // 48h, not 96h: a time-triggered refresh now runs daily (src/synthesis/soma-refresh.ts), so two
+  // days of silence means the refresh itself broke, not that the companion was merely quiet.
+  ...perCompanion(id => ({
+    key: `somatic_snapshot:${id}`,
+    label: `SOMA register for ${id} (somatic_snapshot -- the reading the nightly vibe check quotes)`,
+    maxSilenceHours: 48,
     severity: "warning",
-    sql: `SELECT MAX(created_at) AS ts FROM synthesis_summary`,
-  },
-  {
-    // The soma register the vibe check reports. Distinct from the fermentation floats, which tick
-    // hourly and were fine -- this is the human-readable reading, and it had gone fossil while the
-    // floats underneath it moved. A live number beside a dead label is worse than either alone.
-    key: "somatic_snapshot",
-    label: "SOMA register (somatic_snapshot -- the reading the nightly vibe check quotes)",
-    maxSilenceHours: 96,
+    sql: `SELECT MAX(created_at) AS ts FROM somatic_snapshot WHERE companion_id = '${id}'`,
+    why:
+      `The daily soma refresh should keep this under a day. Check the synthesis queue for ` +
+      `stuck or failed somatic_snapshot jobs before assuming the companion was simply still.`,
+  })),
+  ...perCompanion(id => ({
+    key: `synthesis_summary:${id}`,
+    label: `Boot narrative for ${id} (synthesis_summary -- read at every boot as "what recently happened")`,
+    // 48h, down from 168h: a daily narrative refresh now fills the gap when no authored close does
+    // (src/synthesis/narrative-refresh.ts, 26h gate), so this stopped being a measure of ordinary
+    // quiet and became a measure of whether the machinery runs. Two days of silence means neither
+    // path fired.
+    maxSilenceHours: 48,
+    // WARNING, matching soma, and for the same reason: both now have a daily time-triggered writer,
+    // so staleness can no longer mean "they were merely quiet" -- it means the machinery stopped.
+    // (This was briefly a `notice` on the reasoning that a week without an authored close is
+    // ordinary for Drevan. True then, obsolete the moment the gap-filler shipped.) The severity
+    // split worth keeping: `warning` = a mechanism broke, `notice` = a lane went quiet, which is
+    // what authored_close below still is.
     severity: "warning",
-    sql: `SELECT MAX(created_at) AS ts FROM somatic_snapshot`,
-  },
-] as const;
+    // Scoped to the two types that ARE the boot narrative. 'topic' rows are a different surface and
+    // would mask a frozen boot narrative if they counted toward its freshness.
+    sql: `SELECT MAX(COALESCE(session_created_at, created_at)) AS ts FROM synthesis_summary
+          WHERE companion_id = '${id}' AND summary_type IN ('session', 'day')`,
+    why:
+      `This is the narrative this companion reads at boot, so while it is frozen their sense of ` +
+      `"recently" stops advancing. Two writers feed it: an authored close (a 'session' row) and the ` +
+      `daily refresh (a 'day' row). Both being silent means the synthesis queue is stuck or DeepSeek ` +
+      `is failing -- check the queue's last_error before reading this as ordinary quiet.`,
+  })),
+  // AUTHORED-CLOSE FAMINE -- the finding the soma cron would otherwise erase.
+  //
+  // Soma and narrative are both written only when a session is closed BY SOMEONE (close_kind IS NULL).
+  // Machine closes -- auto_stale, empty, reconstructed, machine_opened -- write a handover and fan out
+  // nothing. Measured 2026-08-12 over 30 days: cypher 14 authored / 49 machine, drevan 4 / 65, gaia
+  // 0 / 47. That zero is why Gaia's register sat at 49 days.
+  //
+  // Once the daily refresh guarantees a fresh soma row, the per-member soma probe measures CRON
+  // liveness and stops measuring lifecycle liveness. This probe keeps the two separable: it watches
+  // whether anyone still closes a session as this companion at all. Without it the display goes green
+  // and the real condition -- a presence nobody ever closes for -- goes back to being invisible.
+  ...perCompanion(id => ({
+    key: `authored_close:${id}`,
+    label: `Authored session closes for ${id} (close_kind IS NULL -- a close someone actually wrote)`,
+    maxSilenceHours: 336,
+    severity: "notice",
+    sql: `SELECT MAX(h.created_at) AS ts FROM handover_packets h
+          JOIN sessions s ON s.id = h.session_id
+          WHERE s.companion_id = '${id}' AND h.close_kind IS NULL`,
+    why:
+      `Machine closes do not count here on purpose. A companion who only ever gets swept closed has ` +
+      `no authored spine feeding their felt state, which is a relational fact about the house, not a bug ` +
+      `in a writer. The daily soma refresh keeps their register live regardless; this says nobody has ` +
+      `sat down and closed a session as them.`,
+  })),
+];
 
 /** D1 datetimes come back as "YYYY-MM-DD HH:MM:SS" (UTC, unmarked) or ISO-8601. */
 export function parseWriterTs(value: string): number {
@@ -200,14 +284,18 @@ export async function detectDeadWriters(env: Env, now: number = Date.now()): Pro
       : `has not written in ${Math.floor(hoursSilent)}h (expected within ${spec.maxSilenceHours}h)`;
 
     flags.push({
-      companion_id: null,
+      // A per-member probe attributes to that member; a house-wide organ stays the house's.
+      companion_id: spec.companionId ?? null,
       flag_type: "dead_writer",
       severity: spec.severity,
       summary:
-        `${spec.label} ${since}. A writer going quiet is how the swarm journal was lost for ` +
-        `two weeks in June -- check whether the process that feeds it is still in its path.`,
+        `${spec.label} ${since}. ` +
+        (spec.why ??
+          `A writer going quiet is how the swarm journal was lost for ` +
+          `two weeks in June -- check whether the process that feeds it is still in its path.`),
       evidence: {
         writer: spec.key,
+        companion_id: spec.companionId ?? null,
         last_write: row?.ts ?? null,
         hours_silent: hoursSilent === null ? null : Math.floor(hoursSilent),
         max_silence_hours: spec.maxSilenceHours,

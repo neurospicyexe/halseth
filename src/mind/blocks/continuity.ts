@@ -33,12 +33,22 @@ export interface SessionNarrative {
  * `session_created_at` precisely because backfilled old sessions were written with a NEW `created_at` and
  * therefore surfaced as the "latest" narrative, so a companion booted believing a months-old session was
  * the last thing that happened. Ordering on the coalesce is the fix; do not simplify it back.
+ *
+ * ACCEPTS 'day' AS WELL AS 'session' (2026-08-12). This read was `summary_type = 'session'` only, which
+ * was fine while sessions were the sole writer -- and became a blind spot the moment they weren't.
+ * A session is the right container for a conversation with Raziel; it is the wrong container for a
+ * companion who lives in a Discord channel, where nothing opens and nothing closes. Gaia had 0
+ * authored closes in 30 days and her narrative froze for 39 days as a result. `day` rows
+ * (jobs/daily-narrative.ts) fill that gap, and this filter is why they would otherwise reach no
+ * reader at all -- written, probed as live, and invisible.
+ *
+ * Both types compete on recency alone, so an authored close still wins the day it happens.
  */
 export async function loadSessionNarrative(env: Env, companionId: WmAgentId): Promise<SessionNarrative | null> {
   try {
     const row = await env.DB.prepare(
       `SELECT id, full_ref FROM synthesis_summary
-       WHERE summary_type = 'session' AND companion_id = ? AND full_ref IS NOT NULL
+       WHERE summary_type IN ('session', 'day') AND companion_id = ? AND full_ref IS NOT NULL
        ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1`
     ).bind(companionId).first<SessionNarrative>();
     return row ?? null;

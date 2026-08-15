@@ -128,16 +128,33 @@ describe("detectDeadWriters", () => {
     }),
   });
 
-  it("flags a silent writer system-wide (a dead organ belongs to the house)", async () => {
+  it("attributes a house-wide organ to the house and a per-member lane to its member", async () => {
+    // ORIGINAL RULE (2026-07-09), still correct and still enforced below: a dead organ belongs to
+    // the house. The swarm journal writer wasn't Cypher's or Drevan's; it was theirs, so flagging it
+    // at one companion would have been a lie about whose lane broke.
+    //
+    // REFINED 2026-08-12: that rule was applied to EVERY flag unconditionally, which stopped being
+    // right once probes could watch one member's lane. Gaia's soma register was frozen 49 days --
+    // that is her lane, not the house's, and attributing it to `null` is how it stayed anonymous
+    // while the house read healthy. So: probes WITHOUT a companionId stay house-wide; probes WITH
+    // one carry it. Both halves asserted, because either alone re-opens the hole.
     const env = { DB: dbReturning(() => "2026-06-25T21:33:21.322Z") } as never;
     const flags = await detectDeadWriters(env, NOW);
     expect(flags.length).toBeGreaterThan(0);
+
     for (const f of flags) {
-      expect(f.companion_id).toBeNull();
       expect(f.flag_type).toBe("dead_writer");
       expect(f.dedup_key.startsWith("dead_writer:")).toBe(true);
       expect(f.evidence).toHaveProperty("last_write");
+      // Attribution must agree with the spec the flag came from -- never be invented per flag.
+      const spec = WRITER_REGISTRY.find(s => `dead_writer:${s.key}` === f.dedup_key);
+      expect(spec, `no spec matches dedup_key ${f.dedup_key}`).toBeTruthy();
+      expect(f.companion_id).toBe(spec!.companionId ?? null);
     }
+
+    // Both kinds are genuinely present, so this test cannot pass by there being only one kind.
+    expect(flags.some(f => f.companion_id === null)).toBe(true);
+    expect(flags.some(f => f.companion_id !== null)).toBe(true);
   });
 
   it("stays silent when every writer is current", async () => {

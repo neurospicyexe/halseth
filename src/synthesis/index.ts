@@ -10,6 +10,7 @@ import { runSessionSummary } from "./jobs/session-summary.js";
 import { runDrevanState } from "./jobs/drevan-state.js";
 import { runBasinDriftCheck } from "./jobs/basin-drift-check.js";
 import { runSomaticSnapshot } from "./jobs/somatic-snapshot.js";
+import { runDailyNarrative } from "./jobs/daily-narrative.js";
 
 const MAX_PER_RUN = 5;
 
@@ -81,6 +82,8 @@ export async function processQueue(env: Env): Promise<void> {
         if (job.companion_id) await runBasinDriftCheck(job.companion_id, env);
       } else if (job.job_type === "somatic_snapshot") {
         if (job.companion_id) await runSomaticSnapshot(job.companion_id, env);
+      } else if (job.job_type === "daily_narrative") {
+        if (job.companion_id) await runDailyNarrative(job.companion_id, env);
       } else {
         console.warn(`[synthesis] unknown job_type: ${job.job_type}`);
       }
@@ -130,6 +133,13 @@ export async function enqueueSomaticSnapshot(
   companionId: string,
   env: Env,
   sessionId?: string | null,
+  /**
+   * Explicit dedup occasion for callers that are not a session close (the daily soma refresh
+   * passes `soma-refresh:<date>`). Kept separate from `sessionId` on purpose: the refresh has no
+   * session, and stuffing a synthetic key into the `session_id` column would make the queue lie
+   * about what caused the job.
+   */
+  occasionOverride?: string,
 ): Promise<void> {
   const id = generateId();
   // DEDUP KEY MUST BE PER-OCCASION, NOT PER-COMPANION (fixed 2026-07-31).
@@ -146,11 +156,28 @@ export async function enqueueSomaticSnapshot(
   // Falls back to a timestamp when no session id is available, so a caller without one still enqueues
   // rather than being permanently blocked. Colliding within the same second is the acceptable failure;
   // never enqueueing again is not.
-  const occasion = sessionId && sessionId.trim() ? sessionId.trim() : new Date().toISOString();
+  const occasion = occasionOverride?.trim()
+    ? occasionOverride.trim()
+    : sessionId && sessionId.trim() ? sessionId.trim() : new Date().toISOString();
   await env.DB.prepare(`
     INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
     VALUES (?, ?, ?, 'somatic_snapshot', 'pending', ?, datetime('now'))
   `).bind(id, sessionId ?? "", companionId, `${companionId}:${occasion}:somatic_snapshot`).run();
+}
+
+// Enqueue a day-scoped narrative job. Called from the daily narrative refresh, never from a close --
+// an authored close writes a real `session` summary, and this only fills the gap when none arrives.
+// Keyed per companion per day, same shape as the soma refresh.
+export async function enqueueDailyNarrative(
+  companionId: string,
+  env: Env,
+  occasion: string,
+): Promise<void> {
+  const id = generateId();
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO synthesis_queue (id, session_id, companion_id, job_type, status, dedup_key, created_at)
+    VALUES (?, '', ?, 'daily_narrative', 'pending', ?, datetime('now'))
+  `).bind(id, companionId, `${companionId}:${occasion}:daily_narrative`).run();
 }
 
 // Enqueue a session summary job. Called from halseth_session_close.

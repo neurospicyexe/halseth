@@ -11,7 +11,7 @@
 // Versioning: bump MINOR when adding blocks (renderers ignore unknown blocks), MAJOR
 // when renaming/removing/restructuring (renderers must assert major compatibility).
 
-import type { KernelBlock, SelfModelEntry, PreferenceEntry, RefusalEntry } from "./blocks/identity.js";
+import type { KernelBlock, SelfModelEntry, PreferenceEntry, RefusalEntry, ArchitectFactEntry } from "./blocks/identity.js";
 import type { SomaFloat, DriveState, FermentEventRow } from "./blocks/felt.js";
 import type {
   WmAgentId, WmIdentityAnchor, WmLimbicState, WmSessionHandoff, WmMindThread,
@@ -60,6 +60,11 @@ export interface MindState {
     shared_kernel: KernelBlock | null;
     companion_kernel: KernelBlock | null;
     self_model: SelfModelEntry[];
+    /** What is durably true about RAZIEL (mig 0116) -- as opposed to about the companion, which is
+     *  what `preferences` holds. Lives on the contract because every boot surface needs it and
+     *  because the store having the facts is NOT the same as a companion seeing them: this field was
+     *  loaded for a while before any renderer emitted it, and a store nobody renders is no store. */
+    architect_facts: ArchitectFactEntry[];
     preferences: PreferenceEntry[];
     refusals: RefusalEntry[];
     /** Standing invitation to declare a preference or a refusal. In the contract rather than

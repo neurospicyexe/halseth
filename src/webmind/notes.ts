@@ -341,6 +341,25 @@ export const MACHINE_SOURCES = new Set([
   "deploy-verified", "evaluator", "metronome", "pattern_worker", "synthesis-gap-detector",
 ]);
 
+/**
+ * THE TRANSCRIPT LANE -- searchable, but barred from anything that reads as "their own interior".
+ *
+ * Distinct from MACHINE_SOURCES and NOT a subset relationship worth collapsing: MACHINE_SOURCES is a
+ * recall-RANKING weight class, and it contains `autonomous` and `metronome`, which are a companion's
+ * own reflections written without a human present. Excluding MACHINE_SOURCES from an interiority read
+ * would therefore throw away most of what a quiet companion actually produced -- 84 of Gaia's 88
+ * non-transcript journal rows in the 30 days to 2026-08-12 were exactly that class.
+ *
+ * These two are different: dialogue captured from a channel. Feeding them into a felt-state prompt
+ * both floods it and re-reads other people's sentences back as the reader's own state.
+ *
+ * Consumers: src/synthesis/jobs/somatic-snapshot.ts.
+ */
+export const TRANSCRIPT_SOURCES = ["discord_speech", "discord_swarm"] as const;
+
+/** `'a', 'b'` for inlining into a hardcoded SQL `NOT IN (...)`. Values are module literals, never input. */
+export const TRANSCRIPT_SOURCES_SQL = TRANSCRIPT_SOURCES.map(s => `'${s}'`).join(", ");
+
 function sourceWeight(kind: RecalledMemory["kind"], source: string | null): number {
   if (kind === "handover") return 1.0;             // human-session by construction
   if (source && HUMAN_SOURCES.has(source)) return 1.0;

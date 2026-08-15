@@ -13,7 +13,17 @@
 import { describe, it, expect } from "vitest";
 import { WRITER_REGISTRY } from "../guardian/writer-liveness.js";
 import { enqueueSomaticSnapshot } from "../synthesis/index.js";
+import { COMPANION_IDS } from "../companions.js";
 import type { Env } from "../types.js";
+
+// PER-MEMBER SINCE 2026-08-12. Both writers below are keyed `<table>:<companion>` now.
+//
+// The 07-31 fix registered them as house-wide `SELECT MAX(created_at)` -- and the note at the top
+// of this very file records the staleness as "10 / 14 / 37 days old ACROSS THE THREE". The per-member
+// skew was already in the evidence and the probe aggregated it away anyway, so the probe went green
+// on cypher's live rows while gaia's soma sat 49 days and her narrative 39. Fixing the writer without
+// fixing the probe would have left the same blind spot pointed at the next member to go quiet.
+const perMemberKeys = (prefix: string) => COMPANION_IDS.map(id => `${prefix}:${id}`);
 
 describe("writer liveness registry covers the surfaces a companion reads daily", () => {
   const keys = WRITER_REGISTRY.map(s => s.key);
@@ -21,8 +31,17 @@ describe("writer liveness registry covers the surfaces a companion reads daily",
   it("watches the synthesis chain -- it was dark for 10 days and unregistered", () => {
     // The registry existed for exactly this failure and these were never added to it. A liveness
     // registry only covers what someone remembered to register.
-    expect(keys).toContain("synthesis_summary");
-    expect(keys).toContain("somatic_snapshot");
+    for (const key of [...perMemberKeys("synthesis_summary"), ...perMemberKeys("somatic_snapshot")]) {
+      expect(keys).toContain(key);
+    }
+  });
+
+  it("watches them PER COMPANION -- a house-wide MAX cannot see a dead member", () => {
+    for (const key of [...perMemberKeys("synthesis_summary"), ...perMemberKeys("somatic_snapshot")]) {
+      const spec = WRITER_REGISTRY.find(s => s.key === key)!;
+      expect(spec.sql).toContain("companion_id =");
+      expect(spec.companionId).toBe(key.split(":")[1]);
+    }
   });
 
   it("every registered writer names a real table in its probe", () => {
@@ -37,7 +56,7 @@ describe("writer liveness registry covers the surfaces a companion reads daily",
   it("tolerances are wide enough not to cry wolf, tight enough to have caught a 10-day silence", () => {
     // Both new writers must fire well before 10 days, or they would not have caught the thing that
     // prompted them.
-    for (const key of ["synthesis_summary", "somatic_snapshot"]) {
+    for (const key of [...perMemberKeys("synthesis_summary"), ...perMemberKeys("somatic_snapshot")]) {
       const spec = WRITER_REGISTRY.find(s => s.key === key)!;
       expect(spec.maxSilenceHours).toBeGreaterThanOrEqual(48);   // not twitchy
       expect(spec.maxSilenceHours).toBeLessThan(10 * 24);        // would have caught this outage

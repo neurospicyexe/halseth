@@ -36,8 +36,10 @@ export async function sessionLightGround(env: Env, input: SessionGroundInput) {
 export async function taskList(env: Env, companionId: string, status?: string) {
   const statusClause = status ? "AND status = ?" : "AND status != 'done'";
   const bindings: unknown[] = status ? [companionId, status] : [companionId];
+  // Priority is a text enum -- alphabetical DESC put 'high' below 'low' (u>n>l>h). Rank explicitly.
   const tasks = await env.DB.prepare(
-    `SELECT * FROM tasks WHERE (assigned_to = ? OR assigned_to IS NULL) ${statusClause} ORDER BY priority DESC, created_at ASC LIMIT 20`
+    `SELECT * FROM tasks WHERE (assigned_to = ? OR assigned_to IS NULL) ${statusClause}
+     ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, created_at ASC LIMIT 100`
   ).bind(...bindings).all();
   return tasks.results ?? [];
 }
