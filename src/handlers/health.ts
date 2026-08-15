@@ -24,6 +24,7 @@
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { COMPANION_IDS } from "../companions.js";
+import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
 
 export type Severity = "ok" | "notice" | "warning" | "red";
 
@@ -184,9 +185,14 @@ export async function getHealth(request: Request, env: Env): Promise<Response> {
     detail: `${qn} pending`,
   });
 
+  // RATIFIABLE_PENDING_SQL, not bare review_status='pending' (2026-08-15): the bare predicate
+  // counted 42 opt-out reflections as "pending" -- rows the 2026-08-12 opt-in decision made LOGS
+  // (only source='autonomous' or needs-raziel-tagged reflections are Raziel's queue). A counter
+  // with a different predicate than the queue it reports on is a second authority, the exact
+  // thing this file's header forswears.
   const ratify = await one<{ n: number; oldest: string }>(
     env,
-    `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM growth_journal WHERE review_status = 'pending'`,
+    `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM growth_journal WHERE ${RATIFIABLE_PENDING_SQL}`,
   );
   const rn = ratify?.n ?? 0;
   const rAge = minutesSince(ratify?.oldest, now);

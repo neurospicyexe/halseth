@@ -159,6 +159,15 @@ const router = new Router()
   .on("POST", "/admin/reindex-existing",      (request, env) => reindexExisting(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
   .on("GET", "/admin/health",             (request, env) => getHealth(request, env))
+  // Fallback door for the every-minute scheduled work (2026-08-15): when Cloudflare cron delivery
+  // stalls, the VPS drives this via ops/kick-halseth-cron.sh. Safe to call repeatedly -- every
+  // rider self-gates. Awaited so the work completes before the response, like any handler write.
+  .on("POST", "/admin/run-scheduled", async (request, env) => {
+    const denied = authGuard(request, env);
+    if (denied) return denied;
+    await runScheduledWork(env);
+    return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
+  })
   // Are the relational edges actually filling in? One readout so "hold and see" is executable.
   .on("GET", "/admin/edges",              (request, env) => getEdges(request, env))
 
@@ -604,6 +613,55 @@ function isPublicPath(pathname: string): boolean {
     || pathname.startsWith("/mind/tools/image/");
 }
 
+/**
+ * Everything the every-minute cron does, callable from two doors: the Cloudflare `scheduled`
+ * handler (normal path) and POST /admin/run-scheduled (fallback path, added 2026-08-15 when
+ * Cloudflare stopped delivering scheduled events to this worker for hours -- trigger registered,
+ * zero invocations in wrangler tail -- and every autonomic tick froze at once: home, ferment,
+ * synthesis queue, roster, salience, stale-sweep, SOMA, narrative).
+ *
+ * Every rider self-gates on its own stamp (24h/20h/26h/hourly), so calling this MORE often than
+ * once a minute is safe and calling it from both doors at once double-runs nothing that matters.
+ * Each rider keeps its own catch: one failure never breaks the rest.
+ *
+ * Rider-specific context lives with each rider's module; the history that used to sit here as
+ * comments (soma/narrative freezes, roster cold-cache) is in git at 231566b^..fbbca51.
+ */
+export async function runScheduledWork(env: Env): Promise<void> {
+  const { processQueue } = await import("./synthesis/index.js");
+  await Promise.allSettled([
+    processQueue(env).catch(e => console.error("[cron] processQueue failed:", e)),
+    (async () => {
+      try { await runHomeTick(env); }
+      catch (err) { console.error("home tick failed", err); }
+    })(),
+    (async () => {
+      try { await runRosterRefresh(env); }
+      catch (err) { console.error("roster refresh failed", err); }
+    })(),
+    (async () => {
+      try { await runFermentTick(env); }
+      catch (err) { console.error("ferment tick failed", err); }
+    })(),
+    (async () => {
+      try { await runSaliencePrune(env); }
+      catch (err) { console.error("salience prune failed", err); }
+    })(),
+    (async () => {
+      try { await runStaleSessionSweep(env); }
+      catch (err) { console.error("stale session sweep failed", err); }
+    })(),
+    (async () => {
+      try { await runSomaRefresh(env); }
+      catch (err) { console.error("soma refresh failed", err); }
+    })(),
+    (async () => {
+      try { await runNarrativeRefresh(env); }
+      catch (err) { console.error("narrative refresh failed", err); }
+    })(),
+  ]);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
@@ -636,92 +694,7 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const { processQueue } = await import("./synthesis/index.js");
-    ctx.waitUntil(processQueue(env).catch(e => console.error("[cron] processQueue failed:", e)));
-
-    // The Home placement tick rides the existing cron. Guarded so a failure
-    // here never breaks the synthesis queue or any other scheduled work.
-    ctx.waitUntil(
-      (async () => {
-        try { await runHomeTick(env); }
-        catch (err) { console.error("home tick failed", err); }
-      })(),
-    );
-
-    // Roster refresh (mig 0117) rides the same every-minute cron and self-gates on the cache's own
-    // age (24h), so it makes at most one PluralKit call a day. It never blanks the table on failure
-    // and it records every attempt -- including failures -- in `pk_roster_sync`, because a lookup has
-    // to be able to say "I could not check" instead of "no such member". A cold cache answering
-    // not_found is exactly the bug this table was added to prevent.
-    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
-    ctx.waitUntil(
-      (async () => {
-        try { await runRosterRefresh(env); }
-        catch (err) { console.error("roster refresh failed", err); }
-      })(),
-    );
-
-    // The fermentation tick rides the existing cron too (decay + cross-field reactions +
-    // baseline drift). Guarded so a failure never breaks the synthesis queue.
-    ctx.waitUntil(
-      (async () => {
-        try { await runFermentTick(env); }
-        catch (err) { console.error("ferment tick failed", err); }
-      })(),
-    );
-
-    // The salience-prune tick rides the existing cron too (cold machine journal rows
-    // self-archive). This cron fires every MINUTE (see wrangler.toml), so the prune
-    // self-gates to a 24h cadence internally (its own companion_settings stamp --
-    // see src/webmind/salience-prune.ts) rather than relying on the cron interval to
-    // already be daily; unforced here, so the gate always applies on this path.
-    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
-    ctx.waitUntil(
-      (async () => {
-        try { await runSaliencePrune(env); }
-        catch (err) { console.error("salience prune failed", err); }
-      })(),
-    );
-
-    // The stale-session sweep rides the same cron and self-gates to 24h. It closes sessions that sat
-    // open past 48h with a close built from COUNTS ONLY -- no model, no valence, no arc -- and its
-    // close_kind is supersedable, so an authored close still wins whenever one arrives.
-    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
-    ctx.waitUntil(
-      (async () => {
-        try { await runStaleSessionSweep(env); }
-        catch (err) { console.error("stale session sweep failed", err); }
-      })(),
-    );
-
-    // The SOMA refresh rides the same cron and self-gates on each companion's own register age
-    // (20h), so it enqueues at most one snapshot per companion per day. It only ENQUEUES -- the
-    // model call, retries and stuck-job recovery stay in processQueue.
-    //
-    // Added 2026-08-12 because soma was written only on an AUTHORED session close. Gaia had zero of
-    // those in 30 days (47 machine closes) and her register sat frozen for 49 days while the house
-    // read healthy. The trigger is now time, not a lifecycle event: sample while the holding is
-    // happening, not after it ends. See src/synthesis/soma-refresh.ts.
-    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
-    ctx.waitUntil(
-      (async () => {
-        try { await runSomaRefresh(env); }
-        catch (err) { console.error("soma refresh failed", err); }
-      })(),
-    );
-
-    // The NARRATIVE refresh rides the same cron, gated on each companion's narrative age (26h).
-    // Same fault as soma: `synthesis_summary` -- the "what recently happened" every loom reads at
-    // boot -- was written only on an authored close, so Gaia's froze for 39 days. Gated on staleness,
-    // which makes precedence automatic: on a day with a real close, the session summary lands first
-    // and this skips. See src/synthesis/narrative-refresh.ts.
-    // Guarded so a failure never breaks the synthesis queue or any other scheduled work.
-    ctx.waitUntil(
-      (async () => {
-        try { await runNarrativeRefresh(env); }
-        catch (err) { console.error("narrative refresh failed", err); }
-      })(),
-    );
+    ctx.waitUntil(runScheduledWork(env));
 
     // RETIRED 2026-08-01: the bot-orient parity sampler used to run here.
     //
