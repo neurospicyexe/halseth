@@ -15,20 +15,10 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { COMPANION_ID_SET } from "../companions.js";
 import { NOTE_REF_TABLES, type NoteRefType } from "../librarian/backends/halseth.js";
+import { unreadNotesFor, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
 
 const VALID_COMPANIONS = COMPANION_ID_SET;
 const MAX_ITEMS = 20;
-
-interface NoteRow {
-  id: string;
-  from_id: string;
-  to_id: string | null;
-  content: string;
-  created_at: string;
-  ref_type: string | null;
-  ref_id: string | null;
-  reason: string | null;
-}
 
 export async function getUnreadInterCompanionNotes(
   request: Request,
@@ -43,15 +33,12 @@ export async function getUnreadInterCompanionNotes(
     return new Response("Invalid companion_id", { status: 400 });
   }
 
-  const rows = await env.DB.prepare(
-    `SELECT id, from_id, to_id, content, created_at, ref_type, ref_id, reason
-     FROM inter_companion_notes
-     WHERE read_at IS NULL AND (to_id = ? OR to_id IS NULL)
-     ORDER BY created_at ASC
-     LIMIT ${MAX_ITEMS}`,
-  ).bind(companionId).all<NoteRow>();
+  // Per-recipient receipts (mig 0120): unread means THIS companion has no receipt, so a
+  // broadcast acked by a sibling (or by a Claude surface) still reaches this one. The old
+  // read_at predicate also lacked a from_id guard -- a bot could poll its own broadcast.
+  const items = await unreadNotesFor(env, companionId, MAX_ITEMS);
 
-  return new Response(JSON.stringify({ items: rows.results ?? [] }), {
+  return new Response(JSON.stringify({ items }), {
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -63,11 +50,14 @@ export async function ackInterCompanionNotes(
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  const body = await request.json() as { ids?: string[]; companion_id?: string };
+  const body = await request.json() as { ids?: string[]; companion_id?: string; surface?: string };
   const ids = body?.ids;
-  const companionId = typeof body?.companion_id === "string" && body.companion_id.length > 0
-    ? body.companion_id
-    : null;
+  const companionId = typeof body?.companion_id === "string" ? body.companion_id : "";
+  // Receipts are per (note, companion) since mig 0120, so an anonymous ack has no row to write.
+  // The only callers (the bot notes-poll, librarian.ts notesAck) always send companion_id.
+  if (!VALID_COMPANIONS.has(companionId)) {
+    return new Response("companion_id required", { status: 400 });
+  }
   if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_ITEMS) {
     return new Response("ids must be a non-empty array (max 20)", { status: 400 });
   }
@@ -77,16 +67,11 @@ export async function ackInterCompanionNotes(
     return new Response("Invalid id format", { status: 400 });
   }
 
-  const placeholders = ids.map(() => "?").join(", ");
-  const now = new Date().toISOString();
-  // Scope to the acking companion when provided so one companion can't mark a
-  // sibling's addressed notes read (broadcasts, to_id NULL, stay ackable by anyone).
-  const scope = companionId ? " AND (to_id = ? OR to_id IS NULL)" : "";
-  const bindings: unknown[] = [now, ...ids];
-  if (companionId) bindings.push(companionId);
-  await env.DB.prepare(
-    `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL${scope}`,
-  ).bind(...bindings).run();
+  // Marks read for THIS companion only; a broadcast stays live for the siblings.
+  const surface = typeof body?.surface === "string" && body.surface.length > 0
+    ? body.surface
+    : `discord:${companionId}`;
+  await ackNotesForCompanion(env, companionId, ids, surface);
 
   return new Response(JSON.stringify({ acked: ids.length }), {
     headers: { "Content-Type": "application/json" },

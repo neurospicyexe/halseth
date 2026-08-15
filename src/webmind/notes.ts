@@ -104,14 +104,19 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
         .map(r => `[${r.created_at.slice(0, 10)}] ${r.content.slice(0, 200)}`)
         .join("\n")
         .slice(0, 8000);
+      const archiveId = generateId();
       await env.DB.prepare(`
         INSERT INTO wm_archive_notes (id, agent_id, summary, note_ids, note_count, period_from, period_to)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).bind(
-        generateId(), input.agent_id, summary,
+        archiveId, input.agent_id, summary,
         JSON.stringify(overflow.map(r => r.note_id)), overflow.length,
         overflow[0]!.created_at, overflow[overflow.length - 1]!.created_at,
       ).run();
+      // Embed the digest (coherence review D4): the notes below are about to be DELETEd, and an
+      // un-embedded digest made eviction a permanent semantic loss. Non-fatal; backfill sweeps.
+      await embedAndStoreAsync(env, summary, "wm_archive_notes", archiveId, input.agent_id)
+        .catch((err) => console.warn("[notes] archive digest embed failed (non-fatal):", String(err)));
       await env.DB.prepare(
         `DELETE FROM wm_continuity_notes WHERE note_id IN (${overflow.map(() => "?").join(", ")})`
       ).bind(...overflow.map(r => r.note_id)).run();
@@ -284,6 +289,9 @@ export async function archiveNotes(
   // inserted but source notes still unarchived (orphaned entry, safe to retry:
   // the INSERT will 409 on the UUID PK and the UPDATE is idempotent).
   await env.DB.batch(stmts);
+  // Embed the digest (coherence review D4) -- otherwise archival is a semantic dead end.
+  await embedAndStoreAsync(env, summary, "wm_archive_notes", archiveId, agentId)
+    .catch((err) => console.warn("[notes] archive digest embed failed (non-fatal):", String(err)));
   return { archived: notes.length, skipped: "none" };
 }
 

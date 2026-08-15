@@ -219,6 +219,21 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
       getText:      (r) => r.pattern_text as string,
       getCompanion: (r) => r.companion_id as string,
     },
+    // 2026-08-15 coherence review D6: tasks were in NO semantic lane, which is why seven searches
+    // could not find the floor-rework task. companion = assigned_to when it names a companion;
+    // a Raziel-assigned or unassigned task still embeds, discoverable by meaning for everyone.
+    tasks: {
+      sql:          "SELECT id, title, description, assigned_to FROM tasks",
+      getText:      (r) => [r.title, r.description].filter(Boolean).join(" -- "),
+      getCompanion: (r) => (r.assigned_to as string) ?? "",
+    },
+    // D4: wm_archive_notes are the digests of cap-evicted continuity notes. Un-embedded, eviction
+    // was a permanent semantic loss -- compressed memory that could never again be found by meaning.
+    wm_archive_notes: {
+      sql:          "SELECT id, summary, agent_id FROM wm_archive_notes",
+      getText:      (r) => r.summary as string,
+      getCompanion: (r) => (r.agent_id as string) ?? "",
+    },
   };
 
   const targets = table ? [table] : Object.keys(TABLES);
@@ -327,6 +342,8 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     handover_packets:    "SELECT id FROM handover_packets",
     companion_conclusions: "SELECT id FROM companion_conclusions",
     companion_tensions:  "SELECT id FROM companion_tensions",
+    tasks:               "SELECT id FROM tasks",
+    wm_archive_notes:    "SELECT id FROM wm_archive_notes",
   };
 
   // Text per row id, for fill mode. Same content shaping as backfill-embeddings' TABLES map,
@@ -344,6 +361,8 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     handover_packets:    "SELECT hp.id AS id, hp.spine || CASE WHEN hp.last_real_thing IS NOT NULL AND hp.last_real_thing != '' THEN char(10) || char(10) || 'Last real thing: ' || hp.last_real_thing ELSE '' END || CASE WHEN hp.open_threads IS NOT NULL AND json_valid(hp.open_threads) AND json_array_length(hp.open_threads) > 0 THEN char(10) || 'Open threads: ' || (SELECT group_concat(value, '; ') FROM json_each(hp.open_threads)) ELSE '' END AS text, s.companion_id AS companion FROM handover_packets hp LEFT JOIN sessions s ON s.id = hp.session_id",
     companion_conclusions: "SELECT id, conclusion_text AS text, companion_id AS companion FROM companion_conclusions",
     companion_tensions:  "SELECT id, tension_text AS text, companion_id AS companion FROM companion_tensions",
+    tasks:               "SELECT id, title || CASE WHEN description IS NOT NULL AND description != '' THEN ' -- ' || description ELSE '' END AS text, COALESCE(assigned_to, '') AS companion FROM tasks",
+    wm_archive_notes:    "SELECT id, summary AS text, agent_id AS companion FROM wm_archive_notes",
   };
 
   const targets = table ? [table] : Object.keys(ID_SQL);

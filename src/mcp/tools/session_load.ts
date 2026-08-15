@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
+import { unreadNotesFor, ackNotesForCompanion } from "../../db/inter_companion_note_reads.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 
@@ -405,23 +406,16 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   ]);
   const openTasks = openTasksResult?.count ?? 0;
 
-  // 7. Read unread inter_companion_notes addressed to this companion or broadcast (to_id IS NULL)
-  const unreadNotes = await env.DB.prepare(
-    "SELECT * FROM inter_companion_notes WHERE read_at IS NULL AND (to_id = ? OR to_id IS NULL) ORDER BY created_at ASC"
-  ).bind(input.companion_id).all<InterCompanionNote>();
+  // 7. Read unread inter_companion_notes addressed to this companion or broadcast (to_id IS NULL).
+  // Per-recipient receipts since mig 0120. The old copy here was the worst of the three consumers:
+  // no from_id guard (a boot consumed the companion's own outgoing broadcasts) and an unscoped
+  // read_at UPDATE (one Claude Code boot marked the whole triad's mail read). Predicate + ack now
+  // live in db/inter_companion_note_reads.ts -- one place, no second copy.
+  const pendingNotes: InterCompanionNote[] = await unreadNotesFor(env, input.companion_id, 20);
 
-  const pendingNotes = unreadNotes.results ?? [];
-
-  // 8. Mark those notes as read
+  // 8. Mark those notes as read FOR THIS COMPANION only
   if (pendingNotes.length > 0) {
-    // Phase 2: fire-and-forget Service Binding call to State Synthesis Worker if snapshot is null or stale
-
-    // Parameterized IN-list: one placeholder per id, routed through the driver's
-    // escaping (covenant: all SQL uses .bind(), no string interpolation of values).
-    const placeholders = pendingNotes.map(() => "?").join(", ");
-    await env.DB.prepare(
-      `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders})`
-    ).bind(now, ...pendingNotes.map(n => n.id)).run();
+    await ackNotesForCompanion(env, input.companion_id, pendingNotes.map(n => n.id), input.surface ?? null);
   }
 
   return {

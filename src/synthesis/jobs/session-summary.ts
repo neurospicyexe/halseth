@@ -250,12 +250,18 @@ companion_id: ${session.companion_id ?? "unknown"}
     || session.active_anchor != null;
 
   if (shouldIngestRaw) {
-    const transcriptTitle = `Session Transcript ${dateStr} ${sessionShort} ${session.companion_id ?? "unknown"}`;
+    // "Session Writes Digest", NOT "Transcript" (coherence review D3): buildTranscript composes
+    // entirely from D1 rows the companion already wrote (deltas, journal, spine) -- nothing from
+    // the actual exchange is captured anywhere. The old name was a false positive for anyone
+    // auditing whether conversations are recorded. Renaming does not add capture; it stops lying.
+    const transcriptTitle = `Session Writes Digest ${dateStr} ${sessionShort} ${session.companion_id ?? "unknown"}`;
     sbIngestRaw(env, {
       title: transcriptTitle,
       content: buildTranscript(session, deltas.results ?? [], notes.results ?? [], handover ?? null),
       companion: session.companion_id ?? undefined,
-      tags: ["session-transcript", "raw-exchange", session.companion_id ?? "unknown"],
+      // Tags renamed with the title (D3): "raw-exchange" claimed verbatim content that was never
+      // there. "session-writes-digest" says what the body actually is.
+      tags: ["session-writes-digest", session.companion_id ?? "unknown"],
     }).catch(e => console.warn("[synthesis:session-summary] sb raw-transcript ingest failed:", e));
   }
 }
@@ -277,7 +283,7 @@ function buildTranscript(
   handover: HandoverRow | null,
 ): string {
   const lines: string[] = [
-    `# Session Transcript`,
+    `# Session Writes Digest`,
     ``,
     `session_id: ${session.id}`,
     `companion: ${session.companion_id ?? "unknown"}`,

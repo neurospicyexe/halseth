@@ -128,9 +128,24 @@ export interface WatchItem {
   with_companion: string | null;
 }
 
+/** A commons post with its author -- the read-back half of the shared board. */
+export interface CommonsLifePost {
+  id: string;
+  author: string;
+  context: string | null;
+  body: string;
+  reply_to: string | null;
+  created_at: string;
+}
+
 export interface WorldBlocks {
   club: ClubRound | null;
   commons: CommonsPost[];
+  /** The commons as a SHARED board (coherence review D7, 2026-08-15). `commons` above is
+   *  Raziel's unanswered drops only; until this field, companion-authored posts (the worker's
+   *  shelf reactions, replies) were written into a lane no companion ever read back, making the
+   *  commons a one-way drop box. This is the last few posts by ANYONE, authors visible. */
+  commons_life: CommonsLifePost[];
   shelf: ShelfItem[];
   collection: { forage: unknown[]; media: unknown[]; top: CollectionHighlight[] };
   forage: { pool: ForageFind[]; active: ForageFind[] };
@@ -143,7 +158,7 @@ export interface WorldBlocks {
 }
 
 const EMPTY: WorldBlocks = {
-  club: null, commons: [], shelf: [], collection: { forage: [], media: [], top: [] },
+  club: null, commons: [], commons_life: [], shelf: [], collection: { forage: [], media: [], top: [] },
   forage: { pool: [], active: [] }, listens: [],
   motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [],
   watching: [],
@@ -152,7 +167,7 @@ const EMPTY: WorldBlocks = {
 /** Never throws: the shared world is context, and missing context must never break a boot. */
 export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise<WorldBlocks> {
   try {
-    const [club, commons, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
+    const [club, commons, commonsLife, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
       await Promise.all([
         env.DB.prepare(
           "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
@@ -166,6 +181,10 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
              AND id NOT IN (SELECT reply_to FROM commons_posts WHERE author = ?1 AND reply_to IS NOT NULL)
            ORDER BY created_at DESC LIMIT 5`
         ).bind(companionId).all<CommonsPost>(),
+        // The shared board itself, any author -- what makes the commons readable back, not write-only.
+        env.DB.prepare(
+          "SELECT id, author, context, body, reply_to, created_at FROM commons_posts ORDER BY created_at DESC LIMIT 8"
+        ).all<CommonsLifePost>(),
         env.DB.prepare(
           "SELECT title, kind, note FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 6"
         ).all<ShelfItem>(),
@@ -280,6 +299,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
     return {
       club: club ?? null,
       commons: commons.results ?? [],
+      commons_life: commonsLife.results ?? [],
       shelf: shelf.results ?? [],
       collection: { forage: colForage.results ?? [], media: colMedia.results ?? [], top: colTop.results ?? [] },
       forage: { pool: pool.results ?? [], active: active.results ?? [] },

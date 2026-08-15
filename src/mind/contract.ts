@@ -18,7 +18,7 @@ import type {
   WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState,
   WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion,
   WmBiometricSnapshot, WmHouseState, WmFeeling, WmOpenLoop, WmSittingNote,
-  WmArchiveDigest, WmRecentSpiralTurn, HomeEvent,
+  WmArchiveDigest, WmRecentSpiralTurn, HomeEvent, WmActiveConversation,
 } from "../webmind/types.js";
 import type { GrowthBlocks } from "./blocks/growth.js";
 import type { WorldBlocks } from "./blocks/world.js";
@@ -26,11 +26,13 @@ import type { OversightBlocks } from "./blocks/oversight.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 
-/** 0.4.0 -- wave 8 added `oversight.growth_unconfirmed` (growth readings detected but not yet owned), the
- *  last field `execSessionOrient` rendered that no other surface could see. MINOR: additive only, renderers
- *  ignore unknown blocks. 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
- *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.4.0";
+/** 0.5.0 -- coherence review (2026-08-15) added `continuity.conversations` (the conversation ledger,
+ *  mig 0106, previously readable by NO contract surface -- D5) and `world.commons_life` (the commons as
+ *  a shared board rather than a one-way drop box -- D7). MINOR: additive only, renderers ignore unknown
+ *  blocks. 0.4.0 was wave 8 (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching,
+ *  beliefs.supersede_candidates, relational.siblings, relational.recent_witness,
+ *  oversight.answered_questions). */
+export const MINDSTATE_CONTRACT_VERSION = "0.5.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -110,6 +112,10 @@ export interface MindState {
      *  so a companion's sense of "recently" silently stopped advancing. Loading it does not fix
      *  that; it only means every loom reads the same one. */
     session_narrative: string | null;
+    /** Active conversation-ledger threads (mig 0106). 0.5.0 (coherence review D5): the ledger backs
+     *  durable reply-to and Discord thread mapping, yet orient returned it in a raw field no contract
+     *  surface could see. mindOrient selects state IN ('open','moving') LIMIT 3, seed_text clipped. */
+    conversations: WmActiveConversation[];
   };
 
   /** What I'm carrying -- unresolved, unexamined, still-metabolizing. */
@@ -178,6 +184,9 @@ export interface MindState {
      *  execBotOrient keep divergent inline copies until they cut over. */
     club: WorldBlocks["club"];
     commons: WorldBlocks["commons"];
+    /** 0.5.0 (coherence review D7): the commons as a shared board, any author. Without it,
+     *  companion-authored posts were written into a lane no companion ever read back. */
+    commons_life: WorldBlocks["commons_life"];
     shelf: WorldBlocks["shelf"];
     collection: WorldBlocks["collection"];
     forage: WorldBlocks["forage"];

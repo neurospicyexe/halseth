@@ -76,8 +76,10 @@ function writtenTables(doc: string, known: Set<string>): Set<string> {
 
 /** Write-only by design: each entry needs a reason, reviewed when the matrix changes. */
 const WRITE_ONLY_BY_DESIGN: Record<string, string> = {
-  // (none currently -- companion_interiority has interiority_read; if a genuinely
-  // sealed table is added, document it here with the sealing rationale)
+  wm_thread_events:
+    "pure audit log of thread lifecycle (synthesis/index.ts says so); 0 reads is intentional. " +
+    "Hidden until 2026-08-15 because its 90-day DELETE FROM purge satisfied the old read regex -- " +
+    "declared here instead so the guard stays honest (coherence review D8)",
 };
 
 /** Superseded tables no non-test source may reference again. */
@@ -97,12 +99,15 @@ describe("write→read coverage floor", () => {
   });
 
   it("every Librarian-written D1 table is SELECTed somewhere in src/", () => {
+    // A retention purge is not a read: `DELETE FROM x` matched the old FROM regex and kept
+    // wm_thread_events green for months while nothing ever read it (coherence review D8).
+    const readableSource = allSource.replace(/DELETE\s+FROM\s+[a-z0-9_]+/gi, "");
     const holes: string[] = [];
     for (const table of written) {
       if (table in WRITE_ONLY_BY_DESIGN) continue;
       // FROM <table> or JOIN <table> anywhere in non-test source counts as a read path.
       const readRe = new RegExp(`(?:FROM|JOIN)\\s+${table}\\b`, "i");
-      if (!readRe.test(allSource)) holes.push(table);
+      if (!readRe.test(readableSource)) holes.push(table);
     }
     expect(
       holes,

@@ -18,6 +18,7 @@ import { effectiveChargeSql } from "../librarian/backends/halseth.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
+import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
 
 /** "While you were away" block. Null-safe: orient must never break on home error.
@@ -156,11 +157,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     env.DB.prepare(
       "SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE from_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmCompanionNote>(),
-    // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self)
-    // read_at IS NULL ensures notes don't repeat across sessions. Auto-acked below after fetch.
-    env.DB.prepare(
-      "SELECT id, from_id, to_id, content, read_at, created_at, ref_type, ref_id, reason FROM inter_companion_notes WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND read_at IS NULL ORDER BY created_at ASC LIMIT 10"
-    ).bind(agentId, agentId).all<WmCompanionNote>(),
+    // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self).
+    // Per-recipient receipts since mig 0120 -- a broadcast stays unread for each sibling until THAT
+    // sibling acks it, so surfacing here can no longer consume it for the other two. Acked below.
+    env.DB.prepare(UNREAD_NOTES_SQL).bind(agentId, 10).all<WmCompanionNote>(),
     // Wide-window: recent journal entries written BY this companion (companion_journal table).
     // SUBSTANTIVE lane only -- 3 recency slots, and chatter (discord_swarm) ran 24-61 rows/day
     // against ~40/day of authored reflection, so an unfiltered LIMIT 3 surfaced transcript
@@ -361,10 +361,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   // only callers are Hearth server-side renders. See handlers/webmind.ts:getMindOrient for why.
   const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
   if (!opts.readOnly && unreadIds.length > 0) {
-    const placeholders = unreadIds.map(() => "?").join(", ");
-    await env.DB.prepare(
-      `UPDATE inter_companion_notes SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`
-    ).bind(new Date().toISOString(), ...unreadIds).run().catch((e: unknown) => {
+    // Per-recipient receipt (mig 0120): this ack marks the notes read for THIS companion only.
+    await ackNotesForCompanion(env, agentId, unreadIds, "claude-ai:orient").catch((e: unknown) => {
       console.error("[orient] auto-ack failed:", String(e));
     });
   }

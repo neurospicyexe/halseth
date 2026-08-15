@@ -319,6 +319,14 @@ export async function taskAdd(env: Env, params: {
   await env.DB.prepare(
     "INSERT INTO tasks (id, title, description, priority, due_at, assigned_to, status, created_at, updated_at, created_by, shared) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)"
   ).bind(id, params.title, params.description ?? null, params.priority ?? "normal", params.due_at ?? null, params.assigned_to ?? null, now, now, params.created_by ?? null, params.shared ? 1 : 0).run();
+  // Tasks join the semantic lane (coherence review D6): a task findable only by one truncating
+  // list surface is how the floor-rework task was lost. Non-fatal -- the admin backfill sweeps
+  // any row this misses.
+  await embedAndStoreAsync(
+    env,
+    [params.title, params.description].filter(Boolean).join(" -- "),
+    "tasks", id, params.assigned_to ?? "",
+  ).catch((err) => console.warn("[taskAdd] embed failed (non-fatal):", String(err)));
   return { id, title: params.title, status: "open" };
 }
 

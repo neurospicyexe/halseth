@@ -116,7 +116,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       "SELECT content FROM wm_continuity_notes WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<{ content: string }>().catch(() => null),
     ctx.env.DB.prepare(
-      "SELECT title FROM wm_mind_threads WHERE agent_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 3"
+      // status='open' -- writers only ever set 'open'; the old 'active' filter matched nothing,
+      // so the thread third of the topic seed was silently always empty (coherence review D14).
+      "SELECT title FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 3"
     ).bind(agentId).all<{ title: string }>().catch(() => null),
   ]);
   const threadNames = (activeThreadsP1?.results ?? []).map(t => t.title).filter(Boolean).join(" ");

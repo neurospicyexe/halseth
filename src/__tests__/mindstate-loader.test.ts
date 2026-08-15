@@ -44,7 +44,7 @@ function fakeEnv(overrides: Array<{ match: RegExp; rows: unknown[] }> = []) {
 function armedOverrides() {
   return [
     {
-      match: /FROM inter_companion_notes WHERE \(to_id = \?/i,
+      match: /FROM inter_companion_notes n\s+WHERE \(n\.to_id = \?/i,
       rows: [{ id: "note-1", from_id: "drevan", to_id: "cypher", content: "hi", read_at: null, created_at: "2026-07-01T00:00:00Z" }],
     },
     {
