@@ -86,7 +86,7 @@ import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
-import { postCareActed, getCarePending, getCareRecent, postCareTickForce } from "./handlers/care.js";
+import { postCareActed, getCarePending, getCareRecent, postCareTickForce, getOwnerActivity } from "./handlers/care.js";
 import { runCareTick } from "./care/tick.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
 import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
@@ -178,6 +178,7 @@ const router = new Router()
   .on("POST", "/mind/care/:id/acted",     (request, env, params) => postCareActed(request, env, params ?? {}))
   .on("GET",  "/mind/care/pending/:companion_id", (request, env, params) => getCarePending(request, env, params ?? {}))
   .on("GET",  "/mind/care/recent",        (request, env) => getCareRecent(request, env))
+  .on("GET",  "/mind/care/owner-activity", (request, env) => getOwnerActivity(request, env))
   .on("POST", "/admin/care-tick",         (request, env) => postCareTickForce(request, env))
 
   // Presence (dashboard feed)

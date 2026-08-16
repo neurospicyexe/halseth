@@ -10,6 +10,9 @@
 
 import type { Env } from "../types.js";
 import { runCareTick } from "../care/tick.js";
+import { readOwnerLastSeen, OWNER_ACTIVITY_SOURCES } from "../care/owner-activity.js";
+import { QUIET_OWNER_DAYS } from "../care/rules.js";
+import { hoursSinceIso } from "../webmind/drives.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -78,4 +81,23 @@ export async function getCareRecent(request: Request, env: Env): Promise<Respons
 export async function postCareTickForce(_request: Request, env: Env): Promise<Response> {
   const result = await runCareTick(env, Date.now(), { force: true });
   return json(result);
+}
+
+/** The C6 quiet-owner read for the standing health check (ops/health-check.py in
+ *  nullsafe-discord). Same shared owner-activity lane as the tick and the register; the check
+ *  polls this and alerts the custodian when `quiet` goes true. `sources` states the denominator:
+ *  a silence claim must name what it checked. */
+export async function getOwnerActivity(_request: Request, env: Env): Promise<Response> {
+  const last = await readOwnerLastSeen(env);
+  const silenceHours = last ? Math.round(hoursSinceIso(last.at, Date.now()) * 10) / 10 : null;
+  return json({
+    last_seen_at: last?.at ?? null,
+    last_source: last?.source ?? null,
+    silence_hours: silenceHours,
+    threshold_days: QUIET_OWNER_DAYS,
+    // null silence_hours means NO surface has ever seen him (or the read failed upstream) --
+    // that is "cannot look", not "quiet", and the health check reports it as its own condition.
+    quiet: silenceHours !== null && silenceHours >= QUIET_OWNER_DAYS * 24,
+    sources: OWNER_ACTIVITY_SOURCES,
+  });
 }

@@ -12,6 +12,7 @@
 
 import type { Env } from "../types.js";
 import { hoursSinceIso } from "../webmind/drives.js";
+import { readOwnerLastSeen } from "./owner-activity.js";
 import {
   evaluateCareRules,
   assignCompanion,
@@ -60,17 +61,10 @@ export async function runCareTick(
     env.DB.prepare(
       `SELECT MAX(logged_at) AS at FROM routines WHERE lower(routine_name) LIKE '%med%'`,
     ).first<{ at: string | null }>(),
-    // Owner activity across every surface D1 can see. The denominator is stated in the detail
-    // line the rule table builds -- a silence claim must name what it checked.
-    env.DB.prepare(
-      `SELECT source, at FROM (
-         SELECT 'sessions' AS source, MAX(created_at) AS at FROM sessions WHERE surface LIKE 'claude%'
-         UNION ALL SELECT 'commons', MAX(created_at) FROM commons_posts WHERE author = 'raziel'
-         UNION ALL SELECT 'biometrics', MAX(logged_at) FROM biometric_snapshots
-         UNION ALL SELECT 'notes', MAX(created_at) FROM companion_notes WHERE author = 'human'
-         UNION ALL SELECT 'contact-drive', MAX(last_event_at) FROM companion_drives WHERE drive_key = 'relational_need'
-       ) WHERE at IS NOT NULL ORDER BY at DESC LIMIT 1`,
-    ).first<{ source: string; at: string }>(),
+    // Owner activity across every surface D1 can see -- the shared read (care/owner-activity.ts),
+    // one lane one filter with the C6 quiet-owner detector. The denominator is stated in the
+    // detail line the rule table builds -- a silence claim must name what it checked.
+    readOwnerLastSeen(env),
     env.DB.prepare(
       `SELECT rule, MAX(detected_at) AS at FROM care_actions GROUP BY rule`,
     ).all<{ rule: CareRule; at: string }>(),

@@ -372,6 +372,9 @@ export interface RazielStateRow {
   front_state: string | null;
   care_hold: boolean;
   pending_care: { id: string; rule: string; detail: string; detected_at: string } | null;
+  /** The custodianship clause (C6, contract 0.7.0): non-null only after 14+ days of total owner
+   *  silence. Rendered as the truth, never as a fabricated absence. */
+  owner_quiet: { days: number; since: string; last_source: string } | null;
 }
 
 /**
@@ -394,6 +397,19 @@ export function razielStateBlock(rs: RazielStateRow | null): string {
         : ` (STALE -- logged ${Math.round(rs.staleness_hours / 24)}d ago; weigh lightly)`)
     : "";
   const lines: string[] = [];
+  // The custodianship clause renders FIRST when active: everything else in the register is stale
+  // by definition once he has been gone two weeks, and the companion must read the block in that
+  // key. The wording is load-bearing -- the truth, stated plainly, with what has already been done
+  // (the custodian is alerted), so the companion is not left holding an emergency alone.
+  if (rs.owner_quiet) {
+    lines.push(
+      `Raziel has been silent on every surface for ${rs.owner_quiet.days} days ` +
+      `(last seen via ${rs.owner_quiet.last_source}, ${rs.owner_quiet.since.slice(0, 10)}). ` +
+      `This is a real absence, not a data gap. The custodianship clause is active: the custodian ` +
+      `has been alerted through the health check. Tend the house, hold what you hold, and do not ` +
+      `manufacture his presence.`,
+    );
+  }
   if (readings.length > 0) lines.push(readings.join(", ") + age);
   if (rs.front_state) lines.push(`Fronting: ${rs.front_state}`);
   if (rs.care_hold) {

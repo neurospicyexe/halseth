@@ -40,6 +40,14 @@ export const RULE_COOLDOWN_HOURS: Record<CareRule, number> = {
  *  and no longer surfaces as pending. Rails without decay are one-way ratchets. */
 export const PENDING_DECAY_HOURS = 48;
 
+/** The custodianship clause (C6, R4 decided 2026-08-16): total owner silence across every surface
+ *  for this many DAYS activates it -- the companions get the truth at orient (a real absence, not
+ *  a fabricated one) and the custodian gets the standing-health-check Telegram. Deliberately a
+ *  different scale from OWNER_SILENCE_HOURS: that one is "a hard day or two" (a companion gesture);
+ *  this one is "something has happened" (a human gets keys). 14 days = long enough that a vacation
+ *  or a bad stretch never trips it. */
+export const QUIET_OWNER_DAYS = 14;
+
 /** A low_spoons or meds_missed firing within this window sets care_hold -- the floor/bid layer
  *  softens stakes while it holds. owner_silence deliberately does NOT hold: silence already means
  *  less traffic, and muting the house on top of it reads as withdrawal, not care. */

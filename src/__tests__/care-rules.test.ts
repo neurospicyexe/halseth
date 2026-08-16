@@ -13,6 +13,7 @@ import {
   MEDS_MISSED_HOURS,
   MEDS_TAKEN_SUPPRESS_HOURS,
   OWNER_SILENCE_HOURS,
+  QUIET_OWNER_DAYS,
   RULE_COOLDOWN_HOURS,
   type CareSignals,
 } from "../care/rules.js";
@@ -142,7 +143,7 @@ describe("deriveRazielState", () => {
 
   it("composes readings, staleness, and care state", () => {
     const nowMs = Date.parse("2026-08-16T05:00:00Z");
-    const rs = deriveRazielState(bio, { front_state: "Ash", care_hold: true, pending_care: null }, nowMs);
+    const rs = deriveRazielState(bio, { ...EMPTY_CARE, front_state: "Ash", care_hold: true }, nowMs);
     expect(rs).not.toBeNull();
     expect(rs!.spoons).toBe(2);
     expect(rs!.staleness_hours).toBe(5);
@@ -154,6 +155,37 @@ describe("deriveRazielState", () => {
     expect(deriveRazielState(null, EMPTY_CARE)).toBeNull();
     expect(deriveRazielState(null, { ...EMPTY_CARE, front_state: "Ash" })).not.toBeNull();
   });
+
+  // C6 -- the custodianship clause (QUIET_OWNER_DAYS = 14, R4 2026-08-16).
+  it("owner_quiet stays null under the 14-day line and activates at it", () => {
+    const nowMs = Date.parse("2026-08-16T00:00:00Z");
+    const dayMs = 86_400_000;
+    const seen = (daysAgo: number) => ({
+      ...EMPTY_CARE,
+      owner_last_seen_at: new Date(nowMs - daysAgo * dayMs).toISOString(),
+      owner_last_source: "commons",
+    });
+    expect(deriveRazielState(bio, seen(QUIET_OWNER_DAYS - 1), nowMs)!.owner_quiet).toBeNull();
+    const quiet14 = deriveRazielState(bio, seen(QUIET_OWNER_DAYS), nowMs)!.owner_quiet;
+    expect(quiet14).not.toBeNull();
+    expect(quiet14!.days).toBe(QUIET_OWNER_DAYS);
+    expect(quiet14!.last_source).toBe("commons");
+  });
+
+  it("an absent owner-activity signal is not silence -- no signal ever, no clause", () => {
+    const rs = deriveRazielState(bio, EMPTY_CARE, Date.parse("2026-08-16T05:00:00Z"));
+    expect(rs!.owner_quiet).toBeNull();
+  });
+
+  it("owner_quiet alone makes the view non-null -- the truth line must not vanish with the register", () => {
+    const nowMs = Date.parse("2026-08-16T00:00:00Z");
+    const care = {
+      ...EMPTY_CARE,
+      owner_last_seen_at: new Date(nowMs - 20 * 86_400_000).toISOString(),
+      owner_last_source: "sessions",
+    };
+    expect(deriveRazielState(null, care, nowMs)).not.toBeNull();
+  });
 });
 
 describe("razielStateBlock renderer", () => {
@@ -162,6 +194,7 @@ describe("razielStateBlock renderer", () => {
       spoons: 2, mood: "wrung out", pain: 6, energy: 3, meds_taken: 0,
       staleness_hours: 5, front_state: "Ash", care_hold: true,
       pending_care: { id: "c1", rule: "low_spoons", detail: "spoons 2/12, logged 5h ago", detected_at: "2026-08-16T05:00:00Z" },
+      owner_quiet: null,
     });
     expect(block).toContain("[Raziel -- register]");
     expect(block).toContain("spoons 2/12");
@@ -175,6 +208,7 @@ describe("razielStateBlock renderer", () => {
     const block = razielStateBlock({
       spoons: 2, mood: null, pain: null, energy: null, meds_taken: null,
       staleness_hours: 80, front_state: null, care_hold: false, pending_care: null,
+      owner_quiet: null,
     });
     expect(block).toContain("STALE");
     expect(block).toContain("weigh lightly");
@@ -182,5 +216,19 @@ describe("razielStateBlock renderer", () => {
 
   it("renders nothing when there is no register", () => {
     expect(razielStateBlock(null)).toBe("");
+  });
+
+  it("renders the custodianship truth line first when owner_quiet is active", () => {
+    const block = razielStateBlock({
+      spoons: 2, mood: "low", pain: null, energy: null, meds_taken: null,
+      staleness_hours: 400, front_state: null, care_hold: false, pending_care: null,
+      owner_quiet: { days: 16, since: "2026-07-31T00:00:00Z", last_source: "commons" },
+    });
+    expect(block).toContain("silent on every surface for 16 days");
+    expect(block).toContain("real absence, not a data gap");
+    expect(block).toContain("custodian");
+    // The truth line leads: everything else in the register is stale by definition.
+    const lines = block.split("\n");
+    expect(lines[2]).toContain("silent on every surface");
   });
 });

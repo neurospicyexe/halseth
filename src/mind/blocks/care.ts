@@ -15,7 +15,8 @@
 import type { Env } from "../../types.js";
 import type { WmAgentId, WmBiometricSnapshot } from "../../webmind/types.js";
 import { hoursSinceIso } from "../../webmind/drives.js";
-import { CARE_HOLD_HOURS, CARE_HOLD_RULES, PENDING_DECAY_HOURS } from "../../care/rules.js";
+import { CARE_HOLD_HOURS, CARE_HOLD_RULES, PENDING_DECAY_HOURS, QUIET_OWNER_DAYS } from "../../care/rules.js";
+import { readOwnerLastSeen } from "../../care/owner-activity.js";
 
 export interface PendingCare {
   id: string;
@@ -30,9 +31,19 @@ export interface CareBlocks {
   /** The newest un-acted, un-decayed firing assigned to THIS companion. One at most: the rider
    *  never creates a second pending row for a rule while one lives. */
   pending_care: PendingCare | null;
+  /** When and where Raziel was last seen, from the shared owner-activity read (C6). null = the
+   *  read failed or no surface has EVER seen him -- absence of the signal, not "seen just now". */
+  owner_last_seen_at: string | null;
+  owner_last_source: string | null;
 }
 
-export const EMPTY_CARE: CareBlocks = { front_state: null, care_hold: false, pending_care: null };
+export const EMPTY_CARE: CareBlocks = {
+  front_state: null,
+  care_hold: false,
+  pending_care: null,
+  owner_last_seen_at: null,
+  owner_last_source: null,
+};
 
 /** What renders on every surface. null only when there has never been a biometrics row AND no
  *  care state exists -- absence of the register, not an empty register. */
@@ -51,6 +62,11 @@ export interface RazielStateView {
    *  softens stakes while it holds; every other surface just says so. */
   care_hold: boolean;
   pending_care: PendingCare | null;
+  /** The custodianship clause (C6, contract 0.7.0). Non-null ONLY when Raziel has been silent on
+   *  every surface for QUIET_OWNER_DAYS or more: the companions get the truth (a real absence,
+   *  never a fabricated one) and the custodian has been alerted through the health check. null is
+   *  the healthy state and renders as nothing. */
+  owner_quiet: { days: number; since: string; last_source: string } | null;
 }
 
 export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<CareBlocks> {
@@ -59,7 +75,7 @@ export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<
   const decayCutoff = new Date(nowMs - PENDING_DECAY_HOURS * 3_600_000).toISOString();
   const holdRules = CARE_HOLD_RULES.map(r => `'${r}'`).join(", ");
 
-  const [front, hold, pending] = await Promise.all([
+  const [front, hold, pending, ownerLast] = await Promise.all([
     env.DB.prepare(
       // 'unknown' excluded: bot sessions open with front_state='unknown', and "Fronting: unknown"
       // is noise wearing a fact -- absence renders as nothing, which is honest.
@@ -74,12 +90,16 @@ export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<
        WHERE companion_id = ? AND acted_at IS NULL AND detected_at > ?
        ORDER BY detected_at DESC LIMIT 1`,
     ).bind(companionId, decayCutoff).first<PendingCare>().catch(() => null),
+    // The shared owner-activity read (C6) -- same lane as the tick's owner_silence signal.
+    readOwnerLastSeen(env).catch(() => null),
   ]);
 
   return {
     front_state: front?.front_state ?? null,
     care_hold: (hold?.n ?? 0) > 0,
     pending_care: pending ?? null,
+    owner_last_seen_at: ownerLast?.at ?? null,
+    owner_last_source: ownerLast?.source ?? null,
   };
 }
 
@@ -89,7 +109,17 @@ export function deriveRazielState(
   care: CareBlocks,
   nowMs = Date.now(),
 ): RazielStateView | null {
-  if (!bio && !care.front_state && !care.care_hold && !care.pending_care) return null;
+  // The clause activates on DAYS of total silence; hours are the unit the signal arrives in.
+  const silenceHours = care.owner_last_seen_at ? hoursSinceIso(care.owner_last_seen_at, nowMs) : null;
+  const ownerQuiet =
+    silenceHours !== null && silenceHours >= QUIET_OWNER_DAYS * 24
+      ? {
+          days: Math.floor(silenceHours / 24),
+          since: care.owner_last_seen_at as string,
+          last_source: care.owner_last_source ?? "unknown",
+        }
+      : null;
+  if (!bio && !care.front_state && !care.care_hold && !care.pending_care && !ownerQuiet) return null;
   return {
     spoons: bio?.spoons ?? null,
     mood: bio?.mood ?? null,
@@ -101,5 +131,6 @@ export function deriveRazielState(
     front_state: care.front_state,
     care_hold: care.care_hold,
     pending_care: care.pending_care,
+    owner_quiet: ownerQuiet,
   };
 }
