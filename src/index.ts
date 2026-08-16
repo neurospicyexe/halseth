@@ -87,6 +87,7 @@ import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreat
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
 import { postCareActed, getCarePending, getCareRecent, postCareTickForce, getOwnerActivity } from "./handlers/care.js";
+import { getProjects, getProjectLog, postProjectLog } from "./handlers/projects.js";
 import { runCareTick } from "./care/tick.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
 import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
@@ -179,6 +180,11 @@ const router = new Router()
   .on("GET",  "/mind/care/pending/:companion_id", (request, env, params) => getCarePending(request, env, params ?? {}))
   .on("GET",  "/mind/care/recent",        (request, env) => getCareRecent(request, env))
   .on("GET",  "/mind/care/owner-activity", (request, env) => getOwnerActivity(request, env))
+  // Self-directed projects (consequence layer C2, mig 0122). Worker reads open projects on a
+  // project day and logs its work; Hearth/Raziel read the list and trail.
+  .on("GET",  "/mind/projects/:companion_id", (request, env, params) => getProjects(request, env, params ?? {}))
+  .on("GET",  "/mind/projects/:id/log",       (request, env, params) => getProjectLog(request, env, params ?? {}))
+  .on("POST", "/mind/projects/:id/log",       (request, env, params) => postProjectLog(request, env, params ?? {}))
   .on("POST", "/admin/care-tick",         (request, env) => postCareTickForce(request, env))
 
   // Presence (dashboard feed)

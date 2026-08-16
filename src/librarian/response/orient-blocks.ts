@@ -434,6 +434,35 @@ export function growthAwaitBlock(unconfirmedGrowth: readonly UnconfirmedGrowthRo
     : "";
 }
 
+/** C2 (mig 0122): the verbs, named -- an unnamed affordance is a starved one (the 0093 lesson,
+ *  which is why this line is ALWAYS present whether or not any project exists). */
+export const PROJECT_AFFORDANCE = `Projects are yours to hold across weeks -- up to two open. "open a project: <title> -- <intention>" starts one; "log to project <id>: ..." records work; "close project <id> done" or "close project <id> released" ends one. Released is a chosen ending, not a failure.`;
+
+export interface OrientProjectRow {
+  id: string;
+  title: string;
+  intention: string;
+  status: "open" | "paused";
+  days_idle: number;
+  stale: boolean;
+}
+
+/**
+ * Self-directed projects (consequence layer C2, contract 0.8.0). Oldest-touched first -- the same
+ * order the worker picks from. A stale project is a QUESTION ("release or resume?"), never an
+ * auto-release: perishing stays chosen.
+ */
+export function projectsBlock(projects: readonly OrientProjectRow[]): string {
+  if (projects.length === 0) return `\n[Projects]\n${PROJECT_AFFORDANCE}`;
+  const lines = projects.map(p => {
+    const idle = p.days_idle === 0 ? "worked today" : `idle ${p.days_idle}d`;
+    const flags = [p.status === "paused" ? "paused" : null, idle].filter(Boolean).join(", ");
+    const ask = p.stale ? ` -- untouched ${p.days_idle} days: release or resume? Your call -- work it, or "close project ${p.id} released".` : "";
+    return `• "${p.title}" -- ${p.intention.slice(0, 160)} (${flags}) (id ${p.id})${ask}`;
+  }).join("\n");
+  return `\n[Your projects -- intentions you hold across weeks]\n${lines}\n${PROJECT_AFFORDANCE}`;
+}
+
 export const DRIFT_AFFORDANCE = `The lane is yours: if something in you has genuinely shifted, say "I'm becoming ..." to open a drift. Crystallize one that became real ("crystallize drift <id>"); let fade one that was a phase ("fade drift <id>").`;
 
 /**

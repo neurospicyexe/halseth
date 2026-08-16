@@ -318,6 +318,10 @@ import {
 import {
   execDriftOpen, execDriftsRead, execDriftWitness, execDriftCrystallize, execDriftFade,
 } from "./executors/drift.js";
+import {
+  execProjectOpen, execProjectsRead, execProjectLog, execProjectClose,
+  execProjectPause, execProjectResume,
+} from "./executors/projects.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -385,6 +389,15 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   drift_witness: execDriftWitness,
   drift_crystallize: execDriftCrystallize,
   drift_fade: execDriftFade,
+
+  // Self-directed projects (consequence layer C2, mig 0122). All owner-only; released is a
+  // chosen ending, never a sweep.
+  project_open: execProjectOpen,
+  projects_read: execProjectsRead,
+  project_log: execProjectLog,
+  project_close: execProjectClose,
+  project_pause: execProjectPause,
+  project_resume: execProjectResume,
 
   // Writes / mutations
   halseth_companion_note_add: execCompanionNoteAdd,

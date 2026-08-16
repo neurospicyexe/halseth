@@ -22,9 +22,10 @@ export const BUDGET_CHARS = {
   refusals: 0,     // a companion's own refusals -- raw passthrough
   preferences: 0,  // a companion's own chosen preferences -- raw passthrough
   drifts: 0,       // a companion's own sanctioned drifts -- raw passthrough
+  projects: 0,     // a companion's own held projects (C2) -- raw passthrough
 } as const;
 
-export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift" | "ack" | "data" | "system_error" | "interiority" | "refusals" | "preferences" | "drifts";
+export type ResponseKey = "ready_prompt" | "summary" | "witness" | "tensions" | "drift" | "ack" | "data" | "system_error" | "interiority" | "refusals" | "preferences" | "drifts" | "projects";
 
 // Raw data truncation (no markdown stripping -- companions parse the structure).
 // 3000 chars ~750 tokens -- enough for several search excerpts without flooding context.

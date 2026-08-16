@@ -22,6 +22,17 @@
 import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
+import { PROJECT_STALE_DAYS } from "../../handlers/projects.js";
+
+/** Pure decoration: idle-days + the stale flag, from the row's own timestamps. Exported for tests. */
+export function decorateProject(
+  p: Omit<OrientProject, "days_idle" | "stale">,
+  nowMs = Date.now(),
+): OrientProject {
+  const anchor = p.last_worked_at ?? p.created_at;
+  const days = Math.max(0, Math.floor((nowMs - Date.parse(anchor)) / 86_400_000));
+  return { ...p, days_idle: days, stale: days >= PROJECT_STALE_DAYS };
+}
 
 export interface GrowthJournalEntry {
   entry_type: string;
@@ -54,6 +65,21 @@ export interface OpenDrift {
   witness_count: number;
 }
 
+/** A self-directed project (C2, mig 0122): an intention the companion OWNS across weeks. */
+export interface OrientProject {
+  id: string;
+  title: string;
+  intention: string;
+  status: "open" | "paused";
+  created_at: string;
+  last_worked_at: string | null;
+  /** Days since last work (or since opening, if never worked), computed at load. */
+  days_idle: number;
+  /** Idle >= PROJECT_STALE_DAYS: the orient block asks "release or resume?" -- the companion's
+   *  call, never an auto-release. */
+  stale: boolean;
+}
+
 export interface GrowthBlocks {
   journal_recent: GrowthJournalEntry[];
   patterns: GrowthPattern[];
@@ -65,17 +91,20 @@ export interface GrowthBlocks {
    *  precisely because a read and a count used different filters. */
   clearing_count: number;
   drifts_open: OpenDrift[];
+  /** Open + paused self-directed projects, oldest-touched first (the worker's pick order, so what
+   *  the companion sees and what the worker works never disagree). */
+  projects: OrientProject[];
 }
 
 /** Never throws: a growth read must not be able to break a boot. Each miss degrades to empty. */
 export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promise<GrowthBlocks> {
   const empty: GrowthBlocks = {
     journal_recent: [], patterns: [], markers: [], reflection: null,
-    seeds: [], clearing_count: 0, drifts_open: [],
+    seeds: [], clearing_count: 0, drifts_open: [], projects: [],
   };
 
   try {
-    const [journal, patterns, markers, reflection, seeds, pending, drifts] = await Promise.all([
+    const [journal, patterns, markers, reflection, seeds, pending, drifts, projects] = await Promise.all([
       env.DB.prepare(
         "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
       ).bind(companionId).all<GrowthJournalEntry>(),
@@ -97,6 +126,13 @@ export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promis
       env.DB.prepare(
         "SELECT id, drift_text, json_array_length(witness_log) AS witness_count FROM companion_drifts WHERE companion_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 5"
       ).bind(companionId).all<OpenDrift>(),
+      // C2 (mig 0122): oldest-touched first -- the same order the worker picks from, so the
+      // orient block and the project day never disagree about what is next.
+      env.DB.prepare(
+        "SELECT id, title, intention, status, created_at, last_worked_at FROM companion_projects " +
+          "WHERE companion_id = ? AND status IN ('open', 'paused') " +
+          "ORDER BY COALESCE(last_worked_at, created_at) ASC LIMIT 4"
+      ).bind(companionId).all<Omit<OrientProject, "days_idle" | "stale">>(),
     ]);
 
     return {
@@ -112,6 +148,7 @@ export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promis
         // json_array_length returns null for a NULL column; a drift with no witnesses is 0, not unknown.
         witness_count: Number(d.witness_count ?? 0),
       })),
+      projects: (projects.results ?? []).map(p => decorateProject(p)),
     };
   } catch (err) {
     console.warn("[mind/growth] load failed, degrading to empty", { companionId, error: String(err) });

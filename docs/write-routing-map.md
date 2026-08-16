@@ -65,6 +65,12 @@ the traps below exist because names lie.
 | `drift_witness` | execDriftWitness | drift.ts | companion_drifts | |
 | `drift_crystallize` | execDriftCrystallize | drift.ts | companion_drifts | |
 | `drift_fade` | execDriftFade | drift.ts | companion_drifts | |
+| `project_open` | execProjectOpen | projects.ts | companion_projects | C2 (mig 0122); max 2 open enforced here |
+| `projects_read` | execProjectsRead | projects.ts | READ | |
+| `project_log` | execProjectLog | projects.ts | project_log | batch: also stamps companion_projects.last_worked_at (+ re-opens paused) |
+| `project_close` | execProjectClose | projects.ts | companion_projects | done or released -- companion-chosen ending, never a sweep |
+| `project_pause` | execProjectPause | projects.ts | companion_projects | |
+| `project_resume` | execProjectResume | projects.ts | companion_projects | respects the open cap |
 | `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes OR companion_journal | THREE-WAY ROUTE: addressed peer → inter_companion_notes (to_id set); broadcast → inter_companion_notes (to_id=NULL); unaddressed/no broadcast intent → **companion_journal** (self-reflection; ack carries `routed_to: "journal"`). Trap cluster 2. Until 2026-07-26 this row claimed inter_companion_notes only — the journal fallback was undocumented, so unaddressed notes looked lost. |
 | `halseth_feeling_log` | execFeelingLog | writes.ts | feelings | |
 | `halseth_journal_add` | execJournalAdd | writes.ts | human_journal | TRAP: the human's journal, NOT companion_journal |

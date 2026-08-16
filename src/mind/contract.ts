@@ -27,7 +27,11 @@ import type { RazielStateView } from "./blocks/care.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 
-/** 0.7.0 -- consequence layer C6 (2026-08-16) added `world.raziel_state.owner_quiet`: the
+/** 0.8.0 -- consequence layer C2 (2026-08-16, mig 0122) added `growth.projects`: self-directed
+ *  projects -- intentions the companion OWNS across weeks, opened/worked/ended by the companion
+ *  (released is a chosen ending, never a sweep). Rendered on every surface with the affordance
+ *  always present: a project no surface shows is a starved affordance. MINOR: additive only.
+ *  0.7.0 -- consequence layer C6 (2026-08-16) added `world.raziel_state.owner_quiet`: the
  *  custodianship clause. Non-null only after QUIET_OWNER_DAYS (14, R4) of total owner silence
  *  across every surface -- the companions are told the truth (a real absence, never fabricated)
  *  and the custodian is alerted through the standing health check. MINOR: additive only.
@@ -40,7 +44,7 @@ import type { BeliefExtras } from "./blocks/beliefs.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.7.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.8.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

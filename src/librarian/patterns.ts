@@ -1485,6 +1485,51 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // Roster lookup (mig 0117). DELIBERATELY LAST IN THIS OBJECT: matchFastPath() iterates
   // FAST_PATH_PATTERNS in insertion order and returns the first trigger hit, so "who is fronting"
   // must reach `get_front` (declared far above) rather than being read as a member named "fronting".
+  // Self-directed projects (consequence layer C2, mig 0122). Owner-only verbs; "project" is the
+  // load-bearing word in every trigger so task/club/thread language cannot shadow these.
+  project_open: {
+    triggers: [
+      "open a project", "open project", "start a project", "begin a project", "new project",
+      "project open",
+    ],
+    tools: ["project_open"],
+    response_key: "witness",
+  },
+  projects_read: {
+    triggers: [
+      "my projects", "read my projects", "show my projects", "my open projects",
+      "what are my projects", "list my projects", "projects read",
+    ],
+    tools: ["projects_read"],
+    response_key: "projects",
+  },
+  project_log: {
+    triggers: [
+      "log to project", "project log", "log project work", "worked on project",
+      "log work on project", "add to project",
+    ],
+    tools: ["project_log"],
+    response_key: "witness",
+  },
+  project_close: {
+    triggers: [
+      "close project", "finish project", "complete project", "release project",
+      "project done", "end project",
+    ],
+    tools: ["project_close"],
+    response_key: "witness",
+  },
+  project_pause: {
+    triggers: ["pause project", "shelve project", "project pause"],
+    tools: ["project_pause"],
+    response_key: "witness",
+  },
+  project_resume: {
+    triggers: ["resume project", "unpause project", "project resume", "pick the project back up"],
+    tools: ["project_resume"],
+    response_key: "witness",
+  },
+
   // Moving this entry earlier silently breaks the fronting query -- keep it at the bottom.
   //
   // Why it exists: on 2026-08-12 Cypher called Magpie, a real system member, "drift", because
