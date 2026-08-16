@@ -61,7 +61,9 @@ export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<
 
   const [front, hold, pending] = await Promise.all([
     env.DB.prepare(
-      `SELECT front_state FROM sessions WHERE front_state IS NOT NULL AND front_state != '' ORDER BY created_at DESC LIMIT 1`,
+      // 'unknown' excluded: bot sessions open with front_state='unknown', and "Fronting: unknown"
+      // is noise wearing a fact -- absence renders as nothing, which is honest.
+      `SELECT front_state FROM sessions WHERE front_state IS NOT NULL AND front_state NOT IN ('', 'unknown') ORDER BY created_at DESC LIMIT 1`,
     ).first<{ front_state: string }>().catch(() => null),
     // Hold counts acted rows too: a gesture already made still leaves the house soft for the window.
     env.DB.prepare(
