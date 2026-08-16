@@ -348,7 +348,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
             created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
      FROM companion_conclusions
      WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1
-     ORDER BY ${effectiveHeatSql()} DESC`
+     ORDER BY ${effectiveHeatSql()} DESC LIMIT 10`
   ).bind(agentId).all<WmConclusion>();
 
   const flagged_beliefs: WmConclusion[] = flaggedResult.results ?? [];
