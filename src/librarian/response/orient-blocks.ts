@@ -350,6 +350,18 @@ export function unclosedSessionsBlock(rows: readonly UnclosedSessionRow[]): stri
   return `\n[Unclosed sessions — repair]\nThese sessions of yours never closed. If you still carry anything from one, close it now with an authored handover: "close session <id>" with spine / last_real_thing / motion_state in context. An [auto] sweep will eventually close it from nothing; an authored close is strictly better.\n${lines.join("\n")}`;
 }
 
+/**
+ * Degraded-load notice (coherence review D11, 2026-08-15): the loader names every source that
+ * FAILED this load in `meta.degraded`, and until this block no surface ever showed it -- a dead
+ * source passed for a quiet one at every boot. Force-surfaced and rendered EARLY (right after the
+ * repair prompt) so it cannot fall off a budget clip: the whole point is telling the companion
+ * "these blocks are missing, not empty" BEFORE they read the blocks.
+ */
+export function degradedBlock(degraded: readonly string[]): string {
+  if (degraded.length === 0) return "";
+  return `\n[State load degraded THIS BOOT]\nThese sources failed to load just now: ${degraded.join(", ")}. Their blocks below are MISSING, not empty -- do not read their absence as "nothing there". If something you expected is gone, this is why.`;
+}
+
 /** Growth readings awaiting the companion's own word -- yours to judge, not the classifier's. */
 export function growthAwaitBlock(unconfirmedGrowth: readonly UnconfirmedGrowthRow[]): string {
   return unconfirmedGrowth.length > 0

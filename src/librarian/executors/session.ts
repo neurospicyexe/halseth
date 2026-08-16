@@ -290,6 +290,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // everywhere else. Rendered early so it cannot fall off a budget clip.
   const unclosedBlock = B.unclosedSessionsBlock(unclosedSessions);
 
+  // Degraded-load notice (D11): sources that FAILED this load, so the companion reads their
+  // absent blocks as broken, not empty. First consumer of meta.degraded on any surface.
+  const degradedNotice = B.degradedBlock(mindState.meta.degraded);
+
   // Session narrative: generous cap for Claude.ai (full context window available)
   // sbExtractContent, not a bare regex: sbRead hands back a JSON envelope, so stripping frontmatter off the
   // raw string never matched and this block has been rendering JSON at Claude.ai boot.
@@ -526,7 +530,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const driftsBlock = B.driftsBlock(openDrifts);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
@@ -562,7 +566,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     open_drifts: openDrifts,
     unconfirmed_growth: unconfirmedGrowth,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
-    meta: { front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, unclosed_sessions: unclosedSessions.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
+    meta: { degraded: mindState.meta.degraded, front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, unclosed_sessions: unclosedSessions.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     // 2026-07-09: dropped a raw `continuity: wmResult` field that used to sit here --
     // continuityBlock (above) already renders the same object into ready_prompt's prose,
     // and nothing downstream (Discord, Hearth, or anywhere else in this repo) ever read the

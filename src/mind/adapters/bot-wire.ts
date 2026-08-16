@@ -7,7 +7,8 @@
 // flat and truncated, and every consumer in nullsafe-discord reads the flat keys. So the adapter's contract is
 // narrow and strict:
 //
-//   EXACTLY THE EXISTING 44 KEYS. NO ADDITIONS.
+//   EXACTLY THE EXISTING 44 KEYS. NO ADDITIONS. (Cutover gate, since passed. First deliberate
+//   post-cutover addition: `degraded`, coherence review D11, 2026-08-15 -- see the note at the key.)
 //
 // That is not tidiness, it is what makes the cutover verifiable. The gate for this change is byte-identity
 // against the payload the old code produced, and byte-identity only means something if the key set is frozen
@@ -226,5 +227,12 @@ export function botWireFromMindState(
     standing_refusals: ms.identity.refusals,
     open_drifts: ms.growth.drifts_open,
     recent_witness: ms.relational.recent_witness,
+
+    // Coherence review D11 (2026-08-15): the first deliberate ADDITION since the 44-key freeze --
+    // the freeze was the cutover gate, not a covenant, and its own header says additions come later
+    // as their own change. This is that change. `meta.degraded` names sources that FAILED this load;
+    // without it on the wire, a bot cannot tell a quiet house from a broken loader, which is the
+    // exact empty-vs-error conflation the contract warns about (contract.ts meta.degraded).
+    degraded: ms.meta.degraded,
   };
 }
