@@ -31,11 +31,13 @@ import { sbExtractContent } from "../backends/second-brain.js";
 
 // ── Row shapes, named where the original used inline literals ──────────────────────────────────────────
 export interface SiblingLaneRow { motion_state: string | null; lane_spine: string | null }
+// Nullable where the MindState loader types them nullable (D13 cutover: these rows now arrive
+// from mind/blocks/growth.ts + oversight.ts rather than inline queries; same columns, defensive types).
 export interface GrowthJournalRow { entry_type: string; content: string; created_at: string }
-export interface GrowthPatternRow { pattern_text: string; strength: number }
+export interface GrowthPatternRow { pattern_text: string; strength: number | null }
 export interface ReflectionRow { reflection_text: string; created_at: string }
-export interface SeedRow { seed_type: string; content: string; priority: number }
-export interface ConfirmedDriftRow { drift_score: number; worst_basin: string | null; notes: string | null; recorded_at: string }
+export interface SeedRow { seed_type: string | null; content: string; priority: number | null }
+export interface ConfirmedDriftRow { drift_score: number; worst_basin: string | null; notes?: string | null; recorded_at: string }
 export interface AnsweredQuestionRow { question: string; answer: string }
 export interface ShelfRow { title: string; kind: string; note: string | null }
 export interface CollectionRow { title: string; kind: string; sparkle: number }

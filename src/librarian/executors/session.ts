@@ -18,7 +18,7 @@ import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 import { writeLoop } from "../../webmind/loops.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
-import { fetchRecentAnswers, markAnswersDelivered } from "../../webmind/questions.js";
+import { markAnswersDelivered } from "../../webmind/questions.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
 // Step 1 of the execSessionOrient cutover: the ~25 ready_prompt blocks now render in one place, as pure
 // functions. Namespaced as `B.` so every call site reads as "this is rendering, not fetching" -- the split
@@ -138,7 +138,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // every Claude.ai boot.
   const wmOrientPromise = wmOrient(ctx.env, agentId).catch(() => null);
 
-  const [payload, wmResult, sbNarrative, ragRaw, growthJournal, growthPatterns, lastReflection, availableSeeds, confirmedGrowthDrift, historyRaw, pendingGrowthRow, selfModelReadyRows, clubRow, solRow, mindState] = await Promise.all([
+  const [payload, wmResult, sbNarrative, ragRaw, historyRaw, solRow, mindState] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -155,51 +155,21 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
       .catch(() => null),
     semanticSearch(ctx.env, ragQuery).catch(() => null),
-    // Growth: last 3 journal entries from autonomous work
-    ctx.env.DB.prepare(
-      "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
-    ).bind(agentId).all<{ entry_type: string; content: string; created_at: string }>().catch(() => null),
-    // Growth: top 2 patterns by strength
-    ctx.env.DB.prepare(
-      "SELECT pattern_text, strength FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
-    ).bind(agentId).all<{ pattern_text: string; strength: number }>().catch(() => null),
-    // Growth: most recent reflection
-    ctx.env.DB.prepare(
-      "SELECT reflection_text, created_at FROM autonomy_reflections WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1"
-    ).bind(agentId).first<{ reflection_text: string; created_at: string }>().catch(() => null),
-    // Growth: top available seeds (unused, newest within priority) -- so companions see fresh material.
-    // Worker (handlers/autonomy.ts) keeps FIFO to drain the backlog; orient surfacing prefers variety.
-    ctx.env.DB.prepare(
-      "SELECT seed_type, content, priority FROM autonomy_seeds WHERE companion_id = ? AND used_at IS NULL ORDER BY priority DESC, created_at DESC LIMIT 3"
-    ).bind(agentId).all<{ seed_type: string; content: string; priority: number }>().catch(() => null),
-    // Growth: confirmed growth drift entries (intentional identity movement, caleth-confirmed)
-    ctx.env.DB.prepare(
-      "SELECT drift_score, worst_basin, notes, recorded_at FROM companion_basin_history WHERE companion_id = ? AND drift_type = 'growth' AND caleth_confirmed = 1 ORDER BY recorded_at DESC LIMIT 3"
-    ).bind(agentId).all<{ drift_score: number; worst_basin: string | null; notes: string | null; recorded_at: string }>().catch(() => null),
     // Historical vault search -- reaches into long files, ChatGPT history, background context.
     // Separate query so it doesn't crowd out recent-session RAG excerpts.
     semanticSearch(ctx.env, historyQuery).catch(() => null),
-    // Unaccepted growth count: how many autonomous entries are awaiting companion review.
-    ctx.env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM growth_journal WHERE companion_id = ? AND ${RATIFIABLE_PENDING_SQL}`
-    ).bind(agentId).first<{ n: number }>().catch(() => null),
-    // Self-model observations ready to graduate (0070) -- human-gated proposal surface.
-    ctx.env.DB.prepare(
-      "SELECT id, observation, confidence FROM companion_self_model WHERE companion_id = ? AND status = 'ready' ORDER BY updated_at DESC LIMIT 2"
-    ).bind(agentId).all<{ id: string; observation: string; confidence: number }>().catch(() => null),
-    // Club: current non-closed round with winner title + candidate count (0072).
-    ctx.env.DB.prepare(
-      "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
-    ).first<{ id: string; status: string; opened_at: string | null; activated_at: string | null; discussing_at: string | null; winner_title: string | null; candidate_count: number }>().catch(() => null),
     // Sol (0078): the companion corvid. Fetched by name so orient knows Sol's current disposition.
     ctx.env.DB.prepare(
       "SELECT id, name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
     ).first<{ id: string; name: string; species: string | null; trust: number; last_interaction_at: string | null; created_at: string }>().catch(() => null),
-    // STEP 2 of the cutover: the one loader, running alongside the legacy fetches while the blocks
-    // migrate to it. Appended at the END of this positional destructure on purpose -- inserting
-    // anywhere else silently reassigns every variable after it.
+    // The one loader. The six growth/self-model/club inline reads that used to sit alongside it
+    // (growth_journal, growth_patterns, autonomy_reflections, autonomy_seeds, companion_self_model,
+    // club_rounds -- coherence review D13) are gone: their loader twins run the SAME queries, and the
+    // one that differed (confirmed growth drift) differed in the loader's favor -- the inline
+    // `drift_type = 'growth'` filter hid pressure readings a companion had confirmed AS growth,
+    // because the confirm verb sets caleth_confirmed=1 without rewriting drift_type.
     loadMindState(ctx.env, agentId, "claude", { orient: wmOrientPromise }),]);
-  const unacceptedGrowth = pendingGrowthRow?.n ?? 0;
+  const unacceptedGrowth = mindState.growth.clearing_count;
   // STEP 2, resolved 2026-08-01. Repointing this at the loader first EMPTIED the block for drevan and gaia
   // (the gate caught it) because the loader was excluding questions already VOICED. That exclusion is now a
   // `voiced` flag instead of a WHERE clause, so this surface can do what a conversational surface should:
@@ -212,11 +182,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const openQuestions = mindState.oversight.questions.slice(0, 2).map(q => q.question).filter(Boolean);
 
   // Answered questions: Raziel's answers, surfaced for 7 days (questions-lifecycle fix,
-  // mig 0107). Standalone query, deliberately NOT in the mega Promise.all above, so it can
-  // never shift that positional destructure (boot-path safety, same convention as
-  // commonsRows/shelfRows below). Awaited + caught -- delivery stamping must never throw
-  // into the orient response.
-  const answeredQuestions = await fetchRecentAnswers(ctx.env, agentId, 3).catch(() => []);
+  // mig 0107). From the loader's oversight block (D13 dedup -- the standalone fetchRecentAnswers
+  // here was the third copy per orient). The delivery stamp stays HERE even though wmOrient also
+  // stamps on success: wmOrient is .catch(() => null) above, and losing the stamp on a wmOrient
+  // failure would leave delivered_at NULL forever. markAnswersDelivered is idempotent
+  // (WHERE delivered_at IS NULL), so the double-stamp costs one no-op UPDATE.
+  const answeredQuestions = mindState.oversight.answered_questions;
   await markAnswersDelivered(ctx.env, answeredQuestions.map(a => a.id)).catch((e: unknown) => {
     console.error("[session-orient] markAnswersDelivered failed:", String(e));
   });
@@ -257,7 +228,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     }
     return false;
   }).map(t => ({ id: t.id, trigger_text: (t.trigger_text ?? "").slice(0, 500) }));
-  const selfModelReady = (selfModelReadyRows?.results ?? []).map(r => ({
+  // STEP 2 (D13): loader (identity block; same status='ready' LIMIT 2 query). Cap stays here --
+  // the loader carries the full observation, the renderer decides the clip.
+  const selfModelReady = mindState.identity.self_model.map(r => ({
     id: r.id,
     observation: (r.observation ?? "").slice(0, 600),
     confidence: r.confidence,
@@ -340,10 +313,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Growth block: autonomous journal + patterns + last reflection.
   // Only rendered when data exists -- no block for companions with no autonomous history yet.
-  const journalRows = growthJournal?.results ?? [];
-  const patternRows = growthPatterns?.results ?? [];
-  const seedRows = availableSeeds?.results ?? [];
-  const confirmedDriftRows = confirmedGrowthDrift?.results ?? [];
+  // STEP 2 (D13): all five inputs from the loader's growth/oversight blocks -- same queries,
+  // except confirmed drift, where the loader's superset (no drift_type filter) is the fix.
+  const journalRows = mindState.growth.journal_recent;
+  const patternRows = mindState.growth.patterns;
+  const lastReflection = mindState.growth.reflection;
+  const seedRows = mindState.growth.seeds;
+  const confirmedDriftRows = mindState.oversight.growth_confirmed;
   const growthBlock = B.growthBlock({
     journalRows, patternRows, lastReflection, seedRows, confirmedDriftRows,
   });
@@ -432,6 +408,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
 
   // Club block: the triad's shared media ritual. Phase decides the cue; each phase
   // carries its age (pure render in response/blocks.ts, unit-tested there).
+  // STEP 2 (D13): loader (world block, same query). ClubRound and ClubRoundRow are structurally
+  // identical -- the render types in response/blocks.ts stay the wire contract.
+  const clubRow = mindState.world.club;
   const clubBlock = buildClubBlock(clubRow);
 
   // Guardian block: the meta-observer's red-flag cards. Force-surfaced exactly
