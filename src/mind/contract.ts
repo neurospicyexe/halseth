@@ -23,16 +23,20 @@ import type {
 import type { GrowthBlocks } from "./blocks/growth.js";
 import type { WorldBlocks } from "./blocks/world.js";
 import type { OversightBlocks } from "./blocks/oversight.js";
+import type { RazielStateView } from "./blocks/care.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 
-/** 0.5.0 -- coherence review (2026-08-15) added `continuity.conversations` (the conversation ledger,
+/** 0.6.0 -- consequence layer C1 (2026-08-16, mig 0121) added `world.raziel_state`: the care
+ *  register -- Raziel's readable state (spoons/mood/pain/energy + staleness + front state) plus the
+ *  care-loop fields (`care_hold`, `pending_care`), derived once and rendered on every surface so
+ *  every generation calibrates register without being told. MINOR: additive only.
+ *  0.5.0 -- coherence review (2026-08-15) added `continuity.conversations` (the conversation ledger,
  *  mig 0106, previously readable by NO contract surface -- D5) and `world.commons_life` (the commons as
- *  a shared board rather than a one-way drop box -- D7). MINOR: additive only, renderers ignore unknown
- *  blocks. 0.4.0 was wave 8 (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching,
- *  beliefs.supersede_candidates, relational.siblings, relational.recent_witness,
- *  oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.5.0";
+ *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
+ *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
+ *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
+export const MINDSTATE_CONTRACT_VERSION = "0.6.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -199,6 +203,13 @@ export interface MindState {
     /** Wave 6. Where Raziel actually is in what they are watching. A progress fact is a FIELD -- the
      *  stale-Fargo answer came from ranking prose because no field existed. */
     watching: WorldBlocks["watching"];
+    /** 0.6.0, consequence layer C1: the care register. Raziel's readable state, derived from the
+     *  latest biometrics row + front state + the care loop (mig 0121). The signals flowed IN since
+     *  0009/0081 and were read at orient as a raw row; this is the first field that makes them a
+     *  STATE every renderer must show -- staleness included, because a three-day-old "2 spoons"
+     *  presented as current is misinformation wearing a care line. `pending_care` is per-companion
+     *  (the one firing THIS companion is assigned); everything else is identical on every loom. */
+    raziel_state: RazielStateView | null;
   };
 
   meta: {

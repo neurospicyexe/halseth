@@ -34,7 +34,7 @@ function stateWith(questions: Array<{ id: string; question: string; voiced: bool
     relational: { snapshot: [], deltas_recent: [], witness_raziel: [], triad_incoming: [], triad_outgoing: [], letters: [], journal_recent: [], siblings: [], recent_witness: [] },
     growth: { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [] },
     oversight: { pressure_flags: [], growth_confirmed: [], guardian_cards: [], tripwires: [], questions, answered_questions: [], growth_unconfirmed: [] },
-    world: { home_recent: [], club: null, commons: [], commons_life: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [] },
+    world: { home_recent: [], club: null, commons: [], commons_life: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [], raziel_state: null },
     meta: { datetime_iso: "2026-08-01T00:00:00Z", datetime_local: "2026-08-01", not_yet_loaded: [], degraded: [] },
   } as MindState;
 }

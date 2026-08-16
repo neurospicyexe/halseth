@@ -294,6 +294,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // absent blocks as broken, not empty. First consumer of meta.degraded on any surface.
   const degradedNotice = B.degradedBlock(mindState.meta.degraded);
 
+  // The care register (consequence layer C1, contract 0.6.0): rendered EARLY, right after the
+  // degraded notice, so register calibration lands before anything else is read.
+  const razielRegisterBlock = B.razielStateBlock(mindState.world.raziel_state);
+
   // Session narrative: generous cap for Claude.ai (full context window available)
   // sbExtractContent, not a bare regex: sbRead hands back a JSON envelope, so stripping frontmatter off the
   // raw string never matched and this block has been rendering JSON at Claude.ai boot.
@@ -530,7 +534,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const driftsBlock = B.driftsBlock(openDrifts);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an

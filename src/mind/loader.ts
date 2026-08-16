@@ -25,6 +25,7 @@ import { loadOversightBlocks } from "./blocks/oversight.js";
 import { loadSessionNarrative } from "./blocks/continuity.js";
 import { loadRelationalBlocks } from "./blocks/relational.js";
 import { loadBeliefExtras } from "./blocks/beliefs.js";
+import { loadCareBlocks, deriveRazielState, EMPTY_CARE } from "./blocks/care.js";
 
 /**
  * `opts.orient` lets a caller that ALREADY runs mindOrient hand its result in instead of making the loader
@@ -88,7 +89,7 @@ export async function loadMindState(
       return fallback;
     }
   };
-  const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras] = await Promise.all([
+  const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras, care] = await Promise.all([
     (opts.orient ?? mindOrient(env, companionId, { readOnly: true })).catch((err: unknown) => {
       console.error("[mind/loader] mindOrient failed, degrading", { companionId, error: String(err) });
       degraded.push("orient");
@@ -120,6 +121,9 @@ export async function loadMindState(
     // and must not make every loom's boot depend on the Second Brain tunnel.
     guard("relational", () => loadRelationalBlocks(env, companionId), { siblings: [], recent_witness: [] }),
     guard("beliefs", () => loadBeliefExtras(env, companionId), { supersede_candidates: [] }),
+    // 0.6.0 (consequence layer C1): the care register's D1 half -- front state + care-loop rows.
+    // The biometrics half rides orient's existing read; deriveRazielState composes the two below.
+    guard("care", () => loadCareBlocks(env, companionId), EMPTY_CARE),
   ]);
 
   // Non-null views. `orient`/`ground` are the only two sources that can be wholly absent (the blocks each
@@ -213,6 +217,9 @@ export async function loadMindState(
     world: {
       home_recent: orient?.home_recent ?? [],
       ...world,
+      // 0.6.0: the care register. Derived here rather than in a block loader so it composes
+      // orient's biometrics read instead of duplicating it (D13: one loader, zero sibling reads).
+      raziel_state: deriveRazielState(orient?.latest_biometrics ?? null, care),
     },
 
     meta: {

@@ -86,6 +86,8 @@ import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
+import { postCareActed, getCarePending, getCareRecent, postCareTickForce } from "./handlers/care.js";
+import { runCareTick } from "./care/tick.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
 import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
 import { postNarrativeRefresh, runNarrativeRefresh } from "./synthesis/narrative-refresh.js";
@@ -170,6 +172,13 @@ const router = new Router()
   })
   // Are the relational edges actually filling in? One readout so "hold and see" is executable.
   .on("GET", "/admin/edges",              (request, env) => getEdges(request, env))
+
+  // Care loop (consequence layer C1, mig 0121). The forced tick skips the hourly gate but never
+  // the rule cooldowns -- it is the live-fire door for the verification gate.
+  .on("POST", "/mind/care/:id/acted",     (request, env, params) => postCareActed(request, env, params ?? {}))
+  .on("GET",  "/mind/care/pending/:companion_id", (request, env, params) => getCarePending(request, env, params ?? {}))
+  .on("GET",  "/mind/care/recent",        (request, env) => getCareRecent(request, env))
+  .on("POST", "/admin/care-tick",         (request, env) => postCareTickForce(request, env))
 
   // Presence (dashboard feed)
   .on("GET", "/presence", (request, env) => getPresence(request, env))
@@ -658,6 +667,10 @@ export async function runScheduledWork(env: Env): Promise<void> {
     (async () => {
       try { await runNarrativeRefresh(env); }
       catch (err) { console.error("narrative refresh failed", err); }
+    })(),
+    (async () => {
+      try { await runCareTick(env); }
+      catch (err) { console.error("care tick failed", err); }
     })(),
   ]);
 }

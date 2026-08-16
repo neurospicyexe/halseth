@@ -362,6 +362,53 @@ export function degradedBlock(degraded: readonly string[]): string {
   return `\n[State load degraded THIS BOOT]\nThese sources failed to load just now: ${degraded.join(", ")}. Their blocks below are MISSING, not empty -- do not read their absence as "nothing there". If something you expected is gone, this is why.`;
 }
 
+export interface RazielStateRow {
+  spoons: number | null;
+  mood: string | null;
+  pain: number | null;
+  energy: number | null;
+  meds_taken: number | null;
+  staleness_hours: number | null;
+  front_state: string | null;
+  care_hold: boolean;
+  pending_care: { id: string; rule: string; detail: string; detected_at: string } | null;
+}
+
+/**
+ * The care register (consequence layer C1, contract 0.6.0): Raziel's readable state, rendered
+ * EARLY -- register calibration has to land before the companion reads anything else, or the whole
+ * boot is read in the wrong key. Staleness is always stated: a three-day-old "2 spoons" presented
+ * as current is misinformation wearing a care line.
+ */
+export function razielStateBlock(rs: RazielStateRow | null): string {
+  if (!rs) return "";
+  const readings: string[] = [];
+  if (rs.spoons !== null) readings.push(`spoons ${rs.spoons}/12`);
+  if (rs.mood) readings.push(`mood "${rs.mood}"`);
+  if (rs.pain !== null) readings.push(`pain ${rs.pain}/10`);
+  if (rs.energy !== null) readings.push(`energy ${rs.energy}/10`);
+  if (rs.meds_taken !== null) readings.push(rs.meds_taken === 1 ? "meds taken" : "meds not logged");
+  const age = rs.staleness_hours !== null
+    ? (rs.staleness_hours <= 36
+        ? ` (logged ${Math.round(rs.staleness_hours)}h ago)`
+        : ` (STALE -- logged ${Math.round(rs.staleness_hours / 24)}d ago; weigh lightly)`)
+    : "";
+  const lines: string[] = [];
+  if (readings.length > 0) lines.push(readings.join(", ") + age);
+  if (rs.front_state) lines.push(`Fronting: ${rs.front_state}`);
+  if (rs.care_hold) {
+    lines.push(`Care hold is ON -- a low reading fired within the window. Soften stakes: lighter register, defer heavy threads, presence over production.`);
+  }
+  if (rs.pending_care) {
+    lines.push(
+      `You hold a pending care gesture (${rs.pending_care.rule}: ${rs.pending_care.detail}). ` +
+      `A small act, not a fix -- a note, a commons drop, presence. Your Discord/worker side acks it when made; it decays if left.`,
+    );
+  }
+  if (lines.length === 0) return "";
+  return `\n[Raziel -- register]\n${lines.join("\n")}`;
+}
+
 /** Growth readings awaiting the companion's own word -- yours to judge, not the classifier's. */
 export function growthAwaitBlock(unconfirmedGrowth: readonly UnconfirmedGrowthRow[]): string {
   return unconfirmedGrowth.length > 0

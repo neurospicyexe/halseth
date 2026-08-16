@@ -234,5 +234,13 @@ export function botWireFromMindState(
     // without it on the wire, a bot cannot tell a quiet house from a broken loader, which is the
     // exact empty-vs-error conflation the contract warns about (contract.ts meta.degraded).
     degraded: ms.meta.degraded,
+
+    // Consequence layer C1 (2026-08-16, contract 0.6.0): the care register. Second deliberate
+    // post-freeze addition. This deliberately REVERSES half of the "what that parks" note in the
+    // header: the bots are the highest-frequency presence in the house, and a register line they
+    // cannot see is a register line the house mostly runs without. The raw biometrics row stays
+    // parked; what crosses the wire is the DERIVED state (staleness included) plus care_hold
+    // (read by fit-bid to soften stakes) and this companion's own pending gesture, if any.
+    raziel_state: ms.world.raziel_state,
   };
 }
