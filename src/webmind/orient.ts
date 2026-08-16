@@ -189,7 +189,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       "SELECT id, recorded_at, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
     ).first<WmBiometricSnapshot>(),
     env.DB.prepare(
-      "SELECT current_room, spoon_count, love_meter, companion_mood, companion_activity, updated_at FROM house_state LIMIT 1"
+      // id = 'main', not LIMIT 1 (coherence review D14): every other house_state read pins the row
+      // by id; an unpinned LIMIT 1 silently reads whichever row the engine returns first if a second
+      // row ever appears, and the two surfaces would disagree about the house.
+      "SELECT current_room, spoon_count, love_meter, companion_mood, companion_activity, updated_at FROM house_state WHERE id = 'main'"
     ).first<WmHouseState>(),
     // Feelings logged via feeling_log / session_close. Until 2026-07-26 these were
     // write-only from orient's perspective -- logged faithfully, never carried into boot.
@@ -200,10 +203,19 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     env.DB.prepare(
       "SELECT id, loop_text, weight, opened_at FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
     ).bind(agentId).all<WmOrientOpenLoop>(),
-    // Open questions: queries awaiting synthesis/investigation (thinking quality fix)
+    // Open questions: queries awaiting synthesis/investigation (thinking quality fix).
+    // Same shape as the loader's oversight block (coherence review D14): the `voiced` flag as a
+    // COLUMN, never a WHERE clause (a question spoken once but never answered is still carried),
+    // and LIMIT 10 so a renderer that filters voiced is not starved by the window. Renderers
+    // take their own slice.
     env.DB.prepare(
-      "SELECT id, question, context, created_at FROM companion_questions WHERE companion_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 5"
-    ).bind(agentId).all<WmOrientOpenQuestion>(),
+      `SELECT q.id, q.question, q.context, q.created_at,
+              EXISTS(SELECT 1 FROM companion_settings s
+                     WHERE s.companion_id = q.companion_id AND s.key = 'question_voiced:' || q.id) AS voiced
+       FROM companion_questions q
+       WHERE q.companion_id = ?1 AND q.status = 'open'
+       ORDER BY q.created_at DESC LIMIT 10`
+    ).bind(agentId).all<Omit<WmOrientOpenQuestion, "voiced"> & { voiced: number }>(),
     // Answered questions: Raziel's answers, surfaced for 7 days regardless of delivered_at
     // (questions-lifecycle fix, mig 0107) -- the dedup/mutuality gap where answers never
     // reached companions because every orient path only ever read status = 'open'.
@@ -222,7 +234,10 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // session-orient path) never saw a flag. Read-only here, same as the bot path: the open ->
     // surfaced transition stays session-orient's job (see session.ts:536-541).
     env.DB.prepare(
-      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 3"
+      // LIMIT 8, matching the loader's oversight block (coherence review D14): any consumer that
+      // filters after this limit gets starved by a small window -- the exact filter-after-limit
+      // shape mind/blocks/oversight.ts documents. Renderers take their own slice.
+      "SELECT id, flag_type, severity, summary FROM guardian_flags WHERE (companion_id = ? OR companion_id IS NULL) AND status IN ('open','surfaced') ORDER BY CASE severity WHEN 'red' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC LIMIT 8"
     ).bind(agentId).all<{ id: string; flag_type: string; severity: string; summary: string }>(),
   ]);
 
@@ -419,14 +434,16 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     flagged_beliefs,
     recent_feelings: recentFeelings.results ?? [],
     open_loops: (openLoopsRes.results ?? []),
-    open_questions: (openQuestionsRes.results ?? []),
+    open_questions: (openQuestionsRes.results ?? []).map(q => ({ ...q, voiced: q.voiced === 1 })),
     answered_questions: answeredQuestions,
     active_conversations: activeConvosRes.results ?? [],
     guardian_flags: (guardianFlagsRes.results ?? []).map(f => ({
       id: f.id,
       flag_type: f.flag_type,
       severity: f.severity,
-      summary: (f.summary ?? "").slice(0, 300),
+      // 400, matching the loader (D14) -- the same flag read as a longer explanation on one
+      // surface and a shorter one on another is a wrong-diagnosis generator.
+      summary: (f.summary ?? "").slice(0, 400),
       remediation: remediationHint(f.flag_type),
     })),
     soma_arc: (somaArcNotes.results ?? []) as { note_id: string; content: string; created_at: string }[],

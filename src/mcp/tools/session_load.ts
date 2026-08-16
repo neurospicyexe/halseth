@@ -364,7 +364,11 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const synthRaw = await env.DB.prepare(
     // 'session' OR 'day' (2026-08-12) -- see mind/blocks/continuity.ts loadSessionNarrative for why:
     // a companion with no authored closes has no 'session' row to find, and froze for 39 days.
-    "SELECT * FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
+    // full_ref IS NOT NULL (coherence review D14): this was the ONE variant of the three
+    // last-session reads missing the filter, so this surface could pick a newer-but-empty row
+    // while every other surface showed an older full one -- two looms disagreeing about what
+    // "last session" was.
+    "SELECT * FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
   ).bind(input.companion_id).first<SynthesisSummary>();
 
   // Warm the loaded summary (0074): repeated loads keep it hot, which protects it

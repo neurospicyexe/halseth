@@ -208,7 +208,10 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[Open loops (yours, still open)] ${wm.open_loops.map(l => `«${l.loop_text.length > 120 ? l.loop_text.slice(0, 120) + "…" : l.loop_text}»`).join(" | ")}`);
   }
   if (wm.open_questions?.length) {
-    parts.push(`[Open questions (yours, awaiting synthesis)] ${wm.open_questions.map(q => `«${q.question.length > 120 ? q.question.slice(0, 120) + "…" : q.question}»`).join(" | ")}`);
+    // slice(0, 5): the source widened to LIMIT 10 for parity with the loader (D14 -- window vs
+    // render are different decisions); this block keeps its original five. Same ORDER BY, so the
+    // first five are the same rows the old LIMIT 5 returned.
+    parts.push(`[Open questions (yours, awaiting synthesis)] ${wm.open_questions.slice(0, 5).map(q => `«${q.question.length > 120 ? q.question.slice(0, 120) + "…" : q.question}»`).join(" | ")}`);
   }
 
   // 7c-2. Answers Raziel left -- the other half of the questions loop (mig 0107). Surfaced

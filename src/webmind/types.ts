@@ -457,6 +457,9 @@ export interface WmOrientOpenQuestion {
   question: string;
   context: string | null;
   created_at: string;
+  /** Already spoken aloud once (question_voiced:<id> settings key). A FLAG, never a filter --
+   *  same rule as the loader's oversight block (D14): carried until Raziel answers. */
+  voiced?: boolean;
 }
 
 // Guardian red-flag cards, surfaced at the raw mindOrient path (Wave 3 starvation fix,
