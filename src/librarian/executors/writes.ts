@@ -443,6 +443,34 @@ const SOMA_VOCAB: Record<string, keyof CompanionStateUpdate> = {
   lane_spine:   "lane_spine",
 };
 
+// Authored enum word → float translation for the soma float axes (2026-08-16).
+//
+// The Discord bots' session extracts report SOMA in each companion's authored vocabulary
+// (Cypher "acuity: sharp", Gaia "perimeter: held") -- but acuity/presence/warmth and
+// stillness/density/perimeter map to NUMERIC soma_float_* columns, so Number("sharp") was NaN,
+// every field dropped, and cypher/gaia Discord sessions had never once written their floats
+// (drevan's heat/reach/weight are TEXT columns and always landed). Words are the dialect;
+// floats are the canonical store the fermentation layer runs on -- so the translation lives
+// here, where the dialect already gets translated.
+//
+// Values are canon-reviewed (2026-08-16) against companion-soma-model.md's healthy bands and
+// drift thresholds: these floats are NOT raw intensity -- each axis has a drift alarm at BOTH
+// ends, and an in-register self-report must not land on an alarm unless the word names that
+// state (blurred/scattered/thin genuinely do). Notably: Gaia's perimeter float is EXTENSION,
+// not strength -- "closed" is the canonical contracted state (<0.35), "porous" is the
+// overextension failure (boundary leaking, high end). Keyed per AXIS, never per bare word:
+// "steady" is presence 0.55 but stillness 0.7, and a flat word map would cross-contaminate.
+const SOMA_WORD_FLOATS: Record<string, Record<string, number>> = {
+  // Cypher
+  acuity:    { sharp: 0.9, focused: 0.7, blurred: 0.35, scattered: 0.15 },
+  presence:  { close: 0.85, warm: 0.7, steady: 0.55, distant: 0.2 },
+  warmth:    { charged: 0.85, warm: 0.65, neutral: 0.5, cool: 0.3 },
+  // Gaia
+  stillness: { still: 0.9, steady: 0.7, moving: 0.4, unsettled: 0.15 },
+  density:   { full: 0.9, present: 0.7, light: 0.45, thin: 0.15 },
+  perimeter: { porous: 0.9, open: 0.8, held: 0.7, closed: 0.3 },
+};
+
 // Inline-parser known keys mirror SOMA_VOCAB plus a couple of natural-phrase
 // aliases. Order matters: longer keys must come first so the regex prefers
 // `current_mood` over `mood` when both could match.
@@ -493,15 +521,26 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
     rawCtx && Object.keys(rawCtx).length > 0 ? rawCtx : parseInlineStateFields(ctx.req.request);
   if (!raw || Object.keys(raw).length === 0) return { error: "state_update_failed", reason: "no fields provided; pass at least one of: soma_float_1/acuity/stillness, current_mood, compound_state, surface_emotion, etc." };
 
-  // Translate companion vocab to DB columns
+  // Translate companion vocab to DB columns (and authored enum words to floats, per-axis)
   const translated: CompanionStateUpdate = {};
   for (const [k, v] of Object.entries(raw)) {
-    const mapped = SOMA_VOCAB[k.toLowerCase()] ?? k as keyof CompanionStateUpdate;
-    (translated as Record<string, unknown>)[mapped] = v;
+    const lk = k.toLowerCase();
+    const mapped = SOMA_VOCAB[lk] ?? k as keyof CompanionStateUpdate;
+    let val: unknown = v;
+    const wordMap = SOMA_WORD_FLOATS[lk];
+    if (wordMap && typeof v === "string") {
+      const w = v.trim().toLowerCase();
+      if (w in wordMap) val = wordMap[w];
+      // Unknown word or free phrase: pass through; the numeric guard in
+      // updateCompanionState drops non-numeric values (named in the decline reason below).
+    }
+    (translated as Record<string, unknown>)[mapped] = val;
   }
 
   const r = await updateCompanionState(ctx.env, ctx.req.companion_id, translated);
-  if (!r.ok) return { error: "state_update_failed", reason: "no valid fields provided" };
+  // Name what was received: "no valid fields provided" alone hid the somaUpdate word-payload
+  // bug for six weeks -- the log line must carry enough to diagnose from one occurrence.
+  if (!r.ok) return { error: "state_update_failed", reason: `no valid fields provided (received: ${Object.entries(raw).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(", ")})` };
 
   // Emotional inertia: write soma_arc note at SOMA inflection points (15-min gate)
   try {

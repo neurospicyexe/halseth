@@ -975,6 +975,9 @@ export async function updateCompanionState(
         bindings.push(null);
         continue;
       }
+      // Empty/whitespace string is a hole in the Number() guard: Number("") === 0, so an
+      // extract field the model left blank would silently ZERO the float instead of skipping.
+      if (typeof v === "string" && v.trim() === "") continue;
       const n = Number(v);
       if (!Number.isFinite(n)) continue;
       assignments.push(`${col} = ?`);

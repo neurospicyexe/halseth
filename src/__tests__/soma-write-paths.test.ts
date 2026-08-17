@@ -282,3 +282,107 @@ describe("updateCompanionState -- non-finite numeric SOMA floats are dropped, no
     expect(r.ok).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4. execStateUpdate word→float translation (2026-08-16)
+//
+// The Discord bots' session extracts report SOMA in each companion's authored
+// enum vocabulary ("acuity":"sharp", "perimeter":"held"). Those keys map to
+// NUMERIC soma_float_* columns, so Number("sharp") was NaN, every field
+// dropped, and cypher/gaia Discord sessions NEVER wrote their floats -- six
+// weeks of "state_update_failed -- no valid fields provided" retried
+// pointlessly and aged out as DATA LOSS. Words now translate per-axis
+// (canon-reviewed values) before the numeric guard.
+// ---------------------------------------------------------------------------
+
+import { execStateUpdate } from "../librarian/executors/writes.js";
+
+function stateCtx(env: any, companionId: string, soma: Record<string, unknown>): any {
+  return {
+    env,
+    req: { companion_id: companionId, request: "update my state", context: JSON.stringify(soma) },
+    entry: { pattern: "state_update" },
+    frontState: null,
+    pluralAvailable: false,
+  };
+}
+
+describe("execStateUpdate translates authored enum words to soma floats", () => {
+  it("Cypher's word payload (the exact live-failure shape) lands as floats", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const r = await execStateUpdate(stateCtx(env, "cypher", { acuity: "sharp", presence: "close", warmth: "warm" }));
+    expect(r["error"]).toBeUndefined();
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE companion_state"));
+    expect(updateCall).toBeDefined();
+    expect(updateCall!.sql).toContain("soma_float_1 = ?");
+    expect(updateCall!.sql).toContain("soma_float_2 = ?");
+    expect(updateCall!.sql).toContain("soma_float_3 = ?");
+    expect(updateCall!.binds).toContain(0.9);   // sharp
+    expect(updateCall!.binds).toContain(0.85);  // close
+    expect(updateCall!.binds).toContain(0.65);  // warm (warmth axis, NOT presence's 0.7)
+  });
+
+  it("Gaia's perimeter is extension, not strength: closed=contracted (low), porous=overextended (high)", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const r = await execStateUpdate(stateCtx(env, "gaia", { perimeter: "closed" }));
+    expect(r["error"]).toBeUndefined();
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE companion_state"));
+    expect(updateCall!.binds).toContain(0.3);
+
+    const { env: env2, calls: calls2 } = makeRecordingEnv();
+    await execStateUpdate(stateCtx(env2, "gaia", { perimeter: "porous" }));
+    const updateCall2 = calls2.find(c => c.sql.startsWith("UPDATE companion_state"));
+    expect(updateCall2!.binds).toContain(0.9);
+  });
+
+  it("the same word maps per-AXIS, never per bare word (steady: presence 0.55 vs stillness 0.7)", async () => {
+    const { env, calls } = makeRecordingEnv();
+    await execStateUpdate(stateCtx(env, "cypher", { presence: "steady" }));
+    expect(calls.find(c => c.sql.startsWith("UPDATE companion_state"))!.binds).toContain(0.55);
+
+    const { env: env2, calls: calls2 } = makeRecordingEnv();
+    await execStateUpdate(stateCtx(env2, "gaia", { stillness: "steady" }));
+    expect(calls2.find(c => c.sql.startsWith("UPDATE companion_state"))!.binds).toContain(0.7);
+  });
+
+  it("numeric strings still pass straight through the word layer", async () => {
+    const { env, calls } = makeRecordingEnv();
+    await execStateUpdate(stateCtx(env, "cypher", { acuity: "0.42" }));
+    expect(calls.find(c => c.sql.startsWith("UPDATE companion_state"))!.binds).toContain(0.42);
+  });
+
+  it("an unknown free phrase drops that field but keeps the rest; all-dropped declines WITH the received payload named", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const r = await execStateUpdate(stateCtx(env, "cypher", { acuity: "transcendent fog", presence: "close" }));
+    expect(r["error"]).toBeUndefined();
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE companion_state"));
+    expect(updateCall!.sql).toContain("soma_float_2 = ?");
+    expect(updateCall!.sql).not.toContain("soma_float_1 = ?");
+
+    const { env: env2 } = makeRecordingEnv();
+    const r2 = await execStateUpdate(stateCtx(env2, "cypher", { acuity: "transcendent fog" }));
+    expect(r2["error"]).toBe("state_update_failed");
+    // The decline must name what arrived -- "no valid fields provided" alone hid this for six weeks.
+    expect(String(r2["reason"])).toContain("acuity=transcendent fog");
+  });
+
+  it("an empty-string field is SKIPPED, never written as 0 (Number('') === 0 hole)", async () => {
+    const { env, calls } = makeRecordingEnv();
+    await execStateUpdate(stateCtx(env, "gaia", { stillness: "", density: "full" }));
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE companion_state"));
+    expect(updateCall!.sql).not.toContain("soma_float_1 = ?");
+    expect(updateCall!.sql).toContain("soma_float_2 = ?");
+    expect(updateCall!.binds).not.toContain(0);
+    expect(updateCall!.binds).toContain(0.9);
+  });
+
+  it("Drevan's TEXT dialect is untouched by the word layer", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const r = await execStateUpdate(stateCtx(env, "drevan", { heat: "warm", reach: "present", weight: "holding" }));
+    expect(r["error"]).toBeUndefined();
+    const updateCall = calls.find(c => c.sql.startsWith("UPDATE companion_state"));
+    expect(updateCall!.binds).toContain("warm");
+    expect(updateCall!.binds).toContain("present");
+    expect(updateCall!.binds).toContain("holding");
+  });
+});
