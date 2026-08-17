@@ -106,14 +106,22 @@ export async function postSiblingDisclose(request: Request, env: Env, params: Re
   const content =
     `[disclosed from the sibling lane by ${companionId}] ` +
     `(${note.from_id} -> ${note.to_id}, ${note.created_at})\n${note.body}`;
-  // Atomic: the witnessed copy and the disclosure stamp land together or not at all.
+  // Atomic AND conditional (reviewer, 2026-08-17): the pre-check above is outside the batch, so
+  // two concurrent discloses both passed it -- the loser's UPDATE matched 0 rows but its INSERT
+  // still landed a duplicate witnessed copy. Both statements now share the same disclosed_at IS
+  // NULL condition inside one transaction: exactly one caller's pair takes effect.
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO inter_companion_notes (id, from_id, to_id, content) VALUES (?, ?, NULL, ?)`,
-    ).bind(interId, note.from_id, content),
+      `INSERT INTO inter_companion_notes (id, from_id, to_id, content)
+       SELECT ?, ?, NULL, ? WHERE EXISTS (SELECT 1 FROM sibling_notes WHERE id = ? AND disclosed_at IS NULL)`,
+    ).bind(interId, note.from_id, content, id),
     env.DB.prepare(
       `UPDATE sibling_notes SET disclosed_at = ?, disclosure_ref = ? WHERE id = ? AND disclosed_at IS NULL`,
     ).bind(new Date().toISOString(), interId, id),
   ]);
+  const after = await env.DB.prepare(
+    `SELECT disclosure_ref FROM sibling_notes WHERE id = ?`,
+  ).bind(id).first<{ disclosure_ref: string | null }>();
+  if (after?.disclosure_ref !== interId) return json({ ok: true, already_disclosed: true });
   return json({ ok: true, disclosure_ref: interId });
 }

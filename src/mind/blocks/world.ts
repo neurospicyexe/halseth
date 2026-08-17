@@ -197,10 +197,12 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         env.DB.prepare(
           "SELECT id, author, context, body, reply_to, created_at FROM commons_posts ORDER BY created_at DESC LIMIT 8"
         ).all<CommonsLifePost>(),
-        // Change-notes get their own 14-day window (idx_commons_context makes the LIKE cheap):
-        // a deploy announcement must outlive the board's 8-post scroll to actually be read.
+        // Change-notes get their own 14-day window. RANGE predicate, not LIKE (reviewer,
+        // 2026-08-17): LIKE's prefix optimization needs case_sensitive_like/NOCASE, so it was a
+        // full scan of the highest-churn world table; the range pair uses idx_commons_context.
+        // 'change-notf' is 'change-note' with the last byte +1 -- the exclusive upper bound.
         env.DB.prepare(
-          "SELECT id, body, created_at FROM commons_posts WHERE context LIKE 'change-note%' AND created_at >= datetime('now', '-14 days') ORDER BY created_at DESC LIMIT 3"
+          "SELECT id, body, created_at FROM commons_posts WHERE context >= 'change-note' AND context < 'change-notf' AND created_at >= datetime('now', '-14 days') ORDER BY created_at DESC LIMIT 3"
         ).all<ChangeNote>(),
         env.DB.prepare(
           "SELECT title, kind, note FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 6"

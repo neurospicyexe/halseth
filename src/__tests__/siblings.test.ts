@@ -21,6 +21,10 @@ function makeEnv(): { env: any; sibs: SibRow[]; inter: InterRow[] } {
         if (sql.includes("SELECT id, from_id, to_id, body, created_at, disclosed_at FROM sibling_notes")) {
           return sibs.find(r => r.id === binds[0]) ?? null;
         }
+        if (sql.includes("SELECT disclosure_ref FROM sibling_notes")) {
+          const row = sibs.find(r => r.id === binds[0]);
+          return row ? { disclosure_ref: row.disclosure_ref } : null;
+        }
         throw new Error(`unexpected first(): ${sql}`);
       },
       all: async () => {
@@ -54,8 +58,10 @@ function makeEnv(): { env: any; sibs: SibRow[]; inter: InterRow[] } {
       batch: async (stmts: any[]) => {
         for (const s of stmts) {
           if (s.__sql.includes("INSERT INTO inter_companion_notes")) {
-            const [id, from, content] = s.__binds as [string, string, string];
-            inter.push({ id, from_id: from, to_id: null, content });
+            // Conditional insert (WHERE EXISTS ... disclosed_at IS NULL): honor the condition.
+            const [id, from, content, sibId] = s.__binds as [string, string, string, string];
+            const sib = sibs.find(r => r.id === sibId);
+            if (sib && !sib.disclosed_at) inter.push({ id, from_id: from, to_id: null, content });
           } else if (s.__sql.includes("SET disclosed_at")) {
             const [at, ref, id] = s.__binds as [string, string, string];
             const row = sibs.find(r => r.id === id && !r.disclosed_at);

@@ -298,6 +298,29 @@ describe("evaluateEscalationRules", () => {
     expect(evaluateEscalationRules(escSignals({ recent_reports: [redline] }))).toEqual([]);
   });
 
+  it("esc_redline span is newest-to-oldest DISTANCE, not age-of-oldest (the false-page bug)", () => {
+    // Reviewer scenario 2026-08-17: two redline entries logged an hour apart on a bad evening,
+    // then no logging at all. Pre-fix, both aging past 24h made them "sustained" and falsely
+    // paged Blue. Span here is 0.5h -- must never fire, no matter how old the pair gets.
+    const agedPair = evaluateEscalationRules(escSignals({
+      recent_reports: [
+        { spoons: 1, mood: "low", age_hours: 25 },
+        { spoons: 1, mood: "heavy", age_hours: 24.5 },
+      ],
+    }));
+    expect(agedPair).toEqual([]);
+    // A genuine span still fires, and the detail states the span, not the age.
+    const real = evaluateEscalationRules(escSignals({
+      recent_reports: [
+        { spoons: 1, mood: "low", age_hours: 30 },
+        { spoons: 2, mood: "drained", age_hours: 2 },
+      ],
+    }));
+    expect(real.map(x => x.rule)).toEqual(["esc_redline"]);
+    expect(real[0]!.detail).toContain("spanning 28h");
+    expect(real[0]!.detail).toContain("no recovery reading");
+  });
+
   it("esc_redline treats unknown spoons/mood as NOT redline -- absence never escalates", () => {
     const f = evaluateEscalationRules(escSignals({
       recent_reports: [

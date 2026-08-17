@@ -44,14 +44,25 @@ export async function runCareTick(
   nowMs = Date.now(),
   opts: { force?: boolean } = {},
 ): Promise<{ fired: number; skipped?: string }> {
-  // Self-gate: at most one evaluation per hour. The stamp is the tick's own scheduling anchor --
-  // restamping it is correct; it feeds no rule. `force` (the /admin/care-tick live-fire door)
+  // Self-gate: at most one evaluation per hour, taken as a CONDITIONAL CLAIM rather than
+  // check-then-act (reviewer, 2026-08-17): the every-minute kick-script and the CF scheduled()
+  // handler are two live drivers, and two overlapping runs at an hour boundary both passed the
+  // old SELECT gate, double-inserting escalations -- two DMs to a human for one condition.
+  // The claim UPDATE succeeds for exactly one caller. Trade-off accepted: a crash mid-run now
+  // skips up to an hour instead of retrying within it; care conditions persist across an hour,
+  // a duplicate page to Blue does not un-happen. `force` (the /admin/care-tick live-fire door)
   // skips the gate but never the rule cooldowns: even a forced pass cannot nag.
   if (!opts.force) {
-    const stamp = await env.DB.prepare(
-      `SELECT value FROM companion_settings WHERE companion_id = 'system' AND key = 'care_tick_at'`,
-    ).first<{ value: string }>();
-    if (stamp && hoursSinceIso(stamp.value, nowMs) < TICK_GATE_HOURS) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO companion_settings (companion_id, key, value, updated_at)
+       VALUES ('system', 'care_tick_at', '1970-01-01T00:00:00.000Z', datetime('now'))`,
+    ).run();
+    const cutoff = new Date(nowMs - TICK_GATE_HOURS * 3_600_000).toISOString();
+    const claim = await env.DB.prepare(
+      `UPDATE companion_settings SET value = ?, updated_at = datetime('now')
+       WHERE companion_id = 'system' AND key = 'care_tick_at' AND value <= ?`,
+    ).bind(new Date(nowMs).toISOString(), cutoff).run();
+    if ((claim.meta?.changes ?? 0) === 0) {
       return { fired: 0, skipped: "gate" };
     }
   }
@@ -113,11 +124,8 @@ export async function runCareTick(
   // ── Tier 3: escalation to Blue (R1, 2026-08-17) -- same gate, its own reads/cooldowns ──────
   const escFired = await runEscalationPass(env, signals, nowMs, dayIndex, detectedAt);
 
-  // Stamp the gate LAST, so a crash mid-run retries within the hour instead of silently skipping.
-  await env.DB.prepare(
-    `INSERT INTO companion_settings (companion_id, key, value, updated_at) VALUES ('system', 'care_tick_at', ?, datetime('now'))
-     ON CONFLICT(companion_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-  ).bind(detectedAt).run();
+  // The gate stamp moved to the ENTRY claim (see above) -- stamping here again would be a
+  // second writer on the same anchor for no benefit.
 
   return { fired: firings.length + escFired };
 }

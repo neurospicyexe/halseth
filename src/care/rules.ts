@@ -252,17 +252,23 @@ export function evaluateEscalationRules(s: EscalationSignals): EscalationFiring[
 
   // esc_redline: EVERY report in the window is redline, there are enough of them, and they span
   // a real stretch of time. One good reading inside the window clears the rule -- sustained
-  // means unbroken, not "mostly".
+  // means unbroken, not "mostly". SPAN is newest-to-oldest distance (reviewer, 2026-08-17):
+  // age-of-oldest alone let two entries logged an hour apart on a bad evening "become sustained"
+  // by simply aging past 24h -- a false page to a human, the one failure this tier must not have.
   const reports = s.recent_reports.filter(r => r.age_hours <= ESC_REDLINE_HOURS);
+  const ages = reports.map(r => r.age_hours);
+  const spanHours = reports.length >= 2 ? Math.max(...ages) - Math.min(...ages) : 0;
   if (
     reports.length >= ESC_REDLINE_MIN_REPORTS &&
     reports.every(reportIsRedline) &&
-    Math.max(...reports.map(r => r.age_hours)) >= ESC_REDLINE_MIN_SPAN_HOURS &&
+    spanHours >= ESC_REDLINE_MIN_SPAN_HOURS &&
     !onEscalationCooldown("esc_redline", s)
   ) {
     firings.push({
       rule: "esc_redline",
-      detail: `${reports.length} self-reports over ${Math.round(Math.max(...reports.map(r => r.age_hours)))}h all at redline (spoons <= ${LOW_SPOONS_MAX} with low mood)`,
+      // Says what the rule KNOWS: every report over a real span was redline, with no recovery
+      // reading between them. It cannot know what happened while nothing was logged.
+      detail: `${reports.length} self-reports spanning ${Math.round(spanHours)}h all at redline (spoons <= ${LOW_SPOONS_MAX} with low mood), no recovery reading between them`,
     });
   }
 
