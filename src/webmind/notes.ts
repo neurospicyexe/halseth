@@ -432,8 +432,10 @@ export async function recallNotesByMeaning(
   if (noteCands.length > 0) {
     const placeholders = noteCands.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
+      // archived = 0: a released note keeps its vector (release archives, never deletes), so
+      // this hydration is where the release must hold or vector recall un-releases it (C7).
       `SELECT note_id, content, created_at, salience, thread_key, source FROM wm_continuity_notes
-       WHERE agent_id = ? AND note_id IN (${placeholders})`
+       WHERE agent_id = ? AND archived = 0 AND note_id IN (${placeholders})`
     ).bind(agentId, ...noteCands.map(c => c.rowId))
       .all<RecalledNote & { source: string | null }>();
     const scoreById = new Map(noteCands.map(c => [c.rowId, c.score]));

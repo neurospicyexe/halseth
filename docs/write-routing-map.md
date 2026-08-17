@@ -71,6 +71,9 @@ the traps below exist because names lie.
 | `project_close` | execProjectClose | projects.ts | companion_projects | done or released -- companion-chosen ending, never a sweep |
 | `project_pause` | execProjectPause | projects.ts | companion_projects | |
 | `project_resume` | execProjectResume | projects.ts | companion_projects | respects the open cap |
+| `memory_release` | execMemoryRelease | forgetting.ts | memory_releases + companion_journal/wm_continuity_notes/companion_conclusions | C7 (mig 0123); archive-never-delete (sets archived=1), reason REQUIRED, owner-only; batch logs the release |
+| `memory_release_undo` | execMemoryReleaseUndo | forgetting.ts | memory_releases + the released row's table | 30d window; sets restored_at + archived=0 |
+| `memory_releases_read` | execMemoryReleasesRead | forgetting.ts | READ | last 20, with days_left on live releases |
 | `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes OR companion_journal | THREE-WAY ROUTE: addressed peer → inter_companion_notes (to_id set); broadcast → inter_companion_notes (to_id=NULL); unaddressed/no broadcast intent → **companion_journal** (self-reflection; ack carries `routed_to: "journal"`). Trap cluster 2. Until 2026-07-26 this row claimed inter_companion_notes only — the journal fallback was undocumented, so unaddressed notes looked lost. |
 | `halseth_feeling_log` | execFeelingLog | writes.ts | feelings | |
 | `halseth_journal_add` | execJournalAdd | writes.ts | human_journal | TRAP: the human's journal, NOT companion_journal |

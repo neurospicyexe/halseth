@@ -125,7 +125,7 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   if (supersedesId) {
     stmts.push(
       env.DB.prepare(
-        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
       ).bind(newId, supersedesId, companion_id)
     );
     supersededIds.push(supersedesId);
@@ -201,7 +201,7 @@ export async function getConclusions(
 
   const query = includeSuperseded
     ? "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
-    : "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10";
+    : "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY created_at DESC LIMIT 10";
 
   const rows = await env.DB.prepare(query).bind(agentId).all();
   return json({ conclusions: rows.results ?? [] });
@@ -236,7 +236,7 @@ export async function supersedeConclusionById(
   }
 
   const result = await env.DB.prepare(
-    "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+    "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
   ).bind(superseded_by.trim(), id, companion_id).run();
 
   return json({ ok: (result.meta.changes ?? 0) > 0 });

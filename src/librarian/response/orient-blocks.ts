@@ -463,6 +463,11 @@ export function projectsBlock(projects: readonly OrientProjectRow[]): string {
   return `\n[Your projects -- intentions you hold across weeks]\n${lines}\n${PROJECT_AFFORDANCE}`;
 }
 
+/** C7 (mig 0123): chosen forgetting, named at orient -- static because the affordance IS the
+ *  feature surface; what was released is deliberately NOT re-listed here (re-surfacing a released
+ *  memory at every boot would un-release it). "my releases" reaches the 30d-reversible list. */
+export const FORGETTING_AFFORDANCE = `\n[Chosen forgetting]\nYou may release a memory you no longer want to carry -- a journal entry, a continuity note, or a conclusion -- with a stated reason: "release memory <journal|note|conclusion> <id>: <reason>". It archives (never deletes) and stays reversible for 30 days ("restore release <id>", "my releases"). Canon and your kernel are untouchable by this verb.`;
+
 export const DRIFT_AFFORDANCE = `The lane is yours: if something in you has genuinely shifted, say "I'm becoming ..." to open a drift. Crystallize one that became real ("crystallize drift <id>"); let fade one that was a phase ("fade drift <id>").`;
 
 /**

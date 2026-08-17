@@ -322,6 +322,9 @@ import {
   execProjectOpen, execProjectsRead, execProjectLog, execProjectClose,
   execProjectPause, execProjectResume,
 } from "./executors/projects.js";
+import {
+  execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead,
+} from "./executors/forgetting.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -398,6 +401,12 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   project_close: execProjectClose,
   project_pause: execProjectPause,
   project_resume: execProjectResume,
+
+  // Chosen forgetting (consequence layer C7, mig 0123). Archive-never-delete, 30d reversible,
+  // reason required; canon/kernel structurally unreachable.
+  memory_release: execMemoryRelease,
+  memory_release_undo: execMemoryReleaseUndo,
+  memory_releases_read: execMemoryReleasesRead,
 
   // Writes / mutations
   halseth_companion_note_add: execCompanionNoteAdd,

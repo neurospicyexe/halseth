@@ -103,7 +103,7 @@ export async function runDailyNarrative(companionId: string, env: Env): Promise<
     env.DB.prepare(
       // superseded_by IS NULL: a belief they have since revised is not part of today's narrative.
       `SELECT conclusion_text AS t, created_at AS at FROM companion_conclusions
-       WHERE companion_id = ? AND superseded_by IS NULL AND created_at > datetime('now', ?)
+       WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 AND created_at > datetime('now', ?)
        ORDER BY created_at DESC LIMIT 5`
     ).bind(companionId, since).all<TextRow>(),
     env.DB.prepare(

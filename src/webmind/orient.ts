@@ -294,7 +294,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
               created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
        FROM companion_conclusions
-       WHERE companion_id = ? AND belief_type = ? AND superseded_by IS NULL
+       WHERE companion_id = ? AND belief_type = ? AND superseded_by IS NULL AND archived = 0
        ORDER BY ${effectiveHeatSql()} DESC LIMIT 2`
     ).bind(agentId, type).all<WmConclusion>()
   );
@@ -331,7 +331,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
               created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
        FROM companion_conclusions
-       WHERE companion_id = ? AND superseded_by IS NULL ${notIn}
+       WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ${notIn}
        ORDER BY ${effectiveHeatSql()} DESC LIMIT ?`
     ).bind(agentId, ...excluded, room).all<WmConclusion>().catch(() => null);
     for (const row of (topUp?.results ?? [])) {
@@ -347,7 +347,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
             created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
      FROM companion_conclusions
-     WHERE companion_id = ? AND superseded_by IS NULL AND contradiction_flagged = 1
+     WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 AND contradiction_flagged = 1
      ORDER BY ${effectiveHeatSql()} DESC LIMIT 10`
   ).bind(agentId).all<WmConclusion>();
 

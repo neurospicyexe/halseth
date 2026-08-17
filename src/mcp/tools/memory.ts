@@ -317,6 +317,11 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       const ID_COLUMNS: Record<string, string> = {
         wm_continuity_notes: "note_id",
       };
+      // Tables with an archive lane (journal 0105, notes 0050, conclusions 0123). A RELEASED
+      // memory keeps its vector (release archives, never deletes -- unlike the salience pruner,
+      // which drops vectors), so D1 hydration is where the archive must hold: without this
+      // filter a released memory resurfaces through semantic recall, un-releasing it.
+      const ARCHIVED_TABLES = new Set(["companion_journal", "wm_continuity_notes", "companion_conclusions"]);
 
       // Fetch full rows from D1, one query per table
       const allRows: Record<string, unknown>[] = [];
@@ -324,9 +329,10 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         const tableName = TABLE_NAMES[table];
         if (!tableName) continue;
         const idCol = ID_COLUMNS[table] ?? "id";
+        const archGuard = ARCHIVED_TABLES.has(tableName) ? " AND archived = 0" : "";
         const placeholders = ids.map(() => "?").join(", ");
         const rows = await env.DB.prepare(
-          `SELECT * FROM ${tableName} WHERE ${idCol} IN (${placeholders})`
+          `SELECT * FROM ${tableName} WHERE ${idCol} IN (${placeholders})${archGuard}`
         ).bind(...ids).all();
         for (const row of (rows.results as Record<string, unknown>[])) {
           allRows.push({ table, ...row, score: scoreMap.get(row[idCol] as string) ?? null });

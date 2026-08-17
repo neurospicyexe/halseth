@@ -82,7 +82,7 @@ export async function noveltyCheck(
       const rowIds = matches.map((m) => rowIdOf(m.id));
       const placeholders = rowIds.map(() => "?").join(", ");
       const activeRows = await env.DB.prepare(
-        `SELECT id FROM companion_conclusions WHERE id IN (${placeholders}) AND superseded_by IS NULL`,
+        `SELECT id FROM companion_conclusions WHERE id IN (${placeholders}) AND superseded_by IS NULL AND archived = 0`,
       ).bind(...rowIds).all<{ id: string }>();
       const activeIds = new Set((activeRows.results ?? []).map((r) => r.id));
       candidates = matches.filter((m) => activeIds.has(rowIdOf(m.id)));

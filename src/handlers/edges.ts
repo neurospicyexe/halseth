@@ -51,10 +51,10 @@ export async function getEdges(request: Request, env: Env): Promise<Response> {
       (SELECT COUNT(*) FROM companion_conclusions n JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
          WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NOT NULL) AS resolved,
       (SELECT COUNT(*) FROM companion_conclusions n JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
-         WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NULL
+         WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NULL AND o.archived = 0
            AND datetime(n.created_at) > datetime('now','-${SUPERSEDE_CANDIDATE_WINDOW_DAYS} days')) AS open_in_window,
       (SELECT COUNT(*) FROM companion_conclusions n JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
-         WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NULL
+         WHERE n.supersede_candidate_id IS NOT NULL AND o.superseded_by IS NULL AND o.archived = 0
            AND datetime(n.created_at) <= datetime('now','-${SUPERSEDE_CANDIDATE_WINDOW_DAYS} days')) AS expired_unanswered,
       (SELECT COUNT(*) FROM companion_conclusions WHERE superseded_by IS NOT NULL) AS retired_total
   `);

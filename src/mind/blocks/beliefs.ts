@@ -46,7 +46,7 @@ export async function loadBeliefExtras(env: Env, companionId: WmAgentId): Promis
        FROM companion_conclusions n
        JOIN companion_conclusions o ON o.id = n.supersede_candidate_id
        WHERE n.companion_id = ?1 AND n.supersede_candidate_id IS NOT NULL
-         AND o.superseded_by IS NULL
+         AND o.superseded_by IS NULL AND o.archived = 0
          AND datetime(n.created_at) > datetime('now', '-' || ?2 || ' days')
        ORDER BY n.created_at DESC LIMIT 2`
     ).bind(companionId, SUPERSEDE_CANDIDATE_WINDOW_DAYS)

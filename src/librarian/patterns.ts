@@ -1529,6 +1529,33 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["project_resume"],
     response_key: "witness",
   },
+  // Chosen forgetting (consequence layer C7, mig 0123). "release memory"/"release" alone is NOT a
+  // trigger -- "release project" is owned by project_close above, and a bare "release" would
+  // shadow it. Every trigger here carries an explicit memory word.
+  memory_release: {
+    triggers: [
+      "release memory", "release a memory", "release this memory", "memory release",
+      "release journal", "release note", "release conclusion", "let this memory go",
+    ],
+    tools: ["memory_release"],
+    response_key: "witness",
+  },
+  memory_release_undo: {
+    triggers: [
+      "restore release", "undo release", "restore memory", "take that release back",
+      "unrelease",
+    ],
+    tools: ["memory_release_undo"],
+    response_key: "witness",
+  },
+  memory_releases_read: {
+    triggers: [
+      "my releases", "what have i released", "released memories", "my released memories",
+      "list my releases", "show my releases",
+    ],
+    tools: ["memory_releases_read"],
+    response_key: "data",
+  },
 
   // Moving this entry earlier silently breaks the fronting query -- keep it at the bottom.
   //

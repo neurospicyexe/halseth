@@ -692,7 +692,7 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     // `superseded_by IS NULL` guard keeps this from clobbering an already-superseded row.
     stmts.push(
       ctx.env.DB.prepare(
-        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL"
+        "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
     supersededIds.push(supersedes);
@@ -777,7 +777,7 @@ export async function execAutonomyClaim(ctx: ExecutorContext): Promise<ExecutorR
 
 export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const rows = await ctx.env.DB.prepare(
-    "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10"
+    "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY created_at DESC LIMIT 10"
   ).bind(ctx.req.companion_id).all();
   return { data: rows.results ?? [], meta: { operation: "conclusions_read" } };
 }

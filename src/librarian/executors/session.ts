@@ -539,7 +539,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const projectsBlock = B.projectsBlock(projects);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
