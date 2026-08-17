@@ -53,6 +53,63 @@ export async function postCareActed(request: Request, env: Env, params: Record<s
   return json({ ok: true });
 }
 
+/** Tier 3 (R1, 2026-08-17): undelivered escalations, oldest first -- the worker's delivery
+ *  poller drains these to Blue via Discord DM (home-channel fallback). No decay on undelivered
+ *  rows: silent expiry is the failure this tier exists to prevent. */
+export async function getCareEscalations(_request: Request, env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    `SELECT id, rule, companion_id, detail, detected_at FROM care_escalations
+     WHERE delivered_at IS NULL ORDER BY detected_at ASC LIMIT 10`,
+  ).all();
+  return json({ escalations: rows.results ?? [] });
+}
+
+/** The worker stamps how an escalation actually reached a human. Idempotent on retry. */
+export async function postCareEscalationDelivered(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
+  const id = params.id;
+  if (!id) return json({ error: "missing id" }, 400);
+  let body: { via?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  const via = String(body.via ?? "").slice(0, 60);
+  if (!via) return json({ error: "missing via" }, 400);
+
+  const row = await env.DB.prepare(
+    `SELECT delivered_at FROM care_escalations WHERE id = ?`,
+  ).bind(id).first<{ delivered_at: string | null }>();
+  if (!row) return json({ error: "not found" }, 404);
+  if (row.delivered_at) return json({ ok: true, already_delivered: true, delivered_at: row.delivered_at });
+
+  // ISO like detected_at, not datetime('now') -- mixed formats in one table sort wrong the first
+  // time anyone computes delivery latency (reviewer, 2026-08-17).
+  await env.DB.prepare(
+    `UPDATE care_escalations SET delivered_at = ?, delivered_via = ? WHERE id = ? AND delivered_at IS NULL`,
+  ).bind(new Date().toISOString(), via, id).run();
+  return json({ ok: true });
+}
+
+/** A failed delivery attempt, recorded on the row -- pm2 logs rotate; a row stuck at
+ *  attempt_count 40 with a stable last_error is a diagnosable deterministic reject
+ *  ([[deterministic-reject-is-not-transient]]). */
+export async function postCareEscalationAttempt(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
+  const id = params.id;
+  if (!id) return json({ error: "missing id" }, 400);
+  let body: { error?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  const res = await env.DB.prepare(
+    `UPDATE care_escalations SET attempt_count = attempt_count + 1, last_attempt_at = ?, last_error = ?
+     WHERE id = ? AND delivered_at IS NULL`,
+  ).bind(new Date().toISOString(), String(body.error ?? "").slice(0, 300) || null, id).run();
+  return json({ ok: true, counted: (res.meta?.changes ?? 0) > 0 });
+}
+
 /** The newest un-acted, un-decayed firing assigned to this companion -- the worker's gesture
  *  tick polls this. Same predicate as the loader block (mind/blocks/care.ts), one lane one filter. */
 export async function getCarePending(_request: Request, env: Env, params: Record<string, string>): Promise<Response> {

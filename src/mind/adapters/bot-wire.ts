@@ -230,6 +230,8 @@ export function botWireFromMindState(
     // a project no surface shows is a starved affordance.
     projects: ms.growth.projects,
     budget: ms.growth.budget,
+    // 0.10.0: deploy change-notes -- announced system changes, 14-day window.
+    change_notes: ms.world.change_notes,
     recent_witness: ms.relational.recent_witness,
 
     // Coherence review D11 (2026-08-15): the first deliberate ADDITION since the 44-key freeze --

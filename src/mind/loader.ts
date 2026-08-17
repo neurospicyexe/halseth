@@ -110,7 +110,7 @@ export async function loadMindState(
     // -- 13 of execBotOrient's 40 keys mapped to blocks the loader could not fill.
     guard("growth", () => loadGrowthBlocks(env, companionId), { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [], projects: [], budget: null }),
     // Wave 4: the shared world (9). 14 unfilled -> 5.
-    guard("world", () => loadWorldBlocks(env, companionId), { club: null, commons: [], commons_life: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [] }),
+    guard("world", () => loadWorldBlocks(env, companionId), { club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [] }),
     // Wave 5: oversight (3). With session_narrative and the worldview alias, NOT_YET_LOADED hits ZERO.
     guard("oversight", () => loadOversightBlocks(env, companionId), { guardian_cards: [], tripwires: [], questions: [], answered_questions: [], growth_unconfirmed: [] }),
     guard("narrative", () => loadSessionNarrative(env, companionId), null),

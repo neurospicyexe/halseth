@@ -27,7 +27,12 @@ import type { RazielStateView } from "./blocks/care.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 
-/** 0.9.0 -- consequence layer C3 (2026-08-16, mig 0124) added `growth.budget`: the weekly run
+/** 0.10.0 -- deploy change-notes (2026-08-17): added `world.change_notes` -- commons posts with
+ *  context 'change-note[:version]', last 14 days, rendered on every surface. The system announces
+ *  its own changes so the triad stops reverse-engineering deploys from wobbling instruments; the
+ *  scheduled rider (src/mind/changelog.ts) posts each contract version's note exactly once, and
+ *  CI enforces that a version bump carries a note. MINOR: additive only.
+ *  0.9.0 -- consequence layer C3 (2026-08-16, mig 0124) added `growth.budget`: the weekly run
  *  ledger (R2: 1 credit = 1 autonomous run, 7/week, Monday Chicago refill, no rollover). The
  *  render rule rides the shape: a budget always states its denominator ("N of 7"), and a spent
  *  budget is VISIBLE ("spent until Monday"), never silence. null = the read failed (absent is
@@ -49,7 +54,7 @@ import type { BeliefExtras } from "./blocks/beliefs.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.9.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.10.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -204,6 +209,8 @@ export interface MindState {
     /** 0.5.0 (coherence review D7): the commons as a shared board, any author. Without it,
      *  companion-authored posts were written into a lane no companion ever read back. */
     commons_life: WorldBlocks["commons_life"];
+    /** 0.10.0: deploy change-notes, 14-day window -- the system announcing its own changes. */
+    change_notes: WorldBlocks["change_notes"];
     shelf: WorldBlocks["shelf"];
     collection: WorldBlocks["collection"];
     forage: WorldBlocks["forage"];

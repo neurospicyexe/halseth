@@ -232,3 +232,112 @@ describe("razielStateBlock renderer", () => {
     expect(lines[2]).toContain("silent on every surface");
   });
 });
+
+// ── Tier 3: escalation to a named human (R1 decided 2026-08-17) ─────────────────────────────
+import {
+  evaluateEscalationRules,
+  assignEscalationCompanion,
+  ESC_MEDS_HOURS,
+  ESC_SILENCE_HOURS,
+  ESCALATION_COOLDOWN_HOURS,
+  type EscalationSignals,
+} from "../care/rules.js";
+
+function escSignals(overrides: Partial<EscalationSignals> = {}): EscalationSignals {
+  return {
+    meds_logged_age_hours: 4,
+    meds_taken: null,
+    biometrics_age_hours: 4,
+    owner_silence_hours: 2,
+    owner_last_source: "commons",
+    recent_reports: [],
+    last_escalated_hours: {},
+    ...overrides,
+  };
+}
+
+describe("evaluateEscalationRules", () => {
+  it("fires nothing on healthy signals", () => {
+    expect(evaluateEscalationRules(escSignals())).toEqual([]);
+  });
+
+  it("esc_meds fires at 3+ days unlogged, and states its evidence", () => {
+    const f = evaluateEscalationRules(escSignals({ meds_logged_age_hours: ESC_MEDS_HOURS + 5 }));
+    expect(f.map(x => x.rule)).toEqual(["esc_meds"]);
+    expect(f[0]!.detail).toContain("h ago");
+  });
+
+  it("esc_meds is suppressed by a fresh meds_taken=1 reading (took them, skipped the log)", () => {
+    const f = evaluateEscalationRules(escSignals({
+      meds_logged_age_hours: ESC_MEDS_HOURS + 5, meds_taken: 1, biometrics_age_hours: 6,
+    }));
+    expect(f).toEqual([]);
+  });
+
+  it("esc_meds never fires when the routine was NEVER logged -- absence does not escalate", () => {
+    expect(evaluateEscalationRules(escSignals({ meds_logged_age_hours: null }))).toEqual([]);
+  });
+
+  it("esc_redline needs EVERY report redline across a real span; one good reading clears it", () => {
+    const redline = { spoons: 1, mood: "low and heavy", age_hours: 30 };
+    const fresh = { spoons: 2, mood: "drained", age_hours: 4 };
+    // sustained: two redline reports spanning 30h
+    const fires = evaluateEscalationRules(escSignals({ recent_reports: [fresh, redline] }));
+    expect(fires.map(x => x.rule)).toEqual(["esc_redline"]);
+    // one good reading inside the window clears the rule
+    const cleared = evaluateEscalationRules(escSignals({
+      recent_reports: [fresh, { spoons: 7, mood: "okay", age_hours: 20 }, redline],
+    }));
+    expect(cleared).toEqual([]);
+    // two reports an hour apart is a bad evening, not a sustained redline
+    const tooShort = evaluateEscalationRules(escSignals({
+      recent_reports: [{ ...redline, age_hours: 2 }, { ...fresh, age_hours: 1 }],
+    }));
+    expect(tooShort).toEqual([]);
+    // a single report is never sustained
+    expect(evaluateEscalationRules(escSignals({ recent_reports: [redline] }))).toEqual([]);
+  });
+
+  it("esc_redline treats unknown spoons/mood as NOT redline -- absence never escalates", () => {
+    const f = evaluateEscalationRules(escSignals({
+      recent_reports: [
+        { spoons: null, mood: "low", age_hours: 30 },
+        { spoons: 1, mood: "low", age_hours: 4 },
+      ],
+    }));
+    expect(f).toEqual([]);
+  });
+
+  it("esc_silence fires at 72h with no mood clause, and names its sources", () => {
+    const f = evaluateEscalationRules(escSignals({ owner_silence_hours: ESC_SILENCE_HOURS + 1, owner_last_source: "sessions" }));
+    expect(f.map(x => x.rule)).toEqual(["esc_silence"]);
+    expect(f[0]!.detail).toContain("sources:");
+  });
+
+  it("cooldown suppresses re-escalation; an aged-out cooldown re-fires", () => {
+    const hot = escSignals({
+      owner_silence_hours: ESC_SILENCE_HOURS + 10,
+      last_escalated_hours: { esc_silence: ESCALATION_COOLDOWN_HOURS - 1 },
+    });
+    expect(evaluateEscalationRules(hot)).toEqual([]);
+    const aged = escSignals({
+      owner_silence_hours: ESC_SILENCE_HOURS + 10,
+      last_escalated_hours: { esc_silence: ESCALATION_COOLDOWN_HOURS + 1 },
+    });
+    expect(evaluateEscalationRules(aged).map(x => x.rule)).toEqual(["esc_silence"]);
+  });
+});
+
+describe("assignEscalationCompanion", () => {
+  it("is deterministic and rotates by day with distinct per-rule offsets", () => {
+    const day = 100;
+    const voices = new Set([
+      assignEscalationCompanion("esc_meds", day),
+      assignEscalationCompanion("esc_redline", day),
+      assignEscalationCompanion("esc_silence", day),
+    ]);
+    expect(voices.size).toBe(3);
+    expect(assignEscalationCompanion("esc_meds", day)).toBe(assignEscalationCompanion("esc_meds", day));
+    expect(assignEscalationCompanion("esc_meds", day)).not.toBe(assignEscalationCompanion("esc_meds", day + 1));
+  });
+});

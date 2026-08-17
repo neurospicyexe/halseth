@@ -138,6 +138,15 @@ export interface CommonsLifePost {
   created_at: string;
 }
 
+/** A deploy change-note (2026-08-17): a commons post with context 'change-note[:version]'.
+ *  Its own field rather than riding commons_life because a change-note must survive longer
+ *  than an 8-post scroll window -- it renders for 14 days, then self-cleans. */
+export interface ChangeNote {
+  id: string;
+  body: string;
+  created_at: string;
+}
+
 export interface WorldBlocks {
   club: ClubRound | null;
   commons: CommonsPost[];
@@ -146,6 +155,9 @@ export interface WorldBlocks {
    *  shelf reactions, replies) were written into a lane no companion ever read back, making the
    *  commons a one-way drop box. This is the last few posts by ANYONE, authors visible. */
   commons_life: CommonsLifePost[];
+  /** Deploy change-notes from the last 14 days -- the system announcing its own changes so a
+   *  vanished counter is a stated change, not a mystery ([[invisible-effect-reads-as-dead-control]]). */
+  change_notes: ChangeNote[];
   shelf: ShelfItem[];
   collection: { forage: unknown[]; media: unknown[]; top: CollectionHighlight[] };
   forage: { pool: ForageFind[]; active: ForageFind[] };
@@ -158,7 +170,7 @@ export interface WorldBlocks {
 }
 
 const EMPTY: WorldBlocks = {
-  club: null, commons: [], commons_life: [], shelf: [], collection: { forage: [], media: [], top: [] },
+  club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] },
   forage: { pool: [], active: [] }, listens: [],
   motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [],
   watching: [],
@@ -167,7 +179,7 @@ const EMPTY: WorldBlocks = {
 /** Never throws: the shared world is context, and missing context must never break a boot. */
 export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise<WorldBlocks> {
   try {
-    const [club, commons, commonsLife, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
+    const [club, commons, commonsLife, changeNotes, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
       await Promise.all([
         env.DB.prepare(
           "SELECT r.id, r.status, r.opened_at, r.activated_at, r.discussing_at, (SELECT title FROM club_recommendations WHERE id = r.winning_recommendation_id) AS winner_title, (SELECT COUNT(*) FROM club_recommendations WHERE round_id = r.id) AS candidate_count FROM club_rounds r WHERE r.status != 'closed' ORDER BY r.opened_at DESC LIMIT 1"
@@ -185,6 +197,11 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         env.DB.prepare(
           "SELECT id, author, context, body, reply_to, created_at FROM commons_posts ORDER BY created_at DESC LIMIT 8"
         ).all<CommonsLifePost>(),
+        // Change-notes get their own 14-day window (idx_commons_context makes the LIKE cheap):
+        // a deploy announcement must outlive the board's 8-post scroll to actually be read.
+        env.DB.prepare(
+          "SELECT id, body, created_at FROM commons_posts WHERE context LIKE 'change-note%' AND created_at >= datetime('now', '-14 days') ORDER BY created_at DESC LIMIT 3"
+        ).all<ChangeNote>(),
         env.DB.prepare(
           "SELECT title, kind, note FROM obsession_shelf WHERE status = 'active' ORDER BY updated_at DESC LIMIT 6"
         ).all<ShelfItem>(),
@@ -300,6 +317,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
       club: club ?? null,
       commons: commons.results ?? [],
       commons_life: commonsLife.results ?? [],
+      change_notes: changeNotes.results ?? [],
       shelf: shelf.results ?? [],
       collection: { forage: colForage.results ?? [], media: colMedia.results ?? [], top: colTop.results ?? [] },
       forage: { pool: pool.results ?? [], active: active.results ?? [] },

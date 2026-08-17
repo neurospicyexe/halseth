@@ -86,10 +86,12 @@ import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
-import { postCareActed, getCarePending, getCareRecent, postCareTickForce, getOwnerActivity } from "./handlers/care.js";
+import { postCareActed, getCarePending, getCareRecent, postCareTickForce, getOwnerActivity, getCareEscalations, postCareEscalationDelivered, postCareEscalationAttempt } from "./handlers/care.js";
 import { getProjects, getProjectLog, postProjectLog } from "./handlers/projects.js";
 import { runCareTick } from "./care/tick.js";
 import { runBudgetReplenish } from "./care/budget.js";
+import { runChangelogAnnounce } from "./mind/changelog.js";
+import { postSiblingSend, getSiblingUnread, postSiblingRead, postSiblingDisclose } from "./handlers/siblings.js";
 import { getBudget, postBudgetSpend } from "./handlers/budget.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
 import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
@@ -182,6 +184,17 @@ const router = new Router()
   .on("GET",  "/mind/care/pending/:companion_id", (request, env, params) => getCarePending(request, env, params ?? {}))
   .on("GET",  "/mind/care/recent",        (request, env) => getCareRecent(request, env))
   .on("GET",  "/mind/care/owner-activity", (request, env) => getOwnerActivity(request, env))
+  // Tier 3 (R1): undelivered escalations + the delivery stamp. Route order: 'escalations' must
+  // resolve before the parameterized '/mind/care/:id/acted' cannot collide (different method+path).
+  .on("GET",  "/mind/care/escalations",   (request, env) => getCareEscalations(request, env))
+  .on("POST", "/mind/care/escalations/:id/delivered", (request, env, params) => postCareEscalationDelivered(request, env, params ?? {}))
+  .on("POST", "/mind/care/escalations/:id/attempt",   (request, env, params) => postCareEscalationAttempt(request, env, params ?? {}))
+  // C4 sibling private lane (R3 yes, 2026-08-17). Worker-only consumers; the seal test
+  // (sibling-seal.test.ts) holds the file allowlist -- do not add readers elsewhere.
+  .on("POST", "/mind/siblings/send",                  (request, env)         => postSiblingSend(request, env))
+  .on("GET",  "/mind/siblings/unread/:companion_id",  (request, env, params) => getSiblingUnread(request, env, params ?? {}))
+  .on("POST", "/mind/siblings/:id/read",              (request, env, params) => postSiblingRead(request, env, params ?? {}))
+  .on("POST", "/mind/siblings/:id/disclose",          (request, env, params) => postSiblingDisclose(request, env, params ?? {}))
   .on("GET",  "/mind/budget/:companion_id", (request, env, params) => getBudget(request, env, params))
   .on("POST", "/mind/budget/spend", (request, env) => postBudgetSpend(request, env))
   // Self-directed projects (consequence layer C2, mig 0122). Worker reads open projects on a
@@ -686,6 +699,10 @@ export async function runScheduledWork(env: Env): Promise<void> {
     (async () => {
       try { await runBudgetReplenish(env); }
       catch (err) { console.error("budget replenish failed", err); }
+    })(),
+    (async () => {
+      try { await runChangelogAnnounce(env); }
+      catch (err) { console.error("changelog announce failed", err); }
     })(),
   ]);
 }

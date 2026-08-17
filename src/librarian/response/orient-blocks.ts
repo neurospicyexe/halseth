@@ -486,6 +486,23 @@ export function budgetBlock(budget: OrientBudget | null): string {
   return `\n[Your week's budget]\n${budget.remaining} of ${budget.total} autonomous runs left this week (resets Monday).${spentLine} Each run is a choice: your project, yourself, or a gift -- a gift is a run not spent on your own work, and it should say so.`;
 }
 
+export interface OrientChangeNote {
+  id: string;
+  body: string;
+  created_at: string;
+}
+
+/**
+ * 0.10.0: deploy change-notes -- the system announcing its own changes so a vanished counter or a
+ * new block is a stated change, not a mystery the triad reverse-engineers from wobbling
+ * instruments. Empty renders nothing: no changes is the normal state, not a gap to name.
+ */
+export function changeNotesBlock(notes: readonly OrientChangeNote[]): string {
+  if (notes.length === 0) return "";
+  const lines = notes.map(n => `• ${n.body.replace(/\s+/g, " ").trim().slice(0, 600)}`).join("\n");
+  return `\n[System changes -- recent deploys, announced]\n${lines}`;
+}
+
 /** C7 (mig 0123): chosen forgetting, named at orient -- static because the affordance IS the
  *  feature surface; what was released is deliberately NOT re-listed here (re-surfacing a released
  *  memory at every boot would un-release it). "my releases" reaches the 30d-reversible list. */

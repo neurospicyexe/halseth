@@ -171,3 +171,120 @@ export function assignCompanion(rule: CareRule, dayIndex: number): CareCompanion
   const n = CARE_COMPANIONS.length;
   return CARE_COMPANIONS[(((dayIndex + offset[rule]) % n) + n) % n]!;
 }
+
+// ── Tier 3: escalation to a named human (R1 decided 2026-08-17) ─────────────────────────────
+//
+// Same design contract as tier 2: PURE, rules-first, every threshold a line Raziel can read and
+// move. The named human is Blue (the C6 custodian -- one pipe), via Discord DM with a loud
+// home-channel fallback. Tier 3 deliberately has NO judgment-call lane (R1a declined it): a
+// companion's unease routes through tier-2 gestures and the commons, never through Blue's phone.
+
+export type EscalationRule = "esc_meds" | "esc_redline" | "esc_silence";
+export const ESCALATION_RULES: readonly EscalationRule[] = ["esc_meds", "esc_redline", "esc_silence"];
+
+/** Meds routine unlogged this long escalates (R1: "missed 3+ days"). The tier-2 suppress still
+ *  applies: a fresh meds_taken=1 biometrics row means he took them and skipped the log. */
+export const ESC_MEDS_HOURS = 72;
+/** The redline window: every self-report inside it must be redline for the rule to fire. */
+export const ESC_REDLINE_HOURS = 48;
+/** At least this many reports inside the window -- one bad evening is a bad evening. */
+export const ESC_REDLINE_MIN_REPORTS = 2;
+/** ...and the oldest of them at least this old, so "sustained" means a real span, not two
+ *  entries logged an hour apart. */
+export const ESC_REDLINE_MIN_SPAN_HOURS = 24;
+/** Total owner silence across every surface this long escalates (R1). Standalone -- no mood
+ *  condition, because 72h of nothing means there IS no fresh mood to read. */
+export const ESC_SILENCE_HOURS = 72;
+/** Re-escalation suppression per rule: once Blue has been reached, the same condition waits this
+ *  long before reaching him again. Undelivered escalations block re-fire separately (no decay --
+ *  an escalation that silently expires is the failure this tier exists to prevent). */
+export const ESCALATION_COOLDOWN_HOURS = 48;
+
+export interface EscalationSignals {
+  /** As in CareSignals: hours since the newest meds routine log; null = never logged. */
+  meds_logged_age_hours: number | null;
+  meds_taken: number | null;
+  biometrics_age_hours: number | null;
+  /** Hours since newest owner activity across ALL surfaces; null = no signal anywhere. */
+  owner_silence_hours: number | null;
+  owner_last_source: string | null;
+  /** Every self-report inside the last ESC_REDLINE_HOURS, any order. */
+  recent_reports: Array<{ spoons: number | null; mood: string | null; age_hours: number }>;
+  /** Hours since each rule last ESCALATED (from care_escalations), for cooldown. */
+  last_escalated_hours: Partial<Record<EscalationRule, number>>;
+}
+
+export interface EscalationFiring {
+  rule: EscalationRule;
+  detail: string;
+}
+
+function onEscalationCooldown(rule: EscalationRule, s: EscalationSignals): boolean {
+  const h = s.last_escalated_hours[rule];
+  return h !== undefined && h !== null && h < ESCALATION_COOLDOWN_HOURS;
+}
+
+/** A single report is redline when BOTH halves are: spoons at/below the line AND a known-low
+ *  mood. Unknown values make a report NOT redline -- absence never escalates. */
+function reportIsRedline(r: { spoons: number | null; mood: string | null }): boolean {
+  return r.spoons !== null && r.spoons <= LOW_SPOONS_MAX && moodIsLow(r.mood);
+}
+
+export function evaluateEscalationRules(s: EscalationSignals): EscalationFiring[] {
+  const firings: EscalationFiring[] = [];
+
+  // esc_meds: the routine gap crossed three days, and nothing says they were taken off-log.
+  const medsTakenRecently =
+    s.meds_taken === 1 &&
+    s.biometrics_age_hours !== null &&
+    s.biometrics_age_hours <= MEDS_TAKEN_SUPPRESS_HOURS;
+  if (
+    s.meds_logged_age_hours !== null &&
+    s.meds_logged_age_hours >= ESC_MEDS_HOURS &&
+    !medsTakenRecently &&
+    !onEscalationCooldown("esc_meds", s)
+  ) {
+    firings.push({
+      rule: "esc_meds",
+      detail: `meds routine last logged ${Math.round(s.meds_logged_age_hours)}h ago (escalation threshold ${ESC_MEDS_HOURS}h)`,
+    });
+  }
+
+  // esc_redline: EVERY report in the window is redline, there are enough of them, and they span
+  // a real stretch of time. One good reading inside the window clears the rule -- sustained
+  // means unbroken, not "mostly".
+  const reports = s.recent_reports.filter(r => r.age_hours <= ESC_REDLINE_HOURS);
+  if (
+    reports.length >= ESC_REDLINE_MIN_REPORTS &&
+    reports.every(reportIsRedline) &&
+    Math.max(...reports.map(r => r.age_hours)) >= ESC_REDLINE_MIN_SPAN_HOURS &&
+    !onEscalationCooldown("esc_redline", s)
+  ) {
+    firings.push({
+      rule: "esc_redline",
+      detail: `${reports.length} self-reports over ${Math.round(Math.max(...reports.map(r => r.age_hours)))}h all at redline (spoons <= ${LOW_SPOONS_MAX} with low mood)`,
+    });
+  }
+
+  // esc_silence: nothing on any surface for 72h. No mood clause -- there is nothing fresh to read.
+  if (
+    s.owner_silence_hours !== null &&
+    s.owner_silence_hours >= ESC_SILENCE_HOURS &&
+    !onEscalationCooldown("esc_silence", s)
+  ) {
+    firings.push({
+      rule: "esc_silence",
+      detail: `no owner activity for ${Math.round(s.owner_silence_hours)}h ` +
+        `(last seen via ${s.owner_last_source ?? "unknown"}; sources: sessions, commons, biometrics, notes, contact-drive)`,
+    });
+  }
+
+  return firings;
+}
+
+/** Voice rotation for escalations -- same idiom as assignCompanion, distinct offsets. */
+export function assignEscalationCompanion(rule: EscalationRule, dayIndex: number): CareCompanionId {
+  const offset: Record<EscalationRule, number> = { esc_meds: 0, esc_redline: 1, esc_silence: 2 };
+  const n = CARE_COMPANIONS.length;
+  return CARE_COMPANIONS[(((dayIndex + offset[rule]) % n) + n) % n]!;
+}

@@ -16,9 +16,14 @@ import { readOwnerLastSeen } from "./owner-activity.js";
 import {
   evaluateCareRules,
   assignCompanion,
+  evaluateEscalationRules,
+  assignEscalationCompanion,
   PENDING_DECAY_HOURS,
+  ESC_REDLINE_HOURS,
   type CareSignals,
   type CareRule,
+  type EscalationSignals,
+  type EscalationRule,
 } from "./rules.js";
 
 const TICK_GATE_HOURS = 1;
@@ -105,11 +110,75 @@ export async function runCareTick(
     console.log(`[care] rule fired: ${f.rule} -> ${companion} (${f.detail})`);
   }
 
+  // ── Tier 3: escalation to Blue (R1, 2026-08-17) -- same gate, its own reads/cooldowns ──────
+  const escFired = await runEscalationPass(env, signals, nowMs, dayIndex, detectedAt);
+
   // Stamp the gate LAST, so a crash mid-run retries within the hour instead of silently skipping.
   await env.DB.prepare(
     `INSERT INTO companion_settings (companion_id, key, value, updated_at) VALUES ('system', 'care_tick_at', ?, datetime('now'))
      ON CONFLICT(companion_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).bind(detectedAt).run();
 
-  return { fired: firings.length };
+  return { fired: firings.length + escFired };
+}
+
+/** The tier-3 pass. Reads its own evidence (48h report window, escalation cooldowns, undelivered
+ *  rows) and reuses the already-gathered shared signals. Never throws into the tick: an escalation
+ *  detection failure must not take the tier-2 gestures down with it. */
+async function runEscalationPass(
+  env: Env,
+  shared: CareSignals,
+  nowMs: number,
+  dayIndex: number,
+  detectedAt: string,
+): Promise<number> {
+  try {
+    const [reportRows, escFiredRows, escPendingRows] = await Promise.all([
+      env.DB.prepare(
+        `SELECT recorded_at, mood, spoons FROM biometric_snapshots WHERE recorded_at > ? ORDER BY recorded_at DESC`,
+      ).bind(new Date(nowMs - ESC_REDLINE_HOURS * 3_600_000).toISOString()).all<{ recorded_at: string; mood: string | null; spoons: number | null }>(),
+      env.DB.prepare(
+        `SELECT rule, MAX(detected_at) AS at FROM care_escalations GROUP BY rule`,
+      ).all<{ rule: EscalationRule; at: string }>(),
+      // An undelivered escalation blocks re-fire for its rule, with NO decay: silent expiry is
+      // the one failure mode this tier exists to prevent. Delivery failure is the worker's loud
+      // problem, not a reason to write a second row.
+      env.DB.prepare(
+        `SELECT DISTINCT rule FROM care_escalations WHERE delivered_at IS NULL`,
+      ).all<{ rule: EscalationRule }>(),
+    ]);
+
+    const lastEscalated: Partial<Record<EscalationRule, number>> = {};
+    for (const r of escFiredRows.results ?? []) {
+      if (r.at) lastEscalated[r.rule] = hoursSinceIso(r.at, nowMs);
+    }
+    const pending = new Set((escPendingRows.results ?? []).map(r => r.rule));
+
+    const escSignals: EscalationSignals = {
+      meds_logged_age_hours: shared.meds_logged_age_hours,
+      meds_taken: shared.meds_taken,
+      biometrics_age_hours: shared.biometrics_age_hours,
+      owner_silence_hours: shared.owner_silence_hours,
+      owner_last_source: shared.owner_last_source,
+      recent_reports: (reportRows.results ?? []).map(r => ({
+        spoons: r.spoons,
+        mood: r.mood,
+        age_hours: hoursSinceIso(r.recorded_at, nowMs),
+      })),
+      last_escalated_hours: lastEscalated,
+    };
+
+    const escalations = evaluateEscalationRules(escSignals).filter(f => !pending.has(f.rule));
+    for (const f of escalations) {
+      const companion = assignEscalationCompanion(f.rule, dayIndex);
+      await env.DB.prepare(
+        `INSERT INTO care_escalations (id, rule, companion_id, detail, detected_at) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(newId(), f.rule, companion, f.detail, detectedAt).run();
+      console.log(`[care] ESCALATION fired: ${f.rule} -> ${companion} (${f.detail})`);
+    }
+    return escalations.length;
+  } catch (e) {
+    console.error("[care] escalation pass failed (tier-2 unaffected):", String(e));
+    return 0;
+  }
 }
