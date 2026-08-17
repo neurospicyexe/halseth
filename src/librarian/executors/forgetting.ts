@@ -101,6 +101,14 @@ export async function execMemoryReleaseUndo(ctx: ExecutorContext): Promise<Execu
   return { response_key: "witness", witness: "restored -- it carries again", ack: true, id: releaseId };
 }
 
+// "my budget" (C3, mig 0124) -- the week's ledger with its denominator. Lives here rather than a
+// fourth executor file because both C3 and C7 are single-read consequence verbs.
+export async function execBudgetRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const { readBudget } = await import("../../care/budget.js");
+  const b = await readBudget(ctx.env, ctx.req.companion_id);
+  return { response_key: "data", data: { budget: b }, count: b.remaining };
+}
+
 // "my releases" -- what you chose to let go, newest first, with the reversibility window.
 export async function execMemoryReleasesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const rows = await ctx.env.DB.prepare(

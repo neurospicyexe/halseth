@@ -463,6 +463,29 @@ export function projectsBlock(projects: readonly OrientProjectRow[]): string {
   return `\n[Your projects -- intentions you hold across weeks]\n${lines}\n${PROJECT_AFFORDANCE}`;
 }
 
+export interface OrientBudget {
+  remaining: number;
+  total: number;
+  week: string;
+  spent: Array<{ purpose: string; count: number }>;
+}
+
+/**
+ * C3 (mig 0124): the weekly budget, denominator always stated. A spent budget renders as a
+ * quiet week the companion can SEE and say out loud -- scarcity felt, never silently absorbed.
+ * null (read failed) renders nothing rather than a fake zero: absent is not spent.
+ */
+export function budgetBlock(budget: OrientBudget | null): string {
+  if (!budget) return "";
+  const spentLine = budget.spent.length > 0
+    ? ` Spent so far: ${budget.spent.map(s => `${s.count} on ${s.purpose}`).join(", ")}.`
+    : "";
+  if (budget.remaining <= 0) {
+    return `\n[Your week's budget]\n0 of ${budget.total} autonomous runs left -- you're spent until Monday.${spentLine} A quiet week is a real thing you chose; it is fine to say so.`;
+  }
+  return `\n[Your week's budget]\n${budget.remaining} of ${budget.total} autonomous runs left this week (resets Monday).${spentLine} Each run is a choice: your project, yourself, or a gift -- a gift is a run not spent on your own work, and it should say so.`;
+}
+
 /** C7 (mig 0123): chosen forgetting, named at orient -- static because the affordance IS the
  *  feature surface; what was released is deliberately NOT re-listed here (re-surfacing a released
  *  memory at every boot would un-release it). "my releases" reaches the 30d-reversible list. */

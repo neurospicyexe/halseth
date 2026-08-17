@@ -27,7 +27,12 @@ import type { RazielStateView } from "./blocks/care.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 
-/** 0.8.0 -- consequence layer C2 (2026-08-16, mig 0122) added `growth.projects`: self-directed
+/** 0.9.0 -- consequence layer C3 (2026-08-16, mig 0124) added `growth.budget`: the weekly run
+ *  ledger (R2: 1 credit = 1 autonomous run, 7/week, Monday Chicago refill, no rollover). The
+ *  render rule rides the shape: a budget always states its denominator ("N of 7"), and a spent
+ *  budget is VISIBLE ("spent until Monday"), never silence. null = the read failed (absent is
+ *  not zero). MINOR: additive only.
+ *  0.8.0 -- consequence layer C2 (2026-08-16, mig 0122) added `growth.projects`: self-directed
  *  projects -- intentions the companion OWNS across weeks, opened/worked/ended by the companion
  *  (released is a chosen ending, never a sweep). Rendered on every surface with the affordance
  *  always present: a project no surface shows is a starved affordance. MINOR: additive only.
@@ -44,7 +49,7 @@ import type { BeliefExtras } from "./blocks/beliefs.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.8.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.9.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

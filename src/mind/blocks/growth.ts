@@ -23,6 +23,7 @@ import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
 import { PROJECT_STALE_DAYS } from "../../handlers/projects.js";
+import { readBudget, type BudgetState } from "../../care/budget.js";
 
 /** Pure decoration: idle-days + the stale flag, from the row's own timestamps. Exported for tests. */
 export function decorateProject(
@@ -94,17 +95,20 @@ export interface GrowthBlocks {
   /** Open + paused self-directed projects, oldest-touched first (the worker's pick order, so what
    *  the companion sees and what the worker works never disagree). */
   projects: OrientProject[];
+  /** C3 (mig 0124): this week's budget. null only when the read itself failed -- absent is not
+   *  zero; a spent budget is a real 0 with its denominator. */
+  budget: BudgetState | null;
 }
 
 /** Never throws: a growth read must not be able to break a boot. Each miss degrades to empty. */
 export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promise<GrowthBlocks> {
   const empty: GrowthBlocks = {
     journal_recent: [], patterns: [], markers: [], reflection: null,
-    seeds: [], clearing_count: 0, drifts_open: [], projects: [],
+    seeds: [], clearing_count: 0, drifts_open: [], projects: [], budget: null,
   };
 
   try {
-    const [journal, patterns, markers, reflection, seeds, pending, drifts, projects] = await Promise.all([
+    const [journal, patterns, markers, reflection, seeds, pending, drifts, projects, budget] = await Promise.all([
       env.DB.prepare(
         "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
       ).bind(companionId).all<GrowthJournalEntry>(),
@@ -133,6 +137,13 @@ export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promis
           "WHERE companion_id = ? AND status IN ('open', 'paused') " +
           "ORDER BY COALESCE(last_worked_at, created_at) ASC LIMIT 4"
       ).bind(companionId).all<Omit<OrientProject, "days_idle" | "stale">>(),
+      // C3 (mig 0124): pure-D1 (two reads; the replenish self-heal INSERT fires at most once a
+      // week per companion because the every-minute rider normally lands it first). null on its
+      // own failure so a budget hiccup can't take the rest of growth down with it.
+      readBudget(env, companionId).catch((err): BudgetState | null => {
+        console.warn("[mind/growth] budget read failed", { companionId, error: String(err) });
+        return null;
+      }),
     ]);
 
     return {
@@ -149,6 +160,7 @@ export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promis
         witness_count: Number(d.witness_count ?? 0),
       })),
       projects: (projects.results ?? []).map(p => decorateProject(p)),
+      budget,
     };
   } catch (err) {
     console.warn("[mind/growth] load failed, degrading to empty", { companionId, error: String(err) });

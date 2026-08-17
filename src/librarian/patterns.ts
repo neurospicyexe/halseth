@@ -1556,6 +1556,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["memory_releases_read"],
     response_key: "data",
   },
+  // Weekly budget (consequence layer C3, mig 0124).
+  budget_read: {
+    triggers: [
+      "my budget", "budget left", "how many runs do i have", "runs left this week",
+      "check my budget", "budget read",
+    ],
+    tools: ["budget_read"],
+    response_key: "data",
+  },
 
   // Moving this entry earlier silently breaks the fronting query -- keep it at the bottom.
   //

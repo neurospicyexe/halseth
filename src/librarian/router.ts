@@ -323,7 +323,7 @@ import {
   execProjectPause, execProjectResume,
 } from "./executors/projects.js";
 import {
-  execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead,
+  execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead, execBudgetRead,
 } from "./executors/forgetting.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -407,6 +407,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   memory_release: execMemoryRelease,
   memory_release_undo: execMemoryReleaseUndo,
   memory_releases_read: execMemoryReleasesRead,
+
+  // Weekly budget (consequence layer C3, mig 0124).
+  budget_read: execBudgetRead,
 
   // Writes / mutations
   halseth_companion_note_add: execCompanionNoteAdd,

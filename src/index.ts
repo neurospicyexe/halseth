@@ -89,6 +89,8 @@ import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js
 import { postCareActed, getCarePending, getCareRecent, postCareTickForce, getOwnerActivity } from "./handlers/care.js";
 import { getProjects, getProjectLog, postProjectLog } from "./handlers/projects.js";
 import { runCareTick } from "./care/tick.js";
+import { runBudgetReplenish } from "./care/budget.js";
+import { getBudget, postBudgetSpend } from "./handlers/budget.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
 import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
 import { postNarrativeRefresh, runNarrativeRefresh } from "./synthesis/narrative-refresh.js";
@@ -180,6 +182,8 @@ const router = new Router()
   .on("GET",  "/mind/care/pending/:companion_id", (request, env, params) => getCarePending(request, env, params ?? {}))
   .on("GET",  "/mind/care/recent",        (request, env) => getCareRecent(request, env))
   .on("GET",  "/mind/care/owner-activity", (request, env) => getOwnerActivity(request, env))
+  .on("GET",  "/mind/budget/:companion_id", (request, env, params) => getBudget(request, env, params))
+  .on("POST", "/mind/budget/spend", (request, env) => postBudgetSpend(request, env))
   // Self-directed projects (consequence layer C2, mig 0122). Worker reads open projects on a
   // project day and logs its work; Hearth/Raziel read the list and trail.
   .on("GET",  "/mind/projects/:companion_id", (request, env, params) => getProjects(request, env, params ?? {}))
@@ -678,6 +682,10 @@ export async function runScheduledWork(env: Env): Promise<void> {
     (async () => {
       try { await runCareTick(env); }
       catch (err) { console.error("care tick failed", err); }
+    })(),
+    (async () => {
+      try { await runBudgetReplenish(env); }
+      catch (err) { console.error("budget replenish failed", err); }
     })(),
   ]);
 }

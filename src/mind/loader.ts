@@ -108,7 +108,7 @@ export async function loadMindState(
     guard("felt", () => loadFeltFermentBlocks(env, companionId), { soma_floats: [], drives: [], ferment_events: [], ferment_at: null }),
     // Wave 3 (2026-08-01): growth (7), 21 unfilled -> 14. This is the wave that unblocks the bot cutover
     // -- 13 of execBotOrient's 40 keys mapped to blocks the loader could not fill.
-    guard("growth", () => loadGrowthBlocks(env, companionId), { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [], projects: [] }),
+    guard("growth", () => loadGrowthBlocks(env, companionId), { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [], projects: [], budget: null }),
     // Wave 4: the shared world (9). 14 unfilled -> 5.
     guard("world", () => loadWorldBlocks(env, companionId), { club: null, commons: [], commons_life: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [] }),
     // Wave 5: oversight (3). With session_narrative and the worldview alias, NOT_YET_LOADED hits ZERO.

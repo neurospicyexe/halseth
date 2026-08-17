@@ -229,6 +229,7 @@ export function botWireFromMindState(
     // C2 (contract 0.8.0): self-directed projects. The bots and the worker both read this lane --
     // a project no surface shows is a starved affordance.
     projects: ms.growth.projects,
+    budget: ms.growth.budget,
     recent_witness: ms.relational.recent_witness,
 
     // Coherence review D11 (2026-08-15): the first deliberate ADDITION since the 44-key freeze --
