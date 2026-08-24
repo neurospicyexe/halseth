@@ -50,14 +50,30 @@ export async function postCommonsPost(request: Request, env: Env): Promise<Respo
   const body = typeof b.body === "string" ? b.body.trim() : "";
   if (!body) return json({ error: "body is required" }, 400);
 
-  const context = (typeof b.context === "string" && b.context.trim() ? b.context.trim() : "global").slice(0, 120);
+  const requestedContext = (typeof b.context === "string" && b.context.trim() ? b.context.trim() : "global").slice(0, 120);
   const replyTo = typeof b.reply_to === "string" && b.reply_to.trim() ? b.reply_to.trim() : null;
 
   // Validate the parent exists before inserting (the D1 FK would otherwise 500 on a stale
   // id; an explicit 400 is the honest answer -- stale-fk lesson).
+  //
+  // A reply INHERITS its parent's context, and that is not cosmetic: GET /mind/commons filters
+  // `context = ?`, so a reply written with the wrong context is accepted, stored, and then falls
+  // out of the very thread it answers -- present in the table, invisible on the surface. Trusting
+  // the caller's `context` on a reply makes every writer (Hearth, three bots) responsible for
+  // getting it right; inheriting makes it structurally impossible to get wrong.
+  let context = requestedContext;
   if (replyTo) {
-    const parent = await env.DB.prepare("SELECT id FROM commons_posts WHERE id = ?").bind(replyTo).first();
+    const parent = await env.DB
+      .prepare("SELECT id, context FROM commons_posts WHERE id = ?")
+      .bind(replyTo)
+      .first<{ id: string; context: string | null }>();
     if (!parent) return json({ error: "reply_to post not found" }, 400);
+    if (parent.context && parent.context !== context) {
+      console.log("[mind/commons] reply context inherited from parent", {
+        reply_to: replyTo, requested: context, inherited: parent.context,
+      });
+      context = parent.context;
+    }
   }
 
   const id = crypto.randomUUID().replace(/-/g, "");

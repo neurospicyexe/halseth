@@ -77,7 +77,18 @@ export interface Motif {
   status: string;
 }
 export interface ShelfItem { title: string; kind: string; note: string | null }
-export interface CommonsPost { id: string; context: string | null; body: string; created_at: string }
+export interface CommonsPost {
+  id: string;
+  context: string | null;
+  body: string;
+  created_at: string;
+  /** Set when this drop is Raziel REPLYING to something a companion said on the wall (2026-08-23,
+   *  when the Hearth log grew a reply box). Without the parent, an answer like "yes, exactly that"
+   *  arrives as a contextless ambient note and reads as a non-sequitur -- an address needs its
+   *  speakers. `parent_author` is who he is answering; `parent_body` is what they said. */
+  parent_author: string | null;
+  parent_body: string | null;
+}
 export interface SolState {
   name: string; species: string | null; trust: number;
   last_interaction_at: string | null;
@@ -187,11 +198,23 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         // RAZIEL's wall posts that THIS companion has not answered yet. Both halves matter: `author =
         // 'raziel'` because the block is his drops rather than a general feed, and the NOT IN because a
         // post already answered is not still an invitation. Surfaced as drops, not pings.
+        //
+        // ADDRESSING (2026-08-23): once Hearth's log grew a reply box, a Raziel post can be an answer
+        // to one specific companion. A reply whose parent was written by a companion goes to THAT
+        // companion only -- the other two reading "yes, exactly that" aimed at someone else is noise
+        // that looks like a non-sequitur from him. The fallbacks are deliberate: a parent authored by
+        // raziel himself (he continues his own thought) or a parent that has gone missing falls back to
+        // all three, because scoping strictly on the parent's author would surface a self-reply to
+        // NOBODY. `p.author IS NULL` is that missing-parent case; do not "simplify" it away.
         env.DB.prepare(
-          `SELECT id, context, body, created_at FROM commons_posts
-           WHERE author = 'raziel'
-             AND id NOT IN (SELECT reply_to FROM commons_posts WHERE author = ?1 AND reply_to IS NOT NULL)
-           ORDER BY created_at DESC LIMIT 5`
+          `SELECT c.id, c.context, c.body, c.created_at,
+                  p.author AS parent_author, p.body AS parent_body
+             FROM commons_posts c
+             LEFT JOIN commons_posts p ON p.id = c.reply_to
+            WHERE c.author = 'raziel'
+              AND c.id NOT IN (SELECT reply_to FROM commons_posts WHERE author = ?1 AND reply_to IS NOT NULL)
+              AND (c.reply_to IS NULL OR p.author IS NULL OR p.author = 'raziel' OR p.author = ?1)
+            ORDER BY c.created_at DESC LIMIT 5`
         ).bind(companionId).all<CommonsPost>(),
         // The shared board itself, any author -- what makes the commons readable back, not write-only.
         env.DB.prepare(

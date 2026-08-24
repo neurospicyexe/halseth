@@ -14,7 +14,15 @@ const VALID_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 type CompanionId = (typeof VALID_COMPANIONS)[number];
 
 const MAX_OPEN_QUESTIONS = 5; // cap prevents question spam from a misbehaving run
-const MAX_QUESTION_LENGTH = 600;
+
+// 2026-08-23: was 600, which cut two live questions off mid-sentence, and the clip was SILENT --
+// Raziel read them on Hearth as the companion trailing off. The caps stay (a runaway run must not
+// write a novel) but they are now generous enough that a real question never hits one, and a clip
+// LOGS. A cap you can reach without being told is indistinguishable from the writer losing its
+// train of thought. The upstream writer (nullsafe-discord phases/reflect.ts) clips to the same
+// numbers -- both sides move together or the fix lands on one writer and nothing changes.
+const MAX_QUESTION_LENGTH = 1200;
+const MAX_CONTEXT_LENGTH = 1000;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -44,9 +52,18 @@ export async function postQuestion(request: Request, env: Env): Promise<Response
   if (!isCompanionId(companionId)) {
     return json({ error: `Invalid companion_id: must be one of ${VALID_COMPANIONS.join(", ")}` }, 400);
   }
-  const question = typeof body.question === "string" ? body.question.trim().slice(0, MAX_QUESTION_LENGTH) : "";
+  const rawQuestion = typeof body.question === "string" ? body.question.trim() : "";
+  const question = rawQuestion.slice(0, MAX_QUESTION_LENGTH);
   if (!question) return json({ error: "question is required" }, 400);
-  const context = typeof body.context === "string" ? body.context.slice(0, 1000) : null;
+  const rawContext = typeof body.context === "string" ? body.context : null;
+  const context = rawContext === null ? null : rawContext.slice(0, MAX_CONTEXT_LENGTH);
+  if (rawQuestion.length > MAX_QUESTION_LENGTH || (rawContext !== null && rawContext.length > MAX_CONTEXT_LENGTH)) {
+    console.warn("[mind/questions] CLIPPED at the cap -- the stored text ends mid-sentence", {
+      companion_id: companionId,
+      question_chars: rawQuestion.length, question_cap: MAX_QUESTION_LENGTH,
+      context_chars: rawContext?.length ?? 0, context_cap: MAX_CONTEXT_LENGTH,
+    });
+  }
   const source = ["autonomous", "session", "dialectic"].includes(body.source ?? "") ? body.source! : "autonomous";
 
   try {

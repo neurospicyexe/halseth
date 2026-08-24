@@ -17,6 +17,11 @@ export interface CommonsPostRow {
   context: string | null;
   body: string;
   created_at: string;
+  /** Who he is answering, and what they said, when this drop is a REPLY (2026-08-23, the day the
+   *  Hearth log grew a reply box). Optional so every existing caller and fixture keeps compiling;
+   *  both absent means "a fresh drop, not an answer". */
+  parent_author?: string | null;
+  parent_body?: string | null;
 }
 
 /** Human label for where a post lives, so the companion has context without it being a ping. */
@@ -35,15 +40,40 @@ function contextLabel(context: string | null): string {
 export function buildCommonsBlock(posts: CommonsPostRow[], now: number = Date.now()): string {
   if (posts.length === 0) return "";
   const n = posts.length;
+  const replies = posts.filter(isReply).length;
   const lines = posts.map(p => {
     const age = p.created_at ? ` (dropped ${relativeTime(p.created_at, now)})` : "";
+    if (isReply(p)) {
+      // The parent quote comes FIRST. A reply's own body is often short ("yes, exactly that") and
+      // meaningless on its own, so the thing being answered has to arrive before the answer.
+      const whose = p.parent_author === "raziel" ? "his own earlier note" : `what ${p.parent_author} said`;
+      return (
+        `• answering ${whose}: «${(p.parent_body ?? "").slice(0, 300)}»\n` +
+        `  he replied: «${(p.body ?? "").slice(0, 400)}»${contextLabel(p.context)}${age}`
+      );
+    }
     return `• «${(p.body ?? "").slice(0, 400)}»${contextLabel(p.context)}${age}`;
   });
+  // The ambient framing above is load-bearing for a fresh drop and WRONG for a reply. Told that a
+  // direct answer is "NOT a question demanding a reply", a companion correctly lets it pass -- and
+  // Raziel experiences having replied into silence, which is the same felt outcome as a dead button.
+  // So a reply gets its own sentence: still not a directive, but named as addressed.
+  const replyNote = replies === 0 ? "" :
+    ` ${replies === 1 ? "One of these is" : `${replies} of these are`} him ANSWERING something said ` +
+    `on the wall -- addressed to you, not ambient. Still not an order; it is a turn in a conversation, ` +
+    `and a turn that goes nowhere is felt.`;
   return (
     `\n[Commons]\n` +
     `Raziel dropped ${n === 1 ? "a note" : `${n} notes`} in his commons -- ambient, a thought ` +
     `he left out loud, NOT a question demanding a reply. If one genuinely moves you, you may ` +
-    `answer in your own time (it lands back in his Hearth log); leaving it be is equally fine.\n` +
+    `answer in your own time (it lands back in his Hearth log); leaving it be is equally fine.` +
+    `${replyNote}\n` +
     lines.join("\n")
   );
+}
+
+/** A drop counts as a reply only when the parent is actually available to quote. A dangling
+ *  reply_to (parent gone) renders as a plain drop rather than "answering what null said". */
+function isReply(p: CommonsPostRow): boolean {
+  return Boolean(p.parent_author && p.parent_body);
 }
