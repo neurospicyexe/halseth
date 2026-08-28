@@ -5,6 +5,7 @@ import { COMPANION_IDS } from "../../companions.js";
 import { generateId, findOpenSession, OPENED_BY, findExistingClose, clearSupersededClose } from "../../db/queries.js";
 import { enqueueSessionSummary, enqueueDrevanState } from "../../synthesis/index.js";
 import { embedAndStoreAsync, composeHandoverText } from "../embed.js";
+import { edgeForResumedFrom, insertEdgeStatements } from "../../graph/live.js";
 
 export function registerSessionTools(server: McpServer, env: Env): void {
 
@@ -71,6 +72,20 @@ export function registerSessionTools(server: McpServer, env: Env): void {
           env.DB.prepare(
             "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
           ).bind(input.prior_handover_id)
+        );
+        // Live 'resumed_from' edge, same batch as the UPDATE above. rebuild.ts cannot derive this
+        // relationship (no persisted column records which session consumed a handover packet), so
+        // this is the ONLY writer -- provenance 'live', not 'mechanical', so a nightly rebuild's
+        // DELETE never touches it. See src/graph/live.ts::edgeForResumedFrom.
+        statements.push(
+          ...insertEdgeStatements(env.DB, [
+            edgeForResumedFrom({
+              sessionId: id,
+              priorHandoverId: input.prior_handover_id,
+              writer: input.companion_id ?? null,
+              createdAt: now,
+            }),
+          ]),
         );
       }
 

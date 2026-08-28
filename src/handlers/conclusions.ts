@@ -10,6 +10,7 @@ import { authGuard } from "../lib/auth.js";
 import type { WmAgentId } from "../webmind/types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../mcp/embed.js";
 import { noveltyCheck } from "../webmind/novelty.js";
+import { edgeForConclusionSupersede, insertEdgeStatements } from "../graph/live.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -129,6 +130,13 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
       ).bind(newId, supersedesId, companion_id)
     );
     supersededIds.push(supersedesId);
+    // Live graph-edge write, same batch as the UPDATE it depends on -- atomic with the write that
+    // actually confirms the supersede (a caller-declared `supersedes`, never a gate proposal).
+    stmts.push(
+      ...insertEdgeStatements(env.DB, [
+        edgeForConclusionSupersede({ replacementId: newId, oldId: supersedesId, writer: companion_id, createdAt: now }),
+      ]),
+    );
   }
 
   await env.DB.batch(stmts);

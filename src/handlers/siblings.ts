@@ -17,6 +17,7 @@
 // to fund ("conversations he never sees").
 
 import type { Env } from "../types.js";
+import { edgeForNote } from "../graph/live.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -106,18 +107,34 @@ export async function postSiblingDisclose(request: Request, env: Env, params: Re
   const content =
     `[disclosed from the sibling lane by ${companionId}] ` +
     `(${note.from_id} -> ${note.to_id}, ${note.created_at})\n${note.body}`;
+  const now = new Date().toISOString();
   // Atomic AND conditional (reviewer, 2026-08-17): the pre-check above is outside the batch, so
   // two concurrent discloses both passed it -- the loser's UPDATE matched 0 rows but its INSERT
   // still landed a duplicate witnessed copy. Both statements now share the same disclosed_at IS
   // NULL condition inside one transaction: exactly one caller's pair takes effect.
+  //
+  // This disclosure is always a broadcast (to_id NULL, matching the INSERT below) -- the graph
+  // 'sent_to' edges below are guarded by the SAME "did the primary insert actually land" check
+  // (WHERE EXISTS ... inter_companion_notes WHERE id = ?) so the loser of the race above writes
+  // no edges either: an edge whose src_id points at a row that was never inserted is exactly the
+  // "confident garbage" this projection must never contain.
+  const edgeStmts = edgeForNote({ id: interId, from_id: note.from_id, to_id: null, created_at: now }).map((e) =>
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO graph_edges
+         (src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM inter_companion_notes WHERE id = ?)`,
+    ).bind(e.src_table, e.src_id, e.dst_table, e.dst_id, e.edge_type, e.writer, e.provenance, e.created_at, interId),
+  );
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO inter_companion_notes (id, from_id, to_id, content)
-       SELECT ?, ?, NULL, ? WHERE EXISTS (SELECT 1 FROM sibling_notes WHERE id = ? AND disclosed_at IS NULL)`,
-    ).bind(interId, note.from_id, content, id),
+      `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at)
+       SELECT ?, ?, NULL, ?, ? WHERE EXISTS (SELECT 1 FROM sibling_notes WHERE id = ? AND disclosed_at IS NULL)`,
+    ).bind(interId, note.from_id, content, now, id),
     env.DB.prepare(
       `UPDATE sibling_notes SET disclosed_at = ?, disclosure_ref = ? WHERE id = ? AND disclosed_at IS NULL`,
-    ).bind(new Date().toISOString(), interId, id),
+    ).bind(now, interId, id),
+    ...edgeStmts,
   ]);
   const after = await env.DB.prepare(
     `SELECT disclosure_ref FROM sibling_notes WHERE id = ?`,

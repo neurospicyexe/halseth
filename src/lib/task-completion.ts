@@ -17,6 +17,7 @@
 
 import { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
+import { edgeForNote, writeEdgesBestEffort } from "../graph/live.js";
 
 export const TASK_STATUSES = ["open", "in_progress", "done"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
@@ -97,12 +98,18 @@ export async function completeTask(
   const content = `✓ Task done — ${who} closed "${existing.title}"${assignee}. No need to raise it again.`;
 
   // Non-fatal: the status change is the real write and must not be lost to a notify failure.
-  const settled = await Promise.allSettled(toNotify.map(to =>
-    env.DB.prepare(
+  // Graph edge write rides immediately AFTER each note's confirmed success (this loop doesn't
+  // batch, so it can't ride the primary write's batch) -- never before, and never able to fail
+  // the notification itself (writeEdgesBestEffort swallows its own errors).
+  const settled = await Promise.allSettled(toNotify.map(async to => {
+    const noteId = generateId();
+    const result = await env.DB.prepare(
       `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at, reason)
        VALUES (?, 'system', ?, ?, ?, 'task_completed')`
-    ).bind(generateId(), to, content, now).run()
-  ));
+    ).bind(noteId, to, content, now).run();
+    await writeEdgesBestEffort(env.DB, edgeForNote({ id: noteId, from_id: "system", to_id: to, created_at: now }));
+    return result;
+  }));
   const failed = settled.filter(r => r.status === "rejected").length;
   if (failed) console.error("[tasks] completion notify failed for", failed, "of", toNotify.length);
 

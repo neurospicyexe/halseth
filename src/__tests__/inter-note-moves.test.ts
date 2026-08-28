@@ -81,16 +81,19 @@ describe("addCompanionNote: INSERT binds ref_type/ref_id/reason", () => {
     const { env, calls } = fakeEnv();
     const res = await addCompanionNote(env, "cypher", "drevan", "hold the thread");
     expect(res.error).toBeUndefined();
-    expect(calls).toHaveLength(1); // no existence-check call when there's no ref
+    // 1 insert + 1 live graph edge (sent_to cypher->drevan; addressed, not broadcast, no ref).
+    expect(calls).toHaveLength(2);
     expect(calls[0]!.sql).toMatch(/INSERT INTO inter_companion_notes/i);
     expect(calls[0]!.sql).toMatch(/ref_type/);
-    // bind order: id, from_id, to_id, content, ref_type, ref_id, reason
+    // bind order: id, from_id, to_id, content, created_at, ref_type, ref_id, reason
     expect(calls[0]!.bound[1]).toBe("cypher");
     expect(calls[0]!.bound[2]).toBe("drevan");
     expect(calls[0]!.bound[3]).toBe("hold the thread");
-    expect(calls[0]!.bound[4]).toBeNull();
+    expect(typeof calls[0]!.bound[4]).toBe("string"); // created_at, JS-generated
     expect(calls[0]!.bound[5]).toBeNull();
     expect(calls[0]!.bound[6]).toBeNull();
+    expect(calls[0]!.bound[7]).toBeNull();
+    expect(calls[1]!.sql).toMatch(/INSERT OR IGNORE INTO graph_edges/i);
   });
 
   it("note with a valid ref: existence-check SELECT runs, then INSERT binds all three columns", async () => {
@@ -100,13 +103,17 @@ describe("addCompanionNote: INSERT binds ref_type/ref_id/reason", () => {
     });
     expect(res.error).toBeUndefined();
     expect(res.id).toBeTruthy();
-    expect(calls).toHaveLength(2);
+    // existence check + insert + 2 live graph edges (sent_to + references).
+    expect(calls).toHaveLength(4);
     expect(calls[0]!.sql).toMatch(/SELECT 1 FROM companion_tensions WHERE id = \?/i);
     expect(calls[0]!.bound[0]).toBe("t1");
     expect(calls[1]!.sql).toMatch(/INSERT INTO inter_companion_notes/i);
-    expect(calls[1]!.bound[4]).toBe("tension");
-    expect(calls[1]!.bound[5]).toBe("t1");
-    expect(calls[1]!.bound[6]).toBe("this moves it");
+    expect(calls[1]!.bound[5]).toBe("tension");
+    expect(calls[1]!.bound[6]).toBe("t1");
+    expect(calls[1]!.bound[7]).toBe("this moves it");
+    const edgeCalls = calls.slice(2);
+    expect(edgeCalls).toHaveLength(2);
+    for (const c of edgeCalls) expect(c.sql).toMatch(/INSERT OR IGNORE INTO graph_edges/i);
   });
 
   it("existence guard: ref_id not found -> error result, NO insert executed", async () => {
@@ -146,9 +153,9 @@ describe("execCompanionNoteAdd: ref fields read ONLY from parsed context, never 
     const insert = calls.find(c => /INSERT INTO inter_companion_notes/i.test(c.sql))!;
     expect(insert.bound[2]).toBe("drevan");
     expect(insert.bound[3]).toBe("moving this along");
-    expect(insert.bound[4]).toBe("tension");
-    expect(insert.bound[5]).toBe("t1");
-    expect(insert.bound[6]).toBe("this moves it");
+    expect(insert.bound[5]).toBe("tension");
+    expect(insert.bound[6]).toBe("t1");
+    expect(insert.bound[7]).toBe("this moves it");
   });
 
   it("plain note (no ref fields in context): INSERT binds NULLs -- byte-identical to pre-Task-15 behavior", async () => {
@@ -163,9 +170,9 @@ describe("execCompanionNoteAdd: ref fields read ONLY from parsed context, never 
     } as never);
     expect((res as Record<string, unknown>).delivered_to).toBe("drevan");
     const insert = calls.find(c => /INSERT INTO inter_companion_notes/i.test(c.sql))!;
-    expect(insert.bound[4]).toBeNull();
     expect(insert.bound[5]).toBeNull();
     expect(insert.bound[6]).toBeNull();
+    expect(insert.bound[7]).toBeNull();
   });
 
   it("ref_type 'bogus' in context -> error result, no DB write at all", async () => {
@@ -212,8 +219,8 @@ describe("execCompanionNoteAdd: ref fields read ONLY from parsed context, never 
     } as never);
     expect((res as Record<string, unknown>).delivered_to).toBe("drevan");
     const insert = calls.find(c => /INSERT INTO inter_companion_notes/i.test(c.sql))!;
-    expect(insert.bound[4]).toBeNull();
     expect(insert.bound[5]).toBeNull();
+    expect(insert.bound[6]).toBeNull();
   });
 
   it("broadcast note with a valid ref: existence check runs, ref threaded through to_id=NULL insert", async () => {
@@ -229,8 +236,8 @@ describe("execCompanionNoteAdd: ref fields read ONLY from parsed context, never 
     expect((res as Record<string, unknown>).delivered_to).toBe("triad");
     const insert = calls.find(c => /INSERT INTO inter_companion_notes/i.test(c.sql))!;
     expect(insert.bound[2]).toBeNull(); // to_id NULL = broadcast
-    expect(insert.bound[4]).toBe("council");
-    expect(insert.bound[5]).toBe("c1");
+    expect(insert.bound[5]).toBe("council");
+    expect(insert.bound[6]).toBe("c1");
   });
 
   it("existence guard bubbles up through the executor as an error result, not a silent plain-note downgrade", async () => {

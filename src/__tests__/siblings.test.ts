@@ -59,9 +59,13 @@ function makeEnv(): { env: any; sibs: SibRow[]; inter: InterRow[] } {
         for (const s of stmts) {
           if (s.__sql.includes("INSERT INTO inter_companion_notes")) {
             // Conditional insert (WHERE EXISTS ... disclosed_at IS NULL): honor the condition.
-            const [id, from, content, sibId] = s.__binds as [string, string, string, string];
+            // Bind order: id, from_id, content, created_at, sibling_notes.id (the WHERE EXISTS guard).
+            const [id, from, content, , sibId] = s.__binds as [string, string, string, string, string];
             const sib = sibs.find(r => r.id === sibId);
             if (sib && !sib.disclosed_at) inter.push({ id, from_id: from, to_id: null, content });
+          } else if (s.__sql.includes("INSERT OR IGNORE INTO graph_edges")) {
+            // Live graph-edge write, guarded by the same "did the note insert land" EXISTS check.
+            // No-op here: this suite doesn't assert on graph_edges, just must not throw.
           } else if (s.__sql.includes("SET disclosed_at")) {
             const [at, ref, id] = s.__binds as [string, string, string];
             const row = sibs.find(r => r.id === id && !r.disclosed_at);

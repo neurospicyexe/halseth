@@ -349,6 +349,41 @@ describe("rebuildGraph", () => {
     expect(anyMechanicalLeftover).toHaveLength(0);
   });
 
+  it("a 'live' provenance row survives rebuildGraph -- rebuild's DELETE only matches 'mechanical%'", async () => {
+    const { env, tables } = makeEnv({
+      companion_conclusions: [],
+      relational_deltas: [],
+      companion_journal: [],
+      inter_companion_notes: [],
+      companion_tensions: [],
+      handover_packets: [],
+    });
+    // A live writer (src/mcp/tools/session.ts) puts this row here directly -- rebuildGraph never
+    // derives 'resumed_from' edges itself (see rebuild.ts's section g / this file's own header).
+    tables.graph_edges.push({
+      id: "live-edge-1",
+      src_table: "sessions",
+      src_id: "sess-new",
+      dst_table: "handover_packets",
+      dst_id: "handover-old",
+      edge_type: "resumed_from",
+      writer: "cypher",
+      provenance: "live",
+      created_at: "2026-08-20T00:00:00Z",
+    });
+
+    await rebuildGraph(env);
+
+    const survivor = tables.graph_edges.find((e) => e.id === "live-edge-1");
+    expect(survivor).toBeDefined();
+    expect(survivor!.provenance).toBe("live");
+
+    // A second rebuild must not touch it either -- determinism holds across the 'live' lane too.
+    await rebuildGraph(env);
+    const stillThere = tables.graph_edges.find((e) => e.id === "live-edge-1");
+    expect(stillThere).toBeDefined();
+  });
+
   it("returns per-source counts covering all six backfill sources", async () => {
     const { env } = makeEnv({
       companion_conclusions: [],

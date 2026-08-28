@@ -15,6 +15,7 @@ import {
 import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
+import { edgeForConclusionSupersede, insertEdgeStatements } from "../../graph/live.js";
 
 // Strip a leading note-command preamble ("Write a companion note for gaia:", "for drevan:",
 // "Broadcast a note to the triad —") so the routing phrase is never stored as the note body.
@@ -696,6 +697,13 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
       ).bind(newId, supersedes, ctx.req.companion_id)
     );
     supersededIds.push(supersedes);
+    // Live graph-edge write, same batch as the UPDATE it depends on -- atomic with the write that
+    // actually confirms the supersede (a caller-declared `supersedes`, never a gate proposal).
+    stmts.push(
+      ...insertEdgeStatements(ctx.env.DB, [
+        edgeForConclusionSupersede({ replacementId: newId, oldId: supersedes, writer: ctx.req.companion_id, createdAt: now }),
+      ]),
+    );
   }
   await ctx.env.DB.batch(stmts);
 

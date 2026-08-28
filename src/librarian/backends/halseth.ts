@@ -16,6 +16,7 @@ import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-cla
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
+import { edgeForNote, edgeForNoteRef, writeEdgesBestEffort } from "../../graph/live.js";
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
@@ -723,12 +724,23 @@ export async function addCompanionNote(
     }
   }
   const id = generateId();
+  const createdAt = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO inter_companion_notes (id, from_id, to_id, content, created_at, ref_type, ref_id, reason)
-     VALUES (?1, ?2, ?3, ?4, datetime('now'), ?5, ?6, ?7)`,
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   )
-    .bind(id, from_id, to_id, content, ref?.ref_type ?? null, ref?.ref_id ?? null, ref?.reason ?? null)
+    .bind(id, from_id, to_id, content, createdAt, ref?.ref_type ?? null, ref?.ref_id ?? null, ref?.reason ?? null)
     .run();
+
+  // Live graph-edge write, immediately after the confirmed insert above (this call site does not
+  // batch its primary write, so per src/graph/live.ts's failure contract this rides right after,
+  // not inside a batch) -- never able to fail the note write itself.
+  const edges = [
+    ...edgeForNote({ id, from_id, to_id, created_at: createdAt }),
+    ...edgeForNoteRef({ id, from_id, created_at: createdAt, ref_type: ref?.ref_type ?? null, ref_id: ref?.ref_id ?? null }),
+  ];
+  await writeEdgesBestEffort(env.DB, edges);
+
   return { id };
 }
 

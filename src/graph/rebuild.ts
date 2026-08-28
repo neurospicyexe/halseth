@@ -24,6 +24,14 @@
 // (migrations/0005_private_zone.sql) -- inventing one to force a graph edge would be exactly the
 // "confident garbage" failure src/handlers/edges.ts already warns about. This is a real gap between
 // the spec's ambition and the current schema, not an oversight in this file.
+//
+// TWO PROVENANCE LANES, one table (src/graph/live.ts carries the live-write half of this split):
+//   'mechanical%' -- REBUILD-OWNED. Every lane this file derives. The DELETE below matches this
+//       pattern and this file is the only place that lane is ever regenerated from scratch.
+//   'live' -- WRITE-TIME-ONLY. Lanes with no persisted source column to derive from (currently:
+//       'resumed_from', written at session open in src/mcp/tools/session.ts). This file's DELETE
+//       does NOT match 'live' and this file NEVER derives it -- a 'live' row is written once, by
+//       exactly one call site, and must survive every rebuild untouched.
 
 import type { Env } from "../types.js";
 import { COMPANION_IDS } from "../companions.js";
@@ -80,7 +88,7 @@ interface ConclusionRow {
   created_at: string;
 }
 
-function buildSupersedesEdges(rows: ConclusionRow[]): GraphEdgeRow[] {
+export function buildSupersedesEdges(rows: ConclusionRow[]): GraphEdgeRow[] {
   const byId = new Map(rows.map((r) => [r.id, r]));
   const edges: GraphEdgeRow[] = [];
   for (const old of rows) {
@@ -192,7 +200,7 @@ interface InterCompanionNoteRow {
   ref_id: string | null;
 }
 
-function buildNoteEdges(rows: InterCompanionNoteRow[]): GraphEdgeRow[] {
+export function buildNoteEdges(rows: InterCompanionNoteRow[]): GraphEdgeRow[] {
   const edges: GraphEdgeRow[] = [];
   for (const n of rows) {
     if (n.to_id) {
@@ -297,13 +305,13 @@ function buildHandoverEdges(rows: HandoverPacketRow[]): GraphEdgeRow[] {
 // a duplicate edge under a different label for one real-world event. Only (f)'s direction
 // (session --closed_with--> handover) is kept.
 //
-// A genuinely different, NOT-yet-backfillable relationship lives at
-// src/mcp/tools/session.ts:69-73 -- when a session opens with `prior_handover_id`, that packet is
-// marked `returned = 1` but the OPENING session's id is never written anywhere. A live
-// 'resumed_from' edge (src = new session, dst = prior handover packet) could be added at that exact
-// call site (append one INSERT INTO graph_edges alongside the existing UPDATE, in the same
-// env.DB.batch()) the next time that file is touched -- deferred here per the top-level task's
-// instruction not to force a live-write hook into a Phase 1 rebuild pass.
+// A genuinely different relationship lives at src/mcp/tools/session.ts -- when a session opens
+// with `prior_handover_id`, that packet is marked `returned = 1` but the OPENING session's id is
+// never written anywhere else. This file cannot derive it (no persisted column to read it from),
+// so it is written LIVE at that exact call site (src/graph/live.ts::edgeForResumedFrom, appended
+// to the same env.DB.batch() as the existing UPDATE), provenance 'live' -- NOT 'mechanical', so
+// this file's DELETE never touches it and this file never tries to re-derive it. See this file's
+// top-of-file "TWO PROVENANCE LANES" note.
 
 // ── rebuild ─────────────────────────────────────────────────────────────────────────────────────
 
