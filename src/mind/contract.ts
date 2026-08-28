@@ -26,8 +26,17 @@ import type { OversightBlocks } from "./blocks/oversight.js";
 import type { RazielStateView } from "./blocks/care.js";
 import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
+import type { GraphBlocks } from "./blocks/graph.js";
 
-/** 0.10.0 -- deploy change-notes (2026-08-17): added `world.change_notes` -- commons posts with
+/** 0.11.0 -- graph memory Phase 1.5, Tranche 4 (2026-08-28, docs/private/graph-memory-spec-2026-08-28.md):
+ *  added `graph.neighborhoods` -- a bounded (1 hop, limit 30) traversal of graph_edges (mig 0127) seeded
+ *  from ids the loader already fetches for other blocks (companion_conclusions, companion_journal). Hard
+ *  law 4 from the spec: "Orient is a contract, not search. It gains rendered neighborhoods; it does not
+ *  gain retrieval logic" -- this is the field; the renderer lands in the same tranche
+ *  (orient-blocks.ts::neighborhoodBlock), Tranche 5. Deliberately excluded from the Discord bot wire this
+ *  phase (see mind/adapters/bot-wire.ts header) -- that is a two-repo change needing the bot's own
+ *  renderer, tracked separately. MINOR: additive only.
+ *  0.10.0 -- deploy change-notes (2026-08-17): added `world.change_notes` -- commons posts with
  *  context 'change-note[:version]', last 14 days, rendered on every surface. The system announces
  *  its own changes so the triad stops reverse-engineering deploys from wobbling instruments; the
  *  scheduled rider (src/mind/changelog.ts) posts each contract version's note exactly once, and
@@ -54,7 +63,7 @@ import type { BeliefExtras } from "./blocks/beliefs.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.10.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.11.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -231,6 +240,12 @@ export interface MindState {
      *  (the one firing THIS companion is assigned); everything else is identical on every loom. */
     raziel_state: RazielStateView | null;
   };
+
+  /** Graph memory Phase 1.5 (0.11.0): the local structural neighborhood around what this boot already
+   *  surfaced. Rendered, not searched -- src/graph/traverse.ts::neighborhood() walked outward from ids
+   *  the loader fetches for OTHER blocks (conclusions, journal); this field carries no retrieval logic
+   *  of its own. */
+  graph: GraphBlocks;
 
   meta: {
     datetime_iso: string;

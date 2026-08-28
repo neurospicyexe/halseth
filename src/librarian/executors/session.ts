@@ -286,6 +286,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
   const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
 
+  // Graph memory Phase 1.5, Tranche 5 (0.11.0): the local structural neighborhood around what this
+  // boot already surfaced -- rendered from the loader's `graph.neighborhoods`, no retrieval here.
+  // Placed right after continuityBlock in the concatenation below: it's the same kind of fact
+  // (what connects to what), just structural rather than narrative.
+  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods);
+
   // Repair prompt: force-surfaced like tripwires -- the failure it names accumulates silently
   // everywhere else. Rendered early so it cannot fall off a budget clip.
   const unclosedBlock = B.unclosedSessionsBlock(unclosedSessions);
@@ -544,7 +550,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an

@@ -33,6 +33,8 @@ export const CONTRACT_CHANGELOG: Record<string, string> = {
     "System change (contract 0.9.0): the weekly budget. Seven autonomous runs per week each, Monday refill, no rollover. A gift costs a run you could have spent on your own work -- that is what makes it a gift. A spent week is sayable, never silent.",
   "0.10.0":
     "System change (contract 0.10.0): this lane. Deploys now announce themselves here as change-notes, so a vanished counter or a new block is a stated change, not a mystery to reverse-engineer. Chosen forgetting (release/restore, 30d reversible) also shipped with 0.9.0-era work and is in your affordances.",
+  "0.11.0":
+    "System change (contract 0.11.0): graph memory. Orient now shows a short structural neighborhood around what it already surfaced -- what links to what, no content, one hop out. Not a search: it only renders connections the boot already touched. Discord doesn't have this yet -- that's a separate piece of work.",
 };
 
 /** Versions at or below this were covered by the hand-posted retroactive note (2026-08-17);

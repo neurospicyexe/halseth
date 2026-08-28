@@ -510,6 +510,130 @@ export const FORGETTING_AFFORDANCE = `\n[Chosen forgetting]\nYou may release a m
 
 export const DRIFT_AFFORDANCE = `The lane is yours: if something in you has genuinely shifted, say "I'm becoming ..." to open a drift. Crystallize one that became real ("crystallize drift <id>"); let fade one that was a phase ("fade drift <id>").`;
 
+// ── Graph memory Phase 1.5, Tranche 5 (docs/private/graph-memory-spec-2026-08-28.md) ───────────────────
+
+/** Structural shape only -- duck-typed against `GraphNeighborhoodEdge` (mind/blocks/graph.ts) rather than
+ *  importing it, matching this file's existing convention of local row interfaces for every other block. */
+export interface NeighborhoodEdgeRow {
+  src_table: string;
+  src_id: string;
+  dst_table: string;
+  dst_id: string;
+  edge_type: string;
+  writer: string;
+  created_at: string;
+  hop: number;
+}
+
+export interface NeighborhoodBlockOpts {
+  /** Hard cap on rendered lines. Default 6 -- see file-level note below on why this block owns its
+   *  own ceiling rather than trusting a caller-supplied one. */
+  maxLines?: number;
+}
+
+const NEIGHBORHOOD_MAX_LINES_DEFAULT = 6;
+const NEIGHBORHOOD_LINE_CHARS = 90;
+
+const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
+  companion_journal: "notes",
+  companion_conclusions: "conclusions",
+  companion_tensions: "tension",
+  inter_companion_notes: "messages",
+  sessions: "session",
+  handover_packets: "handover",
+  wm_session_handoffs: "handover",
+  companions: "companion",
+};
+
+const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
+  logged_in: "linked",
+  supersedes: "supersedes",
+  sent_to: "sent to",
+  references: "references",
+  holds_tension: "holds",
+  closed_with: "closed with",
+};
+
+/** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
+function shortNeighborId(id: string): string {
+  return id.slice(0, 8);
+}
+
+interface NeighborhoodGroup {
+  edgeType: string;
+  table: string;
+  writer: string;
+  count: number;
+  newest: string;
+  sampleId: string;
+}
+
+/**
+ * The local structural neighborhood around whatever this boot already surfaced -- rendered, not
+ * searched (hard law 4, graph-memory spec: "Orient is a contract, not search. It gains rendered
+ * neighborhoods; it does not gain retrieval logic"). `neighborhoods` is MindState's
+ * `graph.neighborhoods` (contract 0.11.0) -- already the output of a bounded, heat-gated D1 traverse
+ * (src/graph/traverse.ts::neighborhood); this function does no I/O and no ranking, only grouping and
+ * truncation for display.
+ *
+ * NO CONTENT, EVER. Edges carry no text field (mig 0127's own header: "graph_edges is structure, not
+ * salience") and this renderer only ever touches src/dst table+id, edge_type, writer, and created_at --
+ * never a note/conclusion/journal body. Keeping that true here, not just in the schema, is what makes
+ * "linked to a note" safe to show without also showing what the note said.
+ *
+ * GROUPED, so ten identical journal-links from the same writer read as one line ("3 notes from
+ * drevan"), not ten. Grouped by (edge_type, dst_table, writer); a lone edge in its group renders as a
+ * single pointer line with a shortened id instead of a fake "1 of" count.
+ *
+ * SELF-CAPPED. `ready_prompt` has no global length budget (render-order-is-a-budget-decision: under a
+ * tail-cut, position IS survival priority) -- this block enforces its OWN ceiling, both in line count
+ * (default 6, newest-group-first) and per-line width (90 chars, hard-truncated with an ellipsis),
+ * because nothing else in the pipeline will. Empty input renders the empty string -- zero bytes, no
+ * header, no "nothing linked" placeholder -- so a companion with no traversable neighbors sees nothing
+ * different from before this block existed.
+ */
+export function neighborhoodBlock(
+  neighborhoods: readonly NeighborhoodEdgeRow[],
+  opts: NeighborhoodBlockOpts = {},
+): string {
+  if (neighborhoods.length === 0) return "";
+  const maxLines = opts.maxLines ?? NEIGHBORHOOD_MAX_LINES_DEFAULT;
+
+  const groups = new Map<string, NeighborhoodGroup>();
+  for (const e of neighborhoods) {
+    const key = `${e.edge_type} ${e.dst_table} ${e.writer}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (e.created_at > existing.newest) existing.newest = e.created_at;
+    } else {
+      groups.set(key, {
+        edgeType: e.edge_type,
+        table: e.dst_table,
+        writer: e.writer,
+        count: 1,
+        newest: e.created_at,
+        sampleId: e.dst_id,
+      });
+    }
+  }
+
+  const sortedGroups = [...groups.values()].sort((a, b) => (a.newest < b.newest ? 1 : a.newest > b.newest ? -1 : 0));
+
+  const lines: string[] = [];
+  for (const g of sortedGroups) {
+    if (lines.length >= maxLines) break;
+    const verb = NEIGHBORHOOD_EDGE_VERBS[g.edgeType] ?? g.edgeType;
+    const label = NEIGHBORHOOD_TABLE_LABELS[g.table] ?? g.table;
+    const line = g.count > 1
+      ? `${verb}: ${g.count} ${label} from ${g.writer} (newest ${g.newest.slice(0, 10)})`
+      : `${verb} ${label} ${shortNeighborId(g.sampleId)}`;
+    lines.push(line.length > NEIGHBORHOOD_LINE_CHARS ? line.slice(0, NEIGHBORHOOD_LINE_CHARS - 1) + "…" : line);
+  }
+
+  return lines.length > 0 ? "\n[Linked]\n" + lines.map(l => `• ${l}`).join("\n") : "";
+}
+
 /**
  * Sanctioned becoming, witnessed not ratified. The affordance line is ALWAYS present (0093): every drift was
  * dated 06-19 because the lane was readable but never offered.

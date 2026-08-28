@@ -19,6 +19,9 @@
 // the bot payload has never had any of them, so this adapter drops them. The bots are the highest-frequency
 // presence in the house and the only surface with no emotional register at all -- worth fixing, and worth
 // fixing as a decision rather than inheriting as a side effect of a refactor.
+// `graph.neighborhoods` (0.11.0, graph memory Phase 1.5 Tranche 4) is deliberately deferred from the bot
+// wire this phase too -- putting it on the wire is a two-repo change (nullsafe-discord needs its own
+// renderer for the flat payload), tracked separately from landing the field on the contract.
 //
 // WHAT STAYS OUTSIDE. Three inputs arrive via `extras` rather than from MindState, because all three need the
 // network: the two Second Brain semantic searches, and the `sbRead` that hydrates the session narrative.

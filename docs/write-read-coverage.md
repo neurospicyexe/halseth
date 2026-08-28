@@ -41,6 +41,7 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 | `human_journal` | `journal_add` (Raziel's) | n/a | n/a | n/a | ✅ `journal_read` (no companion_id) | — | human store, never surfaced to companions |
 | SB vault | `sb_save_*`, session-close long thought | ✅ RAG excerpt block | ❌ | ✅ RAG | ✅ `sb_*` | ✅ | async: written thoughts are unsearchable until the ~20-min ingest tick + embed — lag is NOT surfaced to the companion |
 | `wm_archive_notes` | cap-eviction digest in `notes.ts addNote` (digest-then-DELETE of overflow continuity notes) | ❌ | ✅ fixed 2026-07-26 (last 3 digests) | ❌ | ❌ | ❌ | **Found by the CI test on its first run**, not the audit: evicted notes were digested, deleted from the live table, and the digests were never read — permanent silent memory loss. Ground now surfaces recent digests. |
+| `graph_edges` | `src/graph/rebuild.ts` (`rebuildGraph`, cron-driven, not a Librarian verb — derived/disposable projection, never companion-written) | ✅ `graph.neighborhoods` (0.11.0, contract Tranche 4), rendered via `neighborhoodBlock` | ❌ | ❌ **deliberately deferred** (bot-wire.ts header: two-repo change, needs the bot's own renderer) | ❌ | ❌ | Not a hole: read-only structural table, no companion write path exists or should exist. `src/graph/traverse.ts::neighborhood()` is the only reader; the 0126 sealed lane is refused at that file's door regardless of caller. |
 
 ## Known-open items (tracked for Phase 1)
 

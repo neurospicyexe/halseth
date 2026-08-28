@@ -26,6 +26,8 @@ import { loadSessionNarrative } from "./blocks/continuity.js";
 import { loadRelationalBlocks } from "./blocks/relational.js";
 import { loadBeliefExtras } from "./blocks/beliefs.js";
 import { loadCareBlocks, deriveRazielState, EMPTY_CARE } from "./blocks/care.js";
+import { loadGraphBlocks, EMPTY_GRAPH } from "./blocks/graph.js";
+import type { GraphSeed } from "../graph/traverse.js";
 
 /**
  * `opts.orient` lets a caller that ALREADY runs mindOrient hand its result in instead of making the loader
@@ -89,8 +91,15 @@ export async function loadMindState(
       return fallback;
     }
   };
-  const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras, care] = await Promise.all([
-    (opts.orient ?? mindOrient(env, companionId, { readOnly: true })).catch((err: unknown) => {
+  // Shared with the graph guard below: seeding the traversal off the SAME orient promise (not a second
+  // call to mindOrient) keeps this a single bounded call joining the existing fan-out, not a new
+  // retrieval. `.catch(() => null)` here is a SEPARATE handler from the one on the array entry below --
+  // both read the same promise; neither can double-reject it, and a synchronous throw inside
+  // `mindOrient` is already captured because `orientPromise` itself is a promise, never a thunk.
+  const orientPromise = opts.orient ?? mindOrient(env, companionId, { readOnly: true });
+
+  const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras, care, graph] = await Promise.all([
+    orientPromise.catch((err: unknown) => {
       console.error("[mind/loader] mindOrient failed, degrading", { companionId, error: String(err) });
       degraded.push("orient");
       return null;
@@ -124,6 +133,18 @@ export async function loadMindState(
     // 0.6.0 (consequence layer C1): the care register's D1 half -- front state + care-loop rows.
     // The biometrics half rides orient's existing read; deriveRazielState composes the two below.
     guard("care", () => loadCareBlocks(env, companionId), EMPTY_CARE),
+    // 0.11.0 (graph memory Phase 1.5, Tranche 4): seeded from ids `orientPromise` ALREADY fetched for
+    // beliefs.conclusions and relational.journal_recent -- no new retrieval, one bounded traverse (hop
+    // 1, limit 30) joining the existing fan-out. Waits on the same orient promise everything else in
+    // this array waits on; a degraded orient (null) yields an empty seed set, not a throw.
+    guard("graph", async () => {
+      const o = await orientPromise.catch(() => null);
+      const seeds: GraphSeed[] = [
+        ...((o?.active_conclusions ?? []).map((c) => ({ table: "companion_conclusions", id: c.id }))),
+        ...((o?.recent_journal ?? []).map((j) => ({ table: "companion_journal", id: j.id }))),
+      ];
+      return loadGraphBlocks(env, companionId, seeds);
+    }, EMPTY_GRAPH),
   ]);
 
   // Non-null views. `orient`/`ground` are the only two sources that can be wholly absent (the blocks each
@@ -221,6 +242,9 @@ export async function loadMindState(
       // orient's biometrics read instead of duplicating it (D13: one loader, zero sibling reads).
       raziel_state: deriveRazielState(orient?.latest_biometrics ?? null, care),
     },
+
+    // 0.11.0: the local structural neighborhood around what this boot already surfaced.
+    graph,
 
     meta: {
       // Time is the one field with no acceptable empty: a companion that does not know when it is will
