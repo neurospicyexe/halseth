@@ -21,10 +21,15 @@ vi.mock("../mcp/embed.js", async (importOriginal) => {
 import { recallNotesByMeaning } from "../webmind/notes.js";
 
 interface FakeMatch { score: number; metadata: { table: string; row_id: string; companion_id: string } }
+interface FakeJournalEdgeRow {
+  id: string; src_table: string; src_id: string; dst_table: string; dst_id: string;
+  edge_type: string; writer: string; created_at: string;
+}
 
 function makeRecallEnv(opts: {
   journal?: FakeMatch[];
   journalRows?: Record<string, unknown>[];
+  graphEdges?: FakeJournalEdgeRow[];
 }) {
   const executed: string[] = [];
   const env = {
@@ -40,6 +45,10 @@ function makeRecallEnv(opts: {
         bind: (..._args: unknown[]) => ({
           all: async () => {
             if (sql.includes("FROM companion_journal")) return { results: opts.journalRows ?? [] };
+            // Graph-memory Phase 1.5 (Tranche 3): default empty -- degree 0 everywhere,
+            // connectivityMultiplier(0) === 1, so pre-existing recall assertions stay valid
+            // unchanged unless a test explicitly supplies graphEdges.
+            if (sql.includes("FROM graph_edges")) return { results: opts.graphEdges ?? [] };
             return { results: [] };
           },
           run: async () => { executed.push(sql); return { meta: { changes: 1 } }; },
@@ -111,6 +120,55 @@ describe("recallNotesByMeaning -- journal warm + archived filter (task 19)", () 
   });
 });
 
+// --- recallNotesByMeaning: graph salience nudges journal ranking (Phase 1.5, Tranche 3) ---
+//
+// Two journal candidates, limit=1 (only one wins). By vector-score * source-weight alone:
+//   j1: score 0.60, source "legacy" (unclassified -> neutral weight 0.85) -> effective 0.51
+//   j2: score 0.50, source "claude_code" (HUMAN_SOURCES -> weight 1.0)    -> effective 0.50
+// so the un-multiplied winner is j1. One graph_edges row touches (companions, "cypher") on one
+// endpoint and companion_journal/j2 on the other -- reader-relevant for cypher (hub match, mig
+// 0127 rebuild.ts convention) -- giving j2 degree 1 -> connectivityMultiplier(1) ~= 1.104 ->
+// graph score 0.50 * 1.104 ~= 0.552, which now outranks j1's 0.51. The winner flips to j2.
+describe("recallNotesByMeaning -- graph salience nudges journal ranking (Phase 1.5, Tranche 3)", () => {
+  const journalMatches: FakeMatch[] = [
+    { score: 0.60, metadata: { table: "companion_journal", row_id: "j1", companion_id: "cypher" } },
+    { score: 0.50, metadata: { table: "companion_journal", row_id: "j2", companion_id: "cypher" } },
+  ];
+  const journalRows = [journalRow("j1", "legacy"), journalRow("j2", "claude_code")];
+  const graphEdges: FakeJournalEdgeRow[] = [{
+    id: "edge-1", src_table: "companions", src_id: "cypher",
+    dst_table: "companion_journal", dst_id: "j2",
+    edge_type: "logged_in", writer: "cypher", created_at: "2026-08-01T00:00:00Z",
+  }];
+
+  it("BEFORE (no graph signal): un-multiplied score*weight order picks j1", async () => {
+    const { env } = makeRecallEnv({ journal: journalMatches, journalRows });
+    const out = await recallNotesByMeaning(env, "cypher", "what happened", 1);
+    expect(out.map(n => n.note_id)).toEqual(["j1"]);
+  });
+
+  it("AFTER (graph signal present): connectivity flips the winner to j2 for the reader the edge belongs to (cypher)", async () => {
+    const { env } = makeRecallEnv({ journal: journalMatches, journalRows, graphEdges });
+    const out = await recallNotesByMeaning(env, "cypher", "what happened", 1);
+    expect(out.map(n => n.note_id)).toEqual(["j2"]);
+  });
+
+  it("is non-fatal: a neighborhood() failure degrades to the un-multiplied order, never throws", async () => {
+    const { env } = makeRecallEnv({ journal: journalMatches, journalRows });
+    (env as { DB: { prepare: (sql: string) => unknown } }).DB.prepare = ((sql: string) => {
+      if (sql.includes("FROM graph_edges")) throw new Error("D1 unavailable");
+      return {
+        bind: (..._args: unknown[]) => ({
+          all: async () => sql.includes("FROM companion_journal") ? { results: journalRows } : { results: [] },
+          run: async () => ({ meta: { changes: 1 } }),
+        }),
+      };
+    }) as never;
+    const out = await recallNotesByMeaning(env, "cypher", "what happened", 1);
+    expect(out.map(n => n.note_id)).toEqual(["j1"]);
+  });
+});
+
 // --- orient: active_conclusions ordered by heat, surfaced ids warmed ---------------
 
 import { mindOrient } from "../webmind/orient.js";
@@ -148,16 +206,24 @@ function makeStmt(sql: string, rowsFn: (args: unknown[]) => unknown[], runsSink:
   return stmt;
 }
 
-function conclusionRow(id: string, beliefType: string) {
+function conclusionRow(id: string, beliefType: string, effectiveHeat = 1) {
   return {
     id, companion_id: "cypher", conclusion_text: `belief ${id}`, source_sessions: null,
     superseded_by: null, created_at: "2026-07-01T00:00:00Z", edited_at: null,
     confidence: 0.7, belief_type: beliefType, subject: null, provenance: null,
-    contradiction_flagged: 0,
+    contradiction_flagged: 0, effective_heat: effectiveHeat,
   };
 }
 
-function makeOrientEnv() {
+interface FakeEdgeRow {
+  id: string; src_table: string; src_id: string; dst_table: string; dst_id: string;
+  edge_type: string; writer: string; created_at: string;
+}
+
+function makeOrientEnv(opts: {
+  observationalRows?: ReturnType<typeof conclusionRow>[];
+  graphEdges?: FakeEdgeRow[];
+} = {}) {
   const preparedSql: string[] = [];
   const runs: Array<{ sql: string; args: unknown[] }> = [];
 
@@ -175,6 +241,7 @@ function makeOrientEnv() {
             const type = args[1];
             if (type === "self") return [conclusionRow("c-self-1", "self")];
             if (type === "relational") return [conclusionRow("c-rel-1", "relational")];
+            if (type === "observational" && opts.observationalRows) return opts.observationalRows;
             return [];
           }, runs);
         }
@@ -183,6 +250,13 @@ function makeOrientEnv() {
         }
         if (sql.includes("FROM biometric_snapshots") || sql.includes("FROM house_state")) {
           return makeStmt(sql, () => [], runs);
+        }
+        // Graph-memory Phase 1.5 (Tranche 2): the fixture answers NOTHING for graph_edges by
+        // default (empty rows) -- degree 0 everywhere, connectivityMultiplier(0) === 1, so the
+        // pre-existing effective-heat order is untouched and every assertion above this line
+        // stays valid unchanged. Tests that need a real graph pass `graphEdges`.
+        if (sql.includes("FROM graph_edges")) {
+          return makeStmt(sql, () => opts.graphEdges ?? [], runs);
         }
         // Everything else (threads, notes pools, tensions, dreams, letters, journal,
         // deltas, witness, soma_arc, open loops/questions, handoffs) -- empty by default.
@@ -252,6 +326,70 @@ describe("mindOrient -- active_conclusions ordered by heat, warmed on surface (t
     expect(result.active_conclusions).toEqual([]);
     expect(result.flagged_beliefs).toEqual([]);
     expect(runs.some(r => r.sql.includes("UPDATE companion_conclusions"))).toBe(false);
+  });
+});
+
+// --- orient: graph salience nudges conclusion ranking, PER READER (Phase 1.5, Tranche 2) ---
+//
+// Three "observational" candidates, over-fetched together (PER_TYPE_LIMIT=2 x
+// CONCLUSION_OVER_FETCH=3 headroom): by raw effective heat alone the order is
+// obs-a (0.50) > obs-c (0.47) > obs-b (0.45), so the un-multiplied top-2 is [obs-a, obs-c] and
+// obs-b is cut. Five graph_edges rows all touch (companions, "cypher") on one endpoint and
+// companion_conclusions/obs-b on the other -- reader-relevant for cypher (hub match), giving
+// obs-b degree 5 -> connectivityMultiplier(5) ~= 1.269 -> graph score 0.45 * 1.269 ~= 0.571,
+// which now outranks obs-a (0.50) and obs-c (0.47). The top-2 flips to [obs-b, obs-a] and obs-c
+// is the one cut instead -- a real membership change, not just an internal re-sort.
+//
+// For a DIFFERENT reader (gaia), none of those edges are writer-matched or hub-matched (they
+// touch "cypher"'s hub node, not "gaia"'s), so degree stays 0 for every candidate and the
+// original un-multiplied order [obs-a, obs-c] survives untouched. Same edge table, same rows,
+// different reader, different gravity -- exactly the "bank, not a mind" clause in the spec.
+describe("mindOrient -- graph salience nudges conclusion ranking per reader (Phase 1.5, Tranche 2)", () => {
+  const observationalRows = [
+    conclusionRow("obs-a", "observational", 0.50),
+    conclusionRow("obs-b", "observational", 0.45),
+    conclusionRow("obs-c", "observational", 0.47),
+  ];
+
+  const graphEdges: FakeEdgeRow[] = Array.from({ length: 5 }, (_, i) => ({
+    id: `edge-${i}`,
+    src_table: "companions",
+    src_id: "cypher",
+    dst_table: "companion_conclusions",
+    dst_id: "obs-b",
+    edge_type: "holds_tension",
+    writer: "cypher",
+    created_at: "2026-08-01T00:00:00Z",
+  }));
+
+  it("BEFORE (no graph signal): un-multiplied effective-heat order keeps obs-a + obs-c, cuts obs-b", async () => {
+    const { env } = makeOrientEnv({ observationalRows }); // no graphEdges -> degree 0 everywhere
+    const result = await mindOrient(env, "cypher");
+    const observationalIds = result.active_conclusions
+      .filter(c => c.belief_type === "observational")
+      .map(c => c.id)
+      .sort();
+    expect(observationalIds).toEqual(["obs-a", "obs-c"]);
+  });
+
+  it("AFTER (graph signal present): connectivity flips the top-2 to obs-b + obs-a, cutting obs-c, for the reader the edges belong to (cypher)", async () => {
+    const { env } = makeOrientEnv({ observationalRows, graphEdges });
+    const result = await mindOrient(env, "cypher");
+    const observationalIds = result.active_conclusions
+      .filter(c => c.belief_type === "observational")
+      .map(c => c.id)
+      .sort();
+    expect(observationalIds).toEqual(["obs-a", "obs-b"]);
+  });
+
+  it("PER-READER GRAVITY: the same edges are inert for a different reader (gaia) -- order stays un-multiplied", async () => {
+    const { env } = makeOrientEnv({ observationalRows, graphEdges });
+    const result = await mindOrient(env, "gaia");
+    const observationalIds = result.active_conclusions
+      .filter(c => c.belief_type === "observational")
+      .map(c => c.id)
+      .sort();
+    expect(observationalIds).toEqual(["obs-a", "obs-c"]);
   });
 });
 

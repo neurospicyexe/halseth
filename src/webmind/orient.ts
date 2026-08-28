@@ -15,11 +15,74 @@ import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql, SURFACE_BUMP } from "./heat.js";
 import { effectiveChargeSql } from "../librarian/backends/halseth.js";
+import { neighborhood } from "../graph/traverse.js";
+import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
 import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
+
+// ---------------------------------------------------------------------------
+// Graph-memory Phase 1.5 (docs/private/graph-memory-spec-2026-08-28.md): relational salience
+// nudges conclusion ranking. Orient stays a contract, not search (hard law 4) -- the only new
+// thing here is a re-rank of rows the existing SQL already fetched; no new retrieval path.
+// ---------------------------------------------------------------------------
+
+/** Conclusion candidates over-fetch by this factor before the graph re-rank trims back to the
+ *  SQL's original LIMIT -- enough headroom for connectivity to actually reorder the tail of
+ *  the fetched set without re-querying. */
+const CONCLUSION_OVER_FETCH = 3;
+
+interface ConclusionCandidate {
+  id: string;
+  effective_heat: number;
+}
+
+/**
+ * One bounded, read-only neighborhood() call over a batch of conclusion ids, converted to a
+ * per-reader degree map (src/graph/salience.ts::readerDegrees). Non-fatal by construction: any
+ * failure (D1 error, traversal error) is caught here and reported as `null`, and every caller
+ * treats a null map as "no connectivity signal" -- i.e. connectivityMultiplier(0) === 1 for every
+ * row, which is exactly the un-multiplied effective-heat order the SQL already produced. Graph
+ * salience can only ever nudge; it must never be able to break orient.
+ */
+async function readerDegreesForConclusions(
+  env: Env,
+  agentId: WmAgentId,
+  candidates: ConclusionCandidate[],
+): Promise<Map<string, number> | null> {
+  if (candidates.length === 0) return null;
+  try {
+    const seeds = candidates.map((c) => ({ table: "companion_conclusions", id: c.id }));
+    const edges = await neighborhood(env, seeds, { hops: 1 });
+    return readerDegrees(edges, agentId, seeds);
+  } catch (err) {
+    console.warn("[orient] graph salience lookup failed (non-fatal, falling back to effective heat order):", err);
+    return null;
+  }
+}
+
+/** effective_heat * connectivityMultiplier(degree). A null degree map (lookup failed, or never
+ *  ran) is treated as degree 0 everywhere -- multiplier 1 -- so this collapses to plain
+ *  effective_heat, the SQL's own order, when graph salience is unavailable. */
+function graphScore(row: ConclusionCandidate, degrees: Map<string, number> | null): number {
+  const degree = degrees?.get(nodeKey("companion_conclusions", row.id)) ?? 0;
+  return row.effective_heat * connectivityMultiplier(degree);
+}
+
+/** Re-rank a set of already effective-heat-ordered candidates by graph score and slice back to
+ *  the caller's real limit. Stable degrade: on any graph failure this reduces to "take the first
+ *  `limit` rows", which is exactly what the un-multiplied SQL order already was. */
+function rerankConclusions<T extends ConclusionCandidate>(
+  rows: T[],
+  degrees: Map<string, number> | null,
+  limit: number,
+): T[] {
+  return [...rows]
+    .sort((a, b) => graphScore(b, degrees) - graphScore(a, degrees))
+    .slice(0, limit);
+}
 
 /** "While you were away" block. Null-safe: orient must never break on home error.
  *  readOnly peeks without stamping surfaced_at (pure read for the MindState loader). */
@@ -288,24 +351,34 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   // Ordered by effective heat (mig 0105, thinking-quality fix 5): a belief that keeps
   // getting reached for outranks one that merely happens to be recent, same as the
   // wm_continuity_notes core/novelty pools above.
+  const PER_TYPE_LIMIT = 2;
   const beliefTypes = ['self', 'relational', 'observational', 'systemic'];
   const conclusionPromises = beliefTypes.map(type =>
     env.DB.prepare(
       `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
-              created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+              created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged,
+              ${effectiveHeatSql()} AS effective_heat
        FROM companion_conclusions
        WHERE companion_id = ? AND belief_type = ? AND superseded_by IS NULL AND archived = 0
-       ORDER BY ${effectiveHeatSql()} DESC LIMIT 2`
-    ).bind(agentId, type).all<WmConclusion>()
+       ORDER BY ${effectiveHeatSql()} DESC LIMIT ?`
+    ).bind(agentId, type, PER_TYPE_LIMIT * CONCLUSION_OVER_FETCH).all<WmConclusion & { effective_heat: number }>()
   );
 
   const [selfResults, relationalResults, observationalResults, systemicResults] = await Promise.all(conclusionPromises);
+  const typeResultSets = [selfResults, relationalResults, observationalResults, systemicResults] as const;
+
+  // ONE neighborhood() call over every over-fetched type candidate (not one per type): graph
+  // salience is a nudge on ranking, not a fourth retrieval path, so it gets a single bounded
+  // read shared across this whole site's re-rank.
+  const allTypeCandidates = typeResultSets.flatMap((r) => r?.results ?? []);
+  const typeDegrees = await readerDegreesForConclusions(env, agentId, allTypeCandidates);
 
   const CONCLUSION_CAP = 6;
   const seenIds = new Set<string>();
   const active_conclusions: WmConclusion[] = [];
-  for (const result of [selfResults, relationalResults, observationalResults, systemicResults] as const) {
-    for (const row of (result?.results ?? [])) {
+  for (const result of typeResultSets) {
+    const reranked = rerankConclusions(result?.results ?? [], typeDegrees, PER_TYPE_LIMIT);
+    for (const { effective_heat: _effective_heat, ...row } of reranked) {
       if (!seenIds.has(row.id) && active_conclusions.length < CONCLUSION_CAP) {
         seenIds.add(row.id);
         active_conclusions.push(row);
@@ -329,12 +402,16 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     const notIn = excluded.length ? `AND id NOT IN (${excluded.map(() => "?").join(",")})` : "";
     const topUp = await env.DB.prepare(
       `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
-              created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+              created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged,
+              ${effectiveHeatSql()} AS effective_heat
        FROM companion_conclusions
        WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ${notIn}
        ORDER BY ${effectiveHeatSql()} DESC LIMIT ?`
-    ).bind(agentId, ...excluded, room).all<WmConclusion>().catch(() => null);
-    for (const row of (topUp?.results ?? [])) {
+    ).bind(agentId, ...excluded, room * CONCLUSION_OVER_FETCH).all<WmConclusion & { effective_heat: number }>().catch(() => null);
+    const topUpRows = topUp?.results ?? [];
+    const topUpDegrees = await readerDegreesForConclusions(env, agentId, topUpRows);
+    const rerankedTopUp = rerankConclusions(topUpRows, topUpDegrees, room);
+    for (const { effective_heat: _effective_heat, ...row } of rerankedTopUp) {
       if (!seenIds.has(row.id) && active_conclusions.length < CONCLUSION_CAP) {
         seenIds.add(row.id);
         active_conclusions.push(row);
@@ -343,15 +420,19 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   }
 
   // Flagged beliefs: separate pass for contradiction-flagged active conclusions
+  const FLAGGED_LIMIT = 10;
   const flaggedResult = await env.DB.prepare(
     `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
-            created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+            created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged,
+            ${effectiveHeatSql()} AS effective_heat
      FROM companion_conclusions
      WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 AND contradiction_flagged = 1
-     ORDER BY ${effectiveHeatSql()} DESC LIMIT 10`
-  ).bind(agentId).all<WmConclusion>();
+     ORDER BY ${effectiveHeatSql()} DESC LIMIT ?`
+  ).bind(agentId, FLAGGED_LIMIT * CONCLUSION_OVER_FETCH).all<WmConclusion & { effective_heat: number }>();
 
-  const flagged_beliefs: WmConclusion[] = flaggedResult.results ?? [];
+  const flaggedDegrees = await readerDegreesForConclusions(env, agentId, flaggedResult.results ?? []);
+  const flagged_beliefs: WmConclusion[] = rerankConclusions(flaggedResult.results ?? [], flaggedDegrees, FLAGGED_LIMIT)
+    .map(({ effective_heat: _effective_heat, ...row }) => row);
 
   // Warm surfaced conclusions (mig 0105, thinking-quality fix 5): access is what keeps
   // a belief hot. Non-fatal -- orient never breaks on a heat bookkeeping failure.

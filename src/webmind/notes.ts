@@ -7,6 +7,8 @@ import { generateId } from "../db/queries.js";
 import { WmContinuityNote, WmNoteInput } from "./types.js";
 import { effectiveHeatSql, warmSql } from "./heat.js";
 import { embedText, embedAndStoreAsync, composeHandoverText } from "../mcp/embed.js";
+import { neighborhood } from "../graph/traverse.js";
+import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -488,6 +490,28 @@ export async function recallNotesByMeaning(
         salience: "journal", thread_key: null,
         kind: "journal", source: r.source, score, effective: score * weight,
       });
+    }
+  }
+
+  // Graph-memory Phase 1.5 (docs/private/graph-memory-spec-2026-08-28.md), Tranche 3: relational
+  // salience nudges journal candidates only this phase (notes and handovers are untouched --
+  // the multiplier is scoped narrowly on purpose, same as the spec's own "phase" framing). One
+  // bounded, read-only neighborhood() call over every journal candidate id, converted to a
+  // per-reader degree map, applied as effective *= connectivityMultiplier(degree). Non-fatal:
+  // any failure here degrades to the un-multiplied vector-score order recall already had, never
+  // breaking the read. Reads warm nothing -- this only re-scores rows already fetched above.
+  const journalEntries = entries.filter((e) => e.kind === "journal");
+  if (journalEntries.length > 0) {
+    try {
+      const seeds = journalEntries.map((e) => ({ table: "companion_journal", id: e.note_id }));
+      const edges = await neighborhood(env, seeds, { hops: 1 });
+      const degrees = readerDegrees(edges, agentId, seeds);
+      for (const e of journalEntries) {
+        const degree = degrees.get(nodeKey("companion_journal", e.note_id)) ?? 0;
+        e.effective = e.effective * connectivityMultiplier(degree);
+      }
+    } catch (err) {
+      console.warn("[notes] graph salience lookup failed (non-fatal, falling back to un-multiplied order):", String(err));
     }
   }
 
