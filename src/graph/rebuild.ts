@@ -105,6 +105,17 @@ function buildSupersedesEdges(rows: ConclusionRow[]): GraphEdgeRow[] {
 // companion_id is '' (empty-string placeholder) on MCP-logged rows (documented covenant in the repo
 // CLAUDE.md: "MCP-logged rows have companion_id=''"); `agent` is the correct writer source for those.
 // Legacy rows carry a real companion_id and no `agent`. Skip rows with no session (NULL or '').
+//
+// DANGLING SESSIONS (audit finding, 2026-08): 8 of these edges point at a sessions.id that does not
+// exist -- all 2026-03 legacy relational_deltas/companion_journal rows, one carrying the literal
+// string "current" as its session_id (never a real row, not even a deleted one). relational_deltas
+// is append-only by covenant (this file's own header, and CLAUDE.md) -- the source rows can never be
+// cleaned, so these edges regenerate identically every rebuild. Ratified decision: mark, don't drop.
+// A derived link may be down-ranked or filtered by a consumer, but this projection must never
+// silently remove what its source still asserts. `sessionIds` (the live SELECT id FROM sessions set)
+// is passed in so these builders stay pure; when session_id is not in that set the edge still gets
+// emitted, just stamped `mechanical:dangling` instead of `mechanical`. Determinism holds: the same
+// input rows against the same sessions snapshot always produce the same provenance stamp.
 interface RelationalDeltaRow {
   id: string;
   companion_id: string | null;
@@ -113,7 +124,7 @@ interface RelationalDeltaRow {
   created_at: string;
 }
 
-function buildRelationalDeltaEdges(rows: RelationalDeltaRow[]): GraphEdgeRow[] {
+function buildRelationalDeltaEdges(rows: RelationalDeltaRow[], sessionIds: Set<string>): GraphEdgeRow[] {
   const edges: GraphEdgeRow[] = [];
   for (const r of rows) {
     if (!r.session_id) continue;
@@ -125,7 +136,7 @@ function buildRelationalDeltaEdges(rows: RelationalDeltaRow[]): GraphEdgeRow[] {
       dst_id: r.session_id,
       edge_type: "logged_in",
       writer,
-      provenance: "mechanical",
+      provenance: sessionIds.has(r.session_id) ? "mechanical" : "mechanical:dangling",
       created_at: r.created_at,
     });
   }
@@ -135,6 +146,8 @@ function buildRelationalDeltaEdges(rows: RelationalDeltaRow[]): GraphEdgeRow[] {
 // ── c. companion_journal.session_id -> 'logged_in' ─────────────────────────────────────────────────
 // human_journal has no session_id column at all (migrations/0014_schema_additions_v2.sql) -- not
 // touched here, not a gap, just a table this relationship doesn't apply to.
+//
+// Same dangling-session marking as (b) above, same audit, same covenant -- see that comment.
 interface CompanionJournalRow {
   id: string;
   agent: string;
@@ -142,7 +155,7 @@ interface CompanionJournalRow {
   created_at: string;
 }
 
-function buildJournalEdges(rows: CompanionJournalRow[]): GraphEdgeRow[] {
+function buildJournalEdges(rows: CompanionJournalRow[], sessionIds: Set<string>): GraphEdgeRow[] {
   const edges: GraphEdgeRow[] = [];
   for (const r of rows) {
     if (!r.session_id) continue;
@@ -153,7 +166,7 @@ function buildJournalEdges(rows: CompanionJournalRow[]): GraphEdgeRow[] {
       dst_id: r.session_id,
       edge_type: "logged_in",
       writer: r.agent,
-      provenance: "mechanical",
+      provenance: sessionIds.has(r.session_id) ? "mechanical" : "mechanical:dangling",
       created_at: r.created_at,
     });
   }
@@ -323,19 +336,23 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
 
   await db.prepare(`DELETE FROM graph_edges WHERE provenance LIKE ?`).bind(MECHANICAL_PROVENANCE_LIKE).run();
 
-  const [conclusions, deltas, journal, notes, tensions, handovers] = await Promise.all([
+  const [conclusions, deltas, journal, notes, tensions, handovers, sessions] = await Promise.all([
     selectAll<ConclusionRow>(db, "companion_conclusions"),
     selectAll<RelationalDeltaRow>(db, "relational_deltas"),
     selectAll<CompanionJournalRow>(db, "companion_journal"),
     selectAll<InterCompanionNoteRow>(db, "inter_companion_notes"),
     selectAll<CompanionTensionRow>(db, "companion_tensions"),
     selectAll<HandoverPacketRow>(db, "handover_packets"),
+    selectAll<{ id: string }>(db, "sessions"),
   ]);
+  // Read once, shared by both dangling-session checks below (b, c) -- see their comments for why
+  // a session_id can point at nothing (append-only source, 8-row 2026-03 audit finding).
+  const sessionIds = new Set(sessions.map((s) => s.id));
 
   const sources: Array<{ source: string; edges: GraphEdgeRow[] }> = [
     { source: "companion_conclusions.superseded_by", edges: buildSupersedesEdges(conclusions) },
-    { source: "relational_deltas.session_id", edges: buildRelationalDeltaEdges(deltas) },
-    { source: "companion_journal.session_id", edges: buildJournalEdges(journal) },
+    { source: "relational_deltas.session_id", edges: buildRelationalDeltaEdges(deltas, sessionIds) },
+    { source: "companion_journal.session_id", edges: buildJournalEdges(journal, sessionIds) },
     { source: "inter_companion_notes", edges: buildNoteEdges(notes) },
     { source: "companion_tensions", edges: buildTensionEdges(tensions) },
     { source: "handover_packets.session_id", edges: buildHandoverEdges(handovers) },

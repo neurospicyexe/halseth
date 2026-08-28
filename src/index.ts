@@ -87,6 +87,7 @@ import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
+import { runGraphRebuildTick } from "./graph/tick.js";
 import { postCareActed, getCarePending, getCareRecent, postCareTickForce, getOwnerActivity, getCareEscalations, postCareEscalationDelivered, postCareEscalationAttempt } from "./handlers/care.js";
 import { getProjects, getProjectLog, postProjectLog } from "./handlers/projects.js";
 import { runCareTick } from "./care/tick.js";
@@ -683,6 +684,10 @@ export async function runScheduledWork(env: Env): Promise<void> {
     (async () => {
       try { await runSaliencePrune(env); }
       catch (err) { console.error("salience prune failed", err); }
+    })(),
+    (async () => {
+      try { await runGraphRebuildTick(env); }
+      catch (err) { console.error("graph rebuild tick failed", err); }
     })(),
     (async () => {
       try { await runStaleSessionSweep(env); }
