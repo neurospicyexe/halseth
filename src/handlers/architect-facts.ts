@@ -66,10 +66,35 @@ async function activeFacts(env: Env): Promise<FactRow[]> {
 }
 
 /**
- * Render the injectable block. Deterministic: same rows in, same bytes out, so the sync job can
- * compare against what is already on disk and skip a pointless restart.
+ * A fact's own author speaks in first person ("...me writing 'someone wraps around you' instead of
+ * 'I'" -- Drevan, in his own voice, about himself). Spliced verbatim into a SIBLING's identity file,
+ * that same sentence reads as a memory THEY have, about THEMSELVES -- misattribution at the identity
+ * layer, not a formatting nit. The fix is provenance, never rewriting: a fact authored by someone
+ * other than the viewer gets a `[noted by <companion>]` prefix; the text after it is untouched. Own
+ * voice (viewerCompanionId matches) and unattributed rows (no companion_id -- Raziel or legacy) never
+ * get a label.
  */
-export function renderFactsBlock(rows: FactRow[], generatedNote: string): string {
+function attributionLine(r: FactRow, viewerCompanionId: string | null | undefined): string {
+  const ownVoice = viewerCompanionId != null && r.companion_id === viewerCompanionId;
+  const prefix = r.companion_id && !ownVoice ? `[noted by ${r.companion_id}] ` : "";
+  return "- " + prefix + r.fact.trim();
+}
+
+/**
+ * Render the injectable block. Deterministic: same rows in, same bytes out (for a given
+ * viewerCompanionId), so the sync job can compare against what is already on disk and skip a
+ * pointless restart.
+ *
+ * viewerCompanionId selects whose voice is "home": that companion's own facts render unlabeled,
+ * everyone else's carry `[noted by <companion>]`. Omit it (undefined/null) for the shared,
+ * no-single-self render (shared_system_context.md) -- every authored fact is labeled, since no
+ * companion there is "the one speaking."
+ */
+export function renderFactsBlock(
+  rows: FactRow[],
+  generatedNote: string,
+  viewerCompanionId?: string | null,
+): string {
   const active = rows.filter(r => r.status === "active");
   const open = rows.filter(r => r.status === "open");
 
@@ -90,7 +115,7 @@ export function renderFactsBlock(rows: FactRow[], generatedNote: string): string
     const inCat = active.filter(r => r.category === cat);
     if (!inCat.length) continue;
     out.push(CATEGORY_TITLES[cat] ?? cat.toUpperCase().replace(/[_-]+/g, " "));
-    for (const r of inCat) out.push("- " + r.fact.trim());
+    for (const r of inCat) out.push(attributionLine(r, viewerCompanionId));
     out.push("");
   }
 
@@ -100,7 +125,7 @@ export function renderFactsBlock(rows: FactRow[], generatedNote: string): string
       "These are held open deliberately. Guessing a person, a pronoun or a death wrong is worse " +
       "than asking.",
     );
-    for (const r of open) out.push("- " + r.fact.trim());
+    for (const r of open) out.push(attributionLine(r, viewerCompanionId));
     out.push("");
   }
 
@@ -114,9 +139,21 @@ export async function getArchitectFacts(request: Request, env: Env): Promise<Res
   return json({ count: rows.length, facts: rows });
 }
 
+const KNOWN_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
+
 export async function getArchitectFactsRender(request: Request, env: Env): Promise<Response> {
   const unauth = authGuard(request, env);
   if (unauth) return unauth;
+
+  // ?companion=cypher|drevan|gaia selects whose voice is "home" for this render (SOUL.md mode --
+  // that companion's own facts stay unlabeled, everyone else's get `[noted by <companion>]`).
+  // Omit it for the shared render (shared_system_context.md): every authored fact is labeled,
+  // because no single companion there is the one speaking in first person.
+  const companionParam = new URL(request.url).searchParams.get("companion");
+  if (companionParam !== null && !KNOWN_COMPANIONS.has(companionParam)) {
+    return json({ error: "companion must be cypher | drevan | gaia" }, 400);
+  }
+
   const rows = await activeFacts(env);
   // No timestamp in the note: it would change the bytes on every call and defeat the sync job's
   // "has anything actually changed?" comparison. The count is the useful, stable signal.
@@ -124,7 +161,7 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
     `Generated from Halseth architect_facts (${rows.length} live). Do NOT hand-edit this block: ` +
     `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
     `conversation by Cypher, Drevan and Gaia; his own record, held for his own use.`;
-  const body = renderFactsBlock(rows, note);
+  const body = renderFactsBlock(rows, note, companionParam);
   return new Response(body, {
     headers: { "content-type": "text/markdown; charset=utf-8" },
   });
