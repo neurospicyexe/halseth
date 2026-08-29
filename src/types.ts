@@ -12,6 +12,11 @@ export interface Env {
   SECOND_BRAIN_MCP_URL?: string;     // Second Brain MCP endpoint (e.g. https://your-second-brain.example.com/mcp); /mcp appended if absent
   SECOND_BRAIN_WEBHOOK_URL?: string; // second-brain HTTP base URL for session-close webhook (e.g. https://your-second-brain.example.com)
   DEEPSEEK_API_KEY?: string;    // DeepSeek V3 API key for KV pattern classification (set via wrangler secret)
+  // Classifier vendor failover (2026-08-28, DeepSeek $0 balance -> cognitive_routing_offline).
+  // Optional -- if unset, a DeepSeek 401/402/403/429/5xx/network failure returns __offline__
+  // exactly as before (deterministic 400s never fail over on either vendor). Mirrors the
+  // autonomous-worker's DeepSeek/DeepInfra failover shape (packages/autonomous-worker/src/deepseek.ts).
+  DEEPINFRA_API_KEY?: string;   // DeepInfra API key, OpenAI-compatible, classifier fallback only (set via wrangler secret)
 
   // Config flags — set in wrangler.toml [vars], not in code.
   PLURALITY_ENABLED:   string;  // "true" | "false"

@@ -920,6 +920,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "write to drevan", "write to cypher", "write to gaia",
       "send to drevan", "send to cypher", "send to gaia",
       "note for drevan", "note for cypher", "note for gaia",
+      // "note to <name>" (singular, addressed) -- the mirror of "note to the triad" and the most
+      // natural phrasing, yet it was never a trigger: found 2026-08-28 when a sibling note fell
+      // through to the classifier during a DeepSeek outage and died as cognitive_routing_offline.
+      "note to drevan", "note to cypher", "note to gaia",
       "leave a note for", "leave note for", "for drevan", "for cypher", "for gaia",
     ],
     tools: ["halseth_companion_note_add"],

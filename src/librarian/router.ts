@@ -584,6 +584,15 @@ export function isCloseShaped(request: string): boolean {
   return /\bclos(?:e|ed|ing)\b/i.test(request) && /\bsession\b/i.test(request);
 }
 
+// ── Classifier vendor failover ──────────────────────────────────────────────
+// A status the SAME classify payload might survive on another vendor: auth flaps, an empty
+// balance (DeepSeek $0 on 2026-08-28, the incident this exists for), rate limits, and server
+// errors. A 400 is deterministic -- the payload is malformed on every vendor -- so it stays
+// fatal. Mirrors packages/autonomous-worker/src/deepseek.ts::vendorFailover exactly.
+export function vendorFailover(status: number): boolean {
+  return status === 401 || status === 402 || status === 403 || status === 429 || status >= 500;
+}
+
 export class LibrarianRouter {
   constructor(private env: Env) {}
 
@@ -726,48 +735,94 @@ export class LibrarianRouter {
         return hint ? `${k} (e.g. "${hint}")` : k;
       }).join(", ");
 
-      const res = await fetch("https://api.deepseek.com/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.env.DEEPSEEK_API_KEY}`,
+      const messages: Array<{ role: "system" | "user"; content: string }> = [
+        {
+          role: "system",
+          content: `You classify companion requests into one of these pattern keys: ${keyList}. Return ONLY the matching pattern key exactly as written, or "unknown". No explanation.`,
         },
-        body: JSON.stringify({
-          // 2026-07-28: was `deepseek-chat` at max_tokens 20. That alias is delisted (see
-          // synthesis/deepseek.ts) and every listed model REASONS, spending max_tokens on the
-          // thought before emitting content -- so a naive model swap here would have returned
-          // "" for every classify and silently routed every non-fast-path request to
-          // __offline__. contentBudget() adds the headroom. Measured on flash with this exact
-          // prompt shape: 60-117 reasoning tokens, 1.6-2.0s, correct key -- well inside the
-          // timeout below, which is nonetheless raised for margin since reasoning latency
-          // scales with prompt size and the key list grows as patterns are added.
-          model: DEEPSEEK_DEFAULT_MODEL,
-          messages: [
-            {
-              role: "system",
-              content: `You classify companion requests into one of these pattern keys: ${keyList}. Return ONLY the matching pattern key exactly as written, or "unknown". No explanation.`,
+        { role: "user", content: request },
+      ];
+      // 2026-07-28: was `deepseek-chat` at max_tokens 20. That alias is delisted (see
+      // synthesis/deepseek.ts) and every listed model REASONS, spending max_tokens on the
+      // thought before emitting content -- so a naive model swap here would have returned
+      // "" for every classify and silently routed every non-fast-path request to
+      // __offline__. contentBudget() adds the headroom. Measured on flash with this exact
+      // prompt shape: 60-117 reasoning tokens, 1.6-2.0s, correct key -- well inside the
+      // timeout below, which is nonetheless raised for margin since reasoning latency
+      // scales with prompt size and the key list grows as patterns are added.
+      const maxTokens = contentBudget(20);
+
+      // Vendor failover (2026-08-28: DeepSeek $0 balance -> every classify returned
+      // cognitive_routing_offline for the entire suite, since the classifier is the sole
+      // Tier 2 path). A 401/402/403/429/5xx/network failure on DeepSeek may still succeed
+      // on DeepInfra (funds/quotas are per-vendor -- see the autonomous-worker's identical
+      // shape in packages/autonomous-worker/src/deepseek.ts). A 400 is deterministic (the
+      // payload itself is malformed) and stays fatal -- it would fail on any vendor.
+      const primary = { baseUrl: "https://api.deepseek.com", apiKey: this.env.DEEPSEEK_API_KEY, model: DEEPSEEK_DEFAULT_MODEL, label: "DeepSeek" };
+      const fallback = this.env.DEEPINFRA_API_KEY
+        ? { baseUrl: "https://api.deepinfra.com/v1/openai", apiKey: this.env.DEEPINFRA_API_KEY, model: "deepseek-ai/DeepSeek-V4-Flash-0731", label: "DeepInfra" }
+        : null;
+
+      let vendor = primary;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let res: Response;
+        try {
+          res = await fetch(`${vendor.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${vendor.apiKey}`,
             },
-            { role: "user", content: request },
-          ],
-          max_tokens: contentBudget(20),
-          temperature: 0,
-        }),
-        signal: AbortSignal.timeout(12_000),
-      });
+            body: JSON.stringify({
+              model: vendor.model,
+              messages,
+              max_tokens: maxTokens,
+              temperature: 0,
+            }),
+            signal: AbortSignal.timeout(12_000),
+          });
+        } catch (e) {
+          // Network-level failure (DNS, TLS, timeout) -- the other vendor may still be up.
+          if (vendor === primary && fallback) {
+            console.warn(
+              `[librarian] classify: ${primary.label} unreachable (${e instanceof Error ? e.message : String(e)}) -- ` +
+              `failing over to ${fallback.label} for this call`,
+            );
+            vendor = fallback;
+            attempt--; // redo this attempt on the fallback vendor, not spend it
+            continue;
+          }
+          throw e;
+        }
 
-      if (!res.ok) {
-        console.warn(`[librarian] classify failed: status=${res.status} request="${request.slice(0, 80)}"`);
-        return "__offline__";
+        if (!res.ok) {
+          if (vendorFailover(res.status) && vendor === primary && fallback) {
+            const text = await res.text().catch(() => "");
+            console.warn(
+              `[librarian] classify: ${primary.label} error ${res.status} (${text.slice(0, 120)}) -- ` +
+              `failing over to ${fallback.label} for this call`,
+            );
+            vendor = fallback;
+            attempt--; // redo this attempt on the fallback vendor, not spend it
+            continue;
+          }
+          console.warn(`[librarian] classify failed: status=${res.status} vendor=${vendor.label} request="${request.slice(0, 80)}"`);
+          return "__offline__";
+        }
+
+        const json = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const result = json.choices?.[0]?.message?.content?.trim().toLowerCase() ?? null;
+        if (!result) {
+          console.warn(`[librarian] classify returned empty result`);
+        } else {
+          console.log(`[librarian] classify: key="${result}"`);
+        }
+        return result ?? "__offline__";
       }
 
-      const json = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-      const result = json.choices?.[0]?.message?.content?.trim().toLowerCase() ?? null;
-      if (!result) {
-        console.warn(`[librarian] classify returned empty result`);
-      } else {
-        console.log(`[librarian] classify: key="${result}"`);
-      }
-      return result ?? "__offline__";
+      // Unreachable in practice (the loop always returns or throws), but keeps the
+      // function's return type honest for TypeScript's control-flow analysis.
+      return "__offline__";
     } catch (e) {
       console.warn(`[librarian] classify error: ${e instanceof Error ? e.message : String(e)}`);
       return "__offline__";

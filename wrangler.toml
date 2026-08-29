@@ -62,6 +62,10 @@ service = "nullsafe-plural-v2"
 # Secrets (set via `wrangler secret put SECOND_BRAIN_TOKEN`):
 # SECOND_BRAIN_TOKEN — OAuth token for your Second Brain MCP endpoint (e.g. https://your-second-brain.example.com/mcp)
 # DEEPSEEK_API_KEY   — DeepSeek V3 API key (classifier + synthesis worker)
+# DEEPINFRA_API_KEY  — optional. Librarian classifier failover vendor: on a DeepSeek
+#                       401/402/403/429/5xx/network error, retries once against DeepInfra
+#                       (OpenAI-compatible, deepseek-ai/DeepSeek-V4-Flash-0731). Unset =
+#                       unchanged behavior (classifier degrades to __offline__ on DeepSeek failure).
 
 # ── Cron triggers ─────────────────────────────────────────────────────────────
 [triggers]
