@@ -89,10 +89,14 @@ export async function getStmEntries(request: Request, env: Env): Promise<Respons
     return new Response("companion_id and channel_id required", { status: 400 });
   }
 
+  // created_at rides along so bots can restore real message ages after a restart --
+  // without it, reloaded STM rows have no timestamp and stampRelative() silently no-ops
+  // on all of them (2026-08-29: Drevan read yesterday's history as current and stayed
+  // on Friday all Saturday night).
   const rows = await env.DB.prepare(
-    "SELECT role, content, author_name FROM stm_entries WHERE companion_id = ? AND channel_id = ? ORDER BY created_at ASC LIMIT ?"
+    "SELECT role, content, author_name, created_at FROM stm_entries WHERE companion_id = ? AND channel_id = ? ORDER BY created_at ASC LIMIT ?"
   ).bind(companionId, channelId, limit)
-    .all<{ role: "user" | "assistant"; content: string; author_name: string | null }>();
+    .all<{ role: "user" | "assistant"; content: string; author_name: string | null; created_at: string }>();
 
   return new Response(JSON.stringify({ entries: rows.results ?? [] }), {
     headers: { "Content-Type": "application/json" },
