@@ -26,10 +26,13 @@ export const OWNER_ACTIVITY_SOURCES = [
   "contact-drive",
 ] as const;
 
+/* The sessions branch uses a range predicate instead of LIKE 'claude%': default LIKE is
+ * case-insensitive in SQLite, which blocks the 0128 (surface, created_at) index; the
+ * half-open range is the same prefix match and stays indexable. */
 export async function readOwnerLastSeen(env: Env): Promise<OwnerLastSeen | null> {
   const row = await env.DB.prepare(
     `SELECT source, at FROM (
-       SELECT 'sessions' AS source, MAX(created_at) AS at FROM sessions WHERE surface LIKE 'claude%'
+       SELECT 'sessions' AS source, MAX(created_at) AS at FROM sessions WHERE surface >= 'claude' AND surface < 'claudf'
        UNION ALL SELECT 'commons', MAX(created_at) FROM commons_posts WHERE author = 'raziel'
        UNION ALL SELECT 'biometrics', MAX(logged_at) FROM biometric_snapshots
        UNION ALL SELECT 'notes', MAX(created_at) FROM companion_notes WHERE author = 'human'

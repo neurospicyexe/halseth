@@ -80,9 +80,20 @@ export async function runNarrativeRefresh(
 
   for (const companionId of COMPANION_IDS) {
     try {
+      // MAX(COALESCE(session_created_at, created_at)) forced a full scan of the companion's
+      // summary rows on every minute tick (3.8M rows read/day). Split into two MAXes over the
+      // 0128 partial-index pair -- exactly equivalent: rows with a session timestamp contribute
+      // it, rows without contribute created_at, and MAX of the two branch maxima is the same value.
       const row = await env.DB.prepare(
-        `SELECT MAX(COALESCE(session_created_at, created_at)) AS ts FROM synthesis_summary
-         WHERE companion_id = ? AND summary_type IN ('session', 'day')`
+        `SELECT MAX(ts) AS ts FROM (
+           SELECT MAX(session_created_at) AS ts FROM synthesis_summary
+            WHERE companion_id = ?1 AND summary_type IN ('session', 'day')
+              AND session_created_at IS NOT NULL
+           UNION ALL
+           SELECT MAX(created_at) FROM synthesis_summary
+            WHERE companion_id = ?1 AND summary_type IN ('session', 'day')
+              AND session_created_at IS NULL
+         )`
       ).bind(companionId).first<{ ts: string | null }>();
 
       const { refresh, hoursOld } = needsNarrativeRefresh(row?.ts ?? null, now);

@@ -239,11 +239,16 @@ export async function refreshRoster(env: Env): Promise<RefreshResult> {
 const RETRY_AFTER_MINUTES = 30;
 
 export async function runRosterRefresh(env: Env): Promise<{ ran: boolean; skipped?: string; result?: RefreshResult }> {
+  // This gate rides the every-minute cron. COUNT(*) here scanned all ~538 roster rows per tick
+  // (2.4M rows read/day); the gate only needs "any rows at all", which EXISTS answers in 1 row.
+  // MAX(fetched_at) is a single seek on the 0128 fetched_at index. lookupMember keeps its real
+  // COUNT(*) -- it is on-demand and reports roster_size to a human.
   const row = await env.DB.prepare(
-    `SELECT MAX(fetched_at) AS newest, COUNT(*) AS n FROM pk_roster`,
-  ).first<{ newest: string | null; n: number }>();
+    `SELECT (SELECT MAX(fetched_at) FROM pk_roster) AS newest,
+            EXISTS(SELECT 1 FROM pk_roster) AS has_rows`,
+  ).first<{ newest: string | null; has_rows: number }>();
 
-  if (row?.newest && (row.n ?? 0) > 0) {
+  if (row?.newest && (row.has_rows ?? 0) > 0) {
     const ageHours = (Date.now() - Date.parse(row.newest)) / 3_600_000;
     if (Number.isFinite(ageHours) && ageHours < REFRESH_AFTER_HOURS) return { ran: false, skipped: "fresh" };
   }

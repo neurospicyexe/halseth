@@ -278,7 +278,8 @@ describe("runRosterRefresh gating", () => {
           bind() { return api; },
           async first<T>(): Promise<T | null> {
             if (sql.includes("MAX(fetched_at)")) {
-              return { newest: opts.newest, n: opts.rosterCount } as unknown as T;
+              // Gate query shape since the 0128 read diet: MAX seek + EXISTS instead of COUNT(*).
+              return { newest: opts.newest, has_rows: opts.rosterCount > 0 ? 1 : 0 } as unknown as T;
             }
             if (sql.includes("pk_roster_sync")) {
               return (opts.lastAttempt ? { started_at: opts.lastAttempt } : null) as T | null;

@@ -691,8 +691,8 @@ export class LibrarianRouter {
       }
     }
 
-    // Tier 2b: DeepSeek LLM classifier (fallback when Vectorize score is below threshold)
-    if (!this.env.DEEPSEEK_API_KEY) return "__offline__";
+    // Tier 2b: LLM classifier (fallback when Vectorize score is below threshold)
+    if (!this.env.DEEPINFRA_API_KEY && !this.env.DEEPSEEK_API_KEY) return "__offline__";
 
     try {
       // Pattern index is stored in a single KV entry ("_index") as a comma-separated
@@ -758,10 +758,17 @@ export class LibrarianRouter {
       // on DeepInfra (funds/quotas are per-vendor -- see the autonomous-worker's identical
       // shape in packages/autonomous-worker/src/deepseek.ts). A 400 is deterministic (the
       // payload itself is malformed) and stays fatal -- it would fail on any vendor.
-      const primary = { baseUrl: "https://api.deepseek.com", apiKey: this.env.DEEPSEEK_API_KEY, model: DEEPSEEK_DEFAULT_MODEL, label: "DeepSeek" };
-      const fallback = this.env.DEEPINFRA_API_KEY
+      // 2026-08-31: order flipped -- DeepInfra is PRIMARY (flat-priced, where the bots already
+      // live), DeepSeek-direct is the fallback. DeepSeek-primary was quietly draining the
+      // DeepSeek platform balance after everything else moved. Same weights on both vendors.
+      const deepinfra = this.env.DEEPINFRA_API_KEY
         ? { baseUrl: "https://api.deepinfra.com/v1/openai", apiKey: this.env.DEEPINFRA_API_KEY, model: "deepseek-ai/DeepSeek-V4-Flash-0731", label: "DeepInfra" }
         : null;
+      const deepseek = this.env.DEEPSEEK_API_KEY
+        ? { baseUrl: "https://api.deepseek.com", apiKey: this.env.DEEPSEEK_API_KEY, model: DEEPSEEK_DEFAULT_MODEL, label: "DeepSeek" }
+        : null;
+      const primary = (deepinfra ?? deepseek)!;
+      const fallback = deepinfra ? deepseek : null;
 
       let vendor = primary;
       for (let attempt = 0; attempt < 2; attempt++) {

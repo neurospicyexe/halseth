@@ -58,7 +58,7 @@ describe("vendorFailover status classifier", () => {
 describe("LibrarianRouter classifier failover", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("degrades to DeepInfra and still classifies when DeepSeek returns 402 (empty balance)", async () => {
+  it("degrades to DeepSeek and still classifies when DeepInfra returns 402 (empty balance)", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(402, { error: { message: "Insufficient Balance" } }))
       .mockResolvedValueOnce(jsonResponse(200, { choices: [{ message: { content: "unknown" } }] }));
@@ -75,13 +75,14 @@ describe("LibrarianRouter classifier failover", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstUrl = fetchMock.mock.calls[0]![0] as string;
     const secondUrl = fetchMock.mock.calls[1]![0] as string;
-    expect(firstUrl).toContain("api.deepseek.com");
-    expect(secondUrl).toContain("api.deepinfra.com/v1/openai");
+    // Vendor order since 2026-08-31: DeepInfra PRIMARY, DeepSeek-direct fallback.
+    expect(firstUrl).toContain("api.deepinfra.com/v1/openai");
+    expect(secondUrl).toContain("api.deepseek.com");
 
-    const secondBody = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string);
-    expect(secondBody.model).toBe("deepseek-ai/DeepSeek-V4-Flash-0731");
-    const secondHeaders = (fetchMock.mock.calls[1]![1] as RequestInit).headers as Record<string, string>;
-    expect(secondHeaders.Authorization).toBe("Bearer deepinfra-test-key");
+    const firstBody = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    expect(firstBody.model).toBe("deepseek-ai/DeepSeek-V4-Flash-0731");
+    const firstHeaders = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(firstHeaders.Authorization).toBe("Bearer deepinfra-test-key");
   });
 
   it("logs a warning on failover", async () => {
@@ -95,10 +96,10 @@ describe("LibrarianRouter classifier failover", () => {
     const router = new LibrarianRouter(env);
     await router.route({ request: UNMATCHED_REQUEST, companion_id: "cypher" } as LibrarianRequest);
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("failing over to DeepInfra"));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("failing over to DeepSeek"));
   });
 
-  it("without DEEPINFRA_API_KEY set, a DeepSeek failure degrades exactly as before (single vendor)", async () => {
+  it("without DEEPINFRA_API_KEY set, DeepSeek is the single vendor and its failure degrades as before", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(402, { error: { message: "Insufficient Balance" } }));
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -111,7 +112,7 @@ describe("LibrarianRouter classifier failover", () => {
     expect(result.error).toBe("cognitive_routing_offline");
   });
 
-  it("a 400 (deterministic payload error) stays fatal and never reaches DeepInfra", async () => {
+  it("a 400 (deterministic payload error) stays fatal and never reaches the fallback vendor", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(400, { error: { message: "bad request" } }));
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "warn").mockImplementation(() => {});

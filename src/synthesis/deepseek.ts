@@ -31,25 +31,48 @@ export const contentBudget = (contentTokens: number): number => contentTokens + 
 
 const MODEL = DEEPSEEK_DEFAULT_MODEL;
 
+/** Vendor order for synthesis (2026-08-31): DeepInfra PRIMARY, DeepSeek-direct fallback.
+ * The bots and the Librarian classifier moved to DeepInfra after the 2026-08 DeepSeek
+ * repricing, but this module kept calling api.deepseek.com directly -- which is what kept
+ * draining the DeepSeek platform balance. Same weights either way (DeepSeek-V4-Flash);
+ * only the vendor changes. Each vendor failing returns null-equivalent and the next is tried. */
+function vendors(env: Env): Array<{ url: string; key: string; model: string; label: string }> {
+  const list: Array<{ url: string; key: string; model: string; label: string }> = [];
+  if (env.DEEPINFRA_API_KEY) {
+    list.push({
+      url: "https://api.deepinfra.com/v1/openai/chat/completions",
+      key: env.DEEPINFRA_API_KEY,
+      model: "deepseek-ai/DeepSeek-V4-Flash-0731",
+      label: "DeepInfra",
+    });
+  }
+  if (env.DEEPSEEK_API_KEY) {
+    list.push({ url: DEEPSEEK_URL, key: env.DEEPSEEK_API_KEY, model: MODEL, label: "DeepSeek" });
+  }
+  return list;
+}
+
 export async function complete(
   systemPrompt: string,
   userPrompt: string,
   env: Env,
 ): Promise<string | null> {
-  if (!env.DEEPSEEK_API_KEY) {
-    console.error("[synthesis:deepseek] DEEPSEEK_API_KEY not set");
+  const order = vendors(env);
+  if (!order.length) {
+    console.error("[synthesis:deepseek] no inference key set (DEEPINFRA_API_KEY / DEEPSEEK_API_KEY)");
     return null;
   }
 
+  for (const vendor of order) {
   try {
-    const res = await fetch(DEEPSEEK_URL, {
+    const res = await fetch(vendor.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${env.DEEPSEEK_API_KEY}`,
+        "Authorization": `Bearer ${vendor.key}`,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: vendor.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user",   content: userPrompt },
@@ -60,8 +83,8 @@ export async function complete(
     });
 
     if (!res.ok) {
-      console.error(`[synthesis:deepseek] HTTP ${res.status}: ${await res.text()}`);
-      return null;
+      console.error(`[synthesis:deepseek] ${vendor.label} HTTP ${res.status}: ${await res.text()}`);
+      continue; // funds/quotas are per-vendor -- the other vendor may still answer
     }
 
     const data = await res.json() as {
@@ -70,8 +93,8 @@ export async function complete(
     };
 
     if (data.error) {
-      console.error("[synthesis:deepseek] API error:", data.error.message);
-      return null;
+      console.error(`[synthesis:deepseek] ${vendor.label} API error:`, data.error.message);
+      continue;
     }
 
     const content = data.choices?.[0]?.message?.content ?? null;
@@ -80,14 +103,15 @@ export async function complete(
     if (!content?.trim()) {
       const choice = (data.choices?.[0] ?? {}) as { finish_reason?: string };
       console.error(
-        `[synthesis:deepseek] empty content (finish=${choice.finish_reason ?? "?"}, model=${MODEL}) -- ` +
+        `[synthesis:deepseek] empty content (finish=${choice.finish_reason ?? "?"}, model=${vendor.model}) -- ` +
         `if finish=length, raise REASONING_HEADROOM (currently ${REASONING_HEADROOM})`,
       );
-      return null;
+      continue;
     }
     return content;
   } catch (e) {
-    console.error("[synthesis:deepseek] exception:", e);
-    return null;
+    console.error(`[synthesis:deepseek] ${vendor.label} exception:`, e);
   }
+  }
+  return null;
 }
