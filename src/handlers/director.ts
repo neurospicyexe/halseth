@@ -6,6 +6,9 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { SUPPLY_SOURCES, RECEIPT_SQL, mapRow, type SupplyRow, type DirectorSupplyItem } from "../director/supply-query.js";
+import { neighborhood, type GraphSeed } from "../graph/traverse.js";
+import { readerDegrees, nodeKey } from "../graph/salience.js";
+import { renderEdgeLines, scoreNode } from "../graph/render.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -98,6 +101,40 @@ export async function getDirectorSupply(request: Request, env: Env): Promise<Res
     return json({ items: page, cursor });
   } catch (err) {
     console.error("[mind/director/supply] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// GET /mind/director/neighborhood?reader=<id>&seeds=<table:id,...>&hops=1|2
+export async function getDirectorNeighborhood(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const url = new URL(request.url);
+  const reader = url.searchParams.get("reader") ?? "";
+  if (!COMPANIONS.has(reader)) return json({ error: "reader must be cypher, drevan, or gaia" }, 400);
+  const seeds: GraphSeed[] = (url.searchParams.get("seeds") ?? "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
+    const i = s.indexOf(":"); return { table: s.slice(0, i), id: s.slice(i + 1) };
+  }).filter((s) => s.table && s.id);
+  if (seeds.length === 0) return json({ lines: [], nodes: [] });
+  if (seeds.some((s) => s.table === "companions")) return json({ error: "companions/<id> is not a valid seed (hairball)" }, 400);
+  const hops = url.searchParams.get("hops") === "2" ? 2 : 1;
+  try {
+    const edges = await neighborhood(env, seeds, { hops, limit: 30, withHeat: true });
+    const degrees = readerDegrees(edges, reader, seeds);
+    const seen = new Set<string>();
+    const nodes: Array<{ table: string; id: string; heat: number | null; score: number }> = [];
+    for (const e of edges) {
+      for (const [t, id] of [[e.src_table, e.src_id], [e.dst_table, e.dst_id]] as const) {
+        const k = nodeKey(t, id);
+        if (seen.has(k) || t === "companions") continue;
+        seen.add(k);
+        nodes.push({ table: t, id, heat: e.node_heat, score: scoreNode(e.node_heat, degrees.get(k) ?? 0) });
+      }
+    }
+    nodes.sort((a, b) => b.score - a.score);
+    return json({ lines: renderEdgeLines(edges, degrees), nodes: nodes.slice(0, 12) });
+  } catch (err) {
+    console.error("[mind/director/neighborhood] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }
