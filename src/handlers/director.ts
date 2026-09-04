@@ -138,3 +138,37 @@ export async function getDirectorNeighborhood(request: Request, env: Env): Promi
     return json({ error: "Internal server error" }, 500);
   }
 }
+
+// GET /admin/director/health?hours=24 -- raw counts with their denominator; no thresholds here.
+export async function getDirectorHealth(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const h = parseInt(new URL(request.url).searchParams.get("hours") ?? "24", 10);
+  const hours = Number.isFinite(h) && h > 0 ? Math.min(h, 24 * 30) : 24;
+  const sinceExpr = `datetime('now', '-${hours} hours')`;
+  const count = async (sql: string): Promise<Record<string, number>> => {
+    const { results } = await env.DB.prepare(sql).all<{ k: string; n: number }>();
+    const out: Record<string, number> = {};
+    for (const r of results ?? []) out[r.k] = Number(r.n);
+    return out;
+  };
+  try {
+    const issued = await count(`SELECT companion_id AS k, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} GROUP BY companion_id`);
+    const outcomes = await count(`SELECT outcome AS k, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} GROUP BY outcome`);
+    const floor = await count(`SELECT reason AS k, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} AND reason = 'open'`);
+    const forage = await count(`SELECT 'forage' AS k, COUNT(*) AS n FROM forage_finds WHERE consumed_at IS NULL`);
+    const questions = await count(`SELECT 'question' AS k, COUNT(*) AS n FROM companion_questions WHERE status='open' AND delivered_at IS NULL`);
+    const projects = await count(`SELECT 'project' AS k, COUNT(*) AS n FROM companion_projects WHERE status='open'`);
+    const tensions = await count(`SELECT 'tension' AS k, COUNT(*) AS n FROM companion_tensions WHERE status IN ('simmering','crystallized')`);
+    return json({
+      window_hours: hours,
+      issued: { cypher: issued["cypher"] ?? 0, drevan: issued["drevan"] ?? 0, gaia: issued["gaia"] ?? 0 },
+      outcomes: { shadow: outcomes["shadow"] ?? 0, issued: outcomes["issued"] ?? 0, spoke: outcomes["spoke"] ?? 0, passed: outcomes["passed"] ?? 0, empty: outcomes["empty"] ?? 0, expired: outcomes["expired"] ?? 0 },
+      floor_fires: floor["open"] ?? 0,
+      supply_pool: { forage: forage["forage"] ?? 0, question: questions["question"] ?? 0, project: projects["project"] ?? 0, tension: tensions["tension"] ?? 0 },
+    });
+  } catch (err) {
+    console.error("[admin/director/health] error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}

@@ -40,7 +40,7 @@ import { getEdges } from "./handlers/edges.js";
 import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
-import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood } from "./handlers/director.js";
+import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "./handlers/director.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -186,6 +186,7 @@ const router = new Router()
   // Read-only readout for the standing health check (VPS side cannot see D1 directly): rebuild gate
   // staleness + live-lane/total edge counts, one query each. See src/handlers/graph.ts header.
   .on("GET",  "/admin/graph/health",      (request, env) => getGraphHealth(request, env))
+  .on("GET",  "/admin/director/health",   (request, env) => getDirectorHealth(request, env))
 
   // Care loop (consequence layer C1, mig 0121). The forced tick skips the hourly gate but never
   // the rule cooldowns -- it is the live-fire door for the verification gate.

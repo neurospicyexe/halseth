@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood } from "../handlers/director.js";
+import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "../handlers/director.js";
 import type { Env } from "../types.js";
 
 vi.mock("../graph/traverse.js", () => ({
@@ -217,5 +217,30 @@ describe("getDirectorNeighborhood", () => {
     expect(tableSet.has("companions")).toBe(false);
     // Heat 0.9 should rank higher than heat 0.4
     expect(body.nodes[0]?.id).toBe("j1");
+  });
+});
+
+describe("director health", () => {
+  it("health returns per-companion issued and per-outcome counts for the window", async () => {
+    const DB = {
+      prepare(sql: string) {
+        const all = async () => {
+          if (sql.includes("GROUP BY companion_id")) return { results: [{ k: "cypher", n: 2 }, { k: "gaia", n: 5 }] };
+          if (sql.includes("GROUP BY outcome")) return { results: [{ k: "spoke", n: 4 }, { k: "passed", n: 3 }] };
+          if (sql.includes("reason = 'open'")) return { results: [{ k: "open", n: 1 }] };
+          if (sql.includes("FROM forage_finds")) return { results: [{ k: "forage", n: 7 }] };
+          return { results: [] };
+        };
+        return { bind: () => ({ all }), all };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorHealth(new Request("https://h/admin/director/health?hours=24", { headers: { Authorization: "Bearer tok" } }), env);
+    const body = await res.json() as { window_hours: number; issued: Record<string, number>; outcomes: Record<string, number>; floor_fires: number };
+    expect(body.window_hours).toBe(24);
+    expect(body.issued.gaia).toBe(5);
+    expect(body.issued.drevan).toBe(0);
+    expect(body.outcomes.passed).toBe(3);
+    expect(body.floor_fires).toBe(1);
   });
 });
