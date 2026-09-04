@@ -40,6 +40,7 @@ import { getEdges } from "./handlers/edges.js";
 import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
+import { postDirectorInvitation, patchDirectorInvitation } from "./handlers/director.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
 import { postConclusion, getConclusions, supersedeConclusionById } from "./handlers/conclusions.js";
 import { getSynthesisSummaries, getInterCompanionNotes, getMindHandoffs, getIngestWounds, getIngestCompanionDreams, getIngestOpenLoops, getIngestRelationalState, getIngestTensions, getIngestSomaticSnapshots, getIngestDriftLog, getIngestLiveThreads, getIngestBasinHistory, getIngestGrowthJournal, getIngestCompanionConclusions } from "./handlers/ingest.js";
@@ -286,6 +287,11 @@ const router = new Router()
   .on("POST", "/mind/conversations/:id/turns",       (request, env, params) => postConversationTurn(request, env, params ?? {}))
   .on("POST", "/mind/conversations/:id/land",        (request, env, params) => postConversationLand(request, env, params ?? {}))
   .on("POST", "/mind/conversations/:id/fade",        (request, env, params) => postConversationFade(request, env, params ?? {}))
+
+  // Conversation Director (spec 2026-09-03, mig 0129)
+  .on("POST",  "/mind/director/invitations",      (request, env)         => postDirectorInvitation(request, env))
+  .on("PATCH", "/mind/director/invitations/:id",  (request, env, params) => patchDirectorInvitation(request, env, params ?? {}))
+
   .on("POST", "/mind/note",             (request, env) => postMindNote(request, env))
   .on("GET",  "/mind/search",                        (request, env)         => getMindSearch(request, env))
   .on("GET",  "/mind/sb-search-log/:agent_id",       (request, env, params) => getMindSbSearchLog(request, env, params ?? {}))
