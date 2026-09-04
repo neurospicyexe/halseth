@@ -1,6 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply } from "../handlers/director.js";
+import { describe, it, expect, vi } from "vitest";
+import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood } from "../handlers/director.js";
 import type { Env } from "../types.js";
+
+vi.mock("../graph/traverse.js", () => ({
+  neighborhood: vi.fn(async () => [
+    {
+      src_table: "companion_tensions", src_id: "t1", dst_table: "companions", dst_id: "drevan",
+      edge_type: "holds_tension", writer: "drevan", created_at: "2026-09-01T00:00:00Z", hop: 1, node_heat: 0.4,
+    },
+    {
+      src_table: "companion_journal", src_id: "j1", dst_table: "companion_tensions", dst_id: "t1",
+      edge_type: "references", writer: "cypher", created_at: "2026-09-01T01:00:00Z", hop: 2, node_heat: 0.9,
+    },
+  ]),
+}));
 
 interface Row { [k: string]: unknown }
 function makeEnv() {
@@ -134,5 +147,75 @@ describe("director supply", () => {
     expect((body.items[0] as any).created_at).toBe(t1);
     expect((body.items[1] as any).created_at).toBe(t2);
     expect(body.cursor).toBe(t2);
+  });
+});
+
+describe("getDirectorNeighborhood", () => {
+  it("denies without auth", async () => {
+    const env = { ADMIN_SECRET: "tok", DB: {} } as unknown as Env;
+    const res = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood"), env);
+    expect(res.status).toBe(401);
+  });
+  it("rejects when reader is not cypher/drevan/gaia", async () => {
+    const env = { ADMIN_SECRET: "tok", DB: {} } as unknown as Env;
+    const res = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood?reader=nobody", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error?: string };
+    expect(body.error).toContain("reader must be");
+  });
+  it("returns empty response when seeds is empty, without calling DB", async () => {
+    let dbCalled = false;
+    const throwingDB = { prepare: () => { dbCalled = true; throw new Error("DB should not be called"); } };
+    const env = { ADMIN_SECRET: "tok", DB: throwingDB } as unknown as Env;
+    const res = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood?reader=cypher&seeds=", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res.status).toBe(200);
+    expect(!dbCalled).toBe(true);
+    const body = await res.json() as { lines: unknown[]; nodes: unknown[] };
+    expect(body.lines).toEqual([]);
+    expect(body.nodes).toEqual([]);
+  });
+  it("rejects companions seed and drops colon-less seed tokens, without calling DB", async () => {
+    let dbCalled = false;
+    const throwingDB = { prepare: () => { dbCalled = true; throw new Error("DB should not be called"); } };
+    const env = { ADMIN_SECRET: "tok", DB: throwingDB } as unknown as Env;
+    // Test 1: companions seed is rejected with 400
+    const res1 = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood?reader=cypher&seeds=companion_tensions:t1,companions:drevan", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res1.status).toBe(400);
+    expect(!dbCalled).toBe(true);
+    const body1 = await res1.json() as { error?: string };
+    expect(body1.error).toContain("hairball");
+    // Test 2: colon-less seed (abc) is dropped, leaving empty seeds, returns 200
+    dbCalled = false;
+    const res2 = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood?reader=cypher&seeds=abc", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res2.status).toBe(200);
+    expect(!dbCalled).toBe(true);
+    const body2 = await res2.json() as { lines: unknown[]; nodes: unknown[] };
+    expect(body2.lines).toEqual([]);
+    expect(body2.nodes).toEqual([]);
+  });
+  it("happy path: renders graph neighborhood with mocked traverse", async () => {
+    const env = { ADMIN_SECRET: "tok", DB: {} } as unknown as Env;
+    const res = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood?reader=drevan&seeds=companion_tensions:t1", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { lines: string[]; nodes: Array<{ table: string; id: string; heat: number | null; score: number }> };
+    expect(body.lines.length).toBe(2);
+    for (const line of body.lines) {
+      expect(line.length).toBeLessThanOrEqual(90);
+    }
+    // Should exclude companions table, so only t1 and j1
+    const tableSet = new Set(body.nodes.map((n) => n.table));
+    expect(tableSet.has("companions")).toBe(false);
+    // Heat 0.9 should rank higher than heat 0.4
+    expect(body.nodes[0]?.id).toBe("j1");
   });
 });

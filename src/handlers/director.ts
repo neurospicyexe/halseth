@@ -113,8 +113,8 @@ export async function getDirectorNeighborhood(request: Request, env: Env): Promi
   const reader = url.searchParams.get("reader") ?? "";
   if (!COMPANIONS.has(reader)) return json({ error: "reader must be cypher, drevan, or gaia" }, 400);
   const seeds: GraphSeed[] = (url.searchParams.get("seeds") ?? "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
-    const i = s.indexOf(":"); return { table: s.slice(0, i), id: s.slice(i + 1) };
-  }).filter((s) => s.table && s.id);
+    const i = s.indexOf(":"); return i > 0 ? { table: s.slice(0, i), id: s.slice(i + 1) } : null;
+  }).filter((s) => s && s.table && s.id) as GraphSeed[];
   if (seeds.length === 0) return json({ lines: [], nodes: [] });
   if (seeds.some((s) => s.table === "companions")) return json({ error: "companions/<id> is not a valid seed (hairball)" }, 400);
   const hops = url.searchParams.get("hops") === "2" ? 2 : 1;
