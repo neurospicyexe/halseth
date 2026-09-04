@@ -243,4 +243,67 @@ describe("director health", () => {
     expect(body.outcomes.passed).toBe(3);
     expect(body.floor_fires).toBe(1);
   });
+
+  it("defaults hours to 24 when omitted", async () => {
+    const DB = {
+      prepare(sql: string) {
+        return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorHealth(new Request("https://h/admin/director/health", { headers: { Authorization: "Bearer tok" } }), env);
+    const body = await res.json() as { window_hours: number };
+    expect(body.window_hours).toBe(24);
+  });
+
+  it("fallbacks hours to 24 when param is non-numeric", async () => {
+    const DB = {
+      prepare(sql: string) {
+        return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorHealth(new Request("https://h/admin/director/health?hours=abc", { headers: { Authorization: "Bearer tok" } }), env);
+    const body = await res.json() as { window_hours: number };
+    expect(body.window_hours).toBe(24);
+  });
+
+  it("fallbacks hours to 24 when param is negative", async () => {
+    const DB = {
+      prepare(sql: string) {
+        return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorHealth(new Request("https://h/admin/director/health?hours=-5", { headers: { Authorization: "Bearer tok" } }), env);
+    const body = await res.json() as { window_hours: number };
+    expect(body.window_hours).toBe(24);
+  });
+
+  it("clamps hours to 720 when param exceeds max", async () => {
+    const DB = {
+      prepare(sql: string) {
+        return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorHealth(new Request("https://h/admin/director/health?hours=100000", { headers: { Authorization: "Bearer tok" } }), env);
+    const body = await res.json() as { window_hours: number };
+    expect(body.window_hours).toBe(720);
+  });
+
+  it("passes clamped hours value into SQL datetime expr", async () => {
+    const sqls: string[] = [];
+    const DB = {
+      prepare(sql: string) {
+        sqls.push(sql);
+        return { bind: () => ({ all: async () => ({ results: [] }) }), all: async () => ({ results: [] }) };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorHealth(new Request("https://h/admin/director/health?hours=48", { headers: { Authorization: "Bearer tok" } }), env);
+    const body = await res.json() as { window_hours: number };
+    expect(body.window_hours).toBe(48);
+    expect(sqls.some((sql) => sql.includes("'-48 hours'"))).toBe(true);
+  });
 });
