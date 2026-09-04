@@ -29,4 +29,10 @@ describe("director supply query", () => {
     expect(interNote.sql).toContain("NOT EXISTS");
     expect(interNote.sql).toContain("inter_companion_note_reads");
   });
+  it("every source drains oldest-first (ORDER BY ASC, no DESC)", () => {
+    for (const s of SUPPLY_SOURCES) {
+      expect(s.sql).toMatch(/ORDER BY [\w.]+ ASC\s+LIMIT \?/);
+      expect(s.sql).not.toContain(" DESC");
+    }
+  });
 });
