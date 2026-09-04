@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "../handlers/director.js";
+import { neighborhood } from "../graph/traverse.js";
 import type { Env } from "../types.js";
 
 vi.mock("../graph/traverse.js", () => ({
@@ -25,8 +26,9 @@ function makeEnv() {
           return {
             async run() {
               const s = sql.trim();
-              if (s.startsWith("INSERT INTO director_invitations")) {
+              if (s.startsWith("INSERT OR IGNORE INTO director_invitations")) {
                 const [id, channel_id, thread_id, companion_id, reason, offer_ids, outcome, issued_at] = args;
+                if (rows.some((x) => x["id"] === id)) return { meta: { changes: 0 } };
                 rows.push({ id, channel_id, thread_id, companion_id, reason, offer_ids, used_offer_ids: "[]", outcome, message_id: null, issued_at, resolved_at: null });
                 return { meta: { changes: 1 } };
               }
@@ -102,27 +104,42 @@ describe("director invitations", () => {
     const res = await postDirectorInvitation(new Request("https://h/x", { method: "POST", body: "{}" }), env);
     expect(res.status).toBe(401);
   });
+  it("is idempotent on duplicate id: 201 then 200 with deduped true", async () => {
+    const { env } = makeEnv();
+    const body = JSON.stringify({ id: "dup1", channel_id: "c1", companion_id: "gaia", reason: "open", offer_ids: [], outcome: "issued" });
+    const first = await postDirectorInvitation(new Request("https://h/x", { method: "POST", headers: H, body }), env);
+    expect(first.status).toBe(201);
+    const firstBody = await first.json() as { id: string; deduped?: boolean };
+    expect(firstBody.id).toBe("dup1");
+    expect(firstBody.deduped).toBeUndefined();
+    const second = await postDirectorInvitation(new Request("https://h/x", { method: "POST", headers: H, body }), env);
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { id: string; deduped?: boolean };
+    expect(secondBody.id).toBe("dup1");
+    expect(secondBody.deduped).toBe(true);
+  });
 });
 
 describe("director supply", () => {
-  it("pages oldest-first and cursor is the last returned row", async () => {
+  it("pages oldest-first and cursor is the last returned row's compound id (created_at|id)", async () => {
     const t1 = "2026-09-01T10:00:00Z";
     const t2 = "2026-09-01T11:00:00Z";
     const t3 = "2026-09-01T12:00:00Z";
     const DB = {
       async batch() {
-        // Return 3 rows across sources, oldest to newest (one per supply source, 10 total)
+        // Return rows across sources, oldest to newest, with two rows sharing t2 but different ids
+        // so the tiebreak-on-id sort/cursor logic is actually exercised.
         return [
           { results: [{ id: "f1", owner: "cypher", title: "t1", body: "b1", created_at: t1, heat: null }] },
           { results: [] },
-          { results: [{ id: "q2", owner: "drevan", title: "t2", body: "b2", created_at: t2, heat: null }] },
+          { results: [{ id: "id2a", owner: "drevan", title: "t2a", body: "b2a", created_at: t2, heat: null }] },
           { results: [] },
           { results: [] },
           { results: [] },
           { results: [] },
           { results: [] },
           { results: [] },
-          { results: [{ id: "c3", owner: "system", title: "t3", body: "b3", created_at: t3, heat: null }] },
+          { results: [{ id: "id2b", owner: "system", title: "t2b", body: "b2b", created_at: t2, heat: null }, { id: "z3", owner: "system", title: "t3", body: "b3", created_at: t3, heat: null }] },
         ];
       },
       prepare(sql: string) {
@@ -145,8 +162,69 @@ describe("director supply", () => {
     const body = await res.json() as { items: unknown[]; cursor: string };
     expect(body.items.length).toBe(2);
     expect((body.items[0] as any).created_at).toBe(t1);
+    expect((body.items[0] as any).id).toBe("f1");
     expect((body.items[1] as any).created_at).toBe(t2);
-    expect(body.cursor).toBe(t2);
+    expect((body.items[1] as any).id).toBe("id2a");
+    expect(body.cursor).toBe(`${t2}|id2a`);
+
+    // Second call with that cursor: fake DB returns the row with the SAME timestamp but the
+    // GREATER id (as the real predicate `created_at = ? AND id > ?` would), proving the compound
+    // cursor advances correctly across a tie.
+    const DB2 = {
+      async batch() {
+        return [
+          { results: [] }, { results: [] }, { results: [] }, { results: [] }, { results: [] },
+          { results: [] }, { results: [] }, { results: [] }, { results: [] },
+          { results: [{ id: "id2b", owner: "system", title: "t2b", body: "b2b", created_at: t2, heat: null }] },
+        ];
+      },
+      prepare(sql: string) {
+        return { bind: (...args: unknown[]) => ({ async all() { return { results: [] }; } }) };
+      },
+    };
+    const env2 = { ADMIN_SECRET: "tok", DB: DB2 } as unknown as Env;
+    const res2 = await getDirectorSupply(new Request(`https://h/mind/director/supply?limit=2&since=${encodeURIComponent(body.cursor)}`, {
+      headers: { Authorization: "Bearer tok" },
+    }), env2);
+    expect(res2.status).toBe(200);
+    const body2 = await res2.json() as { items: unknown[]; cursor: string };
+    expect(body2.items.length).toBe(1);
+    expect((body2.items[0] as any).id).toBe("id2b");
+    expect(body2.cursor).toBe(`${t2}|id2b`);
+  });
+
+  it("runs RECEIPT_SQL over the post-slice page only, not the full unsliced set", async () => {
+    const t1 = "2026-09-01T10:00:00Z";
+    const t2 = "2026-09-01T11:00:00Z";
+    const receiptQueriedIds: string[] = [];
+    const DB = {
+      async batch() {
+        return [
+          { results: [] }, { results: [] }, { results: [] }, { results: [] }, { results: [] }, { results: [] }, { results: [] },
+          // inter_note source (index 7): two rows, only the first should survive limit=1
+          { results: [
+            { id: "n1", owner: "cypher", title: "all", body: "hi", created_at: t1, heat: null },
+            { id: "n2", owner: "drevan", title: "all", body: "yo", created_at: t2, heat: null },
+          ] },
+          { results: [] },
+          { results: [] },
+        ];
+      },
+      prepare(sql: string) {
+        return {
+          bind(...args: unknown[]) {
+            if (sql.includes("inter_companion_note_reads")) receiptQueriedIds.push(...(args as string[]));
+            return { async all() { return { results: [] }; } };
+          },
+        };
+      },
+    };
+    const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
+    const res = await getDirectorSupply(new Request("https://h/mind/director/supply?limit=1", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res.status).toBe(200);
+    expect(receiptQueriedIds).toEqual(["n1"]); // n2 was sliced off the page, must not be receipt-queried
   });
 });
 
@@ -218,13 +296,33 @@ describe("getDirectorNeighborhood", () => {
     // Heat 0.9 should rank higher than heat 0.4
     expect(body.nodes[0]?.id).toBe("j1");
   });
+  it("I1: node_heat attaches only to the endpoint NOT in the seed set", async () => {
+    vi.mocked(neighborhood).mockResolvedValueOnce([
+      {
+        src_table: "companion_journal", src_id: "j1", dst_table: "companion_tensions", dst_id: "t1",
+        edge_type: "references", writer: "cypher", created_at: "2026-09-01T01:00:00Z", hop: 1, node_heat: 0.9,
+      },
+    ]);
+    const env = { ADMIN_SECRET: "tok", DB: {} } as unknown as Env;
+    const res = await getDirectorNeighborhood(new Request("https://h/mind/director/neighborhood?reader=cypher&seeds=companion_tensions:t1", {
+      headers: { Authorization: "Bearer tok" },
+    }), env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { nodes: Array<{ table: string; id: string; heat: number | null; score: number }> };
+    const j1 = body.nodes.find((n) => n.id === "j1");
+    const t1 = body.nodes.find((n) => n.id === "t1");
+    expect(j1?.heat).toBe(0.9);
+    expect(t1?.heat).toBeNull();
+    expect(t1?.score).toBe(0);
+  });
 });
 
 describe("director health", () => {
-  it("health returns per-companion issued and per-outcome counts for the window", async () => {
+  it("health returns per-companion issued, per-outcome, and per-companion-per-outcome counts for the window", async () => {
     const DB = {
       prepare(sql: string) {
         const all = async () => {
+          if (sql.includes("GROUP BY companion_id, outcome")) return { results: [{ company: "cypher", outc: "spoke", n: 3 }, { company: "gaia", outc: "passed", n: 1 }] };
           if (sql.includes("GROUP BY companion_id")) return { results: [{ k: "cypher", n: 2 }, { k: "gaia", n: 5 }] };
           if (sql.includes("GROUP BY outcome")) return { results: [{ k: "spoke", n: 4 }, { k: "passed", n: 3 }] };
           if (sql.includes("reason = 'open'")) return { results: [{ k: "open", n: 1 }] };
@@ -236,12 +334,23 @@ describe("director health", () => {
     };
     const env = { ADMIN_SECRET: "tok", DB } as unknown as Env;
     const res = await getDirectorHealth(new Request("https://h/admin/director/health?hours=24", { headers: { Authorization: "Bearer tok" } }), env);
-    const body = await res.json() as { window_hours: number; issued: Record<string, number>; outcomes: Record<string, number>; floor_fires: number };
+    const body = await res.json() as {
+      window_hours: number; issued: Record<string, number>; outcomes: Record<string, number>; floor_fires: number;
+      outcomes_by_companion: Record<string, Record<string, number>>;
+      supply_pool_open_total: Record<string, number>;
+    };
     expect(body.window_hours).toBe(24);
     expect(body.issued.gaia).toBe(5);
     expect(body.issued.drevan).toBe(0);
     expect(body.outcomes.passed).toBe(3);
     expect(body.floor_fires).toBe(1);
+    // I3: renamed key, all-time open backlog (not window-scoped)
+    expect(body.supply_pool_open_total.forage).toBe(7);
+    expect((body as any).supply_pool).toBeUndefined();
+    // I4: per-companion outcome breakdown
+    expect(body.outcomes_by_companion["cypher"]!.spoke).toBe(3);
+    expect(body.outcomes_by_companion["gaia"]!.passed).toBe(1);
+    expect(body.outcomes_by_companion["drevan"]!.spoke).toBe(0);
   });
 
   it("defaults hours to 24 when omitted", async () => {

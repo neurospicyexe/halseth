@@ -36,10 +36,11 @@ export async function postDirectorInvitation(request: Request, env: Env): Promis
   const offerIds = strArray(b.offer_ids ?? []);
   if (!offerIds) return json({ error: "offer_ids must be string[]" }, 400);
   try {
-    await env.DB.prepare(
-      `INSERT INTO director_invitations (id, channel_id, thread_id, companion_id, reason, offer_ids, outcome, issued_at)
+    const r = await env.DB.prepare(
+      `INSERT OR IGNORE INTO director_invitations (id, channel_id, thread_id, companion_id, reason, offer_ids, outcome, issued_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(b.id, b.channel_id, b.thread_id ?? null, b.companion_id, b.reason, JSON.stringify(offerIds), b.outcome, new Date().toISOString()).run();
+    if (r.meta.changes === 0) return json({ id: b.id, deduped: true }, 200);
     return json({ id: b.id }, 201);
   } catch (err) {
     console.error("[mind/director/invitations] POST error", { error: String(err) });
@@ -76,28 +77,65 @@ export async function patchDirectorInvitation(request: Request, env: Env, params
 }
 
 // GET /mind/director/supply?since=&limit=
-// Returns items oldest-first, cursor is the last returned row's created_at (the worker re-sorts newest-first itself).
+//
+// Cursor format: an opaque compound string "<iso>|<id>" (e.g. "2026-09-03T09:00:00Z|f1"). The
+// worker treats it as opaque and only advances when the response cursor is lexicographically
+// greater than what it already has, which still holds for this format since the iso half sorts
+// chronologically and the id half only breaks ties within the same second. Missing the "|" (or
+// nothing after it) means "no id yet" and is treated as an empty id. Default cursor is the epoch
+// with no id, so a first poll sees everything.
+//
+// Returns items oldest-first; cursor is the last returned row's "<created_at>|<id>" pair (the
+// worker re-sorts newest-first itself).
+const CURSOR_ID_CHUNK_SIZE = 40; // mirrors ID_CHUNK_SIZE in src/graph/traverse.ts
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 export async function getDirectorSupply(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
   const url = new URL(request.url);
-  const since = url.searchParams.get("since") ?? "1970-01-01T00:00:00.000Z";
+  const since = url.searchParams.get("since") ?? "1970-01-01T00:00:00Z|";
+  const pipeIdx = since.indexOf("|");
+  const sinceIso = pipeIdx >= 0 ? since.slice(0, pipeIdx) : since;
+  const sinceId = pipeIdx >= 0 ? since.slice(pipeIdx + 1) : "";
   const parsed = parseInt(url.searchParams.get("limit") ?? "40", 10);
   const perSource = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 80) : 40;
   try {
-    const stmts = SUPPLY_SOURCES.map((s) => env.DB.prepare(s.sql).bind(since, perSource));
+    const stmts = SUPPLY_SOURCES.map((s) => env.DB.prepare(s.sql).bind(sinceIso, sinceIso, sinceId, perSource));
     const results = await env.DB.batch<SupplyRow>(stmts);
     const items: DirectorSupplyItem[] = [];
     results.forEach((res, i) => { for (const row of res.results ?? []) items.push(mapRow(SUPPLY_SOURCES[i]!, row)); });
-    for (const [kind, sqlFor] of Object.entries(RECEIPT_SQL)) {
-      const ids = items.filter((it) => it.kind === kind).map((it) => it.id);
-      if (ids.length === 0 || !sqlFor) continue;
-      const { results: rs } = await env.DB.prepare(sqlFor(ids.length)).bind(...ids).all<{ id: string; reader: string }>();
-      for (const r of rs ?? []) { const it = items.find((x) => x.kind === kind && x.id === r.id); if (it) it.consumed_by.push(r.reader); }
-    }
-    items.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+    items.sort((a, b) => {
+      if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
     const page = items.slice(0, perSource);
-    const cursor = page.length > 0 ? page[page.length - 1]!.created_at : since;
+
+    // M1: receipts run over the PAGE (post-slice) ids only, chunked, keyed into a Map.
+    const consumedByKey = new Map<string, string[]>();
+    for (const [kind, sqlFor] of Object.entries(RECEIPT_SQL)) {
+      if (!sqlFor) continue;
+      const ids = page.filter((it) => it.kind === kind).map((it) => it.id);
+      if (ids.length === 0) continue;
+      for (const idChunk of chunkArray(ids, CURSOR_ID_CHUNK_SIZE)) {
+        const { results: rs } = await env.DB.prepare(sqlFor(idChunk.length)).bind(...idChunk).all<{ id: string; reader: string }>();
+        for (const r of rs ?? []) {
+          const key = `${kind}:${r.id}`;
+          const arr = consumedByKey.get(key) ?? [];
+          arr.push(r.reader);
+          consumedByKey.set(key, arr);
+        }
+      }
+    }
+    for (const it of page) it.consumed_by = consumedByKey.get(`${it.kind}:${it.id}`) ?? [];
+
+    const last = page.length > 0 ? page[page.length - 1]! : null;
+    const cursor = last ? `${last.created_at}|${last.id}` : since;
     return json({ items: page, cursor });
   } catch (err) {
     console.error("[mind/director/supply] error", { error: String(err) });
@@ -121,6 +159,7 @@ export async function getDirectorNeighborhood(request: Request, env: Env): Promi
   try {
     const edges = await neighborhood(env, seeds, { hops, limit: 30, withHeat: true });
     const degrees = readerDegrees(edges, reader, seeds);
+    const seedKeys = new Set(seeds.map((s) => nodeKey(s.table, s.id)));
     const seen = new Set<string>();
     const nodes: Array<{ table: string; id: string; heat: number | null; score: number }> = [];
     for (const e of edges) {
@@ -128,7 +167,13 @@ export async function getDirectorNeighborhood(request: Request, env: Env): Promi
         const k = nodeKey(t, id);
         if (seen.has(k) || t === "companions") continue;
         seen.add(k);
-        nodes.push({ table: t, id, heat: e.node_heat, score: scoreNode(e.node_heat, degrees.get(k) ?? 0) });
+        // I1: node_heat is the heat of the endpoint this hop NEWLY DISCOVERED, not both endpoints
+        // of the edge. A seed node was never "discovered" by this traversal -- it gets heat null
+        // / score 0 unless a later edge legitimately discovers it as a non-seed endpoint (it
+        // can't, seeds are never re-treated as newly found, but the guard costs nothing).
+        const isSeed = seedKeys.has(k);
+        const heat = isSeed ? null : e.node_heat;
+        nodes.push({ table: t, id, heat, score: isSeed ? 0 : scoreNode(e.node_heat, degrees.get(k) ?? 0) });
       }
     }
     nodes.sort((a, b) => b.score - a.score);
@@ -160,12 +205,28 @@ export async function getDirectorHealth(request: Request, env: Env): Promise<Res
     const questions = await count(`SELECT 'question' AS k, COUNT(*) AS n FROM companion_questions WHERE status='open' AND delivered_at IS NULL`);
     const projects = await count(`SELECT 'project' AS k, COUNT(*) AS n FROM companion_projects WHERE status='open'`);
     const tensions = await count(`SELECT 'tension' AS k, COUNT(*) AS n FROM companion_tensions WHERE status IN ('simmering','crystallized')`);
+
+    // I4: same six outcomes, broken out per companion. One query, GROUP BY companion_id, outcome.
+    const { results: byCompanionOutcome } = await env.DB.prepare(
+      `SELECT companion_id AS company, outcome AS outc, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} GROUP BY companion_id, outcome`,
+    ).all<{ company: string; outc: string; n: number }>();
+    const emptyOutcomes = () => ({ shadow: 0, issued: 0, spoke: 0, passed: 0, empty: 0, expired: 0 });
+    const outcomes_by_companion: Record<string, ReturnType<typeof emptyOutcomes>> = {
+      cypher: emptyOutcomes(), drevan: emptyOutcomes(), gaia: emptyOutcomes(),
+    };
+    for (const r of byCompanionOutcome ?? []) {
+      const bucket = outcomes_by_companion[r.company];
+      if (bucket && r.outc in bucket) (bucket as Record<string, number>)[r.outc] = Number(r.n);
+    }
+
     return json({
       window_hours: hours,
       issued: { cypher: issued["cypher"] ?? 0, drevan: issued["drevan"] ?? 0, gaia: issued["gaia"] ?? 0 },
       outcomes: { shadow: outcomes["shadow"] ?? 0, issued: outcomes["issued"] ?? 0, spoke: outcomes["spoke"] ?? 0, passed: outcomes["passed"] ?? 0, empty: outcomes["empty"] ?? 0, expired: outcomes["expired"] ?? 0 },
+      outcomes_by_companion,
       floor_fires: floor["open"] ?? 0,
-      supply_pool: { forage: forage["forage"] ?? 0, question: questions["question"] ?? 0, project: projects["project"] ?? 0, tension: tensions["tension"] ?? 0 },
+      // Rename (I3): all-time open backlog, no time window -- distinct from issued/outcomes above.
+      supply_pool_open_total: { forage: forage["forage"] ?? 0, question: questions["question"] ?? 0, project: projects["project"] ?? 0, tension: tensions["tension"] ?? 0 },
     });
   } catch (err) {
     console.error("[admin/director/health] error", { error: String(err) });

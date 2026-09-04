@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SUPPLY_SOURCES, mapRow, type SupplySource } from "../director/supply-query.js";
+import { SUPPLY_SOURCES, RECEIPT_SQL, mapRow, type SupplySource } from "../director/supply-query.js";
 
 describe("director supply query", () => {
   it("declares all ten kinds, each with a since-bound predicate", () => {
@@ -24,15 +24,38 @@ describe("director supply query", () => {
     expect(item.owner).toBe("system");
     expect(item.consumed_by).toEqual([]);
   });
-  it("inter_note source includes unread predicate (NOT EXISTS clause)", () => {
+  it("inter_note source has no NOT EXISTS filter -- directed notes stay in the shared stream (I2)", () => {
     const interNote = SUPPLY_SOURCES.find((s) => s.kind === "inter_note")!;
-    expect(interNote.sql).toContain("NOT EXISTS");
-    expect(interNote.sql).toContain("inter_companion_note_reads");
+    expect(interNote.sql).not.toContain("NOT EXISTS");
+    expect(interNote.sql).not.toContain("inter_companion_note_reads");
+    // Per-reader consumption still tracked via RECEIPT_SQL, not a WHERE-clause filter.
+    expect(RECEIPT_SQL.inter_note).toBeDefined();
   });
-  it("every source drains oldest-first (ORDER BY ASC, no DESC)", () => {
+  it("every source drains oldest-first (ORDER BY strftime(...) ASC, id ASC, no DESC)", () => {
     for (const s of SUPPLY_SOURCES) {
-      expect(s.sql).toMatch(/ORDER BY [\w.]+ ASC\s+LIMIT \?/);
+      expect(s.sql).toMatch(/ORDER BY strftime\(.*\) ASC, [\w.]+ ASC\s+LIMIT \?/);
       expect(s.sql).not.toContain(" DESC");
     }
+  });
+  it("every source normalizes created_at via strftime in both projection and predicate (C1)", () => {
+    for (const s of SUPPLY_SOURCES) {
+      const occurrences = s.sql.split("strftime('%Y-%m-%dT%H:%M:%SZ'").length - 1;
+      // At least one occurrence in the projected alias and one in the cursor predicate.
+      expect(occurrences).toBeGreaterThanOrEqual(2);
+    }
+  });
+  it("the two staleness gates (tension/project) compare normalized timestamps on both sides", () => {
+    const tension = SUPPLY_SOURCES.find((s) => s.kind === "tension")!;
+    expect(tension.sql).toMatch(/strftime\('%Y-%m-%dT%H:%M:%SZ', last_surfaced_at\) < strftime\('%Y-%m-%dT%H:%M:%SZ', datetime\('now','-1 day'\)\)/);
+    const project = SUPPLY_SOURCES.find((s) => s.kind === "project")!;
+    expect(project.sql).toMatch(/strftime\('%Y-%m-%dT%H:%M:%SZ', last_worked_at\) < strftime\('%Y-%m-%dT%H:%M:%SZ', datetime\('now','-2 days'\)\)/);
+  });
+  it("documents why the SQL normalizes: mixed formats do not compare chronologically as plain strings", () => {
+    // The SQLite datetime('now') format ("2026-09-03 09:00:00") sorts BEFORE the JS ISO format
+    // ("2026-09-03T05:00:00.000Z") as a plain string even though 09:00 is chronologically LATER
+    // than 05:00 -- the space vs "T" separator breaks lexicographic ordering. This is exactly why
+    // a scalar `> ?` cursor across mixed-format sources silently drops rows, and why every source
+    // above normalizes through strftime('%Y-%m-%dT%H:%M:%SZ', ...) before comparing.
+    expect("2026-09-03 09:00:00" > "2026-09-03T05:00:00.000Z").toBe(false);
   });
 });
