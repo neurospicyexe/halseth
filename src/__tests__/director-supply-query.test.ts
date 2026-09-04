@@ -24,4 +24,9 @@ describe("director supply query", () => {
     expect(item.owner).toBe("system");
     expect(item.consumed_by).toEqual([]);
   });
+  it("inter_note source includes unread predicate (NOT EXISTS clause)", () => {
+    const interNote = SUPPLY_SOURCES.find((s) => s.kind === "inter_note")!;
+    expect(interNote.sql).toContain("NOT EXISTS");
+    expect(interNote.sql).toContain("inter_companion_note_reads");
+  });
 });

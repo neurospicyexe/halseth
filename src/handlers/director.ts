@@ -73,6 +73,7 @@ export async function patchDirectorInvitation(request: Request, env: Env, params
 }
 
 // GET /mind/director/supply?since=&limit=
+// Returns items oldest-first, cursor is the last returned row's created_at (the worker re-sorts newest-first itself).
 export async function getDirectorSupply(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
@@ -91,9 +92,10 @@ export async function getDirectorSupply(request: Request, env: Env): Promise<Res
       const { results: rs } = await env.DB.prepare(sqlFor(ids.length)).bind(...ids).all<{ id: string; reader: string }>();
       for (const r of rs ?? []) { const it = items.find((x) => x.kind === kind && x.id === r.id); if (it) it.consumed_by.push(r.reader); }
     }
-    items.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-    const cursor = items.reduce((m, it) => (it.created_at > m ? it.created_at : m), since);
-    return json({ items: items.slice(0, perSource), cursor });
+    items.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+    const page = items.slice(0, perSource);
+    const cursor = page.length > 0 ? page[page.length - 1]!.created_at : since;
+    return json({ items: page, cursor });
   } catch (err) {
     console.error("[mind/director/supply] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);

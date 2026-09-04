@@ -42,7 +42,11 @@ export const SUPPLY_SOURCES: SupplySource[] = [
        FROM council_questions WHERE status = 'open' AND created_at > ? ORDER BY created_at DESC LIMIT ?` },
   { kind: "inter_note", table: "inter_companion_notes", sql:
     `SELECT n.id, n.from_id AS owner, coalesce(n.to_id,'all') AS title, n.content AS body, n.created_at, NULL AS heat
-       FROM inter_companion_notes n WHERE n.created_at > ? ORDER BY n.created_at DESC LIMIT ?` },
+       FROM inter_companion_notes n
+      WHERE n.created_at > ?
+        AND NOT EXISTS (SELECT 1 FROM inter_companion_note_reads r
+                         WHERE r.note_id = n.id AND r.companion_id = coalesce(n.to_id, ''))
+      ORDER BY n.created_at DESC LIMIT ?` },
   { kind: "sibling_note", table: "wm_continuity_notes", sql:
     `SELECT note_id AS id, agent_id AS owner, note_type AS title, content AS body, created_at, NULL AS heat
        FROM wm_continuity_notes WHERE note_type IN ('day_distillation','discord_session') AND archived = 0
