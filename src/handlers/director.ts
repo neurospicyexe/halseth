@@ -52,12 +52,17 @@ export async function patchDirectorInvitation(request: Request, env: Env, params
   let b: { outcome?: string; message_id?: string; used_offer_ids?: unknown };
   try { b = await request.json() as typeof b; } catch { return json({ error: "Invalid JSON body" }, 400); }
   if (!b.outcome || !OUTCOMES.has(b.outcome)) return json({ error: "outcome invalid" }, 400);
-  const used = strArray(b.used_offer_ids ?? []);
-  if (!used) return json({ error: "used_offer_ids must be string[]" }, 400);
+  const used = b.used_offer_ids === undefined ? null : strArray(b.used_offer_ids);
+  if (b.used_offer_ids !== undefined && !used) return json({ error: "used_offer_ids must be string[]" }, 400);
   try {
     const r = await env.DB.prepare(
-      `UPDATE director_invitations SET outcome = ?, message_id = ?, used_offer_ids = ?, resolved_at = ? WHERE id = ?`,
-    ).bind(b.outcome, b.message_id ?? null, JSON.stringify(used), new Date().toISOString(), id).run();
+      `UPDATE director_invitations
+          SET outcome = ?,
+              message_id = COALESCE(?, message_id),
+              used_offer_ids = COALESCE(?, used_offer_ids),
+              resolved_at = ?
+        WHERE id = ?`,
+    ).bind(b.outcome, b.message_id ?? null, used === null ? null : JSON.stringify(used), new Date().toISOString(), id).run();
     if (r.meta.changes === 0) return json({ error: "Invitation not found" }, 404);
     return json({ ok: true });
   } catch (err) {

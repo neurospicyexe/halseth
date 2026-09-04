@@ -21,7 +21,13 @@ function makeEnv() {
                 const [outcome, message_id, used_offer_ids, resolved_at, id] = args;
                 const r = rows.find((x) => x["id"] === id);
                 if (!r) return { meta: { changes: 0 } };
-                Object.assign(r, { outcome, message_id, used_offer_ids, resolved_at });
+                // COALESCE semantics: preserve existing value when null is passed
+                Object.assign(r, {
+                  outcome,
+                  message_id: message_id !== null ? message_id : r["message_id"],
+                  used_offer_ids: used_offer_ids !== null ? used_offer_ids : r["used_offer_ids"],
+                  resolved_at
+                });
                 return { meta: { changes: 1 } };
               }
               throw new Error("unexpected sql: " + s);
@@ -62,6 +68,21 @@ describe("director invitations", () => {
     const miss = await patchDirectorInvitation(new Request("https://h/x", { method: "PATCH", headers: H,
       body: JSON.stringify({ outcome: "passed" }) }), env, { id: "nope" });
     expect(miss.status).toBe(404);
+  });
+  it("preserves omitted optional fields on subsequent PATCHes", async () => {
+    const { env, rows } = makeEnv();
+    await postDirectorInvitation(new Request("https://h/x", { method: "POST", headers: H,
+      body: JSON.stringify({ id: "i1", channel_id: "c1", companion_id: "cypher", reason: "addressed", offer_ids: [], outcome: "issued" }) }), env);
+    const first = await patchDirectorInvitation(new Request("https://h/x", { method: "PATCH", headers: H,
+      body: JSON.stringify({ outcome: "spoke", message_id: "m9", used_offer_ids: ["f1"] }) }), env, { id: "i1" });
+    expect(first.status).toBe(200);
+    expect(rows[0]!["message_id"]).toBe("m9");
+    expect(rows[0]!["used_offer_ids"]).toBe("[\"f1\"]");
+    const second = await patchDirectorInvitation(new Request("https://h/x", { method: "PATCH", headers: H,
+      body: JSON.stringify({ outcome: "spoke" }) }), env, { id: "i1" });
+    expect(second.status).toBe(200);
+    expect(rows[0]!["message_id"]).toBe("m9");
+    expect(rows[0]!["used_offer_ids"]).toBe("[\"f1\"]");
   });
   it("denies without auth", async () => {
     const { env } = makeEnv();
