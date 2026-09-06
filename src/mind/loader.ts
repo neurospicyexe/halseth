@@ -139,9 +139,19 @@ export async function loadMindState(
     // this array waits on; a degraded orient (null) yields an empty seed set, not a throw.
     guard("graph", async () => {
       const o = await orientPromise.catch(() => null);
+      // 0.12.0 (Fargo first light, 2026-09-05): what Raziel is CURRENTLY watching is a seed too. The
+      // `mentions` edges (rebuild source e) point journal rows at watch_shelf titles, so seeding the
+      // active shelf rows is what lets a companion on ANY surface read "Fargo -- 14 notes from drevan
+      // (newest 08-30)" at orient without the newest journal rows having to mention it this week.
+      // One extra cheap D1 read (ids only, watching/paused rows, capped at 10); a failure yields no
+      // shelf seeds, never a throw. Bounded by the traverse's per-hop cap (30) like every other seed.
+      const shelfIds = await env.DB.prepare(
+        "SELECT id FROM watch_shelf WHERE status IN ('watching','paused') ORDER BY last_watched_at DESC NULLS LAST LIMIT 10",
+      ).all<{ id: string }>().then((r) => (r.results ?? []).map((x) => x.id)).catch(() => [] as string[]);
       const seeds: GraphSeed[] = [
         ...((o?.active_conclusions ?? []).map((c) => ({ table: "companion_conclusions", id: c.id }))),
         ...((o?.recent_journal ?? []).map((j) => ({ table: "companion_journal", id: j.id }))),
+        ...shelfIds.map((id) => ({ table: "watch_shelf", id })),
       ];
       return loadGraphBlocks(env, companionId, seeds);
     }, EMPTY_GRAPH),
