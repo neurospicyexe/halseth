@@ -1,3 +1,4 @@
+import { loadTitleLabels } from "../../graph/labels.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck, SUPERSEDE_CANDIDATE_WINDOW_DAYS } from "../../webmind/novelty.js";
@@ -290,7 +291,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // boot already surfaced -- rendered from the loader's `graph.neighborhoods`, no retrieval here.
   // Placed right after continuityBlock in the concatenation below: it's the same kind of fact
   // (what connects to what), just structural rather than narrative.
-  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods);
+  // Fargo first light (2026-09-05): name the titled nodes (watch_shelf / obsession_shelf) so a
+  // `mentions` group reads "Fargo", not "watch_shelf". Best-effort lookup, degrades to id labels.
+  const graphLabels = await loadTitleLabels(ctx.env, mindState.graph.neighborhoods);
+  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, { labels: graphLabels });
 
   // Repair prompt: force-surfaced like tripwires -- the failure it names accumulates silently
   // everywhere else. Rendered early so it cannot fall off a budget clip.

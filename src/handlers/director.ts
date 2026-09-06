@@ -9,42 +9,12 @@ import { SUPPLY_SOURCES, RECEIPT_SQL, mapRow, type SupplyRow, type DirectorSuppl
 import { neighborhood, type GraphSeed } from "../graph/traverse.js";
 import { readerDegrees, nodeKey } from "../graph/salience.js";
 import { renderEdgeLines, scoreNode, RENDER_MAX_LINES } from "../graph/render.js";
+import { loadTitleLabels } from "../graph/labels.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-/** Human-readable labels for neighborhood nodes that back onto a titled shelf row -- a node id alone
- *  renders as "watch_shelf/a1b2c3d4", the whole point of a graph line is "-> Fargo" instead. Scoped to
- *  the two title-bearing tables the `mentions` edges (graph rebuild) can point at; every other table
- *  keeps the old id-shortened fallback. Best-effort: any failure degrades to an empty map (renderEdgeLines
- *  falls back to the id label), it never throws and never blocks the neighborhood response. */
-async function loadTitleLabels(
-  env: Env,
-  edges: ReadonlyArray<{ src_table: string; src_id: string; dst_table: string; dst_id: string }>,
-): Promise<Map<string, string>> {
-  const labels = new Map<string, string>();
-  const idsByTable = new Map<string, Set<string>>([["watch_shelf", new Set()], ["obsession_shelf", new Set()]]);
-  for (const e of edges) {
-    for (const [t, id] of [[e.src_table, e.src_id], [e.dst_table, e.dst_id]] as const) {
-      idsByTable.get(t)?.add(id);
-    }
-  }
-  for (const [table, idSet] of idsByTable) {
-    if (idSet.size === 0) continue;
-    try {
-      const ids = [...idSet];
-      const placeholders = ids.map(() => "?").join(",");
-      const rows = await env.DB.prepare(
-        `SELECT id, title FROM ${table} WHERE id IN (${placeholders})`
-      ).bind(...ids).all<{ id: string; title: string }>();
-      for (const r of rows.results ?? []) labels.set(`${table}/${r.id}`, r.title);
-    } catch (err) {
-      console.warn("[mind/director/neighborhood] title label lookup failed, falling back to id labels", { table, error: String(err) });
-    }
-  }
-  return labels;
-}
 
 const COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 const REASONS = new Set(["addressed", "supply_relevant", "open"]);

@@ -20,7 +20,7 @@ const sessionSrc = readFileSync(resolve(here, "../librarian/executors/session.ts
 
 describe("execSessionOrient ready_prompt block order (graph memory Tranche 5)", () => {
   it("computes neighborhoodBlock via the loader's graph.neighborhoods, not a fresh query", () => {
-    expect(sessionSrc).toMatch(/const neighborhoodBlock = B\.neighborhoodBlock\(mindState\.graph\.neighborhoods\)/);
+    expect(sessionSrc).toMatch(/const neighborhoodBlock = B\.neighborhoodBlock\(mindState\.graph\.neighborhoods(, \{ labels: graphLabels \})?\)/);
   });
 
   it("places neighborhoodBlock after continuityBlock and before narrativeBlock in the concatenation", () => {

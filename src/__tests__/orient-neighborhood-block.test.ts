@@ -106,3 +106,29 @@ describe("neighborhoodBlock", () => {
     );
   });
 });
+
+describe("neighborhoodBlock: named nodes (labels)", () => {
+  const mention = (id: string, created_at: string, dst_id = "shelf1"): NeighborhoodEdgeRow => ({
+    src_table: "companion_journal", src_id: id, dst_table: "watch_shelf", dst_id, edge_type: "mentions",
+    writer: "drevan", created_at, hop: 1,
+  });
+  it("renders a labeled dst by name, grouped per node, with the source table and count", () => {
+    const labels = new Map([["watch_shelf/shelf1", "Fargo"]]);
+    const out = neighborhoodBlock([mention("j1", "2026-08-29T15:00:00Z"), mention("j2", "2026-08-30T22:00:00Z")], { labels });
+    expect(out).toContain("mentions: Fargo (show) -- 2 notes from drevan (newest 2026-08-30)");
+    expect(out).not.toContain("watch_shelf");
+  });
+  it("two different titles are two lines; an unlabeled edge keeps table grouping", () => {
+    const labels = new Map([["watch_shelf/shelf1", "Fargo"], ["watch_shelf/shelf2", "Severance"]]);
+    const out = neighborhoodBlock([
+      mention("j1", "2026-08-29T15:00:00Z"), mention("j2", "2026-08-30T22:00:00Z", "shelf2"), mention("j3", "2026-08-31T22:00:00Z", "shelf9"),
+    ], { labels });
+    expect(out).toContain("mentions: Fargo (show)");
+    expect(out).toContain("mentions: Severance (show)");
+    expect(out).toContain("mentions show shelf9");
+  });
+  it("without labels a mentions group renders by table like any other edge type", () => {
+    const out = neighborhoodBlock([mention("j1", "2026-08-29T15:00:00Z"), mention("j2", "2026-08-30T22:00:00Z")]);
+    expect(out).toContain("mentions: 2 show from drevan (newest 2026-08-30)");
+  });
+});

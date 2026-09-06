@@ -579,6 +579,10 @@ export interface NeighborhoodBlockOpts {
   /** Hard cap on rendered lines. Default 6 -- see file-level note below on why this block owns its
    *  own ceiling rather than trusting a caller-supplied one. */
   maxLines?: number;
+  /** Optional human-readable node labels keyed `${table}/${id}` (src/graph/labels.ts). When the DST
+   *  of an edge has a label, its group is keyed per node and rendered by NAME ("mentions: Fargo -- 14
+   *  notes from drevan") instead of by table; unlabeled edges keep the table-level grouping. */
+  labels?: ReadonlyMap<string, string>;
 }
 
 const NEIGHBORHOOD_MAX_LINES_DEFAULT = 6;
@@ -593,6 +597,8 @@ const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
   handover_packets: "handover",
   wm_session_handoffs: "handover",
   companions: "companion",
+  watch_shelf: "show",
+  obsession_shelf: "fixation",
 };
 
 const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
@@ -602,6 +608,7 @@ const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
   references: "references",
   holds_tension: "holds",
   closed_with: "closed with",
+  mentions: "mentions",
 };
 
 /** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
@@ -616,6 +623,9 @@ interface NeighborhoodGroup {
   count: number;
   newest: string;
   sampleId: string;
+  /** Named node (from opts.labels) -- when set the line leads with it. */
+  dstLabel?: string;
+  srcTable: string;
 }
 
 /**
@@ -651,7 +661,10 @@ export function neighborhoodBlock(
 
   const groups = new Map<string, NeighborhoodGroup>();
   for (const e of neighborhoods) {
-    const key = `${e.edge_type} ${e.dst_table} ${e.writer}`;
+    const dstLabel = opts.labels?.get(`${e.dst_table}/${e.dst_id}`);
+    // A named node groups per NODE (Fargo is one line, another show is another line); unnamed
+    // edges keep grouping per table so ten journal-links still read as one line.
+    const key = dstLabel ? `${e.edge_type} ${e.dst_table}/${e.dst_id} ${e.writer}` : `${e.edge_type} ${e.dst_table} ${e.writer}`;
     const existing = groups.get(key);
     if (existing) {
       existing.count += 1;
@@ -664,6 +677,8 @@ export function neighborhoodBlock(
         count: 1,
         newest: e.created_at,
         sampleId: e.dst_id,
+        dstLabel,
+        srcTable: e.src_table,
       });
     }
   }
@@ -675,9 +690,12 @@ export function neighborhoodBlock(
     if (lines.length >= maxLines) break;
     const verb = NEIGHBORHOOD_EDGE_VERBS[g.edgeType] ?? g.edgeType;
     const label = NEIGHBORHOOD_TABLE_LABELS[g.table] ?? g.table;
-    const line = g.count > 1
-      ? `${verb}: ${g.count} ${label} from ${g.writer} (newest ${g.newest.slice(0, 10)})`
-      : `${verb} ${label} ${shortNeighborId(g.sampleId)}`;
+    const srcLabel = NEIGHBORHOOD_TABLE_LABELS[g.srcTable] ?? g.srcTable;
+    const line = g.dstLabel
+      ? `${verb}: ${g.dstLabel} (${label}) -- ${g.count} ${srcLabel} from ${g.writer} (newest ${g.newest.slice(0, 10)})`
+      : g.count > 1
+        ? `${verb}: ${g.count} ${label} from ${g.writer} (newest ${g.newest.slice(0, 10)})`
+        : `${verb} ${label} ${shortNeighborId(g.sampleId)}`;
     lines.push(line.length > NEIGHBORHOOD_LINE_CHARS ? line.slice(0, NEIGHBORHOOD_LINE_CHARS - 1) + "…" : line);
   }
 
