@@ -21,14 +21,27 @@ function label(table: string, id: string): string {
   return `${table.replace(/^companion_/, "")}/${id.slice(0, 8)}`;
 }
 
-export function renderEdgeLines(edges: TraverseEdge[], degrees: Map<string, number>, max = RENDER_MAX_LINES): string[] {
+/** Human-readable label when one is known (keyed `${table}/${id}`), else the fallback `table/id8`.
+ *  A labels map is optional and best-effort -- the caller populates it from a title lookup that must
+ *  never throw, so a missing or failed lookup degrades silently to the old fallback, never an error. */
+function labelFor(table: string, id: string, labels?: Map<string, string>): string {
+  const named = labels?.get(`${table}/${id}`);
+  return named ?? label(table, id);
+}
+
+export function renderEdgeLines(
+  edges: TraverseEdge[],
+  degrees: Map<string, number>,
+  max = RENDER_MAX_LINES,
+  labels?: Map<string, string>,
+): string[] {
   const out: string[] = [];
   for (const e of edges) {
     if (out.length >= max) break;
     const deg = degrees.get(nodeKey(e.src_table, e.src_id)) ?? degrees.get(nodeKey(e.dst_table, e.dst_id)) ?? 0;
     const heat = e.node_heat === null ? "" : ` heat ${e.node_heat.toFixed(2)}`;
     const links = deg > 0 ? ` ${deg} links` : "";
-    const line = `${e.edge_type}: ${label(e.src_table, e.src_id)} -> ${label(e.dst_table, e.dst_id)} (${e.writer}${heat}${links})`;
+    const line = `${e.edge_type}: ${labelFor(e.src_table, e.src_id, labels)} -> ${labelFor(e.dst_table, e.dst_id, labels)} (${e.writer}${heat}${links})`;
     out.push(line.length > RENDER_MAX_WIDTH ? line.slice(0, RENDER_MAX_WIDTH - 1) + "…" : line);
   }
   return out;

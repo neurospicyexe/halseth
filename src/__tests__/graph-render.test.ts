@@ -25,4 +25,37 @@ describe("graph render", () => {
     const [line] = renderEdgeLines([e({})], d);
     expect(line).toContain("3 links");
   });
+
+  describe("labels map", () => {
+    it("uses the label when present for a node keyed table/id", () => {
+      const edge = e({ dst_table: "watch_shelf", dst_id: "ws1" });
+      const labels = new Map([["watch_shelf/ws1", "Fargo"]]);
+      const [line] = renderEdgeLines([edge], new Map(), 6, labels);
+      expect(line).toContain("-> Fargo");
+      expect(line).not.toContain("watch_shelf/ws1");
+    });
+
+    it("falls back to the id-shortened label when no entry exists", () => {
+      const edge = e({ dst_table: "watch_shelf", dst_id: "ws-no-label-12345" });
+      const labels = new Map([["watch_shelf/some-other-id", "Severance"]]);
+      const [line] = renderEdgeLines([edge], new Map(), 6, labels);
+      expect(line).toContain("watch_shelf/ws-no-la");
+      expect(line).not.toContain("Severance");
+    });
+
+    it("falls back identically when no labels map is passed at all", () => {
+      const edge = e({ dst_table: "watch_shelf", dst_id: "ws1" });
+      const withUndefined = renderEdgeLines([edge], new Map(), 6);
+      const withEmptyMap = renderEdgeLines([edge], new Map(), 6, new Map());
+      expect(withUndefined).toEqual(withEmptyMap);
+    });
+
+    it("width cap still applies when a label is used", () => {
+      const longTitle = "A".repeat(120);
+      const edge = e({ dst_table: "watch_shelf", dst_id: "ws1" });
+      const labels = new Map([["watch_shelf/ws1", longTitle]]);
+      const [line] = renderEdgeLines([edge], new Map(), 6, labels);
+      expect(line!.length).toBeLessThanOrEqual(90);
+    });
+  });
 });

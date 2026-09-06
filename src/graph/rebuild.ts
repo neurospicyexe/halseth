@@ -160,6 +160,7 @@ interface CompanionJournalRow {
   id: string;
   agent: string;
   session_id: string | null;
+  note_text: string | null;
   created_at: string;
 }
 
@@ -313,6 +314,93 @@ function buildHandoverEdges(rows: HandoverPacketRow[]): GraphEdgeRow[] {
 // this file's DELETE never touches it and this file never tries to re-derive it. See this file's
 // top-of-file "TWO PROVENANCE LANES" note.
 
+// ── h. companion_journal.note_text ~ shelf title -> 'mentions' ────────────────────────────────────
+// The graph's first content-derived edge, and deliberately mechanical (zero LLM): the Phase 1.5
+// neighborhood traversal has never rendered a non-empty result because no edge connected a journal
+// row to the thing it was actually about. A title match is a coarse signal on purpose -- structure,
+// not salience (mig 0127's own header) -- and the whole point is a graph line that reads "-> Fargo"
+// instead of an opaque row id.
+//
+// Title source is two shelves: `watch_shelf` (every row -- a finished/paused show is still something
+// a journal entry can be about) and `obsession_shelf` restricted to `status = 'active'` (the caller
+// filters before this function ever sees the rows, so this function has no status branch of its
+// own). Titles under 4 characters or that are exactly one common English word are excluded --
+// short/common strings match constantly and produce noise edges pointing at nothing meaningful.
+//
+// MATCH RULE: case-insensitive, word-bounded substring of the title inside note_text. Word-bounded
+// means the character immediately before and after the match (if any) is neither a letter nor a
+// digit -- "Fargo" matches "watched Fargo tonight" but not "Fargoish" or "Fargon". Title regex
+// metacharacters are escaped before compiling; a title that itself contains something like "(" is
+// still matched as a literal string, never as a pattern.
+//
+// DETERMINISM: both inputs arrive pre-sorted from the caller (journal rows by id, titles by
+// (table, id)) rather than trusting `SELECT *` row order, which SQLite makes no ordering guarantee
+// about absent an explicit ORDER BY. The nested-loop order below (journal outer, titles inner) is
+// what makes two rebuilds against unchanged data byte-identical in edge order, not just edge count.
+const MENTIONS_STOPWORDS = new Set([
+  "the", "and", "that", "this", "with", "from", "have", "what", "when",
+  "home", "life", "love", "time", "work", "night", "day",
+]);
+const MENTIONS_MIN_TITLE_LEN = 4;
+
+export interface CompanionJournalMentionRow {
+  id: string;
+  agent: string;
+  note_text: string | null;
+  created_at: string;
+}
+
+export interface ShelfTitleRow {
+  table: "watch_shelf" | "obsession_shelf";
+  id: string;
+  title: string;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A title is skippable noise if it is too short, or reduces (trimmed, lowercased) to exactly one
+ *  common English word -- both match constantly and would flood the graph with meaningless edges. */
+function isSkippableTitle(title: string): boolean {
+  const t = title.trim();
+  if (t.length < MENTIONS_MIN_TITLE_LEN) return true;
+  return MENTIONS_STOPWORDS.has(t.toLowerCase());
+}
+
+export function buildMentionsEdges(
+  journalRows: CompanionJournalMentionRow[],
+  titleRows: ShelfTitleRow[],
+): GraphEdgeRow[] {
+  const titles = titleRows
+    .filter((t) => !isSkippableTitle(t.title))
+    .slice()
+    .sort((a, b) => (a.table === b.table ? a.id.localeCompare(b.id) : a.table.localeCompare(b.table)));
+  // Cache one compiled pattern per title -- a nested loop over (journal x titles) would otherwise
+  // recompile the same RegExp once per journal row.
+  const patterns = titles.map((t) => ({ ref: t, re: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(t.title)}(?![\\p{L}\\p{N}])`, "iu") }));
+
+  const edges: GraphEdgeRow[] = [];
+  const sortedJournal = journalRows.slice().sort((a, b) => a.id.localeCompare(b.id));
+  for (const j of sortedJournal) {
+    if (!j.note_text) continue;
+    for (const { ref, re } of patterns) {
+      if (!re.test(j.note_text)) continue;
+      edges.push({
+        src_table: "companion_journal",
+        src_id: j.id,
+        dst_table: ref.table,
+        dst_id: ref.id,
+        edge_type: "mentions",
+        writer: j.agent,
+        provenance: "mechanical:title",
+        created_at: j.created_at,
+      });
+    }
+  }
+  return edges;
+}
+
 // ── rebuild ─────────────────────────────────────────────────────────────────────────────────────
 
 async function insertEdges(db: D1Database, edges: GraphEdgeRow[]): Promise<number> {
@@ -344,7 +432,7 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
 
   await db.prepare(`DELETE FROM graph_edges WHERE provenance LIKE ?`).bind(MECHANICAL_PROVENANCE_LIKE).run();
 
-  const [conclusions, deltas, journal, notes, tensions, handovers, sessions] = await Promise.all([
+  const [conclusions, deltas, journal, notes, tensions, handovers, sessions, watchTitles, obsessionTitles] = await Promise.all([
     selectAll<ConclusionRow>(db, "companion_conclusions"),
     selectAll<RelationalDeltaRow>(db, "relational_deltas"),
     selectAll<CompanionJournalRow>(db, "companion_journal"),
@@ -352,7 +440,15 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     selectAll<CompanionTensionRow>(db, "companion_tensions"),
     selectAll<HandoverPacketRow>(db, "handover_packets"),
     selectAll<{ id: string }>(db, "sessions"),
+    selectAll<{ id: string; title: string }>(db, "watch_shelf"),
+    selectAll<{ id: string; title: string; status: string }>(db, "obsession_shelf"),
   ]);
+  const shelfTitles: ShelfTitleRow[] = [
+    ...watchTitles.map((r) => ({ table: "watch_shelf" as const, id: r.id, title: r.title })),
+    // Whole-table read (this file's convention: correlate in JS, not in SQL) filtered here to
+    // status = 'active' -- a retired obsession is still a real row, just not a live title source.
+    ...obsessionTitles.filter((r) => r.status === "active").map((r) => ({ table: "obsession_shelf" as const, id: r.id, title: r.title })),
+  ];
   // Read once, shared by both dangling-session checks below (b, c) -- see their comments for why
   // a session_id can point at nothing (append-only source, 8-row 2026-03 audit finding).
   const sessionIds = new Set(sessions.map((s) => s.id));
@@ -364,6 +460,7 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     { source: "inter_companion_notes", edges: buildNoteEdges(notes) },
     { source: "companion_tensions", edges: buildTensionEdges(tensions) },
     { source: "handover_packets.session_id", edges: buildHandoverEdges(handovers) },
+    { source: "companion_journal.note_text~title", edges: buildMentionsEdges(journal, shelfTitles) },
   ];
 
   const counts: SourceCount[] = [];

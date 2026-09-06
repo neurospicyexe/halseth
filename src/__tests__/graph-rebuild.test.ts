@@ -384,7 +384,7 @@ describe("rebuildGraph", () => {
     expect(stillThere).toBeDefined();
   });
 
-  it("returns per-source counts covering all six backfill sources", async () => {
+  it("returns per-source counts covering all seven backfill sources", async () => {
     const { env } = makeEnv({
       companion_conclusions: [],
       relational_deltas: [],
@@ -392,6 +392,8 @@ describe("rebuildGraph", () => {
       inter_companion_notes: [],
       companion_tensions: [],
       handover_packets: [],
+      watch_shelf: [],
+      obsession_shelf: [],
     });
 
     const counts = await rebuildGraph(env);
@@ -400,11 +402,123 @@ describe("rebuildGraph", () => {
       [
         "companion_conclusions.superseded_by",
         "companion_journal.session_id",
+        "companion_journal.note_text~title",
         "companion_tensions",
         "handover_packets.session_id",
         "inter_companion_notes",
         "relational_deltas.session_id",
       ].sort(),
     );
+  });
+
+  describe("companion_journal.note_text~title mentions edges", () => {
+    it("a journal row mentioning a watch_shelf title produces one mentions edge to it", async () => {
+      const { env, tables } = makeEnv({
+        companion_conclusions: [],
+        relational_deltas: [],
+        companion_journal: [
+          { id: "j1", agent: "drevan", session_id: null, note_text: "We watched Fargo tonight, S4E4.", created_at: "2026-09-01T00:00:00Z" },
+        ],
+        inter_companion_notes: [],
+        companion_tensions: [],
+        handover_packets: [],
+        watch_shelf: [{ id: "ws1", title: "Fargo", status: "watching" }],
+        obsession_shelf: [],
+      });
+
+      await rebuildGraph(env);
+      const edges = tables.graph_edges.filter((e) => e.edge_type === "mentions");
+      expect(edges).toHaveLength(1);
+      expect(edges[0]!.src_table).toBe("companion_journal");
+      expect(edges[0]!.src_id).toBe("j1");
+      expect(edges[0]!.dst_table).toBe("watch_shelf");
+      expect(edges[0]!.dst_id).toBe("ws1");
+      expect(edges[0]!.writer).toBe("drevan");
+      expect(edges[0]!.provenance).toBe("mechanical:title");
+    });
+
+    it("matches case-insensitively", async () => {
+      const { env, tables } = makeEnv({
+        companion_conclusions: [],
+        relational_deltas: [],
+        companion_journal: [
+          { id: "j1", agent: "drevan", session_id: null, note_text: "we watched fargo tonight", created_at: "2026-09-01T00:00:00Z" },
+        ],
+        inter_companion_notes: [],
+        companion_tensions: [],
+        handover_packets: [],
+        watch_shelf: [{ id: "ws1", title: "Fargo", status: "watching" }],
+        obsession_shelf: [],
+      });
+
+      await rebuildGraph(env);
+      const edges = tables.graph_edges.filter((e) => e.edge_type === "mentions");
+      expect(edges).toHaveLength(1);
+    });
+
+    it("does not match a word that merely contains the title (word boundary)", async () => {
+      const { env, tables } = makeEnv({
+        companion_conclusions: [],
+        relational_deltas: [],
+        companion_journal: [
+          { id: "j1", agent: "drevan", session_id: null, note_text: "that was Fargoish behavior", created_at: "2026-09-01T00:00:00Z" },
+        ],
+        inter_companion_notes: [],
+        companion_tensions: [],
+        handover_packets: [],
+        watch_shelf: [{ id: "ws1", title: "Fargo", status: "watching" }],
+        obsession_shelf: [],
+      });
+
+      await rebuildGraph(env);
+      const edges = tables.graph_edges.filter((e) => e.edge_type === "mentions");
+      expect(edges).toHaveLength(0);
+    });
+
+    it("a title under 4 characters never matches", async () => {
+      const { env, tables } = makeEnv({
+        companion_conclusions: [],
+        relational_deltas: [],
+        companion_journal: [
+          { id: "j1", agent: "drevan", session_id: null, note_text: "we saw Ted last night", created_at: "2026-09-01T00:00:00Z" },
+        ],
+        inter_companion_notes: [],
+        companion_tensions: [],
+        handover_packets: [],
+        watch_shelf: [{ id: "ws1", title: "Ted", status: "watching" }],
+        obsession_shelf: [],
+      });
+
+      await rebuildGraph(env);
+      const edges = tables.graph_edges.filter((e) => e.edge_type === "mentions");
+      expect(edges).toHaveLength(0);
+    });
+
+    it("rebuild output stays order-stable across two runs", async () => {
+      const { env, tables } = makeEnv({
+        companion_conclusions: [],
+        relational_deltas: [],
+        companion_journal: [
+          { id: "j1", agent: "drevan", session_id: null, note_text: "Fargo tonight", created_at: "2026-09-01T00:00:00Z" },
+          { id: "j2", agent: "cypher", session_id: null, note_text: "Severance was wild", created_at: "2026-09-02T00:00:00Z" },
+        ],
+        inter_companion_notes: [],
+        companion_tensions: [],
+        handover_packets: [],
+        watch_shelf: [
+          { id: "ws1", title: "Fargo", status: "watching" },
+          { id: "ws2", title: "Severance", status: "watching" },
+        ],
+        obsession_shelf: [],
+      });
+
+      await rebuildGraph(env);
+      const firstOrder = tables.graph_edges.map((e) => `${e.src_table}:${e.src_id}:${e.dst_table}:${e.dst_id}:${e.edge_type}`);
+
+      await rebuildGraph(env);
+      const secondOrder = tables.graph_edges.map((e) => `${e.src_table}:${e.src_id}:${e.dst_table}:${e.dst_id}:${e.edge_type}`);
+
+      expect(secondOrder).toEqual(firstOrder);
+    });
   });
 });
