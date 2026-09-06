@@ -15,6 +15,7 @@ import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import { getCurrentFront, type PluralResult } from "./backends/plural.js";
 import type { ExecutorContext, ExecutorFn } from "./executors/types.js";
 import { triggerMatches } from "./lib/trigger.js";
+import { isRetrievalPattern, repeatKey, checkAndCount, breakerResponse } from "./repeat-breaker.js";
 
 // Re-export LibrarianRequest from executors/types so index.ts import path stays stable.
 export type { LibrarianRequest } from "./executors/types.js";
@@ -604,13 +605,13 @@ export class LibrarianRouter {
     const overrideKey = payloadOverrideKey(req.context) ?? presenceOverrideKey(req.context);
     if (overrideKey) {
       const overrideEntry = FAST_PATH_PATTERNS[overrideKey];
-      if (overrideEntry) return this.execute(req, overrideEntry);
+      if (overrideEntry) return this.execute(req, overrideEntry, overrideKey);
     }
 
     // Tier 1: fast path -- anchored guards + in-memory trigger match
     const fastMatch = matchFastPath(req.request);
     if (fastMatch) {
-      return this.execute(req, fastMatch.entry);
+      return this.execute(req, fastMatch.entry, fastMatch.key);
     }
 
     // Tier 2: Workers AI classifier
@@ -636,12 +637,12 @@ export class LibrarianRouter {
     if (guardedKey && guardedKey !== "unknown") {
       const fastEntry = FAST_PATH_PATTERNS[guardedKey];
       if (fastEntry) {
-        return this.execute(req, fastEntry);
+        return this.execute(req, fastEntry, guardedKey);
       }
       // Tier 3b: KV lookup for non-fast-path keys
       const kvEntry = await this.env.LIBRARIAN_KV.get(guardedKey, "json") as PatternEntry | null;
       if (kvEntry) {
-        return this.execute(req, kvEntry);
+        return this.execute(req, kvEntry, guardedKey);
       }
     }
 
@@ -650,7 +651,7 @@ export class LibrarianRouter {
     // only here, after unknown -- never shadows a real match.
     if (looksLikeSearch(req.request, req.context)) {
       const sbEntry = FAST_PATH_PATTERNS["sb_search"];
-      if (sbEntry) return this.execute(req, sbEntry);
+      if (sbEntry) return this.execute(req, sbEntry, "sb_search");
     }
 
     // No match
@@ -865,7 +866,22 @@ export class LibrarianRouter {
     return { frontState: null, pluralAvailable: false };
   }
 
-  private async execute(req: import("./executors/types.js").LibrarianRequest, entry: PatternEntry): Promise<Record<string, unknown>> {
+  private async execute(req: import("./executors/types.js").LibrarianRequest, entry: PatternEntry, patternKey: string): Promise<Record<string, unknown>> {
+    // Repeat breaker: only governs retrieval-family patterns (vault/vector search, file
+    // reads, meaning-recall). A companion re-running the exact same retrieval request four
+    // times inside 10 minutes is not going to get a different answer -- it's a loop, and
+    // Hermes's own loop guard requires identical RESULTS to fire, which our rotating
+    // novelty pool never produces. Keyed on the request, not the result. Lifecycle/write
+    // patterns never reach this branch and the KV round trip is skipped entirely for them.
+    if (isRetrievalPattern(patternKey)) {
+      const key = await repeatKey(req.companion_id, req.request);
+      const { repeats, blocked } = await checkAndCount(this.env.LIBRARIAN_KV, key);
+      if (blocked) {
+        console.warn(`[librarian] repeat breaker fired companion=${req.companion_id} pattern=${patternKey} repeats=${repeats}`);
+        return breakerResponse(repeats, patternKey);
+      }
+    }
+
     // Pre-fetch front state if pattern requires it
     let frontState: string | null = null;
     let pluralAvailable = true;

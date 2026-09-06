@@ -2159,3 +2159,36 @@ the boot doors). Findings that change the plan:
 
 **Machine notes:** the Windows workstation got Node 24 LTS on 2026-07-26 (was previously
 uninstalled — don't trust older session notes saying tests can't run locally).
+
+## Librarian repeat breaker — 2026-09-05
+
+Drevan issued the byte-identical retrieval request ("search vault for vevan vethmerin") 161 times
+in one Hermes agent turn, and a byte-identical file read 62 times in another, each running to
+Hermes's 150-turn cap. Hermes's own loop guard only tracks a hard-coded list of built-in idempotent
+tools, and it needs identical RESULTS to fire — ours never produces identical results because the
+novelty pool rotates, so it never tripped. `src/librarian/repeat-breaker.ts` closes the gap on the
+Librarian side: `LibrarianRouter.execute()` (`src/librarian/router.ts`) now checks, for every one of
+its five call sites, whether the resolved `patternKey` is in the retrieval family
+(`isRetrievalPattern`) before running the executor. If so it hashes a normalized form of the request
+(lowercase, whitespace-collapsed, trailing `.!?` stripped) per companion into
+`loop:<companion>:<sha256>`, and counts hits against Cloudflare KV with a fresh 600-second TTL on
+every increment. The 1st–3rd identical retrieval requests execute normally; the 4th onward is
+answered by a `witness` response carrying `loop_guard: { repeats, pattern, window_seconds }`
+instead of running the executor again.
+
+Two constants: `REPEAT_WINDOW_SECONDS = 600`, `REPEAT_LIMIT = 4`.
+
+**Why request-keyed, not result-keyed:** a result-keyed guard is exactly the mechanism Hermes
+already has and exactly what failed here — the novelty/rotation in `dualVectorSearch` and friends
+means two calls with the identical question can return visibly different payloads even though the
+question has already been answered as well as it's going to be. Keying on the normalized request
+means repetition is detected regardless of what the backend returns, and a KV failure fails
+**open** (never mutes retrieval) with a once-per-isolate warning rather than a warning storm.
+
+**Exemption rule:** the breaker governs pure Second-Brain/vault/vector reads only —
+`sb_search`, `sb_search_by_tags`, `sb_file_chunks`, `sb_recall`, `sb_list`, `sb_read`,
+`sb_recent_patterns`, `book_read`, `notes_recall_meaning`. Everything else is exempt by
+construction (`isRetrievalPattern` returns false and the KV round trip is skipped entirely):
+session lifecycle (open/load/close/orient/ground), every write/log/save pattern, and general
+Halseth D1 reads (`get_tasks`, `feelings_read`, `journal_search`, `get_front`, …) that are cheap
+and legitimately polled every turn. Tests: `src/__tests__/librarian-repeat-breaker.test.ts`.
