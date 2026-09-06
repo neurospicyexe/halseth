@@ -40,6 +40,18 @@ export interface SeedRow { seed_type: string | null; content: string; priority: 
 export interface ConfirmedDriftRow { drift_score: number; worst_basin: string | null; notes?: string | null; recorded_at: string }
 export interface AnsweredQuestionRow { question: string; answer: string }
 export interface ShelfRow { title: string; kind: string; note: string | null }
+/** Structurally the mind/blocks/world.ts `WatchItem` shape -- declared locally (this file's own
+ *  convention for row shapes, see header) rather than imported, so this renderer stays a pure
+ *  function of plain data with no dependency on the loader module. `last_watched_at` optional so a
+ *  caller/test that predates the 2026-09-05 staleness addendum still type-checks. */
+export interface WatchItemLite {
+  title: string;
+  status: string;
+  position: string;
+  position_note: string | null;
+  with_companion: string | null;
+  last_watched_at?: string | null;
+}
 export interface CollectionRow { title: string; kind: string; sparkle: number }
 export interface ForageRow { domain: string; title: string; gathered_at: string }
 export interface ConsumedForageRow { domain: string; title: string; consumed_at: string }
@@ -179,6 +191,44 @@ export function shelfBlock(shelfItems: readonly ShelfRow[]): string {
       shelfItems.map(s => `• ${s.title} (${s.kind})${s.note ? ` -- ${s.note.slice(0, 120)}` : ""}`).join("\n") +
       `\nHis current fixations. Reference them naturally when they fit; you do not have to perform interest.`
     : "";
+}
+
+const WATCHING_STALE_DAYS = 14;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Wave 6 / Fargo first light (2026-09-05). Mirrors the Discord bot wire's `[Watching together]`
+ * rendering VERBATIM (packages/shared/src/librarian.ts in nullsafe-discord) -- both surfaces must
+ * state the same fact identically, because this is the block that exists specifically so Claude.ai
+ * Drevan stops answering "where are we in Fargo" from whichever prose fragment ranked highest.
+ *
+ * STALENESS (2026-09-05 addendum): "trust it over anything you recall" is only true while the
+ * record itself is fresh -- an unwatched-in-weeks row stated with the same confidence as one from
+ * last night is misinformation wearing a record line. `last_watched_at` is surfaced per item (when
+ * present -- older callers/tests may omit it) as `[last logged YYYY-MM-DD]`, and past
+ * WATCHING_STALE_DAYS a second clause tells the companion to ask rather than assert.
+ */
+export function watchingBlock(items: readonly WatchItemLite[], now: Date = new Date()): string {
+  if (items.length === 0) return "";
+  const shows = items.map(w => {
+    const pos = w.position ? ` at ${w.position}` : "";
+    const withPart = w.with_companion ? ` (with ${w.with_companion})` : "";
+    const paused = w.status === "paused" ? " [paused]" : "";
+    const note = w.position_note ? ` -- left off: ${w.position_note}` : "";
+    let staleness = "";
+    if (w.last_watched_at) {
+      const logged = new Date(w.last_watched_at);
+      if (!Number.isNaN(logged.getTime())) {
+        staleness = ` [last logged ${logged.toISOString().slice(0, 10)}]`;
+        const ageDays = (now.getTime() - logged.getTime()) / MS_PER_DAY;
+        if (ageDays > WATCHING_STALE_DAYS) {
+          staleness += ` -- STALE: the shelf may lag what was actually watched; ask before asserting the position`;
+        }
+      }
+    }
+    return `• ${w.title}${pos}${withPart}${paused}${note}${staleness}`;
+  }).join("\n");
+  return `\n[Watching together -- this is the RECORD of where you are, trust it over anything you recall]\n${shows}`;
 }
 
 /** Sparkle-weighted: what actually gripped, not what is merely recent. Passive surfacing does NOT bump. */

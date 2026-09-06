@@ -396,6 +396,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const shelfItems = mindState.world.shelf;  // STEP 2: loader (same query, LIMIT 6)
   const shelfBlock = B.shelfBlock(shelfItems);
 
+  // Watching (Fargo first light, 2026-09-05): mirrors the Discord bot wire's [Watching together]
+  // block verbatim -- previously only the bot surface knew where Raziel actually was in a show.
+  const watchingBlock = B.watchingBlock(mindState.world.watching);
+
   // Collection (0079): the brightest of what this companion gathered -- sparkle-weighted,
   // so it's what actually gripped, not what's merely recent. Read-back for a layer that
   // accrued silently since 06-13 with no surface. Only items that have earned shine appear
@@ -550,7 +554,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an

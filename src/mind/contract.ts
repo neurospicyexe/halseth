@@ -28,7 +28,13 @@ import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 import type { GraphBlocks } from "./blocks/graph.js";
 
-/** 0.11.0 -- graph memory Phase 1.5, Tranche 4 (2026-08-28, docs/private/graph-memory-spec-2026-08-28.md):
+/** 0.12.0 -- Fargo first light (2026-09-05): `world.watching` items now carry `last_watched_at`
+ *  (mig 0111 `watch_shelf.last_watched_at`, already read by the loader for ordering but never
+ *  surfaced) so a renderer can flag a stale record instead of stating an old position with the
+ *  same confidence as a fresh one. Also: the Claude.ai orient now renders a `watchingBlock` mirroring
+ *  the Discord bot wire's `[Watching together]` wording -- previously only the bot surface said
+ *  where Raziel actually was in a show. MINOR: additive-only field.
+ *  0.11.0 -- graph memory Phase 1.5, Tranche 4 (2026-08-28, docs/private/graph-memory-spec-2026-08-28.md):
  *  added `graph.neighborhoods` -- a bounded (1 hop, limit 30) traversal of graph_edges (mig 0127) seeded
  *  from ids the loader already fetches for other blocks (companion_conclusions, companion_journal). Hard
  *  law 4 from the spec: "Orient is a contract, not search. It gains rendered neighborhoods; it does not
@@ -63,7 +69,7 @@ import type { GraphBlocks } from "./blocks/graph.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.11.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.12.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

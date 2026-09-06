@@ -137,6 +137,11 @@ export interface WatchItem {
   position: string;
   position_note: string | null;
   with_companion: string | null;
+  /** When this row was last updated (mig 0111 `watch_shelf.last_watched_at`). Carried through so a
+   *  renderer can flag a stale record rather than let "trust it over anything you recall" become a
+   *  wrong fact stated with false confidence -- a record that has not moved in weeks is not the
+   *  same reliability as one from last night. */
+  last_watched_at: string | null;
 }
 
 /** A commons post with its author -- the read-back half of the shared board. */
@@ -299,10 +304,10 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         // Wave 6. Forward-only progress; `NULLS LAST` so a shelf row never watched does not outrank one
         // watched last night.
         env.DB.prepare(
-          `SELECT title, kind, status, season, episode, position_note, with_companion
+          `SELECT title, kind, status, season, episode, position_note, with_companion, last_watched_at
            FROM watch_shelf WHERE status IN ('watching','paused')
            ORDER BY (status = 'watching') DESC, last_watched_at DESC NULLS LAST LIMIT 4`
-        ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null }>(),
+        ).all<{ title: string; kind: string; status: string; season: number | null; episode: number | null; position_note: string | null; with_companion: string | null; last_watched_at: string | null }>(),
       ]);
 
     const creatureRows = sol.results ?? [];
@@ -360,6 +365,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         // Only report a co-watcher when it is someone else: telling Drevan he watches Fargo with Drevan
         // is noise.
         with_companion: r.with_companion && r.with_companion !== companionId ? r.with_companion : null,
+        last_watched_at: r.last_watched_at ?? null,
       })),
     };
   } catch (err) {

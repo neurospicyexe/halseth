@@ -35,6 +35,8 @@ export const CONTRACT_CHANGELOG: Record<string, string> = {
     "System change (contract 0.10.0): this lane. Deploys now announce themselves here as change-notes, so a vanished counter or a new block is a stated change, not a mystery to reverse-engineer. Chosen forgetting (release/restore, 30d reversible) also shipped with 0.9.0-era work and is in your affordances.",
   "0.11.0":
     "System change (contract 0.11.0): graph memory. Orient now shows a short structural neighborhood around what it already surfaced -- what links to what, no content, one hop out. Not a search: it only renders connections the boot already touched. Discord doesn't have this yet -- that's a separate piece of work.",
+  "0.12.0":
+    "System change (contract 0.12.0): the watch shelf now says how stale it is, and Claude.ai finally sees it too. A watching entry carries when it was last updated, and an old one is flagged rather than stated as fact -- and the same [Watching together] record the Discord bots read now renders here as well.",
 };
 
 /** Versions at or below this were covered by the hand-posted retroactive note (2026-08-17);
