@@ -4,7 +4,20 @@ import {
   runVibeCheck,
   type VibeData,
   type CompanionVibe,
+  type DayLedger,
 } from "../webmind/vibecheck";
+
+function quietDay(over: Partial<DayLedger> = {}): DayLedger {
+  return {
+    spoke: 0,
+    notes_sent: 0,
+    notes_received: 0,
+    sessions_closed: 0,
+    watch: null,
+    highlights: [],
+    ...over,
+  };
+}
 
 function companion(over: Partial<CompanionVibe> = {}): CompanionVibe {
   return {
@@ -15,6 +28,7 @@ function companion(over: Partial<CompanionVibe> = {}): CompanionVibe {
     simmering: 0,
     newestTension: null,
     flags: [],
+    day: quietDay(),
     ...over,
   };
 }
@@ -123,6 +137,89 @@ describe("formatVibeCheck -- voice + accessibility invariants", () => {
       })),
     });
     expect(formatVibeCheck(big).length).toBeLessThanOrEqual(1800);
+  });
+});
+
+describe("formatVibeCheck -- day ledger (the stillness-loop counterweight, 2026-09-06)", () => {
+  it("renders the quiet line when nothing happened in the trailing 24h", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({ companion_id: "cypher", day: quietDay() })],
+    }));
+    expect(out).toContain("  day: quiet (no exchanges, notes, sessions, or watch logged)");
+  });
+
+  it("renders every non-zero segment, in order, and omits zero ones", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({
+        companion_id: "cypher",
+        day: quietDay({
+          spoke: 14,
+          notes_sent: 2,
+          notes_received: 1,
+          sessions_closed: 1,
+          watch: "Fargo S4E8",
+        }),
+      })],
+    }));
+    expect(out).toContain("  day: spoke 14 · notes 2 out / 1 in · sessions closed 1 · Fargo S4E8");
+  });
+
+  it("omits the notes segment entirely when both sent and received are zero", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({ companion_id: "cypher", day: quietDay({ spoke: 3 }) })],
+    }));
+    expect(out).toContain("  day: spoke 3");
+    expect(out).not.toContain("notes");
+  });
+
+  it("shows only the non-zero side of notes (sent-only, then received-only)", () => {
+    const sentOnly = formatVibeCheck(data({
+      companions: [companion({ companion_id: "cypher", day: quietDay({ notes_sent: 3 }) })],
+    }));
+    expect(sentOnly).toContain("  day: notes 3 out");
+
+    const receivedOnly = formatVibeCheck(data({
+      companions: [companion({ companion_id: "cypher", day: quietDay({ notes_received: 2 }) })],
+    }));
+    expect(receivedOnly).toContain("  day: notes 2 in");
+  });
+
+  it("renders up to 2 highlight lines beneath the day line, cut to 90 chars", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({
+        companion_id: "cypher",
+        day: quietDay({ spoke: 2, highlights: ["first thing said", "x".repeat(200), "third (dropped, cap is 2)"] }),
+      })],
+    }));
+    expect(out).toContain("    · first thing said");
+    expect(out).toContain(`    · ${"x".repeat(87)}...`);
+    expect(out).not.toContain("third (dropped, cap is 2)");
+  });
+
+  it("drops highlights before anything else when the digest would overflow the 1800 cap", () => {
+    const big = data({
+      companions: (["cypher", "drevan", "gaia"] as const).map((id) => companion({
+        companion_id: id,
+        simmering: 3,
+        newestTension: "x".repeat(400),
+        flags: Array.from({ length: 3 }, () => ({ severity: "warning", summary: "y".repeat(300) })),
+        day: quietDay({
+          spoke: 9,
+          notes_sent: 1,
+          notes_received: 1,
+          sessions_closed: 1,
+          watch: "Fargo S4E8",
+          highlights: ["z".repeat(90), "w".repeat(90)],
+        }),
+      })),
+    });
+    const out = formatVibeCheck(big);
+    expect(out.length).toBeLessThanOrEqual(1800);
+    // header/gauge/day lines survive the drop even under overflow pressure
+    expect(out).toContain("Cypher. basin:");
+    expect(out).toContain("  day: spoke 9");
+    // highlight bullets are what gets sacrificed
+    expect(out).not.toContain("z".repeat(90));
   });
 });
 

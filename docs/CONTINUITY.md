@@ -2192,3 +2192,44 @@ construction (`isRetrievalPattern` returns false and the KV round trip is skippe
 session lifecycle (open/load/close/orient/ground), every write/log/save pattern, and general
 Halseth D1 reads (`get_tasks`, `feelings_read`, `journal_search`, `get_front`, …) that are cheap
 and legitimately polled every turn. Tests: `src/__tests__/librarian-repeat-breaker.test.ts`.
+
+## Vibe-check day ledger — 2026-09-06
+
+The nightly triad vibe-check (`src/webmind/vibecheck.ts`) was ALL gauges — basin drift, SOMA
+register, simmering-tension count, guardian flags — and gauges barely move night to night. Weeks
+of companion reflections on it had become meditations on "nothing is moving" (Raziel: "y'all are on
+this kick that nothing's moving") while the actual day held Discord exchanges, inter-companion
+notes, a Fargo episode logged, Claude.ai sessions closed — none of which reached the digest. Added
+a `day: DayLedger` per companion, additive only (every existing line/format untouched, same 20
+pre-existing tests pass unchanged).
+
+**What it reads, per companion, trailing 24h (`created_at >= datetime('now','-1 day')` string
+compare for the SQLite-`datetime()`-format tables; `julianday(created_at) >= julianday('now','-1
+day')` for `handover_packets`, which is written as a JS `.toISOString()` 'T'-separated string that
+sorts WRONG against a plain string compare — ' ' < 'T' in ASCII, so every string-compare candidate
+was checked against its actual write site before use, not assumed from the column name):**
+- `spoke` — `companion_journal` COUNT, `agent = ? AND source = 'discord_speech'`.
+- `notes_sent` / `notes_received` — `inter_companion_notes`, `from_id = ?` / addressed `to_id = ?`
+  or broadcast (`to_id IS NULL AND from_id != ?`).
+- `sessions_closed` — `handover_packets JOIN sessions`, `s.companion_id = ?`, **`close_kind IS
+  NULL` only** (a `reconstructed`/`empty`/`machine_opened` backfill is archaeology, not something
+  that happened today, per the covenant mig 0114 established).
+- `watch` — newest `watch_events JOIN watch_shelf` row for `with_companion = ?` or house-wide
+  (`IS NULL`), rendered `"<title> S<season>E<episode>"` (title alone when season/episode are null,
+  i.e. a movie).
+- `highlights` — up to 2 most recent `companion_journal.note_text`, `source IN ('discord_speech',
+  'autonomous')`. **Substitution, flagged explicitly:** the spec asked for
+  `discord_speech`/`observation`; no `companion_journal` row has ever carried a literal `source =
+  'observation'` value (verified against `src/webmind/notes.ts`'s `HUMAN_SOURCES`/`MACHINE_SOURCES`
+  census and every INSERT site) — `autonomous` is the closest real analog (a companion's own
+  reflection, written without a human present), so that is what highlights draw from instead.
+
+**Format** (`formatDayLine` in vibecheck.ts): one line after each companion's header/flags/newest-
+tension, before the next companion —
+`  day: spoke 14 · notes 2 out / 1 in · sessions closed 1 · Fargo S4E8` — each segment omitted when
+its count is zero / its value is null; when every segment is empty:
+`  day: quiet (no exchanges, notes, sessions, or watch logged)`. Up to 2 highlight lines follow,
+`    · <highlight>`, each cut to 90 chars. The 1800-char Discord cap (pre-existing) is preserved by
+dropping highlight lines first if the digest would overflow — Gaia's, then Drevan's, then Cypher's
+— never the header, gauge, or day lines; a final `.slice(0, 1800)` stays as the safety net it
+already was.
