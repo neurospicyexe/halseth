@@ -11,7 +11,7 @@ import {
   loadGroundData, SessionGroundInput,
   loadLightGroundData,
 } from "../../mcp/tools/session_load.js";
-import { generateId, findExistingClose, clearSupersededClose } from "../../db/queries.js";
+import { generateId, findExistingClose, clearSupersededClose, CALLER_CLOSE_KINDS } from "../../db/queries.js";
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
@@ -354,7 +354,12 @@ export async function sessionClose(env: Env, params: {
   session_id: string; spine: string; last_real_thing: string; open_threads?: string[];
   motion_state: string; active_anchor?: string; notes?: string; spiral_complete?: boolean;
   somaFields?: CompanionStateUpdate; companionId?: string;
+  /** Caller-asserted machine close kind; only CALLER_CLOSE_KINDS are honoured, anything else is NULL. */
+  close_kind?: string | null;
 }): Promise<{ id: string; spine: string }> {
+  const closeKind = params.close_kind && (CALLER_CLOSE_KINDS as readonly string[]).includes(params.close_kind)
+    ? params.close_kind
+    : null;
   // Same precedence rule as the MCP close path (both writers, per fix-landed-on-a-different-writer):
   // an authored close supersedes a machine one (the stale-session sweep's), and never the reverse.
   const existing = await findExistingClose(env, params.session_id);
@@ -365,8 +370,8 @@ export async function sessionClose(env: Env, params: {
 
   const stmts: ReturnType<typeof env.DB.prepare>[] = [
     env.DB.prepare(
-      "INSERT INTO handover_packets (id, session_id, created_at, spine, active_anchor, last_real_thing, open_threads, motion_state, returned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)"
-    ).bind(handoverId, params.session_id, now, params.spine, params.active_anchor ?? null, params.last_real_thing, params.open_threads ? JSON.stringify(params.open_threads) : null, params.motion_state),
+      "INSERT INTO handover_packets (id, session_id, created_at, spine, active_anchor, last_real_thing, open_threads, motion_state, returned, close_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)"
+    ).bind(handoverId, params.session_id, now, params.spine, params.active_anchor ?? null, params.last_real_thing, params.open_threads ? JSON.stringify(params.open_threads) : null, params.motion_state, closeKind),
     env.DB.prepare(
       "UPDATE sessions SET updated_at = ?, spiral_complete = ?, notes = ?, handover_id = ? WHERE id = ?"
     ).bind(now, params.spiral_complete ? 1 : 0, params.notes ?? null, handoverId, params.session_id),

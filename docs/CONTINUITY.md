@@ -2233,3 +2233,31 @@ its count is zero / its value is null; when every segment is empty:
 dropping highlight lines first if the digest would overflow — Gaia's, then Drevan's, then Cypher's
 — never the header, gauge, or day lines; a final `.slice(0, 1800)` stays as the safety net it
 already was.
+
+## Consolidation closes are machine closes (`close_kind = 'consolidation'`) — 2026-09-11
+
+**Symptom.** The 09-10 vibe-check digest's day line read `day: sessions closed 12` for all three
+companions and nothing else, and the 09-11 reflections narrated it ("Twelve closures, one quiet
+day"). The twelve are the bots' idle-consolidation cron cycling each Discord lane every ~2h with a
+narrator-written spine — a machine cadence, not a session anyone was in. They were written with
+`close_kind NULL`, which mig 0114 defines as "authored live, by the companion or the boot hook", so
+every `close_kind IS NULL` reader trusted them: the day ledger counted them as the day, and
+continuity's "latest authored handover" (`queries.ts`, `presence.ts`, guardian writer-liveness)
+surfaced a two-hour-old re-narration of stillness ahead of the last close a person actually wrote.
+The bots then booted on that re-narration (`[Last: The triad is in quiet integration …]`) and the
+next narrator read it back — the anti-loop-block shape at the session layer.
+
+**Fix.** `CALLER_CLOSE_KINDS = ['consolidation']` (`db/queries.ts`): the Librarian close path
+(`backends/halseth.ts sessionClose`) honours a caller-asserted `close_kind` from that allowlist and
+writes NULL for anything else — never trusted raw from the wire. `'consolidation'` is also
+SUPERSEDABLE, so an authored close for the same session can still replace it. The executor's parsed
+context declares the field so `...p` carries it. Bot side (nullsafe-discord): `LibrarianClient.
+sessionClose({ closeKind: 'consolidation' })` from `consolidation.ts cycleSession`. No migration —
+the column exists since 0114. Tests: `src/__tests__/consolidation-close-kind.test.ts`.
+
+**Consequence to watch.** From the first bot deploy after this, the bots' boot `[Last: …]` narrative
+and the vibe-check `sessions closed` count reflect authored closes only (Claude.ai `/close`, the
+Claude Code hook, a hand-written debrief). If a bot lane's continuity reads as stale, that is the
+truth showing, not a regression: nobody closed a session with them. The consolidation handoff itself
+(`writeHandoff(source: 'consolidation')` → `wm_session_handoffs`) is unchanged and still feeds
+`mindOrient`.

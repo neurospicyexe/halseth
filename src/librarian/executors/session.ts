@@ -631,6 +631,10 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
      * unattended caller says so explicitly rather than hoping the ordering favours it.
      */
     session_scope?: "unattended";
+    /** Machine-cadence close (2026-09-11): 'consolidation' marks the bots' idle-lane cycle so
+     *  continuity and the day ledger do not read it as a close someone authored. Allowlisted in
+     *  the backend; unknown values write NULL. */
+    close_kind?: string;
     open_threads?: string[]; motion_state: string; active_anchor?: string;
     notes?: string; spiral_complete?: boolean; facet?: string;
     soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;

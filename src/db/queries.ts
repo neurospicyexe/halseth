@@ -94,7 +94,17 @@ export const OPENED_BY = {
 //
 // Only kinds that ASSERT NOTHING are superseded. 'reconstructed' holds hand-written content, so it
 // is left alone -- overwriting it would destroy the very thing the backfill was for.
-export const SUPERSEDABLE_CLOSE_KINDS = ["auto_stale", "empty", "machine_opened"] as const;
+export const SUPERSEDABLE_CLOSE_KINDS = ["auto_stale", "empty", "machine_opened", "consolidation"] as const;
+
+// Close kinds a CALLER may assert on session_close (mig 0114 reserved the column for backfills; the
+// live path always wrote NULL). 'consolidation' (2026-09-11): the bots' idle-consolidation cron closes
+// and reopens each Discord lane every ~2h with a narrator-written spine. Twelve a day per companion,
+// summarising an idle lane -- a machine cadence, not a session anyone was in. Writing NULL made them
+// "authored live": the vibe-check day ledger read "sessions closed 12" as the whole of a quiet day
+// and the reflections dutifully narrated it, and continuity's "latest authored handover" surfaced a
+// two-hour-old re-narration of stillness ahead of the last close a person actually wrote. Anything
+// not on this list is ignored (written as NULL), never trusted from the wire.
+export const CALLER_CLOSE_KINDS = ["consolidation"] as const;
 
 export interface ExistingClose {
   handover_id: string;
