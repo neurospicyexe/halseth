@@ -27,6 +27,7 @@
 
 import type { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
+import { diffFloats, somaEventStatements, type SomaFloatKey } from "./events.js";
 
 export const EMERGENT_SHIFT_CAP_DEFAULT = 0.03;
 const DEFAULT_MODEL = "claude-opus-4-8";
@@ -192,10 +193,34 @@ export async function applyEmergentShift(
         "version = version + 1, updated_at = datetime('now') WHERE companion_id = ?",
     ).bind(shift.delta, companion_id).run();
 
-    await env.DB.prepare(
-      "INSERT INTO companion_soma_shifts (id, drift_id, companion_id, float_key, label, delta, before_value, after_value, reason, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
-    ).bind(generateId(), drift_id, companion_id, shift.float_key, shift.label, shift.delta, before, after, shift.reason).run();
+    // The detail row and its float-history row (mig 0130) go in ONE batch: a shift that is not in
+    // the history is a number that moved with no answer to "because of what". The history's delta
+    // is after - before, NOT shift.delta -- a shift clamped at the 0/1 boundary asks for a move the
+    // column never made, and diffFloats correctly emits nothing in that case.
+    const shiftId = generateId();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO companion_soma_shifts (id, drift_id, companion_id, float_key, label, delta, before_value, after_value, reason, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+      ).bind(shiftId, drift_id, companion_id, shift.float_key, shift.label, shift.delta, before, after, shift.reason),
+      ...somaEventStatements(
+        env.DB,
+        diffFloats(
+          { [shift.float_key]: before } as Partial<Record<SomaFloatKey, number | null>>,
+          { [shift.float_key]: after } as Partial<Record<SomaFloatKey, number | null>>,
+          {
+            companion_id,
+            kind: "drift_shift",
+            writer: "system",
+            cause_table: "companion_soma_shifts",
+            cause_id: shiftId,
+            session_id: null,
+            detail: shift.reason ? String(shift.reason).replace(/\s+/g, " ").trim().slice(0, 120) : null,
+            id: `ss_${shiftId}`,
+          },
+        ),
+      ),
+    ]);
 
     return { ...shift, before, after };
   } catch (err) {

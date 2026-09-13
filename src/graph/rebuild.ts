@@ -401,6 +401,165 @@ export function buildMentionsEdges(
   return edges;
 }
 
+// ── i. companion_soma_events -> 'moved_by' / 'follows' / 'logged_in' / 'alongside' ────────────────
+// Graph memory Phase 2, tranche 1 (docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md).
+// mig 0130's `companion_soma_events` is the first append-only record of WHY a felt float moved --
+// before it, "heat 0.68, apparently" was literally true, because no writer logged a before/after or
+// its own identity. This source turns each of those events into its structural surroundings:
+//
+//   moved_by   -> the detail row that caused it (handover packet, ferment event, drift shift). Emitted
+//                 ONLY when cause_table AND cause_id are both present: a bare authored_update has
+//                 neither yet (tranche 2 candidate), and an edge with a null dst is garbage, not a gap.
+//   follows    -> the previous event for the SAME (companion, float). writer 'system' -- the chain is
+//                 derived by this file, not asserted by whoever wrote either endpoint (the plan's one
+//                 stated exception to "writer = event.writer").
+//   logged_in  -> sessions, with the same dangling-session marking as (b)/(c) above. Same covenant:
+//                 mark, don't drop -- a derived link may be down-ranked, never silently removed.
+//   alongside  -> what else the companion was doing when the number moved. Two candidate lanes,
+//                 distinguished by provenance, NOT by cap: companion_journal rows in the SAME session
+//                 written at or before the event ('mechanical:session'), and commons_posts by this
+//                 companion or raziel inside the 60 minutes ending at the event
+//                 ('mechanical:window', both ends inclusive). The two lanes are MERGED, sorted
+//                 newest-first, and capped at 6 TOTAL -- capping each lane separately would quietly
+//                 allow 12 and make a chatty commons hour drown the session context.
+//
+// TIME IS PARSED, NOT STRING-COMPARED. `created_at` arrives in two shapes in this schema: SQLite
+// `datetime('now')` writes "YYYY-MM-DD HH:MM:SS" (commons_posts, most legacy rows) while JS writers
+// hand back a full ISO instant. A raw string sort across both is deterministic but WRONG -- 'T' sorts
+// after ' ', so every ISO row lands after every space-formatted row regardless of when it happened.
+// One helper (`tsMs`, the same normalisation webmind/drives.ts::hoursSinceIso uses) does both jobs:
+// the determinism sort key and every window/<= comparison.
+const ALONGSIDE_WINDOW_MS = 60 * 60 * 1000;
+const ALONGSIDE_CAP = 6;
+
+export interface SomaEventGraphRow {
+  id: string;
+  companion_id: string;
+  float_key: string;
+  kind: string;
+  writer: string;
+  cause_table: string | null;
+  cause_id: string | null;
+  session_id: string | null;
+  created_at: string;
+}
+
+export interface CommonsPostGraphRow {
+  id: string;
+  author: string;
+  created_at: string;
+}
+
+/** Normalise both `created_at` shapes this schema carries to a comparable instant. NaN-safe: an
+ *  unparseable stamp sorts as 0 rather than poisoning every comparison it touches. */
+function tsMs(s: string | null | undefined): number {
+  if (!s) return 0;
+  const ms = Date.parse(s.includes("T") ? s : s.replace(" ", "T") + "Z");
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+function byTimeThenId<T extends { id: string; created_at: string }>(a: T, b: T): number {
+  const d = tsMs(a.created_at) - tsMs(b.created_at);
+  return d !== 0 ? d : a.id.localeCompare(b.id);
+}
+
+export function buildSomaEventEdges(
+  events: readonly SomaEventGraphRow[],
+  sessionIds: Set<string>,
+  journalRows: readonly CompanionJournalRow[],
+  commonsRows: readonly CommonsPostGraphRow[],
+): GraphEdgeRow[] {
+  // Sorted inputs before the nested loops -- SQLite guarantees no row order absent an ORDER BY, and
+  // this file's contract is that two rebuilds over unchanged data agree on edge ORDER, not just count.
+  const sortedEvents = events.slice().sort(byTimeThenId);
+  const sortedJournal = journalRows.slice().sort(byTimeThenId);
+  const sortedCommons = commonsRows.slice().sort(byTimeThenId);
+
+  const edges: GraphEdgeRow[] = [];
+  const prevByFloat = new Map<string, SomaEventGraphRow>();
+
+  for (const e of sortedEvents) {
+    const at = tsMs(e.created_at);
+
+    if (e.cause_table && e.cause_id) {
+      edges.push({
+        src_table: "companion_soma_events",
+        src_id: e.id,
+        dst_table: e.cause_table,
+        dst_id: e.cause_id,
+        edge_type: "moved_by",
+        writer: e.writer,
+        provenance: "mechanical",
+        created_at: e.created_at,
+      });
+    }
+
+    const chainKey = `${e.companion_id}|${e.float_key}`;
+    const prev = prevByFloat.get(chainKey);
+    if (prev) {
+      edges.push({
+        src_table: "companion_soma_events",
+        src_id: e.id,
+        dst_table: "companion_soma_events",
+        dst_id: prev.id,
+        edge_type: "follows",
+        // The chain is DERIVED here; neither endpoint's writer asserted it.
+        writer: "system",
+        provenance: "mechanical",
+        created_at: e.created_at,
+      });
+    }
+    prevByFloat.set(chainKey, e);
+
+    if (e.session_id) {
+      edges.push({
+        src_table: "companion_soma_events",
+        src_id: e.id,
+        dst_table: "sessions",
+        dst_id: e.session_id,
+        edge_type: "logged_in",
+        writer: e.writer,
+        provenance: sessionIds.has(e.session_id) ? "mechanical" : "mechanical:dangling",
+        created_at: e.created_at,
+      });
+    }
+
+    const alongside: Array<{ table: string; id: string; created_at: string; provenance: string }> = [];
+    if (e.session_id) {
+      for (const j of sortedJournal) {
+        if (j.session_id !== e.session_id) continue;
+        if (j.agent !== e.companion_id) continue;
+        if (tsMs(j.created_at) > at) continue;
+        alongside.push({ table: "companion_journal", id: j.id, created_at: j.created_at, provenance: "mechanical:session" });
+      }
+    }
+    for (const c of sortedCommons) {
+      if (c.author !== e.companion_id && c.author !== "raziel") continue;
+      const cAt = tsMs(c.created_at);
+      if (cAt > at || cAt < at - ALONGSIDE_WINDOW_MS) continue;
+      alongside.push({ table: "commons_posts", id: c.id, created_at: c.created_at, provenance: "mechanical:window" });
+    }
+    alongside.sort((a, b) => {
+      const d = tsMs(b.created_at) - tsMs(a.created_at);
+      return d !== 0 ? d : a.id.localeCompare(b.id);
+    });
+    for (const a of alongside.slice(0, ALONGSIDE_CAP)) {
+      edges.push({
+        src_table: "companion_soma_events",
+        src_id: e.id,
+        dst_table: a.table,
+        dst_id: a.id,
+        edge_type: "alongside",
+        writer: e.writer,
+        provenance: a.provenance,
+        created_at: e.created_at,
+      });
+    }
+  }
+
+  return edges;
+}
+
 // ── rebuild ─────────────────────────────────────────────────────────────────────────────────────
 
 async function insertEdges(db: D1Database, edges: GraphEdgeRow[]): Promise<number> {
@@ -432,7 +591,7 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
 
   await db.prepare(`DELETE FROM graph_edges WHERE provenance LIKE ?`).bind(MECHANICAL_PROVENANCE_LIKE).run();
 
-  const [conclusions, deltas, journal, notes, tensions, handovers, sessions, watchTitles, obsessionTitles] = await Promise.all([
+  const [conclusions, deltas, journal, notes, tensions, handovers, sessions, watchTitles, obsessionTitles, somaEvents, commonsPosts] = await Promise.all([
     selectAll<ConclusionRow>(db, "companion_conclusions"),
     selectAll<RelationalDeltaRow>(db, "relational_deltas"),
     selectAll<CompanionJournalRow>(db, "companion_journal"),
@@ -442,6 +601,8 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     selectAll<{ id: string }>(db, "sessions"),
     selectAll<{ id: string; title: string }>(db, "watch_shelf"),
     selectAll<{ id: string; title: string; status: string }>(db, "obsession_shelf"),
+    selectAll<SomaEventGraphRow>(db, "companion_soma_events"),
+    selectAll<CommonsPostGraphRow>(db, "commons_posts"),
   ]);
   const shelfTitles: ShelfTitleRow[] = [
     ...watchTitles.map((r) => ({ table: "watch_shelf" as const, id: r.id, title: r.title })),
@@ -461,6 +622,21 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     { source: "companion_tensions", edges: buildTensionEdges(tensions) },
     { source: "handover_packets.session_id", edges: buildHandoverEdges(handovers) },
     { source: "companion_journal.note_text~title", edges: buildMentionsEdges(journal, shelfTitles) },
+    // Source (i) is ONE builder reported as FOUR source rows. The builder has to walk the events once
+    // (the `follows` chain and the merged alongside cap are both per-event state), but a single
+    // "companion_soma_events: 412" count would be illegible -- four families with very different
+    // expected magnitudes collapsed into one number is how a dead family hides behind a live one.
+    // Partitioning by edge_type preserves the builder's emission order, so determinism is unaffected.
+    ...(() => {
+      const all = buildSomaEventEdges(somaEvents, sessionIds, journal, commonsPosts);
+      const of = (t: string) => all.filter((e) => e.edge_type === t);
+      return [
+        { source: "companion_soma_events.cause", edges: of("moved_by") },
+        { source: "companion_soma_events.follows", edges: of("follows") },
+        { source: "companion_soma_events.session", edges: of("logged_in") },
+        { source: "companion_soma_events.alongside", edges: of("alongside") },
+      ];
+    })(),
   ];
 
   const counts: SourceCount[] = [];

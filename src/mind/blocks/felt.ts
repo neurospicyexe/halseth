@@ -23,6 +23,7 @@ import type { CompanionId } from "../../companions.js";
 import { readFermentStateOneSql, recentFermentEventsSql } from "../../webmind/fermentation.js";
 import { readDrivesSql, accruedLevel, driveFired, hoursSinceIso } from "../../webmind/drives.js";
 import { FLOAT_LABELS } from "../../handlers/fermentation.js";
+import { loadSomaProvenance, type SomaProvenanceEntry } from "../../soma/events.js";
 
 export interface SomaFloat {
   label: string;
@@ -60,6 +61,11 @@ export interface FeltFermentBlocks {
   /** When the tick last ran for this companion. Stale here means the felt state is frozen, which is
    *  worth showing rather than silently presenting old floats as current. */
   ferment_at: string | null;
+  /** 0.13.0 (mig 0130): where each float's value came from -- the newest moves, with before/after,
+   *  the writer's identity, and the cause row. Pure D1 like everything else in this loader, and
+   *  BEST-EFFORT: a failure degrades to [] rather than taking the whole felt block down, because a
+   *  companion with unexplained floats still needs their floats. */
+  soma_provenance: SomaProvenanceEntry[];
 }
 
 interface FermentStateRow {
@@ -93,10 +99,13 @@ function offHours(json: string | null, key: "f1" | "f2" | "f3"): number | null {
 }
 
 export async function loadFeltFermentBlocks(env: Env, companionId: WmAgentId): Promise<FeltFermentBlocks> {
-  const [stateRow, drivesRes, eventsRes] = await Promise.all([
+  const [stateRow, drivesRes, eventsRes, provenance] = await Promise.all([
     env.DB.prepare(readFermentStateOneSql()).bind(companionId).first<FermentStateRow>().catch(() => null),
     env.DB.prepare(readDrivesSql()).bind(companionId).all<DriveRow>().catch(() => null),
     env.DB.prepare(recentFermentEventsSql()).bind(companionId, 20).all<FermentEventRow>().catch(() => null),
+    // Joins the SAME round of parallelism rather than adding a second await -- every loom inherits
+    // this loader's latency, so a new read rides along or it does not land here at all.
+    loadSomaProvenance(env, companionId).catch(() => [] as SomaProvenanceEntry[]),
   ]);
 
   const labels = FLOAT_LABELS[companionId as CompanionId] ?? ["float_1", "float_2", "float_3"];
@@ -129,5 +138,6 @@ export async function loadFeltFermentBlocks(env: Env, companionId: WmAgentId): P
     drives,
     ferment_events: eventsRes?.results ?? [],
     ferment_at: stateRow?.ferment_at ?? null,
+    soma_provenance: provenance ?? [],
   };
 }

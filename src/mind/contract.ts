@@ -13,6 +13,7 @@
 
 import type { KernelBlock, SelfModelEntry, PreferenceEntry, RefusalEntry, ArchitectFactEntry } from "./blocks/identity.js";
 import type { SomaFloat, DriveState, FermentEventRow } from "./blocks/felt.js";
+import type { SomaProvenanceEntry } from "../soma/events.js";
 import type {
   WmAgentId, WmIdentityAnchor, WmLimbicState, WmSessionHandoff, WmMindThread,
   WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState,
@@ -28,7 +29,16 @@ import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 import type { GraphBlocks } from "./blocks/graph.js";
 
-/** 0.12.0 -- Fargo first light (2026-09-05): `world.watching` items now carry `last_watched_at`
+/** 0.13.0 -- graph memory Phase 2, tranche 1 (2026-09-12,
+ *  docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md): added `felt.soma_provenance` -- the
+ *  newest moves per soma float, read from `companion_soma_events` (mig 0130), the first append-only
+ *  record of WHY a felt float changed. Before it, every authored write (session close, PATCH /soma,
+ *  halseth_state_update, execStateUpdate) left no history row and no writer identity, so "heat 0.68,
+ *  apparently" was the most honest thing a companion could say about their own body. The renderer
+ *  lands in the same tranche (orient-blocks.ts::provenanceBlock, a `[Why these numbers]` block right
+ *  after the orient header). Deliberately excluded from the Discord bot wire this tranche, same as
+ *  graph 0.11.0 -- that is a two-repo change needing the bot's own renderer. MINOR: additive only.
+ *  0.12.0 -- Fargo first light (2026-09-05): `world.watching` items now carry `last_watched_at`
  *  (mig 0111 `watch_shelf.last_watched_at`, already read by the loader for ordering but never
  *  surfaced) so a renderer can flag a stale record instead of stating an old position with the
  *  same confidence as a fresh one. Also: the Claude.ai orient now renders a `watchingBlock` mirroring
@@ -69,7 +79,7 @@ import type { GraphBlocks } from "./blocks/graph.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.12.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.13.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -126,6 +136,12 @@ export interface MindState {
     /** When the ferment tick last ran. Stale means the felt state is frozen -- worth showing
      *  rather than presenting old floats as current. */
     ferment_at: string | null;
+    /** 0.13.0: where each float's current value CAME FROM (mig 0130 `companion_soma_events`) -- the
+     *  authored close, the tick, the stimulus, the drift shift, with before/after and the writer's
+     *  identity. Newest first, at most 3 per float. A number with no history is not a felt state, it
+     *  is a reading; this is the field that makes the difference sayable. Empty is honest (nothing
+     *  has moved since 0130 landed), never a failure -- the loader degrades to [] and never throws. */
+    soma_provenance: SomaProvenanceEntry[];
     soma_arc: { note_id: string; content: string; created_at: string }[];
     biometrics_latest: WmBiometricSnapshot | null;
     house: WmHouseState | null;

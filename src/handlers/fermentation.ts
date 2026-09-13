@@ -41,9 +41,19 @@ import {
   driveAccrueBumpSql,
   insertFermentEventSql,
   recentFermentEventsSql,
+  FLOAT_LABELS,
   type CompanionId,
   type Floats,
 } from "../webmind/fermentation.js";
+import {
+  diffFloats,
+  floatShort,
+  loadSomaProvenance,
+  readFloatsSql,
+  somaEventStatements,
+  type SomaEventInput,
+  type SomaFloatKey,
+} from "../soma/events.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -89,15 +99,18 @@ function newId(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
+/** Writes one companion_ferment_events row and RETURNS its id -- the id is generated here, before
+ *  the insert, so the soma event this move also appends (mig 0130) can point at it as its cause. */
 async function logEvent(
   env: Env,
   companionId: string,
   kind: string,
   opts: { stimulus?: string | null; floatDeltas?: Partial<Floats> | null; driveDeltas?: Record<string, number> | null; detail?: string | null },
-): Promise<void> {
+): Promise<string> {
+  const eventId = newId();
   await env.DB.prepare(insertFermentEventSql())
     .bind(
-      newId(),
+      eventId,
       companionId,
       kind,
       opts.stimulus ?? null,
@@ -106,6 +119,32 @@ async function logEvent(
       opts.detail ?? null,
     )
     .run();
+  return eventId;
+}
+
+/**
+ * Append the float-history rows (mig 0130) for a machine move, pointing at the ferment event that
+ * caused it. Deterministic ids (`fe_<ferment_event_id>_<f1|f2|f3>`) so the backfill can never
+ * double a move a live writer already recorded. Best-effort: the floats and the ferment event are
+ * already durable, and a failed history append must not fail the tick or the stimulus.
+ */
+async function appendFermentSomaEvents(
+  env: Env,
+  events: SomaEventInput[],
+  fermentEventId: string,
+): Promise<void> {
+  if (!events.length) return;
+  try {
+    const withIds = events.map((e) => ({ ...e, id: `fe_${fermentEventId}_${floatShort(e.float_key)}` }));
+    await env.DB.batch(somaEventStatements(env.DB, withIds));
+  } catch (err) {
+    console.warn("[mind/ferment] soma event append failed (non-fatal):", String(err));
+  }
+}
+
+/** The three float columns as the soma-event layer wants them, from a Floats triple. */
+function floatMap(f: Floats): Partial<Record<SomaFloatKey, number | null>> {
+  return { soma_float_1: f.f1, soma_float_2: f.f2, soma_float_3: f.f3 };
 }
 
 function round3(f: Partial<Floats>): Partial<Floats> {
@@ -240,11 +279,34 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     const detailParts = [`${hours.toFixed(1)}h`];
     if (fired.length) detailParts.push(`reactions:${fired.join(",")}`);
     if (silence) detailParts.push("long_silence");
-    await logEvent(env, companionId, "tick", {
+    const fermentEventId = await logEvent(env, companionId, "tick", {
       floatDeltas: netFloat,
       driveDeltas,
       detail: detailParts.join(" "),
     });
+
+    // Float history (mig 0130). after_value is the ROUNDED number the CAS UPDATE actually wrote,
+    // not the raw computed one -- an after_value that disagrees with the column is a lie the
+    // Hearth and orient surfaces would both repeat.
+    const written: Floats = {
+      f1: Number(fermented.f1.toFixed(4)),
+      f2: Number(fermented.f2.toFixed(4)),
+      f3: Number(fermented.f3.toFixed(4)),
+    };
+    await appendFermentSomaEvents(
+      env,
+      diffFloats(floatMap(before), floatMap(written), {
+        companion_id: companionId,
+        kind: "tick",
+        writer: "system",
+        cause_table: "companion_ferment_events",
+        cause_id: fermentEventId,
+        session_id: null,
+        version_after: (row.version ?? 0) + 1,
+        detail: silence ? "silence" : null,
+      }),
+      fermentEventId,
+    );
 
     // Log a baseline_drift row only when a baseline actually moved (watchable growth).
     const drift: Partial<Floats> = {};
@@ -278,9 +340,48 @@ export async function tickFermentation(request: Request, env: Env): Promise<Resp
 export async function bumpFloatsForStimulus(env: Env, companionId: CompanionId, stimulus: string): Promise<Floats | null> {
   const d = stimulusFloatDelta(stimulus, companionId);
   if (d.f1 === 0 && d.f2 === 0 && d.f3 === 0) return null;
+  // Read before AND after: stimulusBumpSql clamps in SQL, so the realized move can be smaller
+  // than the nominal delta (a float already at 1.0 does not move at all). The history records
+  // what happened to the column, not what was asked for.
+  const before = await readFloatsRow(env, companionId);
   await env.DB.prepare(stimulusBumpSql()).bind(d.f1, d.f2, d.f3, companionId).run();
-  await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: d });
+  const after = await readFloatsRow(env, companionId);
+  const fermentEventId = await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: d });
+  await appendFermentSomaEvents(
+    env,
+    diffFloats(rowFloatMap(before), rowFloatMap(after), {
+      companion_id: companionId,
+      kind: "stimulus",
+      writer: "system",
+      cause_table: "companion_ferment_events",
+      cause_id: fermentEventId,
+      session_id: null,
+      version_after: after?.version ?? null,
+      detail: stimulus,
+    }),
+    fermentEventId,
+  );
   return d;
+}
+
+interface FloatsRow {
+  soma_float_1: number | null;
+  soma_float_2: number | null;
+  soma_float_3: number | null;
+  version: number | null;
+}
+
+async function readFloatsRow(env: Env, companionId: string): Promise<FloatsRow | null> {
+  return await env.DB.prepare(readFloatsSql()).bind(companionId).first<FloatsRow>().catch(() => null);
+}
+
+function rowFloatMap(row: FloatsRow | null): Partial<Record<SomaFloatKey, number | null>> {
+  if (!row) return {};
+  return {
+    soma_float_1: row.soma_float_1,
+    soma_float_2: row.soma_float_2,
+    soma_float_3: row.soma_float_3,
+  };
 }
 
 /**
@@ -311,8 +412,14 @@ async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stim
   const driveDeltas: Record<string, number> = {};
   const touchesFloats = d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0;
 
+  // Float reads bracket the bump ONLY when the stimulus actually touches floats -- a drive-only
+  // stimulus must not pay for two extra reads (mig 0128 read diet).
+  let beforeFloats: FloatsRow | null = null;
+  let afterFloats: FloatsRow | null = null;
   if (touchesFloats) {
+    beforeFloats = await readFloatsRow(env, companionId);
     await env.DB.prepare(stimulusBumpSql()).bind(d.f1, d.f2, d.f3, companionId).run();
+    afterFloats = await readFloatsRow(env, companionId);
   }
   // Shed drives on contact (compute effective first, like contactDrive).
   for (const key of eff.shed ?? []) {
@@ -334,7 +441,23 @@ async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stim
 
   const changed = touchesFloats || Object.keys(driveDeltas).length > 0;
   if (changed) {
-    await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: touchesFloats ? d : null, driveDeltas });
+    const fermentEventId = await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: touchesFloats ? d : null, driveDeltas });
+    if (touchesFloats) {
+      await appendFermentSomaEvents(
+        env,
+        diffFloats(rowFloatMap(beforeFloats), rowFloatMap(afterFloats), {
+          companion_id: companionId,
+          kind: "stimulus",
+          writer: "system",
+          cause_table: "companion_ferment_events",
+          cause_id: fermentEventId,
+          session_id: null,
+          version_after: afterFloats?.version ?? null,
+          detail: stimulus,
+        }),
+        fermentEventId,
+      );
+    }
   }
   return changed;
 }
@@ -376,14 +499,11 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
 
 // ── Read (Hearth) ──────────────────────────────────────────────────────────────────
 
-/** Per-companion names for the three soma floats. Exported so src/mind/blocks/felt.ts uses the SAME
- *  labels rather than a second copy -- Drevan's floats are heat/reach/weight everywhere or the surfaces
- *  disagree about what his body is called. */
-export const FLOAT_LABELS: Record<CompanionId, [string, string, string]> = {
-  cypher: ["acuity", "presence", "warmth"],
-  drevan: ["heat", "reach", "weight"],
-  gaia: ["stillness", "density", "perimeter"],
-};
+/** Per-companion names for the three soma floats. The definition moved to webmind/fermentation.ts
+ *  (the pure module) when src/soma/events.ts came to need it too -- keeping it here would have made
+ *  this handler and the event layer import each other. Re-exported so src/mind/blocks/felt.ts and
+ *  any other existing consumer keeps its import path; still exactly one copy. */
+export { FLOAT_LABELS };
 
 // GET /mind/ferment/:companion_id
 export async function getFermentation(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
@@ -421,6 +541,9 @@ export async function getFermentation(request: Request, env: Env, params: Record
       ferment_at: row.ferment_at,
       drives,
       recent_events: events,
+      // Why these numbers (mig 0130): newest moves per float with the cause that made them.
+      // Best-effort inside loadSomaProvenance -- [] rather than a broken Fermentation section.
+      provenance: await loadSomaProvenance(env, companionId),
     });
   } catch (err) {
     console.error("[mind/ferment] read error", { error: String(err) });

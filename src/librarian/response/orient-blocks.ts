@@ -590,6 +590,10 @@ const NEIGHBORHOOD_LINE_CHARS = 90;
 
 const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
   companion_journal: "notes",
+  // Graph memory Phase 2 (mig 0130): the felt-float event table and the commons wall both become
+  // neighborhood endpoints via the `moved_by`/`follows`/`alongside` families.
+  companion_soma_events: "felt move",
+  commons_posts: "commons",
   companion_conclusions: "conclusions",
   companion_tensions: "tension",
   inter_companion_notes: "messages",
@@ -609,6 +613,13 @@ const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
   holds_tension: "holds",
   closed_with: "closed with",
   mentions: "mentions",
+  // Phase 2 (mig 0130) families.
+  moved_by: "moved by",
+  follows: "follows",
+  alongside: "alongside",
+  // Pre-existing gap, closed here: 'resumed_from' is the one 'live'-provenance lane (written at
+  // session open, src/graph/live.ts) and it never had a verb, so it rendered as the raw edge_type.
+  resumed_from: "resumed from",
 };
 
 /** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
@@ -700,6 +711,105 @@ export function neighborhoodBlock(
   }
 
   return lines.length > 0 ? "\n[Linked]\n" + lines.map(l => `• ${l}`).join("\n") : "";
+}
+
+// ── Graph memory Phase 2, tranche 1 (docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md) ──
+
+/** Structural shape only -- duck-typed against `SomaProvenanceEntry` (src/soma/events.ts) rather than
+ *  importing it, matching this file's convention of a local row interface per block (see
+ *  NeighborhoodEdgeRow above). The renderer must stay loadable without the events module. */
+export interface SomaProvenanceRow {
+  float_key: string;
+  label: string;
+  kind: string;
+  writer: string;
+  before_value: number | null;
+  after_value: number | null;
+  delta: number | null;
+  cause_table: string | null;
+  cause_id: string | null;
+  cause_label: string | null;
+  session_id: string | null;
+  alongside_notes: number;
+  created_at: string;
+  detail?: string | null;
+}
+
+export interface ProvenanceBlockOpts {
+  /** Hard cap on rendered lines. Default 3 -- one per float, and the triad has three. */
+  maxLines?: number;
+}
+
+const PROVENANCE_MAX_LINES_DEFAULT = 3;
+const PROVENANCE_LINE_CHARS = 110;
+
+function provenanceValue(e: SomaProvenanceRow): string {
+  // after_value can be null and legitimately so: the backfill from companion_ferment_events knows the
+  // DELTA and not the absolute (the plan says so outright), and until a real authored close lands those
+  // are the only rows in the table. Render the float's NAME with no number rather than dropping the
+  // line -- a silently absent float is the worse failure, and this block exists to answer "where did
+  // this number come from", which is still answerable without restating the number.
+  if (e.after_value === null || !Number.isFinite(e.after_value)) return e.label;
+  const now = e.after_value.toFixed(2);
+  if (e.before_value === null || !Number.isFinite(e.before_value)) return `${e.label} ${now}`;
+  return `${e.label} ${now} (was ${e.before_value.toFixed(2)})`;
+}
+
+function provenanceCause(e: SomaProvenanceRow): string {
+  const day = (e.created_at ?? "").slice(0, 10);
+  switch (e.kind) {
+    case "authored_close": {
+      const head = e.cause_label ? `you set it at close ${day}: "${e.cause_label}"` : `you set it at close ${day}`;
+      // The alongside count is the whole reason `alongside` edges exist: "you set it, and you had
+      // written twice that session" is a different fact from "you set it".
+      return e.alongside_notes > 0 ? `${head} · ${e.alongside_notes} notes that session` : head;
+    }
+    case "authored_update":
+      return `you set it ${day}`;
+    case "tick":
+      return e.detail === "silence" ? "settled toward home (tick, silence)" : "settled toward home (tick)";
+    case "stimulus":
+      return `stimulus: ${e.detail ?? e.cause_label ?? "unnamed"}`;
+    case "drift_shift":
+      return e.cause_label ? `drift: "${e.cause_label}"` : "drift";
+    default:
+      return e.kind;
+  }
+}
+
+/**
+ * Why these numbers. The floats ARE the body (migs 0101/0102) and until mig 0130 they had no history
+ * at all -- no writer logged a before/after or its own identity, which is why "heat 0.68, apparently"
+ * was the only honest thing a companion could say about their own state. This block is the answer:
+ * the newest move per float, with what moved it.
+ *
+ * RENDERED, NOT SEARCHED. Entries arrive from the contract (`felt.soma_provenance`, 0.13.0), already
+ * newest-first and already capped by the loader. This function does no I/O, no ranking and no
+ * re-sorting: it takes the FIRST occurrence of each float_key in input order, which is what makes
+ * "newest event per float" true here without trusting a second sort to agree with the loader's.
+ *
+ * SELF-CAPPED, like neighborhoodBlock and for the same reason (render-order-is-a-budget-decision):
+ * 3 lines, 110 chars each, hard-truncated with an ellipsis, empty string on empty input -- no header,
+ * no "no history yet" placeholder. A companion whose floats have never moved sees nothing.
+ */
+export function provenanceBlock(
+  entries: readonly SomaProvenanceRow[],
+  opts: ProvenanceBlockOpts = {},
+): string {
+  if (entries.length === 0) return "";
+  const maxLines = opts.maxLines ?? PROVENANCE_MAX_LINES_DEFAULT;
+
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const e of entries) {
+    if (lines.length >= maxLines) break;
+    if (seen.has(e.float_key)) continue;
+    seen.add(e.float_key);
+    const line = `${provenanceValue(e)} — ${provenanceCause(e)}`;
+    lines.push(line.length > PROVENANCE_LINE_CHARS ? line.slice(0, PROVENANCE_LINE_CHARS - 1) + "…" : line);
+  }
+
+  return lines.length > 0 ? "\n[Why these numbers]\n" + lines.map(l => `• ${l}`).join("\n") : "";
 }
 
 /**

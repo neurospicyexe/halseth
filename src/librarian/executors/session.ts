@@ -296,6 +296,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const graphLabels = await loadTitleLabels(ctx.env, mindState.graph.neighborhoods);
   const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, { labels: graphLabels });
 
+  // Graph memory Phase 2, tranche 1 (0.13.0): why these numbers. Rendered from the loader's
+  // `felt.soma_provenance` (mig 0130) -- the newest move per float and what moved it. Concatenated
+  // IMMEDIATELY after buildOrientPrompt's header, which is where the header states the floats: the
+  // number and its cause must arrive in the same breath, or the companion reads the number first and
+  // has already treated it as a bare fact by the time the cause shows up. Empty renders nothing.
+  const provenanceBlock = B.provenanceBlock(mindState.felt.soma_provenance);
+
   // Repair prompt: force-surfaced like tripwires -- the failure it names accumulates silently
   // everywhere else. Rendered early so it cannot fall off a budget clip.
   const unclosedBlock = B.unclosedSessionsBlock(unclosedSessions);
@@ -558,7 +565,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an

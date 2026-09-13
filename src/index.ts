@@ -38,6 +38,7 @@ import { getUnreadInterCompanionNotes, ackInterCompanionNotes, getInterCompanion
 import { getHealth } from "./handlers/health.js";
 import { getEdges } from "./handlers/edges.js";
 import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
+import { postSomaBackfillEvents, getSomaEvents } from "./handlers/soma-events.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "./handlers/director.js";
@@ -186,6 +187,10 @@ const router = new Router()
   // Read-only readout for the standing health check (VPS side cannot see D1 directly): rebuild gate
   // staleness + live-lane/total edge counts, one query each. See src/handlers/graph.ts header.
   .on("GET",  "/admin/graph/health",      (request, env) => getGraphHealth(request, env))
+  // Float history (mig 0130). Backfill seeds companion_soma_events from the detail tables that
+  // already recorded moves; deterministic ids + INSERT OR IGNORE make it safe to re-run forever.
+  .on("POST", "/admin/soma/backfill-events", (request, env) => postSomaBackfillEvents(request, env))
+  .on("GET",  "/admin/soma/events/:companion_id", (request, env, params) => getSomaEvents(request, env, params ?? {}))
   .on("GET",  "/admin/director/health",   (request, env) => getDirectorHealth(request, env))
 
   // Care loop (consequence layer C1, mig 0121). The forced tick skips the hourly gate but never

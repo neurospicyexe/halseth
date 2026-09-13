@@ -407,6 +407,13 @@ describe("rebuildGraph", () => {
         "handover_packets.session_id",
         "inter_companion_notes",
         "relational_deltas.session_id",
+        // Phase 2 tranche 1 (mig 0130): source (i) is one builder reported as four families, so a
+        // dead family cannot hide behind a live one in a single collapsed count. Covered in detail
+        // by graph-soma-events.test.ts.
+        "companion_soma_events.cause",
+        "companion_soma_events.follows",
+        "companion_soma_events.session",
+        "companion_soma_events.alongside",
       ].sort(),
     );
   });

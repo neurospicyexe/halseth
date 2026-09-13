@@ -18,6 +18,20 @@
 
 export type CompanionId = "cypher" | "drevan" | "gaia";
 
+/** Per-companion names for the three soma floats.
+ *
+ *  Lives HERE, in the pure module, rather than in handlers/fermentation.ts where it started: the
+ *  soma event layer (src/soma/events.ts) needs the same labels, and handlers/fermentation.ts
+ *  imports that layer to instrument its tick -- a label constant in the handler would make the two
+ *  modules import each other. handlers/fermentation.ts re-exports this name so its existing
+ *  consumers (src/mind/blocks/felt.ts) keep their import path. Drevan's floats are heat/reach/weight
+ *  everywhere or the surfaces disagree about what his body is called; there is exactly one copy. */
+export const FLOAT_LABELS: Record<CompanionId, [string, string, string]> = {
+  cypher: ["acuity", "presence", "warmth"],
+  drevan: ["heat", "reach", "weight"],
+  gaia: ["stillness", "density", "perimeter"],
+};
+
 export interface Floats {
   f1: number;
   f2: number;

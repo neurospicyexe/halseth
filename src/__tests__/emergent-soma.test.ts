@@ -69,6 +69,7 @@ interface ShiftRow { id: string; drift_id: string; companion_id: string; float_k
 let state: StateRow;
 let driftRow: { id: string; companion_id: string; drift_text: string; origin: string | null } | null;
 let shiftLog: ShiftRow[];
+let somaEventLog: Record<string, unknown>[];
 
 function makeDB() {
   return {
@@ -87,6 +88,13 @@ function makeDB() {
             state.version += 1;
             return { success: true, meta: { changes: 1 } };
           }
+          if (sql.startsWith("INSERT OR IGNORE INTO companion_soma_events")) {
+            // mig 0130: the float-history row that rides the SAME batch as the shift row.
+            somaEventLog.push(Object.fromEntries(
+              (sql.match(/\(([^)]+)\) VALUES/)?.[1] ?? "").split(",").map((c, i) => [c.trim(), args[i]]),
+            ));
+            return { success: true, meta: { changes: 1 } };
+          }
           if (sql.startsWith("INSERT INTO companion_soma_shifts")) {
             const a = args as unknown[];
             shiftLog.push({ id: a[0] as string, drift_id: a[1] as string, companion_id: a[2] as string, float_key: a[3] as string, label: (a[4] as string | null) ?? null, delta: a[5] as number, before_value: (a[6] as number | null), after_value: (a[7] as number | null), reason: (a[8] as string | null) ?? null });
@@ -102,6 +110,12 @@ function makeDB() {
       };
       return stmt;
     },
+    // The shift row and its float-history row (mig 0130) are written atomically together.
+    async batch(stmts: { run: () => Promise<unknown> }[]) {
+      const out: unknown[] = [];
+      for (const s of stmts) out.push(await s.run());
+      return out;
+    },
   };
 }
 
@@ -111,6 +125,7 @@ beforeEach(() => {
   state = { companion_id: "cypher", soma_float_1: 0.5, soma_float_2: 0.5, soma_float_3: 0.5, float_1_label: "acuity", float_2_label: "presence", float_3_label: "warmth", version: 7 };
   driftRow = { ...cypherDrift };
   shiftLog = [];
+  somaEventLog = [];
 });
 
 describe("applyEmergentShift", () => {
@@ -123,6 +138,13 @@ describe("applyEmergentShift", () => {
     expect(state.version).toBe(8);
     expect(shiftLog).toHaveLength(1);
     expect(shiftLog[0]).toMatchObject({ drift_id: "d1", companion_id: "cypher", float_key: "soma_float_3", label: "warmth", delta: 0.02, before_value: 0.5, after_value: 0.52 });
+    // mig 0130: the same move also lands in the float history, pointing back at the shift row.
+    expect(somaEventLog).toHaveLength(1);
+    expect(somaEventLog[0]).toMatchObject({
+      companion_id: "cypher", float_key: "soma_float_3", kind: "drift_shift", writer: "system",
+      cause_table: "companion_soma_shifts", cause_id: shiftLog[0]!.id,
+      id: `ss_${shiftLog[0]!.id}`, before_value: 0.5,
+    });
   });
 
   it("clamps an over-large model delta to the cap before writing", async () => {
