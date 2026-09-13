@@ -2261,3 +2261,32 @@ Claude Code hook, a hand-written debrief). If a bot lane's continuity reads as s
 truth showing, not a regression: nobody closed a session with them. The consolidation handoff itself
 (`writeHandoff(source: 'consolidation')` → `wm_session_handoffs`) is unchanged and still feeds
 `mindOrient`.
+
+## Graph memory Phase 2, tranche 1: SOMA provenance (`companion_soma_events`, mig 0130) — 2026-09-12
+
+"Heat 0.68, apparently" was literally true: every AUTHORED float write (session close, `state_update`,
+`PATCH /soma`) left no history row. Only the ferment tick/stimulus (`companion_ferment_events`, deltas only)
+and drift shifts (`companion_soma_shifts`) logged anything, and nothing recorded a writer.
+
+Shipped (halseth 4abe272, branch `feat/graph-phase-2-soma-provenance`; hearth 60b79b6):
+- **One append-only log all five writers append to**: `companion_soma_events` (before/after/delta, kind
+  `authored_close|authored_update|tick|stimulus|drift_shift`, writer, `cause_table/cause_id`, `session_id`,
+  `version_after`, `detail`). Rows only when a float actually moved. Machine writers mint deterministic ids
+  (`fe_<ferment_event>_<f1|f2|f3>`, `ss_<shift>`), so `POST /admin/soma/backfill-events` is idempotent
+  against live rows. Read-back: `GET /admin/soma/events/:companion_id`.
+- **Graph rebuild source (i)**: `moved_by` (event → its cause row), `follows` (prior value, same
+  companion+float), `logged_in` (session, `mechanical:dangling` when the session is gone), `alongside`
+  (journal rows in the same session, `mechanical:session`; commons posts by the companion or raziel in the
+  60 min before the move, `mechanical:window`; cap 6 per event). Nightly rebuild only; no live edge writes.
+- **Contract 0.13.0**: `felt.soma_provenance` (newest ≤3 events per float, cause labels resolved, journal
+  count for the session). Orient renders `[Why these numbers]` immediately after the interoception header,
+  3 lines max. `/mind/ferment/:id` gains `provenance`; Hearth Fermentation lists the moves under each float.
+- **Fix**: `sessionClose` now bumps `companion_state.version`. The ferment tick CAS-guards on `version`, so
+  a tick after an authored close used to overwrite the floats the companion had just set.
+
+Tranche 1 causes = authored handovers, journal, commons (Raziel's call). Not yet: reflections, foraging,
+Layer B, relational_deltas; bare `state_update` → open session; live edges at close; bot wire.
+
+Watch: does the companion read the block unprompted (vibes channel, same test as Fargo). If commons
+`alongside` lines feel noisy, tighten the window to 30 min. Plan:
+`docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md` (BBH root).
