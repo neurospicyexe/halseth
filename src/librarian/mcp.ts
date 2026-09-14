@@ -46,6 +46,14 @@ function buildServer(env: Env, boundCompanion: string | null = null): McpServer 
       companion_id: z.enum(COMPANION_IDS).describe("Which companion is making the request."),
       context:      z.string().optional().describe("JSON-encoded payload for mutations. E.g. '{\"emotion\":\"grief\",\"intensity\":70}'. Also used for context hints on reads."),
       session_type: z.enum(["checkin", "hangout", "work", "ritual", "companion-work"]).optional().describe("Session type — used for session_open shaping. Defaults to 'work'. Use 'companion-work' for Drevan collaborative sessions."),
+      // 2026-09-14: the Discord bots have sent `surface: "discord:<id>"` on every call since mig 0113
+      // landed, and this schema silently dropped it -- zod strips unknown keys -- so NOT ONE bot session
+      // ever carried a surface. Consequences, all verified in prod: per-(companion, surface) dedup never
+      // applied to the bots (a fresh row per boot and per idle cycle, ~15-25/companion/day); the Claude.ai
+      // orient's "sessions you never closed" list showed bot rows to the companion; the autonomous
+      // worker's `unattended` close (surface IS NULL) could resolve onto a bot lane; and bot float
+      // updates could not be attributed to a session. Same trim/cap/never-default rule as index.ts.
+      surface:      z.string().max(200).optional().describe("Where this call is speaking from, e.g. 'discord:cypher', 'claude-ai:<thread>'. Sessions dedup per (companion, surface); omit only if genuinely unknown (skips dedup)."),
     },
     async (args) => {
       // Enforce the token's companion binding before doing any work.
@@ -59,6 +67,9 @@ function buildServer(env: Env, boundCompanion: string | null = null): McpServer 
         request:      args.request,
         context:      args.context,
         session_type: args.session_type ?? "work",
+        ...(typeof args.surface === "string" && args.surface.trim()
+          ? { surface: args.surface.trim().slice(0, 200) }
+          : {}),
       };
 
       const router = new LibrarianRouter(env);

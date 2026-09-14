@@ -37,8 +37,12 @@ import { generateId } from "../db/queries.js";
 
 /** A session is abandoned, not in progress, after this long with no close. */
 export const SWEEP_IDLE_HOURS = 48;
-/** Rows per run. Small on purpose: this is a janitor, not a migration. */
-export const SWEEP_BATCH = 25;
+/** Rows per run. 25 until 2026-09-14: the bots' MCP path was dropping `surface`, so every boot and
+ *  idle cycle opened a fresh row and the 09-11 restart storm left more abandoned sessions per day
+ *  than one 25-row pass could drain. The backlog then LOOKED like a frozen sweep, because every
+ *  stamp this job writes is backdated into the session's own window and leaves no trace of when
+ *  the run happened. 100 keeps it a janitor while never being outrun by a bad day. */
+export const SWEEP_BATCH = 100;
 export const SWEEP_GATE_HOURS = 24;
 export const SWEEP_GATE_COMPANION_ID = "_system";
 export const SWEEP_GATE_KEY = "stale_session_sweep_last_run_at";
@@ -231,7 +235,9 @@ export async function runStaleSessionSweep(
     closed.push({ id: row.id, companion_id: row.companion_id, evidence: evidence.reduce((a, e) => a + e.n, 0) });
   }
 
-  if (closed.length) console.log("[stale-session-sweep] closed", { count: closed.length });
+  // Log EVERY completed run, zero included: the closes themselves are backdated (see createdAt
+  // above), so this line is the only evidence of when the sweep actually ran and what it found.
+  console.log("[stale-session-sweep] run", { candidates: rows.length, closed: closed.length, cutoff });
 
   // Stamp only after a completed run (mirrors the salience prune): a throw leaves the gate unwritten
   // so the next minute retries, and a "ran, found nothing" pass still re-arms the 24h window.
