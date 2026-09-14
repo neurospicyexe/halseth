@@ -45,7 +45,20 @@ const rows = {
   declinedReflection: { source: "reflection",  review_status: "declined", tags: PLAIN },
   pendingAutonomous:  { source: "autonomous",  review_status: "pending",  tags: [] },
   acceptedAutonomous: { source: "autonomous",  review_status: "accepted", tags: [] },
+  // The drained Hermes self-notes (2026-08-12 drain, source 'conversation'): logs, never canon.
+  pendingConversation:  { source: "conversation", review_status: "pending",  tags: [] },
+  declinedConversation: { source: "conversation", review_status: "declined", tags: [] },
 } satisfies Record<string, Row>;
+
+describe("drained conversation logs (2026-09-14)", () => {
+  it("reach the vault as logs, never the ratification queue", () => {
+    expect(evaluate(VAULT_WORTHY_SQL, rows.pendingConversation)).toBe(true);
+    expect(evaluate(RATIFIABLE_PENDING_SQL, rows.pendingConversation)).toBe(false);
+  });
+  it("a declined one is a verdict and leaves the vault", () => {
+    expect(evaluate(VAULT_WORTHY_SQL, rows.declinedConversation)).toBe(false);
+  });
+});
 
 describe("the ratification queue", () => {
   it("holds an autonomous entry unconditionally", () => {
@@ -99,6 +112,8 @@ describe("what belongs in the vault", () => {
       declinedReflection: "neither", // declined on purpose: a verdict was given
       pendingAutonomous: "queue",
       acceptedAutonomous: "vault",
+      pendingConversation: "vault",   // a drained Hermes self-note is a log: searchable, never a to-do
+      declinedConversation: "neither",
     };
     for (const [name, row] of Object.entries(rows)) {
       const queued = evaluate(RATIFIABLE_PENDING_SQL, row);

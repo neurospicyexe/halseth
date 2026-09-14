@@ -83,5 +83,18 @@ export const LOGGED_REFLECTION_SQL =
  * would write that file and the sweep would delete it on every run, forever. Derive the sweep from
  * this constant (`NOT (VAULT_WORTHY_SQL)`) rather than restating it.
  */
+/**
+ * 2026-09-14: the drained Hermes self-notes (`source = 'conversation'`, written by
+ * nullsafe-discord/ops/drain-hermes-memory-queue.py on 2026-08-12 deliberately as LOGS so they
+ * would not inflate the ratification pile) were readable by nothing: not ratifiable, not vault-
+ * worthy, not rendered. 209 rows nobody could search, including "Crash noted Gaia had gotten way
+ * too silent". Raziel: "those logs should be searchable because they do have things that matter."
+ * Same shape as the logged reflection above -- a log that will never be accepted -- so it takes
+ * the same road to the vault. Ratification is untouched: `conversation` is still not a
+ * RATIFIABLE_SOURCE, so this widens what can be FOUND, not what blocks in a to-do list.
+ */
+export const LOGGED_CONVERSATION_SQL =
+  `source = 'conversation' AND review_status = 'pending'`;
+
 export const VAULT_WORTHY_SQL =
-  `(review_status = 'accepted' OR (${LOGGED_REFLECTION_SQL}))`;
+  `(review_status = 'accepted' OR (${LOGGED_REFLECTION_SQL}) OR (${LOGGED_CONVERSATION_SQL}))`;
