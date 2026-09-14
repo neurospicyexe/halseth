@@ -21,9 +21,13 @@ const src = (p: string) => readFile(resolve(__dirname, "..", p), "utf8");
 
 describe("caller-asserted close_kind", () => {
   it("'consolidation' is the only kind a caller may assert, and it is supersedable", () => {
-    expect([...CALLER_CLOSE_KINDS]).toEqual(["consolidation"]);
+    // 2026-09-14: 'shutdown' joined -- a bot's "[auto] <id> bot shutdown -- process received a stop
+    // signal" close was landing as close_kind NULL, i.e. authored, and surfaced as the latest
+    // authored handover at the next boot (a pm2 reload is not the last thing that happened).
+    expect([...CALLER_CLOSE_KINDS]).toEqual(["consolidation", "shutdown"]);
     // A later authored close for the same session must be able to replace the machine one.
     expect([...SUPERSEDABLE_CLOSE_KINDS]).toContain("consolidation");
+    expect([...SUPERSEDABLE_CLOSE_KINDS]).toContain("shutdown");
     // 'reconstructed' holds hand-written content and must stay non-supersedable and non-assertable.
     expect([...SUPERSEDABLE_CLOSE_KINDS]).not.toContain("reconstructed");
     expect([...CALLER_CLOSE_KINDS] as string[]).not.toContain("reconstructed");

@@ -1018,6 +1018,8 @@ export async function updateCompanionState(
   env: Env,
   companionId: string,
   fields: CompanionStateUpdate,
+  /** Where this authored move came from (mig 0130 history): the open session and the words used. */
+  attribution?: { session_id?: string | null; detail?: string | null },
 ): Promise<{ ok: boolean }> {
   const assignments: string[] = [];
   const bindings: unknown[] = [];
@@ -1096,7 +1098,12 @@ export async function updateCompanionState(
           writer: companionId,
           cause_table: null,
           cause_id: null,
-          session_id: null,
+          // 2026-09-14: the Claude.ai close ritual updates floats via state_update BEFORE the close
+          // ("update my state: acuity 0.78"), never inside the close payload -- so without this the
+          // block could only ever say "you set it" with no session and no words. The executor
+          // resolves the open session for (companion, surface) and passes the request text.
+          session_id: attribution?.session_id ?? null,
+          detail: attribution?.detail ?? null,
           version_after: (prior?.version ?? 0) + 1,
         },
       );

@@ -1,4 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { findOpenSession } from "../../db/queries.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { COMPANION_IDS } from "../../companions.js";
@@ -538,7 +539,15 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
     (translated as Record<string, unknown>)[mapped] = val;
   }
 
-  const r = await updateCompanionState(ctx.env, ctx.req.companion_id, translated);
+  // Attribution for the float history (mig 0130, 2026-09-14): the Claude.ai close ritual moves floats
+  // through THIS verb ("update my state: acuity 0.78 ...") before the close, so the open session for
+  // (companion, surface) is the session that moved them, and the request text is the companion's own
+  // account of why. Best-effort: no surface => no session lookup; the write never waits on it failing.
+  const openSession = await findOpenSession(ctx.env, ctx.req.companion_id, ctx.req.surface).catch(() => null);
+  const r = await updateCompanionState(ctx.env, ctx.req.companion_id, translated, {
+    session_id: openSession?.id ?? null,
+    detail: ctx.req.request.trim().slice(0, 120) || null,
+  });
   // Name what was received: "no valid fields provided" alone hid the somaUpdate word-payload
   // bug for six weeks -- the log line must carry enough to diagnose from one occurrence.
   if (!r.ok) return { error: "state_update_failed", reason: `no valid fields provided (received: ${Object.entries(raw).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(", ")})` };
