@@ -287,21 +287,33 @@ export async function detectBasinPressure(env: Env): Promise<CandidateFlag[]> {
   }));
 }
 
-/** Ratification backlog: autonomous growth waiting on review past the threshold. */
+/** Ratification backlog: autonomous growth waiting on review past the threshold.
+ *
+ *  Wording (2026-09-13). The old summary said "the hybrid flow should be draining these nightly",
+ *  and Gaia's witness repeated it every night for a week while the clearing pass ran exactly as
+ *  scheduled (Sun + Wed) and SHORTLISTED these rows -- kept them as likely real growth, for Raziel.
+ *  A notice that names a healthy state as a stall trains the reader to ignore notices. What is
+ *  true: the machine has already triaged the pile; what is left waits on a person, and its age is
+ *  the number that matters. */
 export async function detectRatificationBacklog(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
-    `SELECT companion_id, COUNT(*) AS n FROM growth_journal
+    `SELECT companion_id, COUNT(*) AS n, MIN(created_at) AS oldest FROM growth_journal
      WHERE ${RATIFIABLE_PENDING_SQL}
      GROUP BY companion_id HAVING n >= ?1`
-  ).bind(GUARDIAN_THRESHOLDS.RATIFICATION_BACKLOG).all<{ companion_id: string; n: number }>();
-  return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => ({
-    companion_id: r.companion_id as CompanionId,
-    flag_type: "ratification_backlog" as const,
-    severity: "notice" as const,
-    summary: `${r.companion_id}: ${r.n} autonomous growth entries pending review -- the hybrid flow should be draining these nightly.`,
-    evidence: { pending: r.n },
-    dedup_key: `ratification:${r.companion_id}`,
-  }));
+  ).bind(GUARDIAN_THRESHOLDS.RATIFICATION_BACKLOG).all<{ companion_id: string; n: number; oldest: string | null }>();
+  return (rows.results ?? []).filter(r => (COMPANIONS as readonly string[]).includes(r.companion_id)).map(r => {
+    const oldestMs = r.oldest ? Date.parse(r.oldest.replace(" ", "T") + (r.oldest.endsWith("Z") ? "" : "Z")) : NaN;
+    const oldestDays = Number.isFinite(oldestMs) ? Math.max(0, Math.floor((Date.now() - oldestMs) / 86_400_000)) : null;
+    const age = oldestDays === null ? "" : ` (oldest ${oldestDays}d)`;
+    return {
+      companion_id: r.companion_id as CompanionId,
+      flag_type: "ratification_backlog" as const,
+      severity: "notice" as const,
+      summary: `${r.companion_id}: ${r.n} growth entries waiting on Raziel's review${age} -- already triaged by the Sun/Wed clearing pass and kept as likely real growth.`,
+      evidence: { pending: r.n, oldest: r.oldest ?? null, oldest_days: oldestDays },
+      dedup_key: `ratification:${r.companion_id}`,
+    };
+  });
 }
 
 /** Orphan-memory rescue (muse-brain daemon "rescues orphaned memories"; take 4).
