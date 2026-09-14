@@ -92,7 +92,7 @@ describe("architect-facts render -- cross-companion attribution", () => {
     const rows: FactRow[] = [
       row({ fact: "is the third cat still alive", companion_id: "drevan", status: "open" }),
     ];
-    const block = renderFactsBlock(rows, "note", "gaia");
+    const block = renderFactsBlock(rows, "note", "gaia", new Date("2026-08-29T00:00:00Z")) // open-facts gate (2026-09-14): fixture is dated 08-28, so pin the clock;
     expect(block).toContain("STILL OPEN -- ASK, DO NOT ASSUME");
     expect(block).toContain("- [noted by drevan] is the third cat still alive");
   });

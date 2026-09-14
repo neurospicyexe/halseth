@@ -375,6 +375,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       last_reflection: lastReflection ? 1 : 0,
       available_seeds: seedRows.length,
     },
+    // 2026-09-14: how many durable facts the block actually rendered (active / open shown / open held).
+    architect_facts: B.architectFactsCounts(mindState.identity.architect_facts),
   };
   await ctx.env.DB.prepare(
     `INSERT INTO companion_state (companion_id, last_orient_debug, updated_at)
@@ -536,6 +538,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // What is true about RAZIEL, not about the companion (mig 0116). Rendered here because the loader
   // carrying the data is not the same as the companion seeing it -- that gap shipped once already.
   const architectFactsBlock = B.architectFactsBlock(mindState.identity.architect_facts);
+  // Counts the renderer PRODUCED, for meta + last_orient_debug (2026-09-14): "was the facts block
+  // returned, clipped, or unused" was unanswerable from the record because nothing recorded it.
+  const architectFactsCounts = B.architectFactsCounts(mindState.identity.architect_facts);
 
   const refusalsBlock = B.refusalsBlock(standingRefusals);
 
@@ -604,7 +609,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     change_notes: mindState.world.change_notes,
     unconfirmed_growth: unconfirmedGrowth,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
-    meta: { degraded: mindState.meta.degraded, front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, unclosed_sessions: unclosedSessions.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
+    meta: { degraded: mindState.meta.degraded, front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, unclosed_sessions: unclosedSessions.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, architect_facts: architectFactsCounts, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },
     // 2026-07-09: dropped a raw `continuity: wmResult` field that used to sit here --
     // continuityBlock (above) already renders the same object into ready_prompt's prose,
     // and nothing downstream (Discord, Hearth, or anywhere else in this repo) ever read the

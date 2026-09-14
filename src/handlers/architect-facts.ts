@@ -22,6 +22,7 @@
  * how a wrong fact becomes unfalsifiable.
  */
 import type { Env } from "../types.js";
+import { gateOpenFacts, heldOpenFactsLine } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
 
 function json(data: unknown, status = 200): Response {
@@ -94,6 +95,7 @@ export function renderFactsBlock(
   rows: FactRow[],
   generatedNote: string,
   viewerCompanionId?: string | null,
+  now?: Date,
 ): string {
   const active = rows.filter(r => r.status === "active");
   const open = rows.filter(r => r.status === "open");
@@ -119,17 +121,53 @@ export function renderFactsBlock(
     out.push("");
   }
 
-  if (open.length) {
+  // 2026-09-14: same gate as the Claude.ai orient block (lib/open-facts-gate.ts). 107 open rows,
+  // 105 of them the Hermes-queue drain, rendered in full into every bot prompt file as questions.
+  // Newest few render; the rest are counted. `now` is injected by tests; production uses the clock,
+  // which means this render is deterministic for a given DAY, not forever -- the sync job's
+  // byte-compare will see one change per day at most as facts age past the window.
+  const gate = gateOpenFacts(open, { now });
+  if (gate.shown.length || gate.held.length) {
     out.push("STILL OPEN -- ASK, DO NOT ASSUME");
     out.push(
       "These are held open deliberately. Guessing a person, a pronoun or a death wrong is worse " +
-      "than asking.",
+      "than asking. Only what is still fresh enough to be a live question:",
     );
-    for (const r of open) out.push(attributionLine(r, viewerCompanionId));
+    for (const r of gate.shown) out.push(attributionLine(r, viewerCompanionId));
+    const footer = heldOpenFactsLine(gate.held.length, gate.oldestHeldDays);
+    if (footer) out.push(footer);
     out.push("");
   }
 
   return out.join("\n").trimEnd() + "\n";
+}
+
+/**
+ * PATCH /identity/architect-facts/:id   body: { status: 'active' | 'retired' }
+ *
+ * The confirm/retire verb for an OPEN fact (2026-09-14). The drain posted 105 proposals as `open`
+ * "so they surface for confirmation" and there was no surface: POST only creates rows, so the only
+ * way to retire a stale open row was to invent a new fact that supersedes it. This is the missing
+ * half. `open -> active` = Raziel confirmed it; `open|active -> retired` = withdrawn. Nothing is
+ * deleted (mig 0116 covenant); lineage keeps the row. Hearth /facts is the surface that calls it.
+ */
+export async function patchArchitectFactStatus(request: Request, env: Env, params: { id?: string }): Promise<Response> {
+  const unauth = authGuard(request, env);
+  if (unauth) return unauth;
+  const id = (params.id ?? "").trim();
+  if (!id) return json({ error: "id is required" }, 400);
+
+  let body: Record<string, unknown>;
+  try { body = (await request.json()) as Record<string, unknown>; } catch { return json({ error: "body must be JSON" }, 400); }
+  const status = typeof body.status === "string" ? body.status : "";
+  if (!["active", "retired"].includes(status)) return json({ error: "status must be active | retired" }, 400);
+
+  const prior = await env.DB.prepare("SELECT id, status FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string }>();
+  if (!prior) return json({ error: `fact ${id} does not exist` }, 404);
+  if (prior.status === "retired") return json({ error: "a retired fact stays retired; supersede it with a new one instead" }, 409);
+
+  await env.DB.prepare("UPDATE architect_facts SET status = ?, updated_at = datetime('now') WHERE id = ?").bind(status, id).run();
+  return json({ ok: true, id, from: prior.status, status });
 }
 
 export async function getArchitectFacts(request: Request, env: Env): Promise<Response> {

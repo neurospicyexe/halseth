@@ -87,8 +87,12 @@ export async function detectVoiceDrift(env: Env): Promise<CandidateFlag[]> {
     if (contaminationRate > T.VOICE_CONTAMINATION_RATE) {
       flags.push({
         companion_id: id, flag_type: "voice_drift", severity: "red",
-        summary: `${id}: ${Math.round(contaminationRate * 100)}% of replies this week carried sibling-register contamination (${row.contaminated_n}/${row.recent_n}).`,
-        evidence: { contaminated_n: row.contaminated_n, recent_n: row.recent_n },
+        // The percentage is over the UN-BIASED estimate (clean rows are 10%-sampled at write time),
+        // so the parenthetical must say so: "27% (4/6)" read as a contradiction on 2026-09-14 and
+        // sent a real investigation down the wrong arithmetic. Also name the surface: this scores
+        // Discord replies only (bot-message-handler + autonomous posts), never a Claude.ai session.
+        summary: `${id}: ${Math.round(contaminationRate * 100)}% of Discord replies this week carried sibling-register phrases (${row.contaminated_n} of ~${Math.round(estimatedTotal)} est. replies; ${row.recent_n} scored rows).`,
+        evidence: { contaminated_n: row.contaminated_n, recent_n: row.recent_n, clean_n: cleanN, estimated_total: Math.round(estimatedTotal), surface: "discord" },
         dedup_key: `voice_contamination:${id}`,
       });
     }

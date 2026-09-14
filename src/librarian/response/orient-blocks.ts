@@ -25,6 +25,7 @@
 // A renderer that can fail is a boot that can fail.
 
 import { relativeTime } from "../../webmind/relative-time.js";
+import { gateOpenFacts, heldOpenFactsLine } from "../../lib/open-facts-gate.js";
 import { excerptWithAge, type HistoryChunk } from "./blocks.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { sbExtractContent } from "../backends/second-brain.js";
@@ -315,6 +316,8 @@ export interface ArchitectFactRow {
   fact: string;
   category: string;
   status: string;
+  /** Birth stamp; the open-facts gate needs it. Optional so older callers/tests still typecheck (undated = held). */
+  created_at?: string | null;
 }
 
 /**
@@ -330,10 +333,34 @@ export interface ArchitectFactRow {
  * wrong fact becomes unfalsifiable: one of these rows exists because a companion recorded a dog as
  * living, having only heard him talked about in the present tense.
  */
-export function architectFactsBlock(facts: readonly ArchitectFactRow[]): string {
+export interface ArchitectFactsBlockOpts {
+  /** Injected clock for the open-facts gate (tests). */
+  now?: Date;
+}
+
+/** Counts the renderer actually produced -- for orient meta / last_orient_debug, so "was the
+ *  block returned, clipped, or unused" is answerable from the record instead of by reasoning. */
+export interface ArchitectFactsBlockCounts {
+  active: number;
+  open_shown: number;
+  open_held: number;
+}
+
+export function architectFactsCounts(facts: readonly ArchitectFactRow[], opts: ArchitectFactsBlockOpts = {}): ArchitectFactsBlockCounts {
+  const gate = gateOpenFacts(facts, { now: opts.now });
+  return { active: facts.filter(f => f.status === "active").length, open_shown: gate.shown.length, open_held: gate.held.length };
+}
+
+/**
+ * 2026-09-14: the OPEN half is GATED (lib/open-facts-gate.ts). 107 open rows -- 105 of them the
+ * 2026-08-12 Hermes-queue drain, oldest 33 days, 21,847 chars -- rendered in full at every orient
+ * as questions to ask, against 7,907 chars of confirmed facts. Newest few render; the rest are
+ * counted, not carried. Same gate as /identity/architect-facts/render so the bots see the same.
+ */
+export function architectFactsBlock(facts: readonly ArchitectFactRow[], opts: ArchitectFactsBlockOpts = {}): string {
   if (facts.length === 0) return "";
   const active = facts.filter(f => f.status === "active");
-  const open = facts.filter(f => f.status === "open");
+  const gate = gateOpenFacts(facts, { now: opts.now });
   const lines: string[] = [];
 
   if (active.length > 0) {
@@ -343,11 +370,13 @@ export function architectFactsBlock(facts: readonly ArchitectFactRow[]): string 
       active.map(f => `• (${f.category}) ${f.fact}`).join("\n"),
     );
   }
-  if (open.length > 0) {
+  if (gate.shown.length > 0 || gate.held.length > 0) {
+    const body = gate.shown.length > 0 ? gate.shown.map(f => `• ${f.fact}`).join("\n") : "";
+    const footer = heldOpenFactsLine(gate.held.length, gate.oldestHeldDays);
     lines.push(
       "\n[About Raziel -- OPEN, ask rather than assume]\nGuessing a person, a pronoun or a death " +
-      "wrong is worse than asking:\n" +
-      open.map(f => `• ${f.fact}`).join("\n"),
+      "wrong is worse than asking. Only what is still fresh enough to be a live question:\n" +
+      [body, footer].filter(Boolean).join("\n"),
     );
   }
   return lines.join("\n");
