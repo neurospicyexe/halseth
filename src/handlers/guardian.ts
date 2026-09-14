@@ -57,6 +57,22 @@ export async function postGuardianRun(request: Request, env: Env): Promise<Respo
         f.summary.slice(0, 500), JSON.stringify(f.evidence).slice(0, 2000), f.dedup_key,
       ).run();
       created += res.meta.changes ?? 0;
+      // Re-detection of a LIVE flag used to be a pure no-op, so its summary froze at first sight:
+      // "10 entries pending" stayed "10" for the life of the flag while the real count moved, and
+      // a wording fix to a detector never reached a flag that was already open (2026-09-13, the
+      // ratification notice). The dedup_key still decides identity; the text and evidence follow
+      // the detector's CURRENT read. Status, surfaced_at and acknowledgement are untouched.
+      if ((res.meta.changes ?? 0) === 0) {
+        await env.DB.prepare(
+          `UPDATE guardian_flags SET summary = ?, evidence_json = ?, severity = ?
+           WHERE dedup_key = ? AND status IN ('open','surfaced','acknowledged')
+             AND (summary != ? OR evidence_json != ? OR severity != ?)`
+        ).bind(
+          f.summary.slice(0, 500), JSON.stringify(f.evidence).slice(0, 2000), f.severity,
+          f.dedup_key,
+          f.summary.slice(0, 500), JSON.stringify(f.evidence).slice(0, 2000), f.severity,
+        ).run().catch((e) => console.warn("[guardian] live-flag refresh failed (non-fatal):", String(e)));
+      }
     }
 
     // Auto-resolve live flags whose condition no longer holds (self-healing,
