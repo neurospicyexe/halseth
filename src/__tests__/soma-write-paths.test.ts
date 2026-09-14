@@ -39,6 +39,9 @@ function makeRecordingEnv(): { env: any; calls: CapturedCall[] } {
         };
         return stmt;
       },
+      // 2026-09-14: a float write now lands as ONE batch (UPDATE + soma event + live graph edges),
+      // so the double needs batch(). Statements are captured at bind() time either way.
+      batch: async (stmts: unknown[]) => stmts.map(() => ({ meta: { changes: 1 } })),
     },
   };
   return { env, calls };

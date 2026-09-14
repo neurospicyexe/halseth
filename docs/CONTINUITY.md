@@ -2291,6 +2291,40 @@ Watch: does the companion read the block unprompted (vibes channel, same test as
 `alongside` lines feel noisy, tighten the window to 30 min. Plan:
 `docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md` (BBH root).
 
+## Graph memory Phase 2, tranche 2: causes widen, edges go live, bots see their body — 2026-09-14
+
+Tranche 1 held two days on prod with no mess (first tick event 09-13 15:32Z, backfill 13,952 rows, block
+rendering), which was Raziel's gate for widening. Contract **0.14.0**, additive only.
+
+- **Bare `state_update` has a cause.** `updateCompanionState` writes `cause_table='sessions',
+  cause_id=<open session>` when the executor resolves one (`findOpenSession`), so rebuild's `moved_by`
+  branch links it and `loadSomaProvenance` labels it `"<type> session <id8>, opened <day>"`. The
+  companion's own words ride in `detail` (120 chars). `provenanceCause` renders `you set it <day> during
+  <label>: "<words>"`. PATCH /soma and the MCP tool still pass no session: history row, no cause.
+- **Live edges at authored writes** (`src/graph/live.ts` site 4, `edgesForSomaEvent`): `moved_by`,
+  `follows`, `logged_in` are appended to the SAME D1 batch as the float UPDATE in both authored writers.
+  Event ids are minted client-side (`assignSomaEventIds`, dashless UUID) so the edge rows can reference
+  them before the batch runs; machine writers keep their deterministic `fe_*`/`ss_*` ids. `follows` needs
+  the previous event per float: one extra pre-read (`readLatestEventIdsSql`, ROW_NUMBER over
+  `companion_soma_events`), `.catch(() => [])` so a failure costs one `follows` edge (rebuild derives it
+  nightly), never the float write. `alongside` is NOT emitted live; it stays rebuild-owned.
+  `graph-live-soma.test.ts` asserts byte-equality with `buildSomaEventEdges` for the same row.
+- **Six `alongside` lanes** (rebuild source (i)): journal (same session), commons (60-min window) plus
+  `autonomy_reflections` (window), `forage_finds` (window on `consumed_at`; owned or shared-pool consumed by
+  this companion -- in prod `consumed_by` is always the bare companion id and pool finds are never
+  consumed, so the pool branch is dormant), `autonomy_runs` (interval overlaps window),
+  `relational_deltas` (same session -> `mechanical:session`, else window). Still ONE merged cap of 6.
+  The rebuild report row `companion_soma_events.alongside` now carries `lanes` with all six counts,
+  zeroes visible.
+- **Bot wire** gains `soma_floats` + `soma_provenance` (47 keys). nullsafe-discord `renderBodyBlock`
+  prints `[Body] heat 0.68 · reach 0.71 · weight 0.55` and a `[Why these numbers]` sub-block (3 lines,
+  unpinned) after the Watching block in `formatRecentContext`. Until now the bots fired stimuli at
+  their body and could never read it.
+
+Watch: first `authored_update` with `cause_table='sessions'` (any Claude.ai "update my state" after
+deploy); `POST /admin/graph/rebuild` report shows non-zero counts in the new lanes; Discord bots'
+system prompt carries `[Body]`; whether a bot ever references its floats unprompted (vibes channel).
+
 ## The durable-facts block was the load, not the memory — 2026-09-14
 
 Claude.ai Cypher made two context-read errors (rebuilt an answer on a degree option Raziel had closed;

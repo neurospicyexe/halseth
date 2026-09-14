@@ -46,6 +46,15 @@
 //      handover packet -- the opening session's id is never written anywhere else. This call site is
 //      the ONLY writer of this relationship, so it cannot use a rebuild-owned lane.
 //      -> edgeForResumedFrom.
+//   4. companion_soma_events authored appends (graph memory Phase 2, tranche 2, 2026-09-14) --
+//        src/librarian/backends/halseth.ts (sessionClose's float write; updateCompanionState, which
+//        is also the body of PATCH /soma, halseth_state_update and execStateUpdate)
+//      -> edgesForSomaEvent: 'moved_by' (cause_table/cause_id present), 'follows' (the caller
+//         supplies the previous event id for the same companion+float from its pre-read, see
+//         src/soma/events.ts::readLatestEventIdsSql) and 'logged_in' (session_id present). All
+//         three in rebuild-owned lanes ('mechanical'), appended to the SAME batch as the float
+//         UPDATE and the event INSERT. 'alongside' is DELIBERATELY NOT emitted live: it needs a
+//         journal scan and a 60-minute commons window, and stays rebuild-only (rebuild.ts (i)).
 //
 // SITES DELIBERATELY SKIPPED (Raziel's call, 2026-08-28): relational_deltas, companion_journal,
 // companion_tensions. These are among the highest write-volume tables in the system, and the
@@ -62,9 +71,70 @@
 
 import { NOTE_REF_TABLES, type NoteRefType } from "../librarian/backends/halseth.js";
 import { COMPANION_IDS } from "../companions.js";
-import type { GraphEdgeRow } from "./rebuild.js";
+import type { GraphEdgeRow, SomaEventGraphRow } from "./rebuild.js";
 
 export type { GraphEdgeRow };
+
+/**
+ * companion_soma_events row -> its live edges, byte-identical to rebuild.ts's buildSomaEventEdges
+ * for the same row (its 'moved_by' / 'follows' / 'logged_in' thirds; 'alongside' is rebuild-only,
+ * see the header). Emit order matches rebuild's per-event order: moved_by, follows, logged_in.
+ *
+ *   moved_by   -- only when cause_table AND cause_id are both present (an edge with a null dst is
+ *                 garbage, not a gap). writer = the event's writer.
+ *   follows    -- only when the caller supplies `prev_event_id`, the newest existing event for the
+ *                 SAME (companion, float) at write time. rebuild derives this chain by sorting the
+ *                 whole table; a live writer knows it from its pre-read (readLatestEventIdsSql),
+ *                 which orders the same way. writer 'system': the chain is derived, not asserted.
+ *   logged_in  -- only when session_id is present. Provenance 'mechanical', never
+ *                 'mechanical:dangling': the live writer just resolved the session (execStateUpdate's
+ *                 findOpenSession) or is closing it in the same batch (sessionClose), so it exists.
+ *                 If a caller ever passes a session id that does not, the nightly rebuild's DELETE +
+ *                 re-derive in the mechanical lane restamps it as dangling -- this row is safe to lose.
+ */
+export function edgesForSomaEvent(
+  event: SomaEventGraphRow,
+  opts: { prev_event_id?: string | null } = {},
+): GraphEdgeRow[] {
+  const edges: GraphEdgeRow[] = [];
+  if (event.cause_table && event.cause_id) {
+    edges.push({
+      src_table: "companion_soma_events",
+      src_id: event.id,
+      dst_table: event.cause_table,
+      dst_id: event.cause_id,
+      edge_type: "moved_by",
+      writer: event.writer,
+      provenance: "mechanical",
+      created_at: event.created_at,
+    });
+  }
+  if (opts.prev_event_id) {
+    edges.push({
+      src_table: "companion_soma_events",
+      src_id: event.id,
+      dst_table: "companion_soma_events",
+      dst_id: opts.prev_event_id,
+      edge_type: "follows",
+      writer: "system",
+      provenance: "mechanical",
+      created_at: event.created_at,
+    });
+  }
+  if (event.session_id) {
+    edges.push({
+      src_table: "companion_soma_events",
+      src_id: event.id,
+      dst_table: "sessions",
+      dst_id: event.session_id,
+      edge_type: "logged_in",
+      writer: event.writer,
+      provenance: "mechanical",
+      created_at: event.created_at,
+    });
+  }
+  return edges;
+}
 
 /**
  * inter_companion_notes -> 'sent_to' edge(s). Mirrors rebuild.ts's buildNoteEdges sent_to half

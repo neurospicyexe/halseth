@@ -29,6 +29,13 @@ import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 import type { GraphBlocks } from "./blocks/graph.js";
 
+/** 0.14.0 -- graph memory Phase 2, tranche 2 (2026-09-14): `felt.soma_provenance` entries gain `detail`
+ *  (the writer's own words, 120 chars) and a bare state_update now names its open session as the cause
+ *  (cause_table 'sessions'). Authored writers emit moved_by / follows / logged_in edges LIVE in the same
+ *  D1 batch as the float write (src/graph/live.ts site 4); rebuild source (i) `alongside` grows from two
+ *  lanes to six (autonomy_reflections, consumed forage_finds, autonomy_runs, relational_deltas). The
+ *  Discord bot wire gains `soma_floats` + `soma_provenance` (bot-wire.ts), the first time the bots can
+ *  see their own body. MINOR: additive only. */
 /** 0.13.0 -- graph memory Phase 2, tranche 1 (2026-09-12,
  *  docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md): added `felt.soma_provenance` -- the
  *  newest moves per soma float, read from `companion_soma_events` (mig 0130), the first append-only
@@ -79,7 +86,7 @@ import type { GraphBlocks } from "./blocks/graph.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.13.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.14.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

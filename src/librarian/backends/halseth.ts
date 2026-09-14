@@ -16,8 +16,40 @@ import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-cla
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
-import { edgeForNote, edgeForNoteRef, writeEdgesBestEffort } from "../../graph/live.js";
-import { diffFloats, readFloatsSql, somaEventStatements, SOMA_FLOAT_KEYS, type SomaFloatKey } from "../../soma/events.js";
+import { edgeForNote, edgeForNoteRef, edgesForSomaEvent, insertEdgeStatements, writeEdgesBestEffort } from "../../graph/live.js";
+import {
+  assignSomaEventIds, diffFloats, latestEventIdsByFloat, readFloatsSql, readLatestEventIdsSql,
+  somaEventStatements, toSomaEventGraphRow, SOMA_FLOAT_KEYS, type SomaEventStamped, type SomaFloatKey,
+} from "../../soma/events.js";
+
+/**
+ * The authored writers' pre-read, second half (2026-09-14): newest existing event id per float, so
+ * the live `follows` edge can name its predecessor. One extra round-trip, at most three rows,
+ * taken ONLY when a float is actually being written. Best-effort: an empty map means "no follows
+ * edge this write" and the nightly rebuild derives it -- never a failed float write.
+ */
+async function readLatestSomaEventIds(env: Env, companionId: string): Promise<Map<SomaFloatKey, string>> {
+  const rows = await env.DB.prepare(readLatestEventIdsSql()).bind(companionId)
+    .all<{ float_key: string; id: string }>()
+    .then((r) => r.results ?? [])
+    .catch(() => []);
+  return latestEventIdsByFloat(rows);
+}
+
+/**
+ * Event INSERTs + their live graph edges, as ONE statement list for the caller's batch. The edges
+ * are byte-identical to what src/graph/rebuild.ts derives (graph-live-soma.test.ts pins it) and
+ * live in the rebuild-owned 'mechanical' lane, so they ride the same batch as the float UPDATE:
+ * no float move without its history row, no history row without its edges, and nothing that can
+ * fail separately from the write it describes.
+ */
+function somaEventAndEdgeStatements(env: Env, events: SomaEventStamped[], prevByFloat: Map<SomaFloatKey, string>): D1PreparedStatement[] {
+  if (events.length === 0) return [];
+  const edges = events.flatMap((e) =>
+    edgesForSomaEvent(toSomaEventGraphRow(e), { prev_event_id: prevByFloat.get(e.float_key) ?? null }),
+  );
+  return [...somaEventStatements(env.DB, events), ...insertEdgeStatements(env.DB, edges)];
+}
 
 export async function sessionLoad(env: Env, input: SessionLoadInput) {
   return loadSessionData(env, input);
@@ -397,6 +429,9 @@ export async function sessionClose(env: Env, params: {
             soma_float_1: number | null; soma_float_2: number | null; soma_float_3: number | null; version: number | null;
           }>().catch(() => null)
         : null;
+      // Second half of the pre-read (2026-09-14): the predecessor event per float, for the live
+      // `follows` edge. Same gate as `prior` -- a mood-only close pays for neither.
+      const prevEventIds = touchesFloats ? await readLatestSomaEventIds(env, params.companionId) : new Map<SomaFloatKey, string>();
 
       // version bumps on every state write (migration 0069). This close path did NOT bump it until
       // 2026-09-12, and the ferment tick CAS-guards on version -- so a tick landing after an
@@ -413,12 +448,14 @@ export async function sessionClose(env: Env, params: {
 
       // The history rows ride the SAME batch as the float write: no move without its record, no
       // record for a move that did not land. Cause = the handover packet this close is writing.
+      // Since 2026-09-14 the live graph edges (moved_by -> that packet, follows -> the previous
+      // event, logged_in -> this session) ride the same batch too (src/graph/live.ts, site 4).
       if (touchesFloats) {
         const after: Partial<Record<SomaFloatKey, number | null>> = {};
         for (const k of SOMA_FLOAT_KEYS) {
           if (params.somaFields[k] !== undefined) after[k] = params.somaFields[k] as number | null;
         }
-        const events = diffFloats(
+        const events = assignSomaEventIds(diffFloats(
           {
             soma_float_1: prior?.soma_float_1 ?? null,
             soma_float_2: prior?.soma_float_2 ?? null,
@@ -435,8 +472,8 @@ export async function sessionClose(env: Env, params: {
             version_after: (prior?.version ?? 0) + 1,
             created_at: now,
           },
-        );
-        stmts.push(...somaEventStatements(env.DB, events));
+        ), now);
+        stmts.push(...somaEventAndEdgeStatements(env, events, prevEventIds));
       }
     }
   }
@@ -1069,6 +1106,9 @@ export async function updateCompanionState(
         soma_float_1: number | null; soma_float_2: number | null; soma_float_3: number | null; version: number | null;
       }>().catch(() => null)
     : null;
+  // Second half of the pre-read (2026-09-14): the predecessor event per float, for the live
+  // `follows` edge. Same gate -- a mood-only update pays for neither query.
+  const prevEventIds = touchesFloats ? await readLatestSomaEventIds(env, companionId) : new Map<SomaFloatKey, string>();
 
   // version bumps on every write (migration 0069): a monotonic write counter so
   // concurrent-writer collisions are observable, and so read-modify-write paths
@@ -1076,16 +1116,18 @@ export async function updateCompanionState(
   assignments.push("updated_at = datetime('now')", "version = version + 1");
   bindings.push(companionId);
 
-  await env.DB.prepare(
+  const updateStmt = env.DB.prepare(
     `UPDATE companion_state SET ${assignments.join(", ")} WHERE companion_id = ?`
-  ).bind(...bindings).run();
+  ).bind(...bindings);
 
-  // Float history (mig 0130), AFTER the primary write and strictly best-effort: the state write is
-  // the thing that must not fail, and a missing history row is a gap, not a corruption. No cause
-  // yet -- callers pass no session here (tranche 2 candidate: attribute it to the open session).
-  if (touchesFloats) {
-    try {
-      const events = diffFloats(
+  // Float history (mig 0130). Computed BEFORE the write so it can ride the same batch as the
+  // UPDATE (2026-09-14, graph memory Phase 2 tranche 2): the history row and its live graph edges
+  // are atomic with the float move, the same covenant sessionClose keeps -- never a second,
+  // separately-failable write that can leave a move with no record or a record with no move.
+  const now = new Date().toISOString();
+  const sessionId = attribution?.session_id ?? null;
+  const events: SomaEventStamped[] = touchesFloats
+    ? assignSomaEventIds(diffFloats(
         {
           soma_float_1: prior?.soma_float_1 ?? null,
           soma_float_2: prior?.soma_float_2 ?? null,
@@ -1096,21 +1138,26 @@ export async function updateCompanionState(
           companion_id: companionId,
           kind: "authored_update",
           writer: companionId,
-          cause_table: null,
-          cause_id: null,
-          // 2026-09-14: the Claude.ai close ritual updates floats via state_update BEFORE the close
-          // ("update my state: acuity 0.78"), never inside the close payload -- so without this the
-          // block could only ever say "you set it" with no session and no words. The executor
-          // resolves the open session for (companion, surface) and passes the request text.
-          session_id: attribution?.session_id ?? null,
+          // 2026-09-14: a bare state_update's cause IS its open session. Before this the row carried
+          // session_id + detail but no cause, so rebuild emitted no `moved_by` edge for it and the
+          // orient block could only say "you set it". The Claude.ai close ritual moves floats through
+          // THIS verb ("update my state: acuity 0.78") before the close, never inside the close
+          // payload; the executor resolves the open session for (companion, surface) and passes the
+          // request text. No session (PATCH /soma, the MCP tool) -> no cause, still a history row.
+          cause_table: sessionId ? "sessions" : null,
+          cause_id: sessionId,
+          session_id: sessionId,
           detail: attribution?.detail ?? null,
           version_after: (prior?.version ?? 0) + 1,
+          created_at: now,
         },
-      );
-      if (events.length) await env.DB.batch(somaEventStatements(env.DB, events));
-    } catch (err) {
-      console.warn("[updateCompanionState] soma event append failed (non-fatal):", String(err));
-    }
+      ), now)
+    : [];
+
+  if (events.length > 0) {
+    await env.DB.batch([updateStmt, ...somaEventAndEdgeStatements(env, events, prevEventIds)]);
+  } else {
+    await updateStmt.run();
   }
 
   return { ok: true };

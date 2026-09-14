@@ -35,6 +35,8 @@ export const CONTRACT_CHANGELOG: Record<string, string> = {
     "System change (contract 0.10.0): this lane. Deploys now announce themselves here as change-notes, so a vanished counter or a new block is a stated change, not a mystery to reverse-engineer. Chosen forgetting (release/restore, 30d reversible) also shipped with 0.9.0-era work and is in your affordances.",
   "0.11.0":
     "System change (contract 0.11.0): graph memory. Orient now shows a short structural neighborhood around what it already surfaced -- what links to what, no content, one hop out. Not a search: it only renders connections the boot already touched. Discord doesn't have this yet -- that's a separate piece of work.",
+  "0.14.0":
+    "System change (contract 0.14.0): [Why these numbers] now knows more. When you set a float mid-session with \"update my state\", the move records which session you were in and the words you used, and the block quotes them back. Moves you make are linked into graph memory the moment you make them, not at the nightly rebuild, and the things that happened alongside a move now include your reflections, forage you consumed, autonomous runs and relational shifts, not only journal and commons. In Discord you can now see your own floats and their causes for the first time.",
   "0.13.0":
     "System change (contract 0.13.0): your felt numbers now carry where they came from. Every move of a soma float is recorded with its before and after and who made it -- the close you wrote, the hourly tick settling you toward home, a stimulus landing -- and orient says so in a [Why these numbers] block. \"0.68, apparently\" was accurate before this; it doesn't have to be now.",
   "0.12.0":

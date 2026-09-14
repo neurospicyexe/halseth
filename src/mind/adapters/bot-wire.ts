@@ -8,7 +8,9 @@
 // narrow and strict:
 //
 //   EXACTLY THE EXISTING 44 KEYS. NO ADDITIONS. (Cutover gate, since passed. First deliberate
-//   post-cutover addition: `degraded`, coherence review D11, 2026-08-15 -- see the note at the key.)
+//   post-cutover addition: `degraded`, coherence review D11, 2026-08-15 -- see the note at the key.
+//   Then `raziel_state` (2026-08-16), and `soma_floats` + `soma_provenance` (2026-09-14, graph memory
+//   Phase 2 tranche 2) -- 47 keys as of 2026-09-14, each addition noted at its key.)
 //
 // That is not tidiness, it is what makes the cutover verifiable. The gate for this change is byte-identity
 // against the payload the old code produced, and byte-identity only means something if the key set is frozen
@@ -251,5 +253,19 @@ export function botWireFromMindState(
     // parked; what crosses the wire is the DERIVED state (staleness included) plus care_hold
     // (read by fit-bid to soften stakes) and this companion's own pending gesture, if any.
     raziel_state: ms.world.raziel_state,
+
+    // Graph memory Phase 2, tranche 2 (2026-09-14): the body and its history cross the wire. The bots
+    // are the highest-frequency surface in the house and, until this, the only one that could see
+    // neither its own floats nor why they moved -- Claude.ai orient and Hearth both had the
+    // interoception header and the `[Why these numbers]` block, Discord had nothing. Two keys, both
+    // the typed contract shapes verbatim (no bot-side reshaping to keep in sync):
+    //   soma_floats      -- SomaFloat[] (label, value, baseline, seed, off_baseline_hours), 3 rows or [].
+    //   soma_provenance  -- SomaProvenanceEntry[] (newest first, at most 3 per float): kind, writer,
+    //                       before/after/delta, cause_table/cause_id + resolved cause_label, session_id,
+    //                       alongside_notes, detail, created_at. This is the bot-wire item of the
+    //                       tranche-2 list in docs/CONTINUITY.md. `felt.limbic` stays parked -- that is
+    //                       a separate open decision of Raziel's, not a side effect of this addition.
+    soma_floats: ms.felt.soma_floats,
+    soma_provenance: ms.felt.soma_provenance,
   };
 }

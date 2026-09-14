@@ -53,6 +53,10 @@ export interface GraphEdgeRow {
 export interface SourceCount {
   source: string;
   inserted: number;
+  /** Per-dst_table breakdown of `inserted`, present only on sources that merge several lanes under
+   *  one cap (today: companion_soma_events.alongside). Every lane is listed, zero included -- a lane
+   *  that produced nothing must be a visible 0, not an absent key. */
+  lanes?: Record<string, number>;
 }
 
 // D1's batch() has no documented hard cap in this codebase's usage (grep of `.batch(` across src/
@@ -69,6 +73,13 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 async function selectAll<T>(db: D1Database, table: string): Promise<T[]> {
   const res = await db.prepare(`SELECT * FROM ${table}`).all<T>();
+  return res.results ?? [];
+}
+
+/** Whole-table read of NAMED columns. Same convention as selectAll (correlate in JS, not SQL); used
+ *  where the table carries bodies the graph must never load (reflection_text, forage summaries). */
+async function selectColumns<T>(db: D1Database, table: string, columns: readonly string[]): Promise<T[]> {
+  const res = await db.prepare(`SELECT ${columns.join(", ")} FROM ${table}`).all<T>();
   return res.results ?? [];
 }
 
@@ -415,13 +426,33 @@ export function buildMentionsEdges(
 //                 stated exception to "writer = event.writer").
 //   logged_in  -> sessions, with the same dangling-session marking as (b)/(c) above. Same covenant:
 //                 mark, don't drop -- a derived link may be down-ranked, never silently removed.
-//   alongside  -> what else the companion was doing when the number moved. Two candidate lanes,
-//                 distinguished by provenance, NOT by cap: companion_journal rows in the SAME session
-//                 written at or before the event ('mechanical:session'), and commons_posts by this
-//                 companion or raziel inside the 60 minutes ending at the event
-//                 ('mechanical:window', both ends inclusive). The two lanes are MERGED, sorted
-//                 newest-first, and capped at 6 TOTAL -- capping each lane separately would quietly
-//                 allow 12 and make a chatty commons hour drown the session context.
+//   alongside  -> what else the companion was doing when the number moved. SIX candidate lanes
+//                 (tranche 1 shipped two; tranche 2 added four), distinguished by provenance, NOT by
+//                 cap. 'mechanical:session' means the row sits in the SAME session as the event and
+//                 was written at or before it; 'mechanical:window' means it landed inside the 60
+//                 minutes ending at the event (both ends inclusive). The lanes:
+//
+//                   companion_journal    same session                       -> mechanical:session
+//                   commons_posts        by this companion or raziel, window -> mechanical:window
+//                   autonomy_reflections by this companion, window          -> mechanical:window
+//                   forage_finds         CONSUMED inside the window, owned by this companion or
+//                                        shared-pool (companion_id NULL) with consumed_by naming
+//                                        this companion. Gathering is the scout's act, not the
+//                                        companion's; only consumption counts    -> mechanical:window
+//                   autonomy_runs        Layer B runs for this companion whose [started_at,
+//                                        completed_at ?? started_at] interval OVERLAPS the window.
+//                                        run_type is deliberately NOT in provenance -- the lane set
+//                                        stays stable across run types            -> mechanical:window
+//                   relational_deltas    same session (mig 0004 added session_id) -> mechanical:session,
+//                                        else window                              -> mechanical:window.
+//                                        Both row shapes match (companion_id, or agent when
+//                                        companion_id is '' -- see CLAUDE.md covenants).
+//
+//                 All six lanes are MERGED, sorted newest-first (tie on id), and capped at 6 TOTAL --
+//                 capping each lane separately would quietly allow 36 and make one chatty commons
+//                 hour or one reflective Layer B night drown the session context. The rebuild report
+//                 carries one combined alongside count PLUS a per-table breakdown (`lanes`), so a
+//                 dead lane reads as an explicit zero instead of hiding behind a live one.
 //
 // TIME IS PARSED, NOT STRING-COMPARED. `created_at` arrives in two shapes in this schema: SQLite
 // `datetime('now')` writes "YYYY-MM-DD HH:MM:SS" (commons_posts, most legacy rows) while JS writers
@@ -450,6 +481,54 @@ export interface CommonsPostGraphRow {
   created_at: string;
 }
 
+export interface AutonomyReflectionGraphRow {
+  id: string;
+  companion_id: string;
+  created_at: string;
+}
+
+export interface ForageFindGraphRow {
+  id: string;
+  /** NULL = shared/triad pool (mig 0068); ownership then comes from `consumed_by`. */
+  companion_id: string | null;
+  consumed_at: string | null;
+  /** "which instance/session consumed it" -- free text, so matched by substring on companion id. */
+  consumed_by: string | null;
+}
+
+export interface AutonomyRunGraphRow {
+  id: string;
+  companion_id: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface RelationalDeltaGraphRow {
+  id: string;
+  companion_id: string | null;
+  agent: string | null;
+  session_id: string | null;
+  created_at: string;
+}
+
+/** The six alongside lanes, in report order. Exported so the tick/report consumers and the tests
+ *  share one list rather than each spelling six table names. */
+export const ALONGSIDE_LANES = [
+  "companion_journal",
+  "commons_posts",
+  "autonomy_reflections",
+  "forage_finds",
+  "autonomy_runs",
+  "relational_deltas",
+] as const;
+
+/** Both relational_deltas row shapes resolve to one owner: legacy rows carry companion_id, MCP-logged
+ *  rows carry companion_id '' and agent. Mirrors the writer rule in buildRelationalDeltaEdges. */
+function deltaOwner(r: RelationalDeltaGraphRow): string | null {
+  return r.companion_id && r.companion_id !== "" ? r.companion_id : (r.agent || null);
+}
+
 /** Normalise both `created_at` shapes this schema carries to a comparable instant. NaN-safe: an
  *  unparseable stamp sorts as 0 rather than poisoning every comparison it touches. */
 function tsMs(s: string | null | undefined): number {
@@ -468,12 +547,31 @@ export function buildSomaEventEdges(
   sessionIds: Set<string>,
   journalRows: readonly CompanionJournalRow[],
   commonsRows: readonly CommonsPostGraphRow[],
+  reflectionRows: readonly AutonomyReflectionGraphRow[] = [],
+  forageRows: readonly ForageFindGraphRow[] = [],
+  runRows: readonly AutonomyRunGraphRow[] = [],
+  deltaRows: readonly RelationalDeltaGraphRow[] = [],
 ): GraphEdgeRow[] {
   // Sorted inputs before the nested loops -- SQLite guarantees no row order absent an ORDER BY, and
   // this file's contract is that two rebuilds over unchanged data agree on edge ORDER, not just count.
   const sortedEvents = events.slice().sort(byTimeThenId);
   const sortedJournal = journalRows.slice().sort(byTimeThenId);
   const sortedCommons = commonsRows.slice().sort(byTimeThenId);
+  const sortedReflections = reflectionRows.slice().sort(byTimeThenId);
+  const sortedDeltas = deltaRows.slice().sort(byTimeThenId);
+  // A find's "when" for this lane is its CONSUMPTION instant, so normalise it onto created_at up front:
+  // one sort key, one window check, and an unconsumed find drops out here rather than in the loop.
+  const sortedForage = forageRows
+    .filter((f) => f.consumed_at)
+    .map((f) => ({ id: f.id, companion_id: f.companion_id, consumed_by: f.consumed_by, created_at: f.consumed_at as string }))
+    .sort(byTimeThenId);
+  // A run is an INTERVAL. Its sort/emit stamp is the interval end (completed_at, else started_at):
+  // a still-running or crashed run has only a start. A row with no started_at never ran (status
+  // 'pending') and is not something the companion was doing.
+  const sortedRuns = runRows
+    .filter((r) => r.started_at)
+    .map((r) => ({ id: r.id, companion_id: r.companion_id, start: tsMs(r.started_at), created_at: (r.completed_at ?? r.started_at) as string }))
+    .sort(byTimeThenId);
 
   const edges: GraphEdgeRow[] = [];
   const prevByFloat = new Map<string, SomaEventGraphRow>();
@@ -533,11 +631,39 @@ export function buildSomaEventEdges(
         alongside.push({ table: "companion_journal", id: j.id, created_at: j.created_at, provenance: "mechanical:session" });
       }
     }
+    const windowLo = at - ALONGSIDE_WINDOW_MS;
+    const inWindow = (ms: number) => ms <= at && ms >= windowLo;
     for (const c of sortedCommons) {
       if (c.author !== e.companion_id && c.author !== "raziel") continue;
-      const cAt = tsMs(c.created_at);
-      if (cAt > at || cAt < at - ALONGSIDE_WINDOW_MS) continue;
+      if (!inWindow(tsMs(c.created_at))) continue;
       alongside.push({ table: "commons_posts", id: c.id, created_at: c.created_at, provenance: "mechanical:window" });
+    }
+    for (const r of sortedReflections) {
+      if (r.companion_id !== e.companion_id) continue;
+      if (!inWindow(tsMs(r.created_at))) continue;
+      alongside.push({ table: "autonomy_reflections", id: r.id, created_at: r.created_at, provenance: "mechanical:window" });
+    }
+    for (const f of sortedForage) {
+      const owned = f.companion_id === e.companion_id
+        || (f.companion_id === null && !!f.consumed_by && f.consumed_by.includes(e.companion_id));
+      if (!owned) continue;
+      if (!inWindow(tsMs(f.created_at))) continue;
+      alongside.push({ table: "forage_finds", id: f.id, created_at: f.created_at, provenance: "mechanical:window" });
+    }
+    for (const r of sortedRuns) {
+      if (r.companion_id !== e.companion_id) continue;
+      // Interval overlap, both closed: run.start <= window.hi AND run.end >= window.lo.
+      if (r.start > at || tsMs(r.created_at) < windowLo) continue;
+      alongside.push({ table: "autonomy_runs", id: r.id, created_at: r.created_at, provenance: "mechanical:window" });
+    }
+    for (const d of sortedDeltas) {
+      if (deltaOwner(d) !== e.companion_id) continue;
+      const dAt = tsMs(d.created_at);
+      if (e.session_id && d.session_id === e.session_id && dAt <= at) {
+        alongside.push({ table: "relational_deltas", id: d.id, created_at: d.created_at, provenance: "mechanical:session" });
+      } else if (inWindow(dAt)) {
+        alongside.push({ table: "relational_deltas", id: d.id, created_at: d.created_at, provenance: "mechanical:window" });
+      }
     }
     alongside.sort((a, b) => {
       const d = tsMs(b.created_at) - tsMs(a.created_at);
@@ -591,7 +717,7 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
 
   await db.prepare(`DELETE FROM graph_edges WHERE provenance LIKE ?`).bind(MECHANICAL_PROVENANCE_LIKE).run();
 
-  const [conclusions, deltas, journal, notes, tensions, handovers, sessions, watchTitles, obsessionTitles, somaEvents, commonsPosts] = await Promise.all([
+  const [conclusions, deltas, journal, notes, tensions, handovers, sessions, watchTitles, obsessionTitles, somaEvents, commonsPosts, reflections, forageFinds, autonomyRuns] = await Promise.all([
     selectAll<ConclusionRow>(db, "companion_conclusions"),
     selectAll<RelationalDeltaRow>(db, "relational_deltas"),
     selectAll<CompanionJournalRow>(db, "companion_journal"),
@@ -603,6 +729,11 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     selectAll<{ id: string; title: string; status: string }>(db, "obsession_shelf"),
     selectAll<SomaEventGraphRow>(db, "companion_soma_events"),
     selectAll<CommonsPostGraphRow>(db, "commons_posts"),
+    // Tranche 2 alongside lanes. Named columns: these tables carry bodies (reflection_text, forage
+    // summary) the graph never needs and should not pull through the Worker on every rebuild.
+    selectColumns<AutonomyReflectionGraphRow>(db, "autonomy_reflections", ["id", "companion_id", "created_at"]),
+    selectColumns<ForageFindGraphRow>(db, "forage_finds", ["id", "companion_id", "consumed_at", "consumed_by"]),
+    selectColumns<AutonomyRunGraphRow>(db, "autonomy_runs", ["id", "companion_id", "started_at", "completed_at", "created_at"]),
   ]);
   const shelfTitles: ShelfTitleRow[] = [
     ...watchTitles.map((r) => ({ table: "watch_shelf" as const, id: r.id, title: r.title })),
@@ -614,7 +745,7 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
   // a session_id can point at nothing (append-only source, 8-row 2026-03 audit finding).
   const sessionIds = new Set(sessions.map((s) => s.id));
 
-  const sources: Array<{ source: string; edges: GraphEdgeRow[] }> = [
+  const sources: Array<{ source: string; edges: GraphEdgeRow[]; lanes?: readonly string[] }> = [
     { source: "companion_conclusions.superseded_by", edges: buildSupersedesEdges(conclusions) },
     { source: "relational_deltas.session_id", edges: buildRelationalDeltaEdges(deltas, sessionIds) },
     { source: "companion_journal.session_id", edges: buildJournalEdges(journal, sessionIds) },
@@ -628,13 +759,17 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     // expected magnitudes collapsed into one number is how a dead family hides behind a live one.
     // Partitioning by edge_type preserves the builder's emission order, so determinism is unaffected.
     ...(() => {
-      const all = buildSomaEventEdges(somaEvents, sessionIds, journal, commonsPosts);
+      // relational_deltas is read once above for source (b); the same rows feed the alongside lane
+      // here (RelationalDeltaRow is structurally a RelationalDeltaGraphRow).
+      const all = buildSomaEventEdges(somaEvents, sessionIds, journal, commonsPosts, reflections, forageFinds, autonomyRuns, deltas);
       const of = (t: string) => all.filter((e) => e.edge_type === t);
       return [
         { source: "companion_soma_events.cause", edges: of("moved_by") },
         { source: "companion_soma_events.follows", edges: of("follows") },
         { source: "companion_soma_events.session", edges: of("logged_in") },
-        { source: "companion_soma_events.alongside", edges: of("alongside") },
+        // One merged count (the cap is on the merged list, so that is the number that means
+        // something) PLUS a per-table breakdown, so a lane that stopped producing is a visible 0.
+        { source: "companion_soma_events.alongside", edges: of("alongside"), lanes: ALONGSIDE_LANES },
       ];
     })(),
   ];
@@ -642,7 +777,17 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
   const counts: SourceCount[] = [];
   for (const s of sources) {
     const inserted = await insertEdges(db, s.edges);
-    counts.push({ source: s.source, inserted });
+    if (s.lanes) {
+      // Derived from the same edge list that was inserted, keyed on dst_table. INSERT OR IGNORE
+      // means `inserted` can be lower than edges.length; the breakdown counts what was DERIVED per
+      // lane, which is the question "is this lane alive" actually asks.
+      const lanes: Record<string, number> = {};
+      for (const lane of s.lanes) lanes[lane] = 0;
+      for (const e of s.edges) lanes[e.dst_table] = (lanes[e.dst_table] ?? 0) + 1;
+      counts.push({ source: s.source, inserted, lanes });
+    } else {
+      counts.push({ source: s.source, inserted });
+    }
   }
   return counts;
 }

@@ -98,8 +98,57 @@ export function floatKeyFromShort(short: string): SomaFloatKey | null {
   return null;
 }
 
-function newEventId(): string {
+/**
+ * Authored-event id: a dashless UUID minted client-side. The machine writers keep their
+ * deterministic `fe_*`/`ss_*` ids; the authored paths have no detail row to derive one from, so
+ * they take a random one -- but they take it BEFORE the batch (assignSomaEventIds), because the
+ * live graph edges (src/graph/live.ts::edgesForSomaEvent) ride the same batch and must name the
+ * event row they hang off. An id minted inside SQL would be unknowable until after the write.
+ */
+export function newSomaEventId(): string {
   return crypto.randomUUID().replace(/-/g, "");
+}
+
+/** A SomaEventInput whose id and created_at are settled -- the shape a live edge can reference. */
+export type SomaEventStamped = SomaEventInput & { id: string; created_at: string };
+
+/**
+ * Settle id + created_at on every event before it reaches somaEventStatements. Idempotent: an
+ * event that already carries an id (machine writers, backfill) or a created_at keeps it. Every
+ * event in one call shares one `now` when none was given, so the edges derived from them agree
+ * with rebuild's per-event created_at byte for byte.
+ */
+export function assignSomaEventIds(events: SomaEventInput[], now = new Date().toISOString()): SomaEventStamped[] {
+  return events.map((e) => ({ ...e, id: e.id ?? newSomaEventId(), created_at: e.created_at ?? now }));
+}
+
+/**
+ * The minimal event shape src/graph/rebuild.ts::buildSomaEventEdges consumes (SomaEventGraphRow),
+ * projected from a stamped input so a live writer hands the edge helper exactly what the nightly
+ * rebuild would read back from the row it is about to insert.
+ */
+export function toSomaEventGraphRow(e: SomaEventStamped): {
+  id: string;
+  companion_id: string;
+  float_key: string;
+  kind: string;
+  writer: string;
+  cause_table: string | null;
+  cause_id: string | null;
+  session_id: string | null;
+  created_at: string;
+} {
+  return {
+    id: e.id,
+    companion_id: e.companion_id,
+    float_key: e.float_key,
+    kind: e.kind,
+    writer: e.writer,
+    cause_table: e.cause_table ?? null,
+    cause_id: e.cause_id ?? null,
+    session_id: e.session_id ?? null,
+    created_at: e.created_at,
+  };
 }
 
 function finite(v: number | null | undefined): number | null {
@@ -122,7 +171,7 @@ export function somaEventStatements(db: D1Database, events: SomaEventInput[]): D
     const before = finite(e.before_value);
     const after = finite(e.after_value);
     return db.prepare(INSERT_EVENT_SQL).bind(
-      e.id ?? newEventId(),
+      e.id ?? newSomaEventId(),
       e.companion_id,
       e.float_key,
       before,
@@ -173,6 +222,31 @@ export function readFloatsSql(): string {
   return "SELECT soma_float_1, soma_float_2, soma_float_3, version FROM companion_state WHERE companion_id = ?";
 }
 
+/**
+ * Bind: [companion_id]. The SECOND half of the authored pre-read (2026-09-14): the newest event id
+ * per float for this companion, so the live `follows` edge can name its predecessor without a
+ * per-float lookup. One windowed query, at most three rows. Same ORDER BY as loadSomaProvenance
+ * (created_at DESC, id DESC) -- every event this table holds carries an ISO instant, so string
+ * order and rebuild.ts's parsed-time order agree.
+ */
+export function readLatestEventIdsSql(): string {
+  return (
+    `SELECT float_key, id FROM (` +
+    `SELECT float_key, id, ROW_NUMBER() OVER (PARTITION BY float_key ORDER BY created_at DESC, id DESC) AS rn ` +
+    `FROM companion_soma_events WHERE companion_id = ?` +
+    `) WHERE rn = 1`
+  );
+}
+
+/** `{float_key, id}` rows from readLatestEventIdsSql -> Map<float_key, id>. Unknown keys dropped. */
+export function latestEventIdsByFloat(rows: readonly { float_key: string; id: string }[] | null | undefined): Map<SomaFloatKey, string> {
+  const out = new Map<SomaFloatKey, string>();
+  for (const r of rows ?? []) {
+    if ((SOMA_FLOAT_KEYS as readonly string[]).includes(r.float_key) && r.id) out.set(r.float_key as SomaFloatKey, String(r.id));
+  }
+  return out;
+}
+
 // ── Read side: provenance for one companion ───────────────────────────────────────
 
 export interface SomaProvenanceEntry {
@@ -185,11 +259,18 @@ export interface SomaProvenanceEntry {
   delta: number | null;
   cause_table: string | null;
   cause_id: string | null;
-  /** handover: spine head (<=80 chars); ferment: stimulus or 'tick'; shift: reason head. */
+  /** handover: spine head (<=80 chars); ferment: stimulus or 'tick'; shift: reason head;
+   *  sessions (2026-09-14, a bare state_update attributed to its open session):
+   *  `<session_type> session <first 8 of id>, opened <YYYY-MM-DD>`. Falls back to `detail` head. */
   cause_label: string | null;
   session_id: string | null;
   /** companion_journal rows sharing this event's session_id (0 when the event has no session). */
   alongside_notes: number;
+  /** 2026-09-14: the writer's own words for the move (<=120 chars) -- for authored_update, the
+   *  request text ("update my state: acuity 0.78"); for the tick, "silence". Carried separately
+   *  from cause_label now that a state_update's cause is its session, so the block can print both
+   *  where it happened and what was said. */
+  detail: string | null;
   created_at: string;
 }
 
@@ -224,8 +305,9 @@ function placeholders(n: number): string {
  * Newest 3 events per float for one companion (<= 9 rows), with the human label for each cause.
  *
  * Query budget matters: this rides the orient path (agent B's felt.soma_provenance) where the
- * loader's pure-D1 0.70s profile is a standing rule. Five queries max -- one windowed read, up to
- * three batched label joins keyed by cause_table, one grouped journal count. No per-row lookups.
+ * loader's pure-D1 0.70s profile is a standing rule. Six queries max -- one windowed read, up to
+ * four batched label joins keyed by cause_table (handover, ferment, shift, and since 2026-09-14
+ * the session a bare state_update was made in), one grouped journal count. No per-row lookups.
  *
  * Best-effort by contract: any throw is warned and returns [], because neither orient nor Hearth
  * may fail on a provenance line.
@@ -270,6 +352,17 @@ export async function loadSomaProvenance(env: Env, companionId: string): Promise
       companion_soma_shifts: {
         sql: (n) => `SELECT id, reason FROM companion_soma_shifts WHERE id IN (${placeholders(n)})`,
         pick: (row) => head(row.reason as string | null, 80),
+      },
+      // 2026-09-14: a bare state_update names its open session as the cause (cause_table 'sessions').
+      // A session has no spine to quote, so the label says WHERE: type, a short id, the opened date.
+      sessions: {
+        sql: (n) => `SELECT id, session_type, created_at FROM sessions WHERE id IN (${placeholders(n)})`,
+        pick: (row) => {
+          const id = String(row.id ?? "");
+          const type = String(row.session_type ?? "work");
+          const opened = String(row.created_at ?? "").slice(0, 10);
+          return `${type} session ${id.slice(0, 8)}${opened ? `, opened ${opened}` : ""}`;
+        },
       },
     };
     for (const [table, idSet] of byTable) {
@@ -318,6 +411,7 @@ export async function loadSomaProvenance(env: Env, companionId: string): Promise
         cause_label: (causeKey ? labels.get(causeKey) ?? null : null) ?? head(r.detail, 80),
         session_id: r.session_id ?? null,
         alongside_notes: r.session_id ? noteCounts.get(r.session_id) ?? 0 : 0,
+        detail: head(r.detail, 120),
         created_at: r.created_at,
       };
     });

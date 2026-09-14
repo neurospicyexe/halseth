@@ -234,7 +234,10 @@ describe("sessionClose float write", () => {
     const backend = await src("librarian/backends/halseth.ts");
     const fn = backend.slice(backend.indexOf("export async function sessionClose("));
     const close = fn.slice(0, fn.indexOf("await env.DB.batch(stmts);"));
-    expect(close).toMatch(/stmts\.push\(\.\.\.somaEventStatements\(env\.DB, events\)\)/);
+    // 2026-09-14: the event INSERTs and their live graph edges are fused into one statement list
+    // (somaEventAndEdgeStatements) and still pushed onto the SAME `stmts` the float UPDATE is in.
+    expect(close).toMatch(/stmts\.push\(\.\.\.somaEventAndEdgeStatements\(env, events, prevEventIds\)\)/);
+    expect(backend).toMatch(/function somaEventAndEdgeStatements\([\s\S]*?\.\.\.somaEventStatements\(env\.DB, events\)/);
     expect(close).toMatch(/cause_table: "handover_packets"/);
     expect(close).toMatch(/kind: "authored_close"/);
   });

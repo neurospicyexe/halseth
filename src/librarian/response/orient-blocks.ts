@@ -623,6 +623,13 @@ const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
   // neighborhood endpoints via the `moved_by`/`follows`/`alongside` families.
   companion_soma_events: "felt move",
   commons_posts: "commons",
+  // Phase 2 tranche 2: the four extra `alongside` lanes (src/graph/rebuild.ts section (i)). Labels
+  // are bare nouns because the template supplies the count or the verb ("alongside reflection 1a2b",
+  // "alongside: 3 forage find from cypher").
+  autonomy_reflections: "reflection",
+  forage_finds: "forage find",
+  autonomy_runs: "autonomous run",
+  relational_deltas: "relational shift",
   companion_conclusions: "conclusions",
   companion_tensions: "tension",
   inter_companion_notes: "messages",
@@ -793,8 +800,14 @@ function provenanceCause(e: SomaProvenanceRow): string {
       // written twice that session" is a different fact from "you set it".
       return e.alongside_notes > 0 ? `${head} · ${e.alongside_notes} notes that session` : head;
     }
-    case "authored_update":
-      return `you set it ${day}`;
+    case "authored_update": {
+      // Tranche 2 (2026-09-14): a bare state_update now carries its open session as the cause
+      // (cause_table 'sessions', label "<type> session <id8>, opened <day>") and the companion's own
+      // words in `detail` ("update my state: acuity 0.78 -- the audit landed"). Both are optional
+      // on the row: PATCH /soma and the MCP tool pass no session and no words.
+      const where = e.cause_label ? `you set it ${day} during ${e.cause_label}` : `you set it ${day}`;
+      return e.detail ? `${where}: "${e.detail}"` : where;
+    }
     case "tick":
       return e.detail === "silence" ? "settled toward home (tick, silence)" : "settled toward home (tick)";
     case "stimulus":

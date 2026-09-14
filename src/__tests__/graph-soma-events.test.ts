@@ -6,7 +6,17 @@
 // one end-to-end pass through the same hand-shaped D1 fake, seeded with the new tables.
 
 import { describe, it, expect } from "vitest";
-import { buildSomaEventEdges, rebuildGraph, type SomaEventGraphRow, type CommonsPostGraphRow } from "../graph/rebuild.js";
+import {
+  buildSomaEventEdges,
+  rebuildGraph,
+  ALONGSIDE_LANES,
+  type SomaEventGraphRow,
+  type CommonsPostGraphRow,
+  type AutonomyReflectionGraphRow,
+  type ForageFindGraphRow,
+  type AutonomyRunGraphRow,
+  type RelationalDeltaGraphRow,
+} from "../graph/rebuild.js";
 import type { Env } from "../types.js";
 
 interface Row { [k: string]: unknown }
@@ -72,6 +82,28 @@ const journal = (id: string, over: Partial<Record<string, unknown>> = {}) =>
   ({ id, agent: "cypher", session_id: "s1", note_text: "x", created_at: atMinus(5), ...over }) as any;
 const commons = (id: string, over: Partial<CommonsPostGraphRow> = {}): CommonsPostGraphRow =>
   ({ id, author: "raziel", created_at: atMinus(5), ...over });
+
+// Tranche 2 lane fixtures. Each defaults to "this companion, 5 minutes before the event" so a test
+// only spells the ONE field it is about.
+const reflection = (id: string, over: Partial<AutonomyReflectionGraphRow> = {}): AutonomyReflectionGraphRow =>
+  ({ id, companion_id: "cypher", created_at: atMinus(5), ...over });
+const forage = (id: string, over: Partial<ForageFindGraphRow> = {}): ForageFindGraphRow =>
+  ({ id, companion_id: "cypher", consumed_at: atMinus(5), consumed_by: "cypher", ...over });
+const run = (id: string, over: Partial<AutonomyRunGraphRow> = {}): AutonomyRunGraphRow =>
+  ({ id, companion_id: "cypher", started_at: atMinus(20), completed_at: atMinus(5), created_at: atMinus(20), ...over });
+const delta = (id: string, over: Partial<RelationalDeltaGraphRow> = {}): RelationalDeltaGraphRow =>
+  ({ id, companion_id: "cypher", agent: null, session_id: null, created_at: atMinus(5), ...over });
+
+/** Positional wrapper so lane tests name only the lane they exercise. */
+type Lanes = {
+  journal?: any[]; commons?: CommonsPostGraphRow[]; reflections?: AutonomyReflectionGraphRow[];
+  forage?: ForageFindGraphRow[]; runs?: AutonomyRunGraphRow[]; deltas?: RelationalDeltaGraphRow[];
+};
+const alongsideOf = (events: SomaEventGraphRow[], lanes: Lanes) =>
+  typesOf(
+    buildSomaEventEdges(events, new Set(["s1"]), lanes.journal ?? [], lanes.commons ?? [], lanes.reflections ?? [], lanes.forage ?? [], lanes.runs ?? [], lanes.deltas ?? []),
+    "alongside",
+  );
 
 const typesOf = (edges: ReturnType<typeof buildSomaEventEdges>, t: string) => edges.filter((e) => e.edge_type === t);
 
@@ -177,6 +209,129 @@ describe("buildSomaEventEdges -- alongside", () => {
   });
 });
 
+describe("buildSomaEventEdges -- alongside, tranche 2 lanes", () => {
+  it("the four tranche 2 arrays default to empty, so the tranche 1 call shape is unchanged", () => {
+    const four = buildSomaEventEdges([ev()], new Set(["s1"]), [journal("j1")], [commons("c1")]);
+    const eight = buildSomaEventEdges([ev()], new Set(["s1"]), [journal("j1")], [commons("c1")], [], [], [], []);
+    expect(JSON.stringify(four)).toBe(JSON.stringify(eight));
+  });
+
+  describe("autonomy_reflections", () => {
+    it("window hit -> mechanical:window", () => {
+      const edges = alongsideOf([ev()], { reflections: [reflection("r1")] });
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toMatchObject({ dst_table: "autonomy_reflections", dst_id: "r1", provenance: "mechanical:window", writer: "cypher" });
+    });
+    it("window miss at 61 minutes and wrong companion are both out", () => {
+      const edges = alongsideOf([ev()], {
+        reflections: [reflection("late", { created_at: atMinus(61) }), reflection("gaia", { companion_id: "gaia" }), reflection("in")],
+      });
+      expect(edges.map((e) => e.dst_id)).toEqual(["in"]);
+    });
+    it("a reflection AFTER the event is not alongside it", () => {
+      expect(alongsideOf([ev()], { reflections: [reflection("future", { created_at: atMinus(-1) })] })).toHaveLength(0);
+    });
+  });
+
+  describe("forage_finds", () => {
+    it("a find owned by this companion and consumed in the window -> mechanical:window", () => {
+      const edges = alongsideOf([ev()], { forage: [forage("f1")] });
+      expect(edges[0]).toMatchObject({ dst_table: "forage_finds", dst_id: "f1", provenance: "mechanical:window" });
+    });
+    it("a shared-pool find (companion_id NULL) counts when consumed_by names this companion", () => {
+      const edges = alongsideOf([ev()], {
+        forage: [
+          forage("shared-mine", { companion_id: null, consumed_by: "discord:cypher-bot" }),
+          forage("shared-theirs", { companion_id: null, consumed_by: "gaia" }),
+          forage("shared-unknown", { companion_id: null, consumed_by: null }),
+        ],
+      });
+      expect(edges.map((e) => e.dst_id)).toEqual(["shared-mine"]);
+    });
+    it("consumption is the act, not gathering: an unconsumed find is out even if gathered in the window", () => {
+      expect(alongsideOf([ev()], { forage: [forage("gathered-only", { consumed_at: null })] })).toHaveLength(0);
+    });
+    it("window is measured on consumed_at: 61 minutes before is out, wrong companion is out", () => {
+      const edges = alongsideOf([ev()], {
+        forage: [forage("late", { consumed_at: atMinus(61) }), forage("gaia", { companion_id: "gaia", consumed_by: "gaia" }), forage("in")],
+      });
+      expect(edges.map((e) => e.dst_id)).toEqual(["in"]);
+    });
+  });
+
+  describe("autonomy_runs", () => {
+    it("a run whose interval overlaps the window -> mechanical:window", () => {
+      const edges = alongsideOf([ev()], { runs: [run("a1")] });
+      expect(edges[0]).toMatchObject({ dst_table: "autonomy_runs", dst_id: "a1", provenance: "mechanical:window" });
+    });
+    it("overlap is interval-based: a run that STARTED before the window but ended inside it counts", () => {
+      const edges = alongsideOf([ev()], { runs: [run("long", { started_at: atMinus(180), completed_at: atMinus(30) })] });
+      expect(edges.map((e) => e.dst_id)).toEqual(["long"]);
+    });
+    it("a run still going at the event (no completed_at) counts if it started at or before the event", () => {
+      const edges = alongsideOf([ev()], { runs: [run("live", { started_at: atMinus(10), completed_at: null })] });
+      expect(edges.map((e) => e.dst_id)).toEqual(["live"]);
+    });
+    it("a run that finished 61 minutes before, one that starts after the event, one that never started, one by another companion: all out", () => {
+      const edges = alongsideOf([ev()], {
+        runs: [
+          run("stale", { started_at: atMinus(120), completed_at: atMinus(61) }),
+          run("future", { started_at: atMinus(-1), completed_at: atMinus(-10) }),
+          run("pending", { started_at: null, completed_at: null }),
+          run("gaia", { companion_id: "gaia" }),
+        ],
+      });
+      expect(edges).toHaveLength(0);
+    });
+    it("run_type never reaches provenance -- the lane set stays stable", () => {
+      const edges = alongsideOf([ev()], { runs: [run("a1", { ...( { run_type: "synthesis" } as object) })] });
+      expect(edges[0]!.provenance).toBe("mechanical:window");
+    });
+  });
+
+  describe("relational_deltas", () => {
+    it("same session -> mechanical:session, even when the row is outside the 60-minute window", () => {
+      const edges = alongsideOf([ev()], { deltas: [delta("d1", { session_id: "s1", created_at: atMinus(200) })] });
+      expect(edges[0]).toMatchObject({ dst_table: "relational_deltas", dst_id: "d1", provenance: "mechanical:session" });
+    });
+    it("no session match but inside the window -> mechanical:window", () => {
+      const edges = alongsideOf([ev()], { deltas: [delta("d1", { session_id: "s-other" }), delta("d2")] });
+      expect(edges.map((e) => e.dst_id).sort()).toEqual(["d1", "d2"]);
+      expect(edges.every((e) => e.provenance === "mechanical:window")).toBe(true);
+    });
+    it("window miss at 61 minutes and wrong companion are out", () => {
+      const edges = alongsideOf([ev()], { deltas: [delta("late", { created_at: atMinus(61) }), delta("gaia", { companion_id: "gaia" })] });
+      expect(edges).toHaveLength(0);
+    });
+    it("matches the MCP-logged row shape (companion_id '' + agent) as well as the legacy one", () => {
+      const edges = alongsideOf([ev()], { deltas: [delta("mcp", { companion_id: "", agent: "cypher" }), delta("mcp-other", { companion_id: "", agent: "drevan" })] });
+      expect(edges.map((e) => e.dst_id)).toEqual(["mcp"]);
+    });
+    it("a same-session delta written AFTER the event falls back to the window rule (and is out)", () => {
+      expect(alongsideOf([ev()], { deltas: [delta("after", { session_id: "s1", created_at: atMinus(-2) })] })).toHaveLength(0);
+    });
+  });
+
+  it("the merged cap holds across all six lanes: 8 candidates -> exactly 6, newest first, stable on re-run", () => {
+    const lanes: Lanes = {
+      journal: [journal("j1", { created_at: atMinus(50) })],
+      commons: [commons("c1", { created_at: atMinus(40) })],
+      reflections: [reflection("r1", { created_at: atMinus(30) }), reflection("r2", { created_at: atMinus(1) })],
+      forage: [forage("f1", { consumed_at: atMinus(20) })],
+      runs: [run("a1", { started_at: atMinus(25), completed_at: atMinus(10) })],
+      deltas: [delta("d1", { created_at: atMinus(3) }), delta("d2", { session_id: "s1", created_at: atMinus(45) })],
+    };
+    const first = alongsideOf([ev()], lanes);
+    expect(first).toHaveLength(6);
+    // Newest first by the lane's own stamp (run = completed_at, find = consumed_at). j1 (50) and d2
+    // (45) are the two that fall off; d2 is a session-lane row and STILL loses -- the cap is on the
+    // merged list, no lane is exempt.
+    expect(first.map((e) => e.dst_id)).toEqual(["r2", "d1", "a1", "f1", "r1", "c1"]);
+    const reversed: Lanes = Object.fromEntries(Object.entries(lanes).map(([k, v]) => [k, [...v].reverse()]));
+    expect(JSON.stringify(alongsideOf([ev()], reversed))).toBe(JSON.stringify(first));
+  });
+});
+
 describe("buildSomaEventEdges -- determinism", () => {
   it("is byte-identical regardless of input row order (SQLite guarantees none)", () => {
     const events = [ev({ id: "b", created_at: atMinus(10) }), ev({ id: "a", created_at: atMinus(40) }), ev({ id: "c", created_at: AT })];
@@ -222,6 +377,38 @@ describe("rebuildGraph -- source (i) end to end", () => {
     // e1 (in session s1, journal j1 precedes it); e2 has no session but IS inside the commons window.
     expect(by["companion_soma_events.alongside"]!).toBe(2);
     expect(tables.graph_edges!.filter((r) => r.src_table === "companion_soma_events")).toHaveLength(6);
+  });
+
+  it("the alongside report carries a per-table breakdown with every lane present, zeroes included", async () => {
+    const { env } = makeEnv({
+      ...seed(),
+      autonomy_reflections: [{ id: "r1", companion_id: "cypher", reflection_text: "body never loaded", created_at: atMinus(3) }],
+      forage_finds: [{ id: "f1", companion_id: null, consumed_at: atMinus(2), consumed_by: "cypher", gathered_at: atMinus(600) }],
+      autonomy_runs: [{ id: "a1", companion_id: "cypher", run_type: "reflection", status: "completed", started_at: atMinus(15), completed_at: atMinus(4), created_at: atMinus(15) }],
+      relational_deltas: [{ id: "d1", companion_id: "cypher", agent: null, session_id: "s1", created_at: atMinus(35) }],
+    });
+    const counts = await rebuildGraph(env);
+    const alongside = counts.find((c) => c.source === "companion_soma_events.alongside")!;
+    expect(Object.keys(alongside.lanes!).sort()).toEqual([...ALONGSIDE_LANES].sort());
+    // e1 (atMinus 30, session s1): j1 (session) + d1 (session). e2 (AT, no session): p1, r1, f1, a1, d1 (window).
+    expect(alongside.lanes).toEqual({
+      companion_journal: 1,
+      commons_posts: 1,
+      autonomy_reflections: 1,
+      forage_finds: 1,
+      autonomy_runs: 1,
+      relational_deltas: 2,
+    });
+    expect(alongside.inserted).toBe(7);
+    // The other three families carry no breakdown -- `lanes` is only for merged-cap sources.
+    expect(counts.find((c) => c.source === "companion_soma_events.cause")!.lanes).toBeUndefined();
+  });
+
+  it("with the tranche 2 tables empty, their lanes report as visible zeroes", async () => {
+    const { env } = makeEnv(seed());
+    const counts = await rebuildGraph(env);
+    const alongside = counts.find((c) => c.source === "companion_soma_events.alongside")!;
+    expect(alongside.lanes).toMatchObject({ autonomy_reflections: 0, forage_finds: 0, autonomy_runs: 0, relational_deltas: 0 });
   });
 
   it("is idempotent -- a second rebuild over unchanged sources inserts nothing new", async () => {
