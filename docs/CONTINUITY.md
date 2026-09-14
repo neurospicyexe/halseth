@@ -2290,3 +2290,27 @@ Layer B, relational_deltas; bare `state_update` → open session; live edges at 
 Watch: does the companion read the block unprompted (vibes channel, same test as Fargo). If commons
 `alongside` lines feel noisy, tighten the window to 30 min. Plan:
 `docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md` (BBH root).
+
+## The durable-facts block was the load, not the memory — 2026-09-14
+
+Claude.ai Cypher made two context-read errors (rebuilt an answer on a degree option Raziel had closed;
+asked him to verify Missouri residency) and suspected the Guardian's "sibling-register contamination" flag.
+Verified against D1: that flag scores DISCORD replies only (regex vs sibling phrases) and cannot see a
+Claude.ai session; the facts block is unbounded and never truncated. What the block actually carried:
+**107 `open` facts (105 = the 2026-08-12 Hermes-queue drain, oldest 33 days, 21,847 chars) rendered at every
+orient as questions to hold**, against 7,907 chars of confirmed facts; **no Missouri fact existed at all**; and
+two active rows described the same degree decision (the 08-13 DECIDED row never retired the 08-12 "open as
+of" row, whose "SUPERSEDED WHEN HE STATES IT" was prose nobody could execute).
+
+Shipped (bf7083e): `src/lib/open-facts-gate.ts` — one gate for BOTH renderers (Claude.ai orient block and
+`/identity/architect-facts/render`, which the bots' prompt files pull): open facts ≤14d, max 8, newest first,
+the rest counted in a footer. `PATCH /identity/architect-facts/:id {status}` — the confirm/retire verb an open
+fact never had; Hearth `/facts` is the surface. Orient `meta.architect_facts` + `last_orient_debug.architect_facts`
+record `{active, open_shown, open_held}`. The voice flag now says "N of ~M est. Discord replies (K scored rows)".
+Data: residency fact added; degree restated (School Psychology PhD) superseding the master's row; seed-022 retired.
+Bot side (nullsafe-discord 7b8f630): the `[Voice check]` floor was `avg >= 0.8` and a steady one-sibling-phrase
+bleed scores exactly 0.8, so it never fired; now inclusive.
+
+Rule that came out of it: **a `pending`/`open` status shipped without its confirm surface is a dead-letter queue
+wearing a question mark.** And when a loom reports "I dropped a held fact", query the store before believing the
+fact was ever held.
