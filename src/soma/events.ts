@@ -226,13 +226,21 @@ export function readFloatsSql(): string {
  * Bind: [companion_id]. The SECOND half of the authored pre-read (2026-09-14): the newest event id
  * per float for this companion, so the live `follows` edge can name its predecessor without a
  * per-float lookup. One windowed query, at most three rows. Same ORDER BY as loadSomaProvenance
- * (created_at DESC, id DESC) -- every event this table holds carries an ISO instant, so string
- * order and rebuild.ts's parsed-time order agree.
+ * (see SOMA_EVENT_ORDER_DESC): `created_at` in this table holds TWO shapes. The 13,952 rows the
+ * 0130 backfill copied verbatim from their source rows are SQLite datetime('now') form
+ * ("YYYY-MM-DD HH:MM:SS"); live rows are JS ISO ("YYYY-MM-DDTHH:MM:SS.sssZ"). 'T' > ' ', so a raw
+ * string sort puts every ISO row above every space-form row regardless of when it happened.
+ * replace(created_at, ' ', 'T') makes the two shapes share a prefix, so byte order agrees with
+ * rebuild.ts's parsed-time chain (byTimeThenId + tsMs): a space-form stamp is a strict prefix of
+ * an ISO stamp at the same second and a prefix sorts OLDER, which is what the ms-carrying ISO row
+ * being newer requires. The rows themselves are never rewritten -- 0130 is append-only.
  */
+export const SOMA_EVENT_ORDER_DESC = "replace(created_at, ' ', 'T') DESC, id DESC";
+
 export function readLatestEventIdsSql(): string {
   return (
     `SELECT float_key, id FROM (` +
-    `SELECT float_key, id, ROW_NUMBER() OVER (PARTITION BY float_key ORDER BY created_at DESC, id DESC) AS rn ` +
+    `SELECT float_key, id, ROW_NUMBER() OVER (PARTITION BY float_key ORDER BY ${SOMA_EVENT_ORDER_DESC}) AS rn ` +
     `FROM companion_soma_events WHERE companion_id = ?` +
     `) WHERE rn = 1`
   );
@@ -261,7 +269,9 @@ export interface SomaProvenanceEntry {
   cause_id: string | null;
   /** handover: spine head (<=80 chars); ferment: stimulus or 'tick'; shift: reason head;
    *  sessions (2026-09-14, a bare state_update attributed to its open session):
-   *  `<session_type> session <first 8 of id>, opened <YYYY-MM-DD>`. Falls back to `detail` head. */
+   *  `<session_type> session` -- kept short (review 09-14): the renderer already prints the day and
+   *  quotes the companion's words after it, and a 110-char line cannot afford an id + date that
+   *  repeat what `session_id` and `created_at` carry structurally. Falls back to `detail` head. */
   cause_label: string | null;
   session_id: string | null;
   /** companion_journal rows sharing this event's session_id (0 when the event has no session). */
@@ -309,6 +319,10 @@ function placeholders(n: number): string {
  * four batched label joins keyed by cause_table (handover, ferment, shift, and since 2026-09-14
  * the session a bare state_update was made in), one grouped journal count. No per-row lookups.
  *
+ * Ordering: SOMA_EVENT_ORDER_DESC, not a raw `created_at DESC` -- the table holds both the
+ * space-form backfilled stamps and ISO live stamps; see readLatestEventIdsSql for why replace()
+ * is what makes SQL order agree with rebuild.ts's parsed-time order.
+ *
  * Best-effort by contract: any throw is warned and returns [], because neither orient nor Hearth
  * may fail on a provenance line.
  */
@@ -319,19 +333,20 @@ export async function loadSomaProvenance(env: Env, companionId: string): Promise
         `SELECT id, float_key, before_value, after_value, delta, kind, writer,
                 cause_table, cause_id, session_id, detail, created_at
            FROM (
-             SELECT *, ROW_NUMBER() OVER (PARTITION BY float_key ORDER BY created_at DESC, id DESC) AS rn
+             SELECT *, ROW_NUMBER() OVER (PARTITION BY float_key ORDER BY ${SOMA_EVENT_ORDER_DESC}) AS rn
                FROM companion_soma_events
               WHERE companion_id = ?
            )
           WHERE rn <= 3
-          ORDER BY created_at DESC, id DESC`,
+          ORDER BY ${SOMA_EVENT_ORDER_DESC}`,
       )
         .bind(companionId)
         .all<EventRow>()
     ).results ?? [];
     if (!rows.length) return [];
 
-    // Label joins, one query per distinct cause_table present (at most three).
+    // Label joins, one query per distinct cause_table present (at most four: handover_packets,
+    // companion_ferment_events, companion_soma_shifts, sessions).
     const byTable = new Map<string, Set<string>>();
     for (const r of rows) {
       if (!r.cause_table || !r.cause_id) continue;
@@ -354,15 +369,12 @@ export async function loadSomaProvenance(env: Env, companionId: string): Promise
         pick: (row) => head(row.reason as string | null, 80),
       },
       // 2026-09-14: a bare state_update names its open session as the cause (cause_table 'sessions').
-      // A session has no spine to quote, so the label says WHERE: type, a short id, the opened date.
+      // A session has no spine to quote, so the label says WHERE: the session type only. The id and
+      // the day ride on the row itself (`session_id`, `created_at`); repeating them here ate ~40 of the
+      // renderer's 110 chars before the companion's own words began.
       sessions: {
-        sql: (n) => `SELECT id, session_type, created_at FROM sessions WHERE id IN (${placeholders(n)})`,
-        pick: (row) => {
-          const id = String(row.id ?? "");
-          const type = String(row.session_type ?? "work");
-          const opened = String(row.created_at ?? "").slice(0, 10);
-          return `${type} session ${id.slice(0, 8)}${opened ? `, opened ${opened}` : ""}`;
-        },
+        sql: (n) => `SELECT id, session_type FROM sessions WHERE id IN (${placeholders(n)})`,
+        pick: (row) => `${String(row.session_type ?? "work")} session`,
       },
     };
     for (const [table, idSet] of byTable) {

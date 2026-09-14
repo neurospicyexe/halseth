@@ -1113,7 +1113,9 @@ export async function updateCompanionState(
   // version bumps on every write (migration 0069): a monotonic write counter so
   // concurrent-writer collisions are observable, and so read-modify-write paths
   // (e.g. drevan-state anticipation aging) can CAS against it.
-  assignments.push("updated_at = datetime('now')", "version = version + 1");
+  // COALESCE matches sessionClose's bump: a legacy row with a NULL version would otherwise stay
+  // NULL forever on this path (NULL + 1 = NULL) and never become CAS-able.
+  assignments.push("updated_at = datetime('now')", "version = COALESCE(version, 0) + 1");
   bindings.push(companionId);
 
   const updateStmt = env.DB.prepare(

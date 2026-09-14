@@ -413,7 +413,8 @@ export function buildMentionsEdges(
 }
 
 // ── i. companion_soma_events -> 'moved_by' / 'follows' / 'logged_in' / 'alongside' ────────────────
-// Graph memory Phase 2, tranche 1 (docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md).
+// Graph memory Phase 2, tranche 1 (two alongside lanes) + tranche 2 (six lanes, 2026-09-14)
+// (docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md).
 // mig 0130's `companion_soma_events` is the first append-only record of WHY a felt float moved --
 // before it, "heat 0.68, apparently" was literally true, because no writer logged a before/after or
 // its own identity. This source turns each of those events into its structural surroundings:
@@ -460,6 +461,16 @@ export function buildMentionsEdges(
 // after ' ', so every ISO row lands after every space-formatted row regardless of when it happened.
 // One helper (`tsMs`, the same normalisation webmind/drives.ts::hoursSinceIso uses) does both jobs:
 // the determinism sort key and every window/<= comparison.
+//
+// PRE-PARSED INDEX (2026-09-14 review fix). ~14k events x six lanes, relational_deltas among the
+// highest-volume tables: the first cut re-ran Date.parse on every lane row for every event. Each
+// lane is now parsed ONCE into `{ row, ms }` (runs: `{ row, startMs, endMs }`), sorted ascending by
+// the same byTimeThenId order, and the window lanes are entered by a lower-bound binary search on
+// `ms >= windowLo` then walked forward until `ms > at`. The two same-session lanes (journal, and
+// the delta rows that share the event's session) have no lower bound, so they are indexed by
+// session_id in a Map built once and filtered `<= at`. Candidate set, newest-first sort, tie on id,
+// and the cap of 6 are unchanged -- the index changes cost, never output (tests pin this with a
+// shuffled-input byte-identity check).
 const ALONGSIDE_WINDOW_MS = 60 * 60 * 1000;
 const ALONGSIDE_CAP = 6;
 
@@ -542,6 +553,56 @@ function byTimeThenId<T extends { id: string; created_at: string }>(a: T, b: T):
   return d !== 0 ? d : a.id.localeCompare(b.id);
 }
 
+// ── alongside index helpers (pre-parsed, see the PRE-PARSED INDEX note in section (i)) ────────────
+
+/** One lane row with its instant parsed exactly once. */
+interface Stamped<T> { row: T; ms: number }
+
+interface AlongsideCandidate { table: string; id: string; created_at: string; ms: number; provenance: string }
+
+/** Parse each row's created_at once; input must already be in byTimeThenId order (ascending ms). */
+function stampIndex<T extends { created_at: string }>(sorted: readonly T[]): Stamped<T>[] {
+  return sorted.map((row) => ({ row, ms: tsMs(row.created_at) }));
+}
+
+/** Group pre-sorted rows by session_id (NULL-session rows are dropped: a session lane can never
+ *  match them). Each bucket keeps the ascending input order, so per-session walks push candidates
+ *  in the same order the unindexed scan did. */
+function indexBySession<T extends { session_id: string | null; created_at: string }>(sorted: readonly T[]): Map<string, Stamped<T>[]> {
+  const out = new Map<string, Stamped<T>[]>();
+  for (const row of sorted) {
+    if (!row.session_id) continue;
+    const bucket = out.get(row.session_id) ?? [];
+    bucket.push({ row, ms: tsMs(row.created_at) });
+    out.set(row.session_id, bucket);
+  }
+  return out;
+}
+
+/** First index whose ms >= lo in an ascending-ms array (array.length when none). */
+function lowerBound(arr: readonly { ms: number }[], lo: number): number {
+  let a = 0;
+  let b = arr.length;
+  while (a < b) {
+    const mid = (a + b) >>> 1;
+    if (arr[mid]!.ms < lo) a = mid + 1;
+    else b = mid;
+  }
+  return a;
+}
+
+/** Same as lowerBound over an interval array sorted by endMs. */
+function lowerBoundEnd(arr: readonly { endMs: number }[], lo: number): number {
+  let a = 0;
+  let b = arr.length;
+  while (a < b) {
+    const mid = (a + b) >>> 1;
+    if (arr[mid]!.endMs < lo) a = mid + 1;
+    else b = mid;
+  }
+  return a;
+}
+
 export function buildSomaEventEdges(
   events: readonly SomaEventGraphRow[],
   sessionIds: Set<string>,
@@ -555,23 +616,32 @@ export function buildSomaEventEdges(
   // Sorted inputs before the nested loops -- SQLite guarantees no row order absent an ORDER BY, and
   // this file's contract is that two rebuilds over unchanged data agree on edge ORDER, not just count.
   const sortedEvents = events.slice().sort(byTimeThenId);
-  const sortedJournal = journalRows.slice().sort(byTimeThenId);
-  const sortedCommons = commonsRows.slice().sort(byTimeThenId);
-  const sortedReflections = reflectionRows.slice().sort(byTimeThenId);
+  // Every lane is parsed ONCE here (see the PRE-PARSED INDEX note above); the event loop below
+  // compares numbers only. Each index is ascending by byTimeThenId, the same order the original
+  // per-event scans walked, so candidate push order (and therefore stable-sort tie order) is unchanged.
+  const indexJournal = indexBySession(journalRows.slice().sort(byTimeThenId));
+  const sortedCommons = stampIndex(commonsRows.slice().sort(byTimeThenId));
+  const sortedReflections = stampIndex(reflectionRows.slice().sort(byTimeThenId));
   const sortedDeltas = deltaRows.slice().sort(byTimeThenId);
+  const indexDeltasBySession = indexBySession(sortedDeltas);
+  const sortedDeltasStamped = stampIndex(sortedDeltas);
   // A find's "when" for this lane is its CONSUMPTION instant, so normalise it onto created_at up front:
   // one sort key, one window check, and an unconsumed find drops out here rather than in the loop.
-  const sortedForage = forageRows
-    .filter((f) => f.consumed_at)
-    .map((f) => ({ id: f.id, companion_id: f.companion_id, consumed_by: f.consumed_by, created_at: f.consumed_at as string }))
-    .sort(byTimeThenId);
+  const sortedForage = stampIndex(
+    forageRows
+      .filter((f) => f.consumed_at)
+      .map((f) => ({ id: f.id, companion_id: f.companion_id, consumed_by: f.consumed_by, created_at: f.consumed_at as string }))
+      .sort(byTimeThenId),
+  );
   // A run is an INTERVAL. Its sort/emit stamp is the interval end (completed_at, else started_at):
   // a still-running or crashed run has only a start. A row with no started_at never ran (status
-  // 'pending') and is not something the companion was doing.
+  // 'pending') and is not something the companion was doing. Sorted by END, so the lower-bound
+  // search is on endMs >= windowLo; the startMs <= at half has no sorted bound and is filtered.
   const sortedRuns = runRows
     .filter((r) => r.started_at)
-    .map((r) => ({ id: r.id, companion_id: r.companion_id, start: tsMs(r.started_at), created_at: (r.completed_at ?? r.started_at) as string }))
-    .sort(byTimeThenId);
+    .map((r) => ({ id: r.id, companion_id: r.companion_id, created_at: (r.completed_at ?? r.started_at) as string, startMs: tsMs(r.started_at) }))
+    .sort(byTimeThenId)
+    .map((row) => ({ row, startMs: row.startMs, endMs: tsMs(row.created_at) }));
 
   const edges: GraphEdgeRow[] = [];
   const prevByFloat = new Map<string, SomaEventGraphRow>();
@@ -622,51 +692,65 @@ export function buildSomaEventEdges(
       });
     }
 
-    const alongside: Array<{ table: string; id: string; created_at: string; provenance: string }> = [];
+    const alongside: AlongsideCandidate[] = [];
     if (e.session_id) {
-      for (const j of sortedJournal) {
-        if (j.session_id !== e.session_id) continue;
-        if (j.agent !== e.companion_id) continue;
-        if (tsMs(j.created_at) > at) continue;
-        alongside.push({ table: "companion_journal", id: j.id, created_at: j.created_at, provenance: "mechanical:session" });
+      for (const j of indexJournal.get(e.session_id) ?? []) {
+        if (j.row.agent !== e.companion_id) continue;
+        if (j.ms > at) continue;
+        alongside.push({ table: "companion_journal", id: j.row.id, created_at: j.row.created_at, ms: j.ms, provenance: "mechanical:session" });
       }
     }
     const windowLo = at - ALONGSIDE_WINDOW_MS;
-    const inWindow = (ms: number) => ms <= at && ms >= windowLo;
-    for (const c of sortedCommons) {
-      if (c.author !== e.companion_id && c.author !== "raziel") continue;
-      if (!inWindow(tsMs(c.created_at))) continue;
-      alongside.push({ table: "commons_posts", id: c.id, created_at: c.created_at, provenance: "mechanical:window" });
+    // Window lanes: enter at the first row with ms >= windowLo, walk forward, stop past `at`.
+    for (let i = lowerBound(sortedCommons, windowLo); i < sortedCommons.length && sortedCommons[i]!.ms <= at; i++) {
+      const c = sortedCommons[i]!;
+      if (c.row.author !== e.companion_id && c.row.author !== "raziel") continue;
+      alongside.push({ table: "commons_posts", id: c.row.id, created_at: c.row.created_at, ms: c.ms, provenance: "mechanical:window" });
     }
-    for (const r of sortedReflections) {
-      if (r.companion_id !== e.companion_id) continue;
-      if (!inWindow(tsMs(r.created_at))) continue;
-      alongside.push({ table: "autonomy_reflections", id: r.id, created_at: r.created_at, provenance: "mechanical:window" });
+    for (let i = lowerBound(sortedReflections, windowLo); i < sortedReflections.length && sortedReflections[i]!.ms <= at; i++) {
+      const r = sortedReflections[i]!;
+      if (r.row.companion_id !== e.companion_id) continue;
+      alongside.push({ table: "autonomy_reflections", id: r.row.id, created_at: r.row.created_at, ms: r.ms, provenance: "mechanical:window" });
     }
-    for (const f of sortedForage) {
-      const owned = f.companion_id === e.companion_id
-        || (f.companion_id === null && !!f.consumed_by && f.consumed_by.includes(e.companion_id));
+    for (let i = lowerBound(sortedForage, windowLo); i < sortedForage.length && sortedForage[i]!.ms <= at; i++) {
+      const f = sortedForage[i]!;
+      const owned = f.row.companion_id === e.companion_id
+        || (f.row.companion_id === null && !!f.row.consumed_by && f.row.consumed_by.includes(e.companion_id));
       if (!owned) continue;
-      if (!inWindow(tsMs(f.created_at))) continue;
-      alongside.push({ table: "forage_finds", id: f.id, created_at: f.created_at, provenance: "mechanical:window" });
+      alongside.push({ table: "forage_finds", id: f.row.id, created_at: f.row.created_at, ms: f.ms, provenance: "mechanical:window" });
     }
-    for (const r of sortedRuns) {
-      if (r.companion_id !== e.companion_id) continue;
+    // Runs are sorted by END; a run ending after `at` can still have started before it, so the
+    // forward walk cannot stop early -- only the lower bound (endMs >= windowLo) prunes.
+    for (let i = lowerBoundEnd(sortedRuns, windowLo); i < sortedRuns.length; i++) {
+      const r = sortedRuns[i]!;
+      if (r.row.companion_id !== e.companion_id) continue;
       // Interval overlap, both closed: run.start <= window.hi AND run.end >= window.lo.
-      if (r.start > at || tsMs(r.created_at) < windowLo) continue;
-      alongside.push({ table: "autonomy_runs", id: r.id, created_at: r.created_at, provenance: "mechanical:window" });
+      if (r.startMs > at) continue;
+      alongside.push({ table: "autonomy_runs", id: r.row.id, created_at: r.row.created_at, ms: r.endMs, provenance: "mechanical:window" });
     }
-    for (const d of sortedDeltas) {
-      if (deltaOwner(d) !== e.companion_id) continue;
-      const dAt = tsMs(d.created_at);
-      if (e.session_id && d.session_id === e.session_id && dAt <= at) {
-        alongside.push({ table: "relational_deltas", id: d.id, created_at: d.created_at, provenance: "mechanical:session" });
-      } else if (inWindow(dAt)) {
-        alongside.push({ table: "relational_deltas", id: d.id, created_at: d.created_at, provenance: "mechanical:window" });
+    // Deltas: same-session rows (<= at) take the session lane; every OTHER row inside the window
+    // takes the window lane. A same-session row is never also a window candidate (the original
+    // branch order gave session precedence). The two sets are disjoint, so merging them back into
+    // ascending (ms, id) order reproduces the single ascending walk the first cut made.
+    const deltaCands: AlongsideCandidate[] = [];
+    if (e.session_id) {
+      for (const d of indexDeltasBySession.get(e.session_id) ?? []) {
+        if (deltaOwner(d.row) !== e.companion_id) continue;
+        if (d.ms > at) continue;
+        deltaCands.push({ table: "relational_deltas", id: d.row.id, created_at: d.row.created_at, ms: d.ms, provenance: "mechanical:session" });
       }
     }
+    for (let i = lowerBound(sortedDeltasStamped, windowLo); i < sortedDeltasStamped.length && sortedDeltasStamped[i]!.ms <= at; i++) {
+      const d = sortedDeltasStamped[i]!;
+      if (e.session_id && d.row.session_id === e.session_id) continue;
+      if (deltaOwner(d.row) !== e.companion_id) continue;
+      deltaCands.push({ table: "relational_deltas", id: d.row.id, created_at: d.row.created_at, ms: d.ms, provenance: "mechanical:window" });
+    }
+    deltaCands.sort((a, b) => (a.ms !== b.ms ? a.ms - b.ms : a.id.localeCompare(b.id)));
+    for (const d of deltaCands) alongside.push(d);
+
     alongside.sort((a, b) => {
-      const d = tsMs(b.created_at) - tsMs(a.created_at);
+      const d = b.ms - a.ms;
       return d !== 0 ? d : a.id.localeCompare(b.id);
     });
     for (const a of alongside.slice(0, ALONGSIDE_CAP)) {

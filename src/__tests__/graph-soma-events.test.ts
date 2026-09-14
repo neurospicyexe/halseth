@@ -343,6 +343,142 @@ describe("buildSomaEventEdges -- determinism", () => {
     expect(a.length).toBeGreaterThan(0);
   });
 
+  it("pre-parsed index changes cost only: a deterministic shuffle of every lane and the events is byte-identical across all six lanes", () => {
+    // Enough rows per lane that the binary-search entry point, the forward-walk cutoff and the
+    // session buckets are all exercised: rows well before the window, at both inclusive edges,
+    // inside it, after the event, other-companion rows, other-session rows, and an interval run
+    // that ENDS after the event but started inside the window.
+    const events = [
+      ev({ id: "e-mid", created_at: atMinus(30) }),
+      ev({ id: "e-late", created_at: AT }),
+      ev({ id: "e-early", created_at: atMinus(200), session_id: "s2" }),
+      ev({ id: "e-nosess", created_at: atMinus(10), session_id: null, float_key: "soma_float_2" }),
+    ];
+    const lanes: Lanes = {
+      journal: [
+        journal("j-in", { created_at: atMinus(15) }), journal("j-after", { created_at: atMinus(-5) }),
+        journal("j-s2", { created_at: atMinus(210), session_id: "s2" }), journal("j-other", { created_at: atMinus(5), agent: "drevan" }),
+        journal("j-old", { created_at: atMinus(400) }), journal("j-sqlite", { created_at: "2026-09-12 11:50:00" }),
+      ],
+      commons: [
+        commons("c-edge-lo", { created_at: atMinus(60) }), commons("c-out", { created_at: atMinus(61) }),
+        commons("c-at", { created_at: AT }), commons("c-after", { created_at: atMinus(-1) }),
+        commons("c-cy", { created_at: atMinus(25), author: "cypher" }), commons("c-gaia", { created_at: atMinus(20), author: "gaia" }),
+        commons("c-ancient", { created_at: atMinus(5000) }),
+      ],
+      reflections: [
+        reflection("r-in", { created_at: atMinus(45) }), reflection("r-out", { created_at: atMinus(90) }),
+        reflection("r-other", { created_at: atMinus(2), companion_id: "drevan" }), reflection("r-edge", { created_at: atMinus(60) }),
+      ],
+      forage: [
+        forage("f-in"), forage("f-pool", { companion_id: null, consumed_by: "cypher/abc" }),
+        forage("f-unconsumed", { consumed_at: null }), forage("f-out", { consumed_at: atMinus(120) }),
+        forage("f-notmine", { companion_id: null, consumed_by: "gaia" }),
+      ],
+      runs: [
+        run("run-in"), run("run-straddle", { started_at: atMinus(35), completed_at: atMinus(-20) }),
+        run("run-open", { completed_at: null }), run("run-old", { started_at: atMinus(300), completed_at: atMinus(200) }),
+        run("run-pending", { started_at: null, completed_at: null }), run("run-other", { companion_id: "gaia" }),
+      ],
+      deltas: [
+        delta("d-win"), delta("d-sess", { session_id: "s1", created_at: atMinus(150) }),
+        delta("d-sess-after", { session_id: "s1", created_at: atMinus(-30) }), delta("d-legacy", { companion_id: "", agent: "cypher", created_at: atMinus(50) }),
+        delta("d-other", { companion_id: "drevan" }), delta("d-s2", { session_id: "s2", created_at: atMinus(250) }),
+        delta("d-out", { created_at: atMinus(61) }), delta("d-edge", { created_at: atMinus(60) }),
+      ],
+    };
+    const baseline = buildSomaEventEdges(
+      events, new Set(["s1"]), lanes.journal!, lanes.commons!, lanes.reflections!, lanes.forage!, lanes.runs!, lanes.deltas!,
+    );
+    expect(typesOf(baseline, "alongside").length).toBeGreaterThan(6); // more than one event's cap, so the merge is real
+
+    // Reference: the pre-index alongside scan (O(events x rows), Date.parse per row per event), kept
+    // here verbatim so the indexed implementation is pinned to the OLD output, not only to itself.
+    const tsMs = (s: string | null | undefined) => {
+      if (!s) return 0;
+      const ms = Date.parse(s.includes("T") ? s : s.replace(" ", "T") + "Z");
+      return Number.isNaN(ms) ? 0 : ms;
+    };
+    const byTimeThenId = <T extends { id: string; created_at: string }>(a: T, b: T) => {
+      const d = tsMs(a.created_at) - tsMs(b.created_at);
+      return d !== 0 ? d : a.id.localeCompare(b.id);
+    };
+    const deltaOwner = (r: RelationalDeltaGraphRow) => (r.companion_id && r.companion_id !== "" ? r.companion_id : (r.agent || null));
+    const referenceAlongside = (e: SomaEventGraphRow) => {
+      const at = tsMs(e.created_at);
+      const windowLo = at - 60 * 60 * 1000;
+      const inWindow = (ms: number) => ms <= at && ms >= windowLo;
+      const out: Array<{ table: string; id: string; created_at: string; provenance: string }> = [];
+      if (e.session_id) {
+        for (const j of [...lanes.journal!].sort(byTimeThenId)) {
+          if (j.session_id !== e.session_id || j.agent !== e.companion_id || tsMs(j.created_at) > at) continue;
+          out.push({ table: "companion_journal", id: j.id, created_at: j.created_at, provenance: "mechanical:session" });
+        }
+      }
+      for (const c of [...lanes.commons!].sort(byTimeThenId)) {
+        if ((c.author !== e.companion_id && c.author !== "raziel") || !inWindow(tsMs(c.created_at))) continue;
+        out.push({ table: "commons_posts", id: c.id, created_at: c.created_at, provenance: "mechanical:window" });
+      }
+      for (const r of [...lanes.reflections!].sort(byTimeThenId)) {
+        if (r.companion_id !== e.companion_id || !inWindow(tsMs(r.created_at))) continue;
+        out.push({ table: "autonomy_reflections", id: r.id, created_at: r.created_at, provenance: "mechanical:window" });
+      }
+      const forageRows = lanes.forage!.filter((f) => f.consumed_at)
+        .map((f) => ({ id: f.id, companion_id: f.companion_id, consumed_by: f.consumed_by, created_at: f.consumed_at as string })).sort(byTimeThenId);
+      for (const f of forageRows) {
+        const owned = f.companion_id === e.companion_id || (f.companion_id === null && !!f.consumed_by && f.consumed_by.includes(e.companion_id));
+        if (!owned || !inWindow(tsMs(f.created_at))) continue;
+        out.push({ table: "forage_finds", id: f.id, created_at: f.created_at, provenance: "mechanical:window" });
+      }
+      const runRows = lanes.runs!.filter((r) => r.started_at)
+        .map((r) => ({ id: r.id, companion_id: r.companion_id, start: tsMs(r.started_at), created_at: (r.completed_at ?? r.started_at) as string })).sort(byTimeThenId);
+      for (const r of runRows) {
+        if (r.companion_id !== e.companion_id || r.start > at || tsMs(r.created_at) < windowLo) continue;
+        out.push({ table: "autonomy_runs", id: r.id, created_at: r.created_at, provenance: "mechanical:window" });
+      }
+      for (const d of [...lanes.deltas!].sort(byTimeThenId)) {
+        if (deltaOwner(d) !== e.companion_id) continue;
+        const dAt = tsMs(d.created_at);
+        if (e.session_id && d.session_id === e.session_id && dAt <= at) out.push({ table: "relational_deltas", id: d.id, created_at: d.created_at, provenance: "mechanical:session" });
+        else if (inWindow(dAt)) out.push({ table: "relational_deltas", id: d.id, created_at: d.created_at, provenance: "mechanical:window" });
+      }
+      out.sort((a, b) => { const d = tsMs(b.created_at) - tsMs(a.created_at); return d !== 0 ? d : a.id.localeCompare(b.id); });
+      return out.slice(0, 6).map((a) => ({
+        src_table: "companion_soma_events", src_id: e.id, dst_table: a.table, dst_id: a.id,
+        edge_type: "alongside", writer: e.writer, provenance: a.provenance, created_at: e.created_at,
+      }));
+    };
+    const reference = [...events].sort(byTimeThenId).flatMap(referenceAlongside);
+    expect(JSON.stringify(typesOf(baseline, "alongside"))).toBe(JSON.stringify(reference));
+    // The fixture really exercises the interesting shapes and they survive the cap somewhere: an
+    // interval run that straddles the late event (newest candidate, ends after it), the s2-session
+    // journal + delta rows far outside the early event's window (session lane has no lower bound),
+    // a run whose interval only touches the early event's window edge, and an excluded 60:01 row.
+    const refIds = new Set(reference.map((x) => x.dst_id));
+    for (const id of ["run-straddle", "j-s2", "d-s2", "run-old"]) expect(refIds.has(id), id).toBe(true);
+    expect(refIds.has("c-out")).toBe(false);
+
+    // Deterministic LCG shuffle so a failure reproduces; three different permutations.
+    const shuffle = <T,>(arr: readonly T[], seed: number): T[] => {
+      const out = [...arr];
+      let s = seed;
+      for (let i = out.length - 1; i > 0; i--) {
+        s = (s * 1103515245 + 12345) & 0x7fffffff;
+        const j = s % (i + 1);
+        [out[i], out[j]] = [out[j]!, out[i]!];
+      }
+      return out;
+    };
+    for (const seed of [7, 1313, 717]) {
+      const shuffled = buildSomaEventEdges(
+        shuffle(events, seed), new Set(["s1"]),
+        shuffle(lanes.journal!, seed + 1), shuffle(lanes.commons!, seed + 2), shuffle(lanes.reflections!, seed + 3),
+        shuffle(lanes.forage!, seed + 4), shuffle(lanes.runs!, seed + 5), shuffle(lanes.deltas!, seed + 6),
+      );
+      expect(JSON.stringify(shuffled)).toBe(JSON.stringify(baseline));
+    }
+  });
+
   it("ties on created_at break on id, so identical stamps still order identically", () => {
     const events = [ev({ id: "zz" }), ev({ id: "aa", float_key: "soma_float_2" })];
     const a = buildSomaEventEdges(events, new Set(["s1"]), [], []);

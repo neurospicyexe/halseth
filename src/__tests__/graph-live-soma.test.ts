@@ -102,8 +102,10 @@ describe("edgesForSomaEvent: byte-identical to rebuild.ts's buildSomaEventEdges 
     const m = latestEventIdsByFloat(rows);
     expect([...m.entries()]).toEqual([["soma_float_1", "a"], ["soma_float_3", "c"]]);
     expect(m.get("soma_float_2")).toBeUndefined();
-    // Same ordering as loadSomaProvenance's window, one row per float.
-    expect(readLatestEventIdsSql()).toMatch(/PARTITION BY float_key ORDER BY created_at DESC, id DESC/);
+    // Same ordering as loadSomaProvenance's window, one row per float. The replace() is load-bearing:
+    // the table holds space-form backfilled stamps AND ISO live stamps, and a raw string sort puts
+    // every 'T' row above every ' ' row regardless of time (see SOMA_EVENT_ORDER_DESC).
+    expect(readLatestEventIdsSql()).toMatch(/PARTITION BY float_key ORDER BY replace\(created_at, ' ', 'T'\) DESC, id DESC/);
     expect(readLatestEventIdsSql()).toMatch(/WHERE rn = 1/);
   });
 });
@@ -155,6 +157,10 @@ describe("assignSomaEventIds: ids and created_at are settled client-side, before
 // ── 3. same batch as the float UPDATE (source-reading + behavioural) ──────────────────────────
 
 describe("authored writers put event + edge statements into the SAME batch as the float UPDATE", () => {
+  // Source-reading by necessity: sessionClose has no behavioural double here (its close body fans
+  // out across a dozen tables and would need a full D1 fake), so the batch shape is pinned by text.
+  // updateCompanionState is covered by the behavioural double below instead; its regex twin was
+  // removed as redundant (2026-09-14 review).
   it("sessionClose: stmts holds the UPDATE companion_state and the event/edge statements, then ONE env.DB.batch(stmts)", async () => {
     const backend = await src("librarian/backends/halseth.ts");
     const fn = backend.slice(backend.indexOf("export async function sessionClose("));
@@ -166,17 +172,6 @@ describe("authored writers put event + edge statements into the SAME batch as th
     expect(close).not.toMatch(/writeEdgesBestEffort/);
     // The helper it calls is the one that fuses events + edges into one list.
     expect(backend).toMatch(/function somaEventAndEdgeStatements\([\s\S]*?return \[\.\.\.somaEventStatements\(env\.DB, events\), \.\.\.insertEdgeStatements\(env\.DB, edges\)\];/);
-  });
-
-  it("updateCompanionState: env.DB.batch([updateStmt, ...somaEventAndEdgeStatements(...)]) -- the UPDATE is the first element", async () => {
-    const backend = await src("librarian/backends/halseth.ts");
-    const fn = backend.slice(backend.indexOf("export async function updateCompanionState("));
-    const body = fn.slice(0, fn.indexOf("return { ok: true };"));
-    expect(body).toMatch(/await env\.DB\.batch\(\[updateStmt, \.\.\.somaEventAndEdgeStatements\(env, events, prevEventIds\)\]\)/);
-    expect(body).not.toMatch(/env\.DB\.batch\(somaEventStatements/);
-    // The session cause is written when a session is known.
-    expect(body).toMatch(/cause_table: sessionId \? "sessions" : null/);
-    expect(body).toMatch(/cause_id: sessionId/);
   });
 
   it("updateCompanionState (behavioural): one batch whose first statement is the UPDATE, followed by the event INSERT, moved_by, follows and logged_in edges", async () => {

@@ -55,6 +55,10 @@
 //         three in rebuild-owned lanes ('mechanical'), appended to the SAME batch as the float
 //         UPDATE and the event INSERT. 'alongside' is DELIBERATELY NOT emitted live: it needs a
 //         journal scan and a 60-minute commons window, and stays rebuild-only (rebuild.ts (i)).
+//         Same-batch consequence: every edge statement is INSERT OR IGNORE, so a UNIQUE conflict
+//         cannot fail the batch; the only way an edge statement fails is a D1-level error, which
+//         would have failed the float UPDATE in the same batch anyway -- so "never fail the
+//         primary write" holds here by construction, not by isolating the edge write.
 //
 // SITES DELIBERATELY SKIPPED (Raziel's call, 2026-08-28): relational_deltas, companion_journal,
 // companion_tensions. These are among the highest write-volume tables in the system, and the
