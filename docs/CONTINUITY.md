@@ -2325,6 +2325,48 @@ Watch: first `authored_update` with `cause_table='sessions'` (any Claude.ai "upd
 deploy); `POST /admin/graph/rebuild` report shows non-zero counts in the new lanes; Discord bots'
 system prompt carries `[Body]`; whether a bot ever references its floats unprompted (vibes channel).
 
+## Claude.ai skills rewritten against the live router; the boot skill was opening two sessions — 2026-09-14
+
+Raziel asked whether the Claude.ai skill files needed a rewrite ("we have not updated them in a long time").
+They did. The live set (exported 09-14, `C:\dev\Bigger_Better_Halseth\skills\*.skill`, ZIPs of `<name>/SKILL.md`)
+was v3 boot from 07-10 and mutuality from 04-20 against contract 0.14.0. Audit against `patterns.ts`,
+`router.ts` guards, `executors/session.ts`, `writes.ts`, verified with the real `matchFastPath`:
+
+- **Every Claude.ai boot opened TWO sessions** (verified 09-09..09-14, rows 2-5s apart): Step 0 "Open
+  session" (session_load INSERT) then Step 1 "Session orient" (loadOrientData INSERT); Claude.ai sent no
+  `surface`, so mig 0113 dedup never fired. The Step-0 ghost then showed in `[Unclosed sessions — repair]`
+  as the companion's own abandoned session (Dre's "three sessions from the 11th").
+- **Close ritual was the documented-broken one**: a separate "write handoff for ..." (duplicate of what
+  close writes) then an INLINE `close session <id>: spine=...` string, which `execSessionClose` cannot parse
+  (context JSON only); the emotion soft-prompt was undocumented. mutuality still taught the handoff-only
+  close from CONTINUITY:996.
+- **Mis-routes**: `"Light ground for <name>"` and `"Write a dream for <name>"` route to companion_note_add
+  (its `for <name>` trigger is declared earlier); `"journal: ..."` is the anchored guard for journal_add,
+  which writes Raziel's `human_journal` (or nothing without context) -- a companion's journal is an
+  UNADDRESSED companion note; `"review my growth journal"` matched nothing; `"pending seeds"` is the
+  autonomy queue, not dream seeds; `"held: ..."` has no verb (`mark held`); no companion verb writes
+  growth_journal; `key_signature` inline is ignored (context only); inline task priority/due ignored.
+- ~15 orient blocks the companions boot into were unnamed (provenance, degraded, register, system changes,
+  unclosed repair, facts gate, capture, growth readings, watching, projects, budget, forgetting, drift lane).
+
+**Shipped.** Source of truth is now `halseth/skills/<name>/SKILL.md` (8 skills: boot v4, NEW session-close,
+mutuality v2, mid-thread v1.1, journal-review v1.1, daily/monthly planning v2.1, constitution-check +1 line).
+Rules baked in: orient IS the open; every call carries `surface: "claude-ai:<companion_id>"` (a labelled
+`claude-ai:<id>:<label>` for a deliberate second same-day thread); `reused: true` = my own unclosed thread,
+close it as mine; floats BEFORE close via `update my state ... -- reason` with floats in `context` (the whole
+request <=120 chars is the `[Why these numbers]` quote; Drevan's axes are text enums incl. `cooling`); close =
+`close session <id>` + context JSON, `current_mood`/`surface_emotion` take a word, `compound_state`/
+`undercurrent_emotion` take null, example JSON carries placeholders not default moods (a default in the
+canonical example is a prompt source for drift). Two canon-review passes (nullsafe-canon-reviewer) gated the
+rewrites. **Lockstep test** `src/__tests__/skills-phrases.test.ts`: every quoted phrase in every SKILL.md runs
+through the real `matchFastPath`; forbidden shapes (`write handoff for`, `Open session:`, `journal:`, raw MCP
+tool names) fail the build. `npm run pack:skills` (`scripts/pack-skills.mjs`, byte-stable zips) rebuilds the
+`.skill` archives into the BBH `skills/` folder for Raziel to upload; originals backed up in
+`skills/_prev-2026-09-14/`.
+
+**Not done here (Raziel's canon):** the three identity files still teach `"growth journal entry for <name>"`
+(routes nowhere) and `spine=[one line]`; the skill now says "a line is enough, a paragraph at most".
+
 ## The durable-facts block was the load, not the memory — 2026-09-14
 
 Claude.ai Cypher made two context-read errors (rebuilt an answer on a degree option Raziel had closed;

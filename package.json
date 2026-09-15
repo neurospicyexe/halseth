@@ -9,7 +9,8 @@
     "migrate:remote": "wrangler d1 migrations apply halseth --remote --config wrangler.prod.toml",
     "type-check": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pack:skills": "node scripts/pack-skills.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260426.1",
