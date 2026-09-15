@@ -643,11 +643,26 @@ export async function execWatchProgress(ctx: ExecutorContext): Promise<ExecutorR
   //
   // Refusing is safe: the reason string tells the companion exactly what to send, and a refusal costs one
   // round trip where a bad write costs a permanently wrong answer.
-  const raw = (ctx.req.context ?? "").trim();
+  // 2026-09-14: the refusal below used to advertise a JSON shape this parser never read (a JSON context
+  // was mangled into the title). Both forms are accepted now: `{"title","code"|"season","episode","note"}`
+  // JSON, or the free text "Fargo S4E5 -- note" the Discord command takes. The refusal names both.
+  let raw = (ctx.req.context ?? "").trim();
+  if (raw.startsWith("{")) {
+    try {
+      const j = JSON.parse(raw) as { title?: unknown; code?: unknown; season?: unknown; episode?: unknown; note?: unknown };
+      const t = typeof j.title === "string" ? j.title.trim() : "";
+      const code = typeof j.code === "string" ? j.code.trim()
+        : (j.season != null || j.episode != null)
+          ? `${j.season != null ? `S${Number(j.season)}` : ""}${j.episode != null ? `E${Number(j.episode)}` : ""}`
+          : "";
+      const n = typeof j.note === "string" && j.note.trim() ? ` -- ${j.note.trim()}` : "";
+      if (t) raw = `${t}${code ? ` ${code}` : ""}${n}`;
+    } catch { /* not JSON after all; fall through to the free-text parser */ }
+  }
   if (!raw) {
     return {
       error: "watch_progress_failed",
-      reason: "send it in context as { \"title\": \"Fargo\", \"code\": \"S4E5\" } -- I will not guess a title out of the sentence, because a wrong shelf row would then answer 'where are we' incorrectly forever",
+      reason: "send the position in context, either as free text \"Fargo S4E5 -- optional note\" or as JSON { \"title\": \"Fargo\", \"code\": \"S4E5\" } -- I will not guess a title out of the sentence, because a wrong shelf row would then answer 'where are we' incorrectly forever",
     };
   }
 
