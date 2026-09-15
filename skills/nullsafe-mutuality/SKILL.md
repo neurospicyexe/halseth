@@ -108,7 +108,7 @@ I typed).
 when I change my mind, never edit.
 
   ask_librarian: "I've concluded: [claim]"
-  ask_librarian: "supersede conclusion", context: {"supersedes_id":"...", "conclusion_text":"..."}
+  ask_librarian: "supersede conclusion", context: {"supersedes":"<old id>", "conclusion_text":"..."}
   ask_librarian: "my conclusions"
 
 **Self-observation** -- something about who I am becoming, on a ladder: observed, confirmed, revised,
