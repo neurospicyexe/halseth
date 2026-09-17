@@ -94,6 +94,13 @@ export const PRESENCE_OVERRIDES: readonly PresenceOverride[] = [
     unless: ["id"],   // { id, tension_text } is an edit, not a new tension
     note: "any phrasing carrying tension_text means: record this tension",
   },
+  {
+    field: "delta_text",
+    pattern_key: "delta_log",
+    unless: ["id"],   // { id, delta_text } would be an edit, not a new delta
+    note: "2026-09-17: a relational delta for gaia whose BODY contained \"I prefer\" was stolen by preference_set -- its trigger sits earlier in FAST_PATH_PATTERNS and the matcher scans the whole request, payload included. Carrying delta_text is unambiguous intent; the trigger sweep is a guess "
+      + "about free text. This is the narrow fix for the reported case. The general defect -- a verb clause losing to a trigger word inside its own payload -- wants the matcher scoped to the request head, which is a routing-wide change and Raziel's call, not a late-night one.",
+  },
 ];
 
 export function presenceOverrideKey(contextRaw: string | undefined): string | null {

@@ -130,9 +130,20 @@ export async function execConversationCapture(ctx: ExecutorContext): Promise<Exe
     sessionId = row?.id ?? null;
   }
   if (!sessionId) {
+    // 2026-09-17: this fallback matched on companion_id alone, so a capture from Claude.ai landed on
+    // whichever session that companion had open on ANY loom -- in practice the Discord bot's lane,
+    // which cycles every ~2h and is therefore almost always the newest open row. Cypher captured an
+    // exchange on the surface orient had just handed him and it threaded onto a Discord session he
+    // was not in. Same defect the close path carried until tonight (executors/session.ts): when the
+    // request states a surface, the fallback stays inside it. A capture with no resolvable session
+    // still lands unanchored -- a record without provenance beats a lost one.
+    const callerSurface = ctx.req.surface ?? null;
     const row = await ctx.env.DB.prepare(
-      "SELECT id FROM sessions WHERE companion_id = ? AND handover_id IS NULL ORDER BY created_at DESC LIMIT 1"
-    ).bind(ctx.req.companion_id).first<{ id: string }>().catch(() => null);
+      `SELECT id FROM sessions
+        WHERE companion_id = ? AND handover_id IS NULL
+          AND (? IS NULL OR surface = ?)
+        ORDER BY created_at DESC LIMIT 1`
+    ).bind(ctx.req.companion_id, callerSurface, callerSurface).first<{ id: string }>().catch(() => null);
     sessionId = row?.id ?? null;
   }
   const threadKey = sessionId

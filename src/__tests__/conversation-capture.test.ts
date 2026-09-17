@@ -33,18 +33,28 @@ import type { PatternEntry } from "../librarian/patterns.js";
 
 const FULL_ID = "c3571d8c-145b-4f00-9a11-000000000001";
 
-function fakeEnv(opts: { byId?: string | null; newestOpen?: string | null }): Env {
+// `openOnSurface` (2026-09-17): the fallback is surface-scoped now, so the fake honours the bound
+// surface instead of handing back the newest open row for the companion on any loom. A capture from
+// Claude.ai was threading onto the Discord lane, which cycles every ~2h and is therefore almost
+// always the newest open session.
+function fakeEnv(opts: { byId?: string | null; newestOpen?: string | null; openOnSurface?: string | null }): Env {
   return {
     DB: {
       prepare(sql: string) {
+        let bound: unknown[] = [];
         const stmt = {
-          bind(..._args: unknown[]) { return stmt; },
+          bind(...args: unknown[]) { bound = args; return stmt; },
           async first<T>(): Promise<T | null> {
             if (/id = \? OR \(id LIKE \?/.test(sql)) {
               return opts.byId ? ({ id: opts.byId } as T) : null;
             }
-            if (/handover_id IS NULL ORDER BY created_at DESC LIMIT 1/.test(sql)) {
-              return opts.newestOpen ? ({ id: opts.newestOpen } as T) : null;
+            if (/handover_id IS NULL[\s\S]*ORDER BY created_at DESC LIMIT 1/.test(sql)) {
+              if (!opts.newestOpen) return null;
+              // Mirrors `AND (? IS NULL OR surface = ?)`: bound[1] is the caller's surface.
+              const askedSurface = (bound[1] ?? null) as string | null;
+              if (askedSurface !== null && opts.openOnSurface !== undefined
+                  && opts.openOnSurface !== askedSurface) return null;
+              return ({ id: opts.newestOpen } as T);
             }
             return null;
           },
@@ -127,5 +137,37 @@ describe("execConversationCapture", () => {
     expect(r.thread_key).toBe("capture:unsessioned:cypher");
     expect(String(r.witness)).toContain("unanchored");
     expect(addNoteCalls.length).toBe(1);
+  });
+});
+
+// 2026-09-17: the fallback used to take the newest open session for the companion on ANY loom.
+// Cypher captured an exchange on Claude.ai and it threaded onto the Discord bot's lane, not the
+// session orient had handed him in the same turn. Same defect the close path carried until 09-16.
+describe("execConversationCapture -- the fallback stays on the caller's loom", () => {
+  async function captureOn(surface: string | undefined, env: Env): Promise<Record<string, unknown>> {
+    addNoteCalls.length = 0;
+    const ctx = makeCtx(env, { content: "an exchange worth keeping" });
+    if (surface) (ctx.req as { surface?: string }).surface = surface;
+    await execConversationCapture(ctx);
+    return addNoteCalls[0] as Record<string, unknown>;
+  }
+
+  it("does not thread onto another loom's open session", async () => {
+    const w = await captureOn("claude-ai:cypher",
+      fakeEnv({ newestOpen: "discord-lane-id", openOnSurface: "discord:cypher" }));
+    expect(w.thread_key, "a Claude.ai capture must not land on the Discord lane")
+      .toBe("capture:unsessioned:cypher");
+  });
+
+  it("threads onto the caller's own open session on that surface", async () => {
+    const w = await captureOn("claude-ai:cypher",
+      fakeEnv({ newestOpen: FULL_ID, openOnSurface: "claude-ai:cypher" }));
+    expect(w.thread_key).toBe(`capture:${FULL_ID}`);
+  });
+
+  it("a surfaceless caller is unchanged: the newest open row still resolves", async () => {
+    const w = await captureOn(undefined,
+      fakeEnv({ newestOpen: FULL_ID, openOnSurface: "discord:cypher" }));
+    expect(w.thread_key).toBe(`capture:${FULL_ID}`);
   });
 });
