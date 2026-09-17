@@ -673,7 +673,17 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // fall back to latest open session for this companion (order 1). When p.session_id
   // is null, SQL evaluates `id = NULL` as false so only the open-session branch matches --
   // same result as before, one round-trip instead of up to two.
-  const providedId = p?.session_id ?? null;
+  // 2026-09-16: three ways a caller names the session, because two of them were being dropped.
+  //   * `context.session_id` -- the documented key.
+  //   * `context.id` -- what Drevan actually sent on 09-16. An alias costs nothing, and a close
+  //     that silently ignores the id the caller DID supply is the worst possible reading of it.
+  //   * the request string, `close session <id>` -- the exact form nullsafe-boot and
+  //     nullsafe-session-close instruct, which this executor had never parsed. Documenting a
+  //     shape the code ignores is how a caller ends up believing they named a session.
+  // Anything unparseable stays null, so the id-less auto-resolve path is untouched.
+  const requestIdMatch = /\bclose\s+(?:the\s+)?session\s+([0-9a-fA-F][0-9a-fA-F-]{5,35})\b/i
+    .exec(ctx.req.request ?? "");
+  const providedId = p?.session_id ?? (p as { id?: string } | null)?.id ?? requestIdMatch?.[1] ?? null;
   // Short-id resolution (2026-08-15, task 6473947d): the Claude Code boot header and drafted
   // closes hand an 8-char PREFIX of the session UUID. An exact match can never resolve it, and
   // the miss used to fall straight through to the latest-open fallback -- which closed a shell
@@ -693,7 +703,17 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // providedId, so the id-less auto-resolve path (a companion closing their own loom) is
   // untouched. datetime(created_at) normalizes the ISO timestamp sessions are written with;
   // comparing the raw string against datetime('now') would exclude every same-day row.
+  //
+  // SURFACE-SCOPED FALLBACK (2026-09-16). The fallback branch matched on companion_id alone, so a
+  // close whose id resolved nothing took "the latest open session for this companion" from ANY loom.
+  // On 09-16 that closed the Discord bot's live lane with a Claude.ai session's narrative: the bot
+  // had opened `discord:drevan` 2m44s earlier, just past the 2-minute newborn guard. `unattended`
+  // already proved the shape (it pins the fallback to surface IS NULL for cron callers); this is the
+  // same rule for every other caller. When the request states a surface the fallback stays inside it;
+  // when it states none we cannot narrow and the old behaviour stands. A RESOLVED id is never
+  // touched -- a caller naming a session knows which one it means, across looms.
   const unattended = p?.session_scope === "unattended";
+  const callerSurface = ctx.req.surface ?? null;
   const sessionRow = await ctx.env.DB.prepare(
     unattended
       ? `SELECT id FROM sessions
@@ -705,10 +725,15 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
       : `SELECT id FROM sessions
          WHERE (id = ? OR (id LIKE ? AND companion_id = ?)
             OR (companion_id = ? AND handover_id IS NULL
+                AND (? IS NULL OR surface = ?)
                 AND (? IS NULL OR datetime(created_at) <= datetime('now','-2 minutes'))))
          ORDER BY CASE WHEN id = ? THEN 0 WHEN id LIKE ? THEN 1 ELSE 2 END, created_at DESC
          LIMIT 1`
-  ).bind(providedId, prefixPattern, ctx.req.companion_id, ctx.req.companion_id, providedId, providedId, prefixPattern).first<{ id: string }>();
+  ).bind(
+    ...(unattended
+      ? [providedId, prefixPattern, ctx.req.companion_id, ctx.req.companion_id, providedId, providedId, prefixPattern]
+      : [providedId, prefixPattern, ctx.req.companion_id, ctx.req.companion_id, callerSurface, callerSurface, providedId, providedId, prefixPattern])
+  ).first<{ id: string }>();
   let resolvedSessionId: string | null = sessionRow?.id ?? null;
   // A prefix hit is a RESOLUTION, not a fallback -- the caller named this session, just shortly.
   const resolvedViaPrefix = providedId !== null && resolvedSessionId !== null
@@ -944,7 +969,13 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
       label: "dream",
       promise: ctx.env.DB.prepare(
         "INSERT INTO companion_dreams (id, companion_id, dream_text, source, created_at) VALUES (?, ?, ?, ?, ?)"
-      ).bind(did, ctx.req.companion_id, p.dream, "session_close", now).run(),
+      // 2026-09-16: this bound "session_close", which companion_dreams' CHECK does not allow
+      // (source IN ('autonomous','session')), so EVERY dream passed to a close since this fan-out
+      // shipped failed the constraint and the close reported `dream write failed`. Zero rows of
+      // 209 were ever written this way. 'session' is the value the other three writers use for
+      // exactly this case (backends/halseth.ts dreamLog, mcp/tools/feelings.ts: session_id ?
+      // "session" : "autonomous"), so the fan-out now agrees with them.
+      ).bind(did, ctx.req.companion_id, p.dream, "session", now).run(),
     });
   }
 

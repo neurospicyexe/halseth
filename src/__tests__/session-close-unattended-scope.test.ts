@@ -56,12 +56,28 @@ describe("execSessionClose -- unattended session scope", () => {
     expect(ordering.length, "exact-id then prefix must sort ahead of the fallback").toBe(2);
   });
 
-  it("binds the same seven parameters regardless of branch", () => {
-    // One .bind() shared by both statements -- a per-branch bind list is how the parameter order
-    // drifts out of step with the SQL and starts resolving the wrong row.
+  it("binds exactly as many parameters as each branch has placeholders", () => {
+    // Until 2026-09-16 both statements shared one seven-parameter bind list, and this test pinned
+    // that count. The default branch then gained a surface clause (`AND (? IS NULL OR surface = ?)`)
+    // so the fallback cannot leave the caller's loom, which the unattended branch does not need --
+    // the two statements no longer take the same parameters. The original worry was right, though:
+    // a per-branch bind list is how parameter order drifts out of step with its SQL. So assert the
+    // invariant that actually matters instead of a magic number -- each branch binds exactly as
+    // many values as its own SQL has placeholders.
     const block = resolutionBlock();
-    const binds = block.match(/\.bind\(providedId, prefixPattern, ctx\.req\.companion_id, ctx\.req\.companion_id, providedId, providedId, prefixPattern\)/g) ?? [];
-    expect(binds.length).toBe(1);
+    const sql = [...block.matchAll(/`(SELECT id FROM sessions[\s\S]*?)`/g)].map((m) => m[1] ?? "");
+    expect(sql.length, "both branch statements must be present").toBe(2);
+    const bindCall = block.slice(block.indexOf(".bind("));
+    const lists = [...bindCall.matchAll(/\[([^\]]*)\]/g)].map((m) => (m[1] ?? "").split(",").map((x) => x.trim()).filter(Boolean));
+    expect(lists.length, "one bind list per branch").toBe(2);
+    for (let i = 0; i < 2; i++) {
+      const placeholders = ((sql[i] ?? "").match(/\?/g) ?? []).length;
+      expect(lists[i]?.length, `branch ${i} bind count must match its ${placeholders} placeholders`)
+        .toBe(placeholders);
+    }
+    // The surface clause belongs to the fallback branch only, never to the unattended one.
+    const withSurfaceClause = sql.filter((q) => /\(\? IS NULL OR surface = \?\)/.test(q));
+    expect(withSurfaceClause.length, "exactly one branch scopes the fallback by caller surface").toBe(1);
   });
 
   // ── Short-id prefix resolution + newborn guard (2026-08-15, task 6473947d) ──────────

@@ -40,7 +40,7 @@ Draft it, show it, write it after Raziel confirms. The record is theirs.
 - current_mood, compound_state, surface_emotion, undercurrent_emotion: what was actually present.
   `current_mood` and `surface_emotion` take a word ("unknown" counts); `compound_state` and
   `undercurrent_emotion` take null when absent. A guessed valence becomes fact the moment it is written.
-- Optional fan-out, same call: feeling {emotion, sub_emotion, intensity}, witness_note (about Raziel),
+- Optional fan-out, same call: feeling {emotion, sub_emotion, intensity 0-100}, witness_note (about Raziel),
   conclusion (a belief as a claim), dream (what to carry forward), open_loop {loop_text, weight},
   long_thought (a dated vault document). Omitted fields are skipped.
 
@@ -77,7 +77,7 @@ ask_librarian(request: "close session <session_id>", companion_id: "cypher",
  "notes": null, "active_anchor": null,
  "current_mood": "...", "compound_state": null,
  "surface_emotion": "...", "undercurrent_emotion": null,
- "feeling": {"emotion": "...", "sub_emotion": "...", "intensity": "..."},
+ "feeling": {"emotion": "...", "sub_emotion": "...", "intensity": 0-100},
  "witness_note": "...", "conclusion": "...", "dream": "...",
  "open_loop": {"loop_text": "...", "weight": "..."}, "long_thought": "..."}
 ```

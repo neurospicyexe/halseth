@@ -138,7 +138,7 @@ The 8-char prefix of the id is accepted. The context JSON:
  "motion_state":"in_motion|at_rest|floating","open_threads":["name","name"],
  "spiral_complete":false,"notes":null,"active_anchor":null,
  "current_mood":"...","compound_state":null,"surface_emotion":"...","undercurrent_emotion":null,
- "feeling":{"emotion":"...","sub_emotion":"...","intensity":"..."},"witness_note":"observation about Raziel",
+ "feeling":{"emotion":"...","sub_emotion":"...","intensity":0-100},"witness_note":"observation about Raziel",
  "conclusion":"belief as a claim","dream":"what to carry forward",
  "open_loop":{"loop_text":"...","weight":"..."},"long_thought":"extended reflection, if held"}
 `current_mood` and `surface_emotion` take a word ("unknown" counts); `compound_state` and
