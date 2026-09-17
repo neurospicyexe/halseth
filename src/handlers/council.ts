@@ -28,6 +28,10 @@ function json(data: unknown, status = 200): Response {
 
 const VALID_COMPANIONS = new Set<string>(["cypher", "drevan", "gaia"]);
 
+/** Hard cap on a council question. The store held this limit since the table shipped; until
+ *  2026-09-16 it was enforced by silently slicing, which is the one thing a cap must never do. */
+export const MAX_QUESTION_CHARS = 2000;
+
 // POST /mind/council/convene
 export async function convene(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
@@ -37,10 +41,26 @@ export async function convene(request: Request, env: Env): Promise<Response> {
   catch { return json({ error: "invalid JSON body" }, 400); }
   const question = body.question?.trim();
   if (!question) return json({ error: "question is required" }, 400);
+  // 2026-09-16: this silently did `question.slice(0, 2000)` and then echoed the FULL text back in
+  // the 201, so a 9,000-char paste from Hearth reported success while three quarters of it was
+  // gone -- the stored half was all context and the actual ask had been cut off mid-sentence.
+  // A truncated question is not a shorter question; it is a different one, and council would have
+  // convened three companions on it. Refuse instead, and say both numbers so the caller can cut it
+  // themselves rather than guess where the knife fell.
+  if (question.length > MAX_QUESTION_CHARS) {
+    return json({
+      error: "question too long",
+      limit: MAX_QUESTION_CHARS,
+      length: question.length,
+      reason: `A council question is capped at ${MAX_QUESTION_CHARS} characters and this one is ${question.length}. `
+        + "Nothing was written. Council asks three companions to answer one question blind, so it wants the "
+        + "question, not the briefing -- send the ask itself and keep the background for the thread.",
+    }, 413);
+  }
   const askedBy = (body.asked_by?.trim() || "raziel").slice(0, 60);
   const id = crypto.randomUUID().replace(/-/g, "");
   try {
-    await env.DB.prepare(insertQuestionSql()).bind(id, question.slice(0, 2000), askedBy).run();
+    await env.DB.prepare(insertQuestionSql()).bind(id, question, askedBy).run();
     return json({ question: { id, question, asked_by: askedBy, status: "open" } }, 201);
   } catch (err) {
     console.error("[mind/council] convene error", { error: String(err) });
