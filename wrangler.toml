@@ -23,6 +23,14 @@ COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
 COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
 SYSTEM_NAME          = "Halseth"
 SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
+# The named feeling line (mig 0131, docs/spec-feeling-line-table-2026-09-19.md).
+#   off    -- do not compute it at all
+#   shadow -- compute and log it; what the companions read does NOT change   <- default
+#   live   -- the authored vocabulary replaces the hand-authored interoception cue text
+# Read `node scripts/feeling-line-diff.mjs` before flipping to live, and apply mig 0131 first
+# (the loader returns silence on a missing table, so either order is safe).
+FEELING_LINE_MODE    = "shadow"
+
 # PluralKit system id for the roster lookup (mig 0117). Public, unauthenticated -- not a secret.
 # Leave blank to disable: lookups then answer "unavailable", never "not found".
 # 2026-08-29: value belongs HERE, not the dashboard -- [vars] ships on every deploy, so a

@@ -195,42 +195,73 @@ export function computeFeelingLine(
   return { mode, result, line };
 }
 
+export interface FeelingLineFetch {
+  rows: VocabularyRow[];
+  events: SomaEventRow[];
+  authored: Array<{ float_key: string; authored_at: string }>;
+}
+
 /**
- * Full D1 path. Returns silence rather than throwing on any failure: a boot payload must never
- * die because a vocabulary row is malformed, and a missing table (before mig 0131 is applied)
- * is silence, not an error.
+ * The three reads, and NOTHING that depends on companion_state.
+ *
+ * SPLIT FROM THE COMPUTE ON PURPOSE. Phase 1 cut execSessionOrient from 38 queries to 31, and
+ * orient latency in this project is round trips, not CPU. These three depend only on the companion
+ * id, so the caller folds them into the boot path's existing Promise.all and they cost no serial
+ * time -- awaiting them after the state arrived would have added three round trips to every boot,
+ * including in shadow mode where the answer is thrown away.
+ *
+ * Returns empty rather than throwing: a boot payload must never die because a vocabulary row is
+ * malformed, and a missing table (before mig 0131 is applied) is silence, not an error.
  */
-export async function loadFeelingLine(
+export async function fetchFeelingLineInputs(
   db: { prepare: (sql: string) => { bind: (...a: unknown[]) => { all: () => Promise<{ results?: unknown[] }> } } },
   companionId: CompanionId,
-  state: StateLike | null | undefined,
   mode: FeelingLineMode,
-  nowMs = Date.now(),
-): Promise<FeelingLineOutcome> {
-  const silent: FeelingLineOutcome = {
-    mode,
-    result: { word: null, rowId: null, rendersNumber: false, floatKey: null, value: null, therlo: null, silentReason: "not loaded" },
-    line: null,
-  };
-  if (mode === "off") return silent;
-
+): Promise<FeelingLineFetch> {
+  const empty: FeelingLineFetch = { rows: [], events: [], authored: [] };
+  if (mode === "off") return empty;
   try {
     const [vocab, events, authored] = await Promise.all([
       db.prepare(activeVocabularySql()).bind(companionId).all(),
       db.prepare(latestSomaEventsSql()).bind(companionId).all(),
       db.prepare(latestAuthoredSomaEventsSql()).bind(companionId).all(),
     ]);
-    const rows = (vocab.results ?? []) as VocabularyRow[];
-    if (rows.length === 0) return { ...silent, result: { ...silent.result, silentReason: "no active vocabulary rows" } };
-    const ctx = buildFeelingContext(
-      companionId,
-      state,
-      (events.results ?? []) as SomaEventRow[],
-      (authored.results ?? []) as Array<{ float_key: string; authored_at: string }>,
-      nowMs,
-    );
-    return computeFeelingLine(companionId, rows, ctx, mode);
+    return {
+      rows: (vocab.results ?? []) as VocabularyRow[],
+      events: (events.results ?? []) as SomaEventRow[],
+      authored: (authored.results ?? []) as Array<{ float_key: string; authored_at: string }>,
+    };
   } catch {
-    return { ...silent, result: { ...silent.result, silentReason: "load failed" } };
+    return empty;
+  }
+}
+
+const SILENT_RESULT: FeelingLineResult = {
+  word: null,
+  rowId: null,
+  rendersNumber: false,
+  floatKey: null,
+  value: null,
+  therlo: null,
+  silentReason: "not loaded",
+};
+
+/** Pure: fetched rows + state -> the line. No D1, no await. */
+export function feelingLineFrom(
+  companionId: CompanionId,
+  fetched: FeelingLineFetch,
+  state: StateLike | null | undefined,
+  mode: FeelingLineMode,
+  nowMs = Date.now(),
+): FeelingLineOutcome {
+  if (mode === "off") return { mode, result: SILENT_RESULT, line: null };
+  if (fetched.rows.length === 0) {
+    return { mode, result: { ...SILENT_RESULT, silentReason: "no active vocabulary rows" }, line: null };
+  }
+  try {
+    const ctx = buildFeelingContext(companionId, state, fetched.events, fetched.authored, nowMs);
+    return computeFeelingLine(companionId, fetched.rows, ctx, mode);
+  } catch {
+    return { mode, result: { ...SILENT_RESULT, silentReason: "compute failed" }, line: null };
   }
 }

@@ -23,6 +23,15 @@ import {
   CONTAMINATION_WINDOW_MINUTES,
 } from "../webmind/vocabulary-guards.js";
 import { FLOAT_LABELS, heatBand, reachBand, weightBand } from "../webmind/fermentation.js";
+import {
+  feelingLineMode,
+  causeFromEvent,
+  buildFeelingContext,
+  feelingLineFrom,
+  activeVocabularySql,
+  latestSomaEventsSql,
+  latestAuthoredSomaEventsSql,
+} from "../webmind/feeling-line-loader.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = readFileSync(join(HERE, "../../migrations/0131_companion_feeling_vocabulary.sql"), "utf8");
@@ -170,9 +179,14 @@ describe("redline is a warning, never a blessing", () => {
       therlo: null,
       silentReason: null,
     })!;
-    for (const warm of ["warm", "lit", "good", "alive", "purpose", "one"]) {
+    // The exact masquerade he rejected -- the Discord version returned redline as "motion that
+    // means something, where pulse and purpose become one". Tokens narrow enough to mean what they
+    // say: a broad substring like "one" matches half the language and would fire on an unrelated
+    // change while reading as a redline corruption.
+    for (const warm of ["warm", "blessing", "pulse and purpose", "means something"]) {
       expect(rendered.toLowerCase()).not.toContain(warm);
     }
+    expect(rendered).toBe("redline 0.90");
     // The migration's own note states the corruption condition so it cannot be lost in a refactor.
     expect(MIGRATION).toContain("WARNING, NEVER A BLESSING");
   });
@@ -477,5 +491,90 @@ describe("the violations in the text this replaces", () => {
   it("clause evaluation is total: an unknown float key is false, never a throw", () => {
     expect(evaluateClause({ float: "f9" as never, band: "warm" }, ctx({}))).toBe(false);
     expect(evaluateClause({ float: "f1", op: "gt", value: Number.NaN }, ctx({}))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Loader: the gate, the cause mapping, and the boot-cost split.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("loader", () => {
+  it("FEELING_LINE_MODE defaults to shadow and only accepts the three values", () => {
+    expect(feelingLineMode(undefined)).toBe("shadow");
+    expect(feelingLineMode({})).toBe("shadow");
+    expect(feelingLineMode({ FEELING_LINE_MODE: "LIVE" })).toBe("live");
+    expect(feelingLineMode({ FEELING_LINE_MODE: "off" })).toBe("off");
+    expect(feelingLineMode({ FEELING_LINE_MODE: "nonsense" })).toBe("shadow");
+  });
+
+  it("is declared in BOTH wrangler configs, so the flip is a one-word edit", () => {
+    for (const f of ["wrangler.toml", "wrangler.prod.toml"]) {
+      const cfg = readFileSync(join(HERE, "../../", f), "utf8");
+      expect(cfg, `${f} does not declare FEELING_LINE_MODE`).toContain('FEELING_LINE_MODE');
+      expect(cfg).toContain('"shadow"');
+    }
+  });
+
+  it("maps soma-event kinds to causes, and never GUESSES autonomous", () => {
+    expect(causeFromEvent("authored_close", null)).toBe("authored");
+    expect(causeFromEvent("authored_update", null)).toBe("authored");
+    expect(causeFromEvent("tick", null)).toBe("tick");
+    expect(causeFromEvent("drift_shift", null)).toBe("tick");
+    expect(causeFromEvent("stimulus", "spiral")).toBe("autonomous");
+    expect(causeFromEvent("stimulus", "message_from_raziel")).toBe("stimulus");
+    // An unclassifiable stimulus stays `stimulus`: freight and silt must never collapse, and
+    // guessing is how they would.
+    expect(causeFromEvent("stimulus", null)).toBe("stimulus");
+  });
+
+  it("reads Drevan's authored ENUMS, never the stale synthesis *_value columns", () => {
+    const ctx = buildFeelingContext(
+      "drevan",
+      { soma_float_1: 0.9, soma_float_2: 0.5, soma_float_3: 0.5, heat: "cold", heat_value: 0.1 } as never,
+      [],
+      [{ float_key: "soma_float_1", authored_at: "2026-09-19T12:00:00Z" }],
+      NOW,
+    );
+    expect(ctx.authoredEnums?.f1).toBe("cold");
+    expect(ctx.floats.f1).toBe(0.9);
+    const loaderSrc = readFileSync(join(HERE, "../webmind/feeling-line-loader.ts"), "utf8");
+    // No CODE line mentions the stale synthesis columns -- they appear only in the comment that
+    // explains why they are never read. Split on a real newline so the assertion carries no
+    // escape of its own.
+    const codeLines = loaderSrc.split(`
+`).filter((l) => {
+      const t = l.trim();
+      return t !== "" && !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*");
+    });
+    for (const staleCol of ["heat_value", "reach_value", "weight_value"]) {
+      expect(codeLines.filter((l) => l.includes(staleCol)), staleCol).toEqual([]);
+    }
+  });
+
+  it("the three reads depend on the companion id ALONE, so they can ride the boot Promise.all", () => {
+    for (const sql of [activeVocabularySql(), latestSomaEventsSql(), latestAuthoredSomaEventsSql()]) {
+      expect(sql).toContain("?1");
+      expect(sql).not.toContain("?2"); // one binding: the companion. No state dependency.
+    }
+    const sessionSrc = readFileSync(join(HERE, "../librarian/executors/session.ts"), "utf8");
+    // Folded in, not awaited separately -- an extra serial round trip per boot is the regression
+    // Phase 1 spent real work removing (38 -> 31 queries).
+    expect(sessionSrc).toContain("fetchFeelingLineInputs(ctx.env.DB");
+    expect(sessionSrc).not.toContain("await fetchFeelingLineInputs");
+  });
+
+  it("off computes nothing; empty vocabulary is silence, not an error", () => {
+    const empty = { rows: [], events: [], authored: [] };
+    expect(feelingLineFrom("gaia", empty, {}, "off").line).toBeNull();
+    expect(feelingLineFrom("gaia", empty, {}, "shadow").result.silentReason).toBe("no active vocabulary rows");
+  });
+
+  it("shadow computes the line but the caller renders nothing", () => {
+    const fetched = { rows: seedFor("gaia") as never, events: [], authored: [] };
+    const out = feelingLineFrom("gaia", fetched, { soma_float_1: 0.8, soma_float_2: 0.5, soma_float_3: 0.8 }, "shadow", NOW);
+    expect(out.mode).toBe("shadow");
+    expect(out.line).toBe("standing");
+    const builderSrc = readFileSync(join(HERE, "../librarian/response/builder.ts"), "utf8");
+    expect(builderSrc).toContain('feeling?.mode === "live"');
   });
 });

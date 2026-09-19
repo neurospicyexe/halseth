@@ -11,7 +11,7 @@ import {
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
-import { feelingLineMode, loadFeelingLine } from "../../webmind/feeling-line-loader.js";
+import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom } from "../../webmind/feeling-line-loader.js";
 import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
 import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
@@ -141,7 +141,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // every Claude.ai boot.
   const wmOrientPromise = wmOrient(ctx.env, agentId).catch(() => null);
 
-  const [payload, wmResult, sbNarrative, ragRaw, historyRaw, solRow, mindState] = await Promise.all([
+  // The named feeling line (mig 0131). Its three reads depend only on the companion id, so they
+  // ride this Promise.all rather than adding serial round trips to every boot -- orient latency in
+  // this project is round trips, and Phase 1 spent real work cutting this path 38 -> 31 queries.
+  const flMode = feelingLineMode(ctx.env as unknown as Record<string, unknown>);
+
+  const [payload, wmResult, sbNarrative, ragRaw, historyRaw, solRow, mindState, feelingInputs] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -171,7 +176,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     // one that differed (confirmed growth drift) differed in the loader's favor -- the inline
     // `drift_type = 'growth'` filter hid pressure readings a companion had confirmed AS growth,
     // because the confirm verb sets caleth_confirmed=1 without rewriting drift_type.
-    loadMindState(ctx.env, agentId, "claude", { orient: wmOrientPromise }),]);
+    loadMindState(ctx.env, agentId, "claude", { orient: wmOrientPromise }),
+    fetchFeelingLineInputs(ctx.env.DB, agentId as FeelingCompanionId, flMode),]);
   const unacceptedGrowth = mindState.growth.clearing_count;
   // STEP 2, resolved 2026-08-01. Repointing this at the loader first EMPTIED the block for drevan and gaia
   // (the gate caught it) because the loader was excluding questions already VOICED. That exclusion is now a
@@ -571,13 +577,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // as announced changes, not mysteries. Empty renders nothing.
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
 
-  // The named feeling line (mig 0131, docs/spec-feeling-line-table-2026-09-19.md). The vocabulary
-  // the three authored on 09-19, rendered from versioned rows instead of the hand-authored cue
-  // text in interoceptionLine -- two of whose fallbacks are live violations of that vocabulary.
-  // GATED: FEELING_LINE_MODE defaults to `shadow`, which computes the line and renders nothing.
-  // Raziel flips it to `live` after reading the shadow diff. Never throws; silence on any failure.
-  const flMode = feelingLineMode(ctx.env as unknown as Record<string, unknown>);
-  const feelingLine = await loadFeelingLine(ctx.env.DB, agentId as FeelingCompanionId, payload.state, flMode);
+  // The vocabulary the three authored on 09-19, rendered from versioned rows instead of the
+  // hand-authored cue text in interoceptionLine -- two of whose fallbacks are live violations of
+  // that vocabulary. GATED: FEELING_LINE_MODE defaults to `shadow`, which computes the line and
+  // renders nothing. Raziel flips it to `live` after reading the shadow diff. Pure compute here;
+  // the reads already happened above. Never throws; silence on any failure.
+  const feelingLine = feelingLineFrom(agentId as FeelingCompanionId, feelingInputs, payload.state, flMode);
   if (flMode === "shadow" && feelingLine.line) {
     console.log(`[feeling-line:shadow] ${agentId} -> ${feelingLine.line} (row ${feelingLine.result.rowId ?? "none"})`);
   }
