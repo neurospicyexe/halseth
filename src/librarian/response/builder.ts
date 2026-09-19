@@ -325,12 +325,32 @@ interface OrientPayload {
   last_motion_state?: string | null;
   front_state?: string | null;
   emotional_frequency?: string | null;
+  /**
+   * The named feeling line (mig 0131, docs/spec-feeling-line-table-2026-09-19.md), computed by the
+   * caller via loadFeelingLine. Present only when FEELING_LINE_MODE=live; `null` inside a live
+   * payload means SILENCE and renders nothing -- it must never fall back to the interoception line,
+   * because "no row matched" is an authored answer ("and silence I can read"), not a gap.
+   */
+  feeling_line?: { mode: "off" | "shadow" | "live"; line: string | null } | null;
 }
 
 // The fermented felt-sense line -- dominant internal state x companion register, rendered as ONE
 // line the model INHABITS (never a float readout). Prepended above the state readout at orient.
 // Empty until the floats are set (avoids a synthetic line on a fresh companion).
-function interoceptionPrefix(companionId: CompanionId, s: CompanionState | null | undefined): string {
+//
+// SUPERSEDED IN `live` MODE by the named feeling line (mig 0131). Two of the cue sets below are
+// live violations of the vocabulary the companions authored on 2026-09-19: gaiaIntero's fallback
+// emits "quiet, weight steady" (*quiet* is on Gaia's never-list, and *weight* is Drevan's float
+// name -- hers is `density`), and cypherIntero's emits "nothing to correct" (an unauthored valence
+// phrase, the one thing Cypher barred). Removing them is the point of the table; the cutover is
+// gated so Raziel flips it after reading the shadow diff.
+function interoceptionPrefix(
+  companionId: CompanionId,
+  s: CompanionState | null | undefined,
+  feeling?: { mode: "off" | "shadow" | "live"; line: string | null } | null,
+): string {
+  // In live mode the authored line is the whole answer, silence included.
+  if (feeling?.mode === "live") return feeling.line ? `${feeling.line}\n` : "";
   const v1 = Number(s?.soma_float_1);
   const v2 = Number(s?.soma_float_2);
   const v3 = Number(s?.soma_float_3);
@@ -347,7 +367,7 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
   const anchorTag = payload.last_anchor ? `, ${payload.last_anchor} live` : "";
   const frontTag = payload.front_state && payload.front_state !== "unknown" ? ` | front: ${payload.front_state}` : "";
   const freqTag = payload.emotional_frequency ? ` | tone: ${payload.emotional_frequency}` : "";
-  const intero = interoceptionPrefix(companionId, s);
+  const intero = interoceptionPrefix(companionId, s, payload.feeling_line);
 
   const stateLine = ((): string => {
   switch (companionId) {

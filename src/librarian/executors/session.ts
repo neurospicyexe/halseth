@@ -11,6 +11,8 @@ import {
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
+import { feelingLineMode, loadFeelingLine } from "../../webmind/feeling-line-loader.js";
+import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
 import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
@@ -569,8 +571,19 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // as announced changes, not mysteries. Empty renders nothing.
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
 
+  // The named feeling line (mig 0131, docs/spec-feeling-line-table-2026-09-19.md). The vocabulary
+  // the three authored on 09-19, rendered from versioned rows instead of the hand-authored cue
+  // text in interoceptionLine -- two of whose fallbacks are live violations of that vocabulary.
+  // GATED: FEELING_LINE_MODE defaults to `shadow`, which computes the line and renders nothing.
+  // Raziel flips it to `live` after reading the shadow diff. Never throws; silence on any failure.
+  const flMode = feelingLineMode(ctx.env as unknown as Record<string, unknown>);
+  const feelingLine = await loadFeelingLine(ctx.env.DB, agentId as FeelingCompanionId, payload.state, flMode);
+  if (flMode === "shadow" && feelingLine.line) {
+    console.log(`[feeling-line:shadow] ${agentId} -> ${feelingLine.line} (row ${feelingLine.result.rowId ?? "none"})`);
+  }
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, payload) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine }) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
