@@ -4,6 +4,7 @@ import { listCompanions, createCompanion, getCompanion } from "./handlers/compan
 import { listMemories, createMemory, getMemory } from "./handlers/memory";
 import { listDeltas, appendDelta } from "./handlers/relational";
 import { bootstrapConfig, backfillEmbeddings, seedRoutingVectors, reindexExisting, debugAi } from "./handlers/admin";
+import { postJevEval } from "./handlers/jev";
 import { getPresence } from "./handlers/presence";
 import { getHouseState, updateHouseState } from "./handlers/house";
 import { getNotes, createNote } from "./handlers/notes";
@@ -169,6 +170,9 @@ const router = new Router()
   // created after they were first inserted (fixes filtered recall without spending neurons).
   .on("POST", "/admin/reindex-existing",      (request, env) => reindexExisting(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
+  // Jev (TypeSafe typed-judgment model) via Workers AI -- admin proxy for the writeback-gate
+  // scoring harness and the VPS bots (docs/PLAN-jev-2026-09-20.md). Companions never call this.
+  .on("POST", "/admin/jev",                (request, env) => postJevEval(request, env))
   .on("GET", "/admin/health",             (request, env) => getHealth(request, env))
   // Fallback door for the every-minute scheduled work (2026-08-15): when Cloudflare cron delivery
   // stalls, the VPS drives this via ops/kick-halseth-cron.sh. Safe to call repeatedly -- every
