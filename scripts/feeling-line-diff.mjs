@@ -14,9 +14,13 @@
 // It needs no D1 and no secrets: both renderers are pure. It sweeps a grid instead of reading one
 // live state, because one state shows one row and the question is what the whole vocabulary does.
 //
-//   node scripts/feeling-line-diff.mjs                  # summary per companion
-//   node scripts/feeling-line-diff.mjs --all            # every grid cell
-//   node scripts/feeling-line-diff.mjs --companion gaia
+// RUN IT FROM THE halseth DIRECTORY -- the BBH root has its own scripts/ folder, so the same
+// command there resolves to a file that is not present and dies with "Cannot find module":
+//
+//   cd C:/dev/Bigger_Better_Halseth/halseth
+//   node scripts/feeling-line-diff.mjs                  # one worked example per word
+//   node scripts/feeling-line-diff.mjs --companion gaia # one companion
+//   node scripts/feeling-line-diff.mjs --all            # every grid cell (3750 of them)
 
 import { build } from "esbuild";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -128,12 +132,34 @@ for (const companion of companions) {
   for (const c of silent) reasons.set(c.why, (reasons.get(c.why) ?? 0) + 1);
   console.log(`silence reasons: ${[...reasons.entries()].map(([r, n]) => `${r} x${n}`).join(", ")}`);
 
-  const sample = showAll ? cells : spoken.slice(0, 12);
+  // One worked example PER WORD, not the first N cells. The first twelve are all the same corner
+  // of the grid and show one word twelve times, which reads as though nothing else ever fires.
+  const seen = new Set();
+  const sample = showAll
+    ? cells
+    : spoken.filter((c) => {
+        const w = c.next.split(" ")[0];
+        if (seen.has(w)) return false;
+        seen.add(w);
+        return true;
+      });
+
+  console.log("");
   for (const c of sample) {
-    const f = `${c.floats.f1.toFixed(2)}/${c.floats.f2.toFixed(2)}/${c.floats.f3.toFixed(2)}`;
-    console.log(`  ${f} [${c.cause}]`);
+    const f = labels.map((l, i) => `${l} ${c.floats["f" + (i + 1)].toFixed(2)}`).join(", ");
+    console.log(`  ${f}  (${c.cause})`);
     console.log(`    now : ${c.now}`);
     console.log(`    next: ${c.next ?? "(silent)"}`);
+  }
+
+  // One worked example of SILENCE too. It is about half the grid and it is an authored answer,
+  // not a gap -- a report that only shows the words makes the silence look like a hole.
+  const quiet = silent.find((c) => c.why === "no row matched");
+  if (quiet && !showAll) {
+    const f = labels.map((l, i) => `${l} ${quiet.floats["f" + (i + 1)].toFixed(2)}`).join(", ");
+    console.log(`  ${f}  (${quiet.cause})`);
+    console.log(`    now : ${quiet.now}`);
+    console.log(`    next: (silent -- ${quiet.why})`);
   }
 }
 
