@@ -98,3 +98,11 @@ namespace_id = "1001"
 # ── Local dev overrides ───────────────────────────────────────────────────────
 [env.local]
 # Secrets live in .dev.vars (gitignored). See config/.dev.vars.example.
+
+# Workers Logs. OFF until 2026-09-20, which made the feeling-line shadow mode unobservable: the
+# `[feeling-line:shadow]` line was written on every Claude.ai orient and persisted nowhere, so the
+# evidence the gated cutover exists to collect could only be seen by holding `wrangler tail` open.
+# A shadow mode nobody can read is not a shadow mode. nullsafe-plural-v2 already logs here.
+[observability]
+enabled = true
+head_sampling_rate = 1
