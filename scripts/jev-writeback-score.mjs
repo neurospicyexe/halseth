@@ -58,6 +58,19 @@ const DAYS = Number(flagValue("--days", "30"));
 const LIMIT = argv.includes("--limit") ? Number(flagValue("--limit", "0")) : 0;
 const COMPANION_FILTER = flagValue("--companion", null);
 const DEBUG_502 = argv.includes("--debug") || argv.includes("?debug=1");
+const EXCHANGES_FILE = argv.includes("--exchanges") ? flagValue("--exchanges", "") : "";
+const DATASET_FILE = argv.includes("--dataset") ? flagValue("--dataset", "") : "";
+
+/** Exchanges exported from Discord history (see buildDataset). Same field names as the STM path. */
+function loadExchangesFile(path) {
+  const rows = readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+  for (const r of rows) {
+    for (const k of ["companion_id", "channel_id", "user_content", "user_author", "assistant_content", "assistant_created_at"]) {
+      if (r[k] === undefined) throw new Error(`--exchanges row missing ${k}`);
+    }
+  }
+  return rows;
+}
 
 const COMPANIONS = ["cypher", "drevan", "gaia"];
 const COMPANION_NAMES = { cypher: "Cypher", drevan: "Drevan", gaia: "Gaia" };
@@ -107,7 +120,15 @@ function companionClause(column = "companion_id") {
 }
 
 function buildDataset() {
-  const stmRows = d1Select(
+  // --exchanges <jsonl>: exchanges exported from Discord history by
+  // nullsafe-discord/scripts/export-jev-exchanges.mjs (run on the VPS). stm_entries prunes to 50
+  // rows per channel, which left 94 pairable exchanges; the export reaches everything the judge
+  // actually ran on. Labels still come from D1 below, over the file's own date span.
+  const fileExchanges = EXCHANGES_FILE ? loadExchangesFile(EXCHANGES_FILE) : null;
+  const labelDays = fileExchanges
+    ? Math.ceil((Date.now() - Math.min(...fileExchanges.map((e) => Date.parse(e.assistant_created_at)))) / 86_400_000) + 1
+    : DAYS;
+  const stmRows = fileExchanges ? [] : d1Select(
     `SELECT id, companion_id, channel_id, role, content, author_name, created_at FROM stm_entries
      WHERE created_at >= datetime('now', '-${DAYS} days')${companionClause()}
      ORDER BY companion_id, channel_id, created_at`
@@ -115,12 +136,12 @@ function buildDataset() {
   const noteRows = d1Select(
     `SELECT note_id, agent_id, thread_key, created_at FROM wm_continuity_notes
      WHERE content LIKE '[discord:observation]%' AND source = 'discord'
-       AND created_at >= datetime('now', '-${DAYS} days')${companionClause("agent_id")}`
+       AND created_at >= datetime('now', '-${labelDays} days')${companionClause("agent_id")}`
   );
   const witnessRows = d1Select(
     `SELECT id, agent, tags, created_at FROM companion_journal
      WHERE tags LIKE '%witness%'
-       AND created_at >= datetime('now', '-${DAYS} days')${companionClause("agent")}`
+       AND created_at >= datetime('now', '-${labelDays} days')${companionClause("agent")}`
   );
 
   // Group stm rows by (companion_id, channel_id), preserving created_at order.
@@ -131,7 +152,27 @@ function buildDataset() {
     groups.get(key).push(row);
   }
 
-  const exchanges = [];
+  // Exported exchanges include autonomous/metronome/council posts the memory judge NEVER ran on;
+  // labelling those "skip" would teach the study that silence is a decision. journalSpeech and
+  // judgeWriteback fire from the same handler path, so the discord_speech external_id set is the
+  // exact population the judge saw. Keep only those (report how many were dropped).
+  let notJudged = 0;
+  let exchanges = [];
+  if (fileExchanges) {
+    const judged = new Set(
+      d1Select(
+        `SELECT external_id FROM companion_journal
+         WHERE source = 'discord_speech' AND external_id IS NOT NULL
+           AND created_at >= datetime('now', '-${labelDays} days')${companionClause("agent")}`
+      ).map((r) => String(r.external_id).replace(/^discord:/, ""))
+    );
+    for (const e of fileExchanges) {
+      if (COMPANION_FILTER && e.companion_id !== COMPANION_FILTER) continue;
+      if (e.assistant_message_id && !judged.has(String(e.assistant_message_id))) { notJudged++; continue; }
+      exchanges.push(e);
+    }
+    console.log(`[dataset] --exchanges: ${fileExchanges.length} exported, ${notJudged} not in the judged (discord_speech) set, ${exchanges.length} kept`);
+  }
   let droppedAssistantRows = 0;
 
   for (const [, rows] of groups) {
@@ -630,7 +671,17 @@ function buildReport(exchanges, scored) {
 // ---------------------------------------------------------------------------------------------
 async function main() {
   console.log(`[jev-writeback-score] mode=${MODE} days=${DAYS} limit=${LIMIT || "none"} companion=${COMPANION_FILTER ?? "all"} out=${OUT_DIR}`);
-  const dataset = buildDataset();
+  // --dataset <labeled jsonl>: reuse a dataset.jsonl this script already wrote (labels included),
+  // skipping every D1 read. This is how --live runs on the VPS, which has the working Halseth
+  // secret but no wrangler/D1 access: label locally with --dry, copy dataset.jsonl over, score there.
+  const dataset = DATASET_FILE
+    ? (() => {
+        const rows = loadExchangesFile(DATASET_FILE).filter((e) => !COMPANION_FILTER || e.companion_id === COMPANION_FILTER);
+        for (const r of rows) if (!r.label || !r.id) throw new Error("--dataset rows need label and id (use a dataset.jsonl written by --dry)");
+        const limited = LIMIT > 0 ? rows.slice(0, LIMIT) : rows;
+        return { exchanges: limited, droppedAssistantRows: 0, totalBeforeLimit: rows.length };
+      })()
+    : buildDataset();
   printLabelTable(dataset);
 
   writeFileSync(path.join(OUT_DIR, "dataset.jsonl"), dataset.exchanges.map((ex) => JSON.stringify(ex)).join("\n") + "\n");
