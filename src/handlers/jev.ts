@@ -29,9 +29,13 @@ export async function postJevEval(request: Request, env: Env): Promise<Response>
   }
   const purpose = typeof body.purpose === "string" ? body.purpose.slice(0, 64) : "admin";
 
+  const debug = new URL(request.url).searchParams.get("debug") === "1";
   try {
     const result = await jevEval(env, body.state as string, body.questions as never, { purpose });
-    return new Response(JSON.stringify(result), { status: 200, headers: JSON_HEADERS });
+    // raw_preview only exists on a partial answer; it is the binding's own payload, so like the
+    // 502 diagnostic it stays behind `?debug=1`.
+    const { raw_preview, ...clean } = result;
+    return new Response(JSON.stringify(debug ? result : clean), { status: 200, headers: JSON_HEADERS });
   } catch (e) {
     if (e instanceof JevInputError) {
       return new Response(JSON.stringify({ error: e.message }), { status: 400, headers: JSON_HEADERS });
@@ -41,7 +45,6 @@ export async function postJevEval(request: Request, env: Env): Promise<Response>
     // `?debug=1` (admin-only route, so already behind the bearer) echoes the error CLASS and the
     // first 200 chars of the message -- enough to tell "model not in catalogue" from "bad input
     // shape" without a log round-trip. Never on by default.
-    const debug = new URL(request.url).searchParams.get("debug") === "1";
     const err = e as Error & { code?: unknown };
     const payload = debug
       ? { error: "jev evaluation failed", name: err?.name ?? null, code: err?.code ?? null, message: String(err?.message ?? e).slice(0, 200) }

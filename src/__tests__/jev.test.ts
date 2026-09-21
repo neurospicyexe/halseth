@@ -60,6 +60,26 @@ describe("jevEval", () => {
     const run = vi.fn(async () => { throw new Error("upstream 503"); });
     await expect(jevEval(fakeEnv(run), "s", QUESTIONS as never)).rejects.toThrow("upstream 503");
   });
+  it("unwraps the AI Gateway envelope { state, result, gatewayMetadata } (the live shape, 2026-09-21)", async () => {
+    const run = vi.fn(async () => ({
+      state: "Completed",
+      result: { model: "jev-1.13.0", answers: ANSWERS, usage: { input_tokens: 367, output_tokens: 50 } },
+      gatewayMetadata: { keySource: "Unified" },
+    }));
+    const res = await jevEval(fakeEnv(run), "s", QUESTIONS as never);
+    expect(res.model).toBe("jev-1.13.0");
+    expect(res.answers).toEqual(ANSWERS);
+    expect(res.usage).toEqual({ input_tokens: 367, output_tokens: 50 });
+    expect(res.raw_preview).toBeUndefined();
+  });
+  it("carries raw_preview only on a partial answer, and the handler hides it without ?debug=1", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = vi.fn(async () => ({ state: "Completed", result: { answers: {} }, gatewayMetadata: {} }));
+    const res = await jevEval(fakeEnv(run), "s", QUESTIONS as never);
+    expect(res.answers).toEqual({});
+    expect(res.raw_preview).toContain("gatewayMetadata");
+    warn.mockRestore();
+  });
   it("warns but returns when the binding answers a subset of questions", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const run = vi.fn(async () => ({ answers: { worth: ANSWERS.worth } }));

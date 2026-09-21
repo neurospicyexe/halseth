@@ -68,6 +68,13 @@ export interface JevResult {
   latency_ms: number;
   /** Whatever usage the binding reports; shape is the vendor's, passed through untouched. */
   usage: unknown;
+  /**
+   * Present ONLY when the binding answered fewer questions than were asked: the raw binding
+   * payload, JSON-serialised and clipped to 2000 chars, so a caller with `?debug=1` can see the
+   * shape that did not fit. Never set on a full answer. Found necessary 2026-09-21: 667 live
+   * calls returned 200 with `answers: {}` and the `[jev]` warn line could not say WHY.
+   */
+  raw_preview?: string;
 }
 
 export class JevInputError extends Error {
@@ -144,21 +151,27 @@ export async function jevEval(
   try {
     // `typesafe/jev` is a third-party Workers AI model; the workers-types model union lags the
     // catalogue, so the model id is cast rather than the whole binding.
-    const raw = await env.AI.run(JEV_MODEL as never, { state, questions } as never) as unknown as {
-      model?: string;
-      answers?: Record<string, JevAnswer>;
-      usage?: unknown;
-    };
+    type JevPayload = { model?: string; answers?: Record<string, JevAnswer>; usage?: unknown };
+    const raw = await env.AI.run(JEV_MODEL as never, { state, questions } as never) as unknown as
+      JevPayload & { state?: string; result?: JevPayload; gatewayMetadata?: unknown };
     const latency_ms = Date.now() - t0;
-    const answers = raw?.answers ?? {};
+    // Through AI Gateway Unified Billing the binding returns an ENVELOPE, not the vendor payload:
+    // `{ state: "Completed", result: { model, answers, usage }, gatewayMetadata }`. The docs page
+    // shows only the inner payload. Read the envelope when present, the bare payload otherwise
+    // (seen 2026-09-21: 667 live calls scored as `answers: {}` because of this one level).
+    const payload: JevPayload = raw?.result && typeof raw.result === "object" ? raw.result : raw;
+    const answers = payload?.answers ?? {};
     const missing = Object.keys(questions).filter((k) => !(k in answers));
     if (missing.length > 0) {
       // A 200 with holes is a contract violation, not a soft miss; say so where a grep will find it.
-      console.warn(`[jev] purpose=${purpose} answered=${Object.keys(answers).length}/${Object.keys(questions).length} missing=${missing.join(",")} latency_ms=${latency_ms}`);
+      let raw_preview = "";
+      try { raw_preview = JSON.stringify(raw).slice(0, 2000); } catch { raw_preview = String(raw).slice(0, 2000); }
+      console.warn(`[jev] purpose=${purpose} answered=${Object.keys(answers).length}/${Object.keys(questions).length} missing=${missing.join(",")} latency_ms=${latency_ms} raw=${raw_preview.slice(0, 500)}`);
+      return { model: payload?.model ?? JEV_MODEL, answers, latency_ms, usage: payload?.usage ?? null, raw_preview };
     } else {
-      console.log(`[jev] purpose=${purpose} ok questions=${Object.keys(questions).length} state_chars=${state.length} latency_ms=${latency_ms} model=${raw?.model ?? "?"}`);
+      console.log(`[jev] purpose=${purpose} ok questions=${Object.keys(questions).length} state_chars=${state.length} latency_ms=${latency_ms} model=${payload?.model ?? "?"}`);
     }
-    return { model: raw?.model ?? JEV_MODEL, answers, latency_ms, usage: raw?.usage ?? null };
+    return { model: payload?.model ?? JEV_MODEL, answers, latency_ms, usage: payload?.usage ?? null };
   } catch (e) {
     const latency_ms = Date.now() - t0;
     console.error(`[jev] purpose=${purpose} FAILED latency_ms=${latency_ms} error=${String(e).slice(0, 300)}`);

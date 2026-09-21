@@ -27,7 +27,7 @@
 //
 // MODES: --dry (dataset + labels only, no Jev calls) / --mock (deterministic fake scorer, exercises
 // the full report pipeline without spending anything) / --live (real Jev calls via POST /admin/jev,
-// concurrency 4, 15s timeout, response cache so a re-run does not re-pay for already-scored rows).
+// concurrency 3, 4 attempts w/ backoff, 15s timeout, response cache so a re-run does not re-pay for already-scored rows).
 // Flags: --days N (default 30), --limit N (cap exchange count), --companion cypher|drevan|gaia.
 //
 // OUTPUT DIR: this repo's .gitignore does not exclude `scratch/`, so per the build instructions
@@ -394,6 +394,8 @@ async function callJevOnce(base, secret, ex, { debug = false } = {}) {
   }
 }
 
+const LIVE_CONCURRENCY = 3;
+
 async function runLive(exchanges) {
   loadEnvFile("scripts/.env", "HALSETH_SECRET", "HALSETH_SECRET");
   loadEnvFile(".dev.vars", "ADMIN_SECRET", "HALSETH_SECRET");
@@ -414,14 +416,28 @@ async function runLive(exchanges) {
   let stop = false;
   const results = new Map(cache);
 
+  // 2026-09-21 live run: 112 of 557 calls came back 502 and the ONE debug retry the harness made
+  // returned a full 200 -- the binding fails transiently, not on our input. So: up to
+  // LIVE_ATTEMPTS attempts with exponential backoff, every retry carrying ?debug=1 so a final
+  // failure records the error CLASS per row (not once per run), and a 200 on any attempt counts.
+  const LIVE_ATTEMPTS = 4;
+  const failClasses = new Map();
   let cursor = 0;
   async function worker() {
     while (cursor < todo.length && !stop) {
       const ex = todo[cursor++];
-      const r = await callJevOnce(base, process.env.HALSETH_SECRET, ex);
+      let r = null;
+      let retries = 0;
+      for (let attempt = 0; attempt < LIVE_ATTEMPTS && !stop; attempt++) {
+        if (attempt > 0) await new Promise((res) => setTimeout(res, 500 * 2 ** (attempt - 1) + Math.random() * 250));
+        r = await callJevOnce(base, process.env.HALSETH_SECRET, ex, { debug: attempt > 0 });
+        if (r.status === 200 && r.body?.answers) break;
+        if (r.status === 400) break;
+        retries++;
+      }
       attempted++;
       if (r.status === 200 && r.body?.answers) {
-        const row = { exchange_id: ex.id, ok: true, model: r.body.model, latency_ms: r.body.latency_ms, usage: r.body.usage, answers: r.body.answers, state_chars: renderState(ex).length };
+        const row = { exchange_id: ex.id, ok: true, model: r.body.model, latency_ms: r.body.latency_ms, usage: r.body.usage, answers: r.body.answers, state_chars: renderState(ex).length, retries };
         results.set(ex.id, row);
         appendFileSync(cacheFile, JSON.stringify(row) + "\n");
       } else if (r.status === 400) {
@@ -431,19 +447,16 @@ async function runLive(exchanges) {
         return;
       } else {
         failed++;
-        if (r.status === 502 && !debugPrinted) {
-          debugPrinted = true;
-          const dbg = await callJevOnce(base, process.env.HALSETH_SECRET, ex, { debug: true });
-          const cls = dbg.body?.name ?? dbg.body?.error?.name ?? "(unknown)";
-          const msg = dbg.body?.message ?? dbg.body?.error?.message ?? dbg.text.slice(0, 300);
-          console.error(`[live] 502 debug class: ${cls} -- ${msg}`);
-        } else {
-          console.error(`[live] ${r.status || "network error"} on exchange ${ex.id}: ${(r.text ?? "").slice(0, 300)}`);
-        }
-        const row = { exchange_id: ex.id, ok: false, status: r.status, error: r.text?.slice(0, 500) };
+        const cls = r.body?.name ?? r.body?.error?.name ?? (r.status ? `http_${r.status}` : "network");
+        const code = r.body?.code ?? "";
+        const msg = r.body?.message ?? r.body?.error?.message ?? (r.text ?? "").slice(0, 200);
+        const key = `${cls}${code ? ` ${code}` : ""}`;
+        failClasses.set(key, (failClasses.get(key) ?? 0) + 1);
+        console.error(`[live] FAILED after ${LIVE_ATTEMPTS} attempts on exchange ${ex.id}: ${key} -- ${String(msg).slice(0, 200)}`);
+        const row = { exchange_id: ex.id, ok: false, status: r.status, error_class: key, error: String(msg).slice(0, 500) };
         results.set(ex.id, row);
       }
-      if (attempted >= 1 && failed / attempted > 0.2) {
+      if (attempted >= 10 && failed / attempted > 0.2) {
         console.error(`[live] failure rate ${failed}/${attempted} exceeds 20% -- aborting remaining calls.`);
         stop = true;
         return;
@@ -451,8 +464,11 @@ async function runLive(exchanges) {
     }
   }
 
-  const workers = Array.from({ length: Math.min(4, todo.length) || 1 }, () => worker());
+  const workers = Array.from({ length: Math.min(LIVE_CONCURRENCY, todo.length) || 1 }, () => worker());
   await Promise.all(workers);
+  if (failClasses.size) console.error(`[live] failure classes (final, after retries): ${[...failClasses].map(([k, v]) => `${k}=${v}`).join(", ")}`);
+  const retried = [...results.values()].filter((x) => x.ok && x.retries > 0).length;
+  if (retried) console.error(`[live] ${retried} rows succeeded only on a retry (transient binding failures).`);
 
   if (aborted400) {
     console.error("[live] run aborted: /admin/jev returned 400 (our bug, not Jev/binding failure).");
