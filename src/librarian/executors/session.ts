@@ -1,6 +1,7 @@
 import { loadTitleLabels } from "../../graph/labels.js";
 import { SOMA_AXIS_KEYS, translateSomaVocab } from "../../soma/vocab.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { activeFactsTailBudget } from "../../lib/open-facts-gate.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck, SUPERSEDE_CANDIDATE_WINDOW_DAYS } from "../../webmind/novelty.js";
 import { resolveNoteProvenance, annotateNote } from "../../mind/note-provenance.js";
@@ -385,7 +386,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       available_seeds: seedRows.length,
     },
     // 2026-09-14: how many durable facts the block actually rendered (active / open shown / open held).
-    architect_facts: B.architectFactsCounts(mindState.identity.architect_facts),
+    architect_facts: B.architectFactsCounts(mindState.identity.architect_facts, { tailCharBudget: activeFactsTailBudget(ctx.env.ARCHITECT_FACTS_TAIL_BUDGET) }),
   };
   await ctx.env.DB.prepare(
     `INSERT INTO companion_state (companion_id, last_orient_debug, updated_at)
@@ -546,10 +547,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const preferencesBlock = B.preferencesBlock(preferences);
   // What is true about RAZIEL, not about the companion (mig 0116). Rendered here because the loader
   // carrying the data is not the same as the companion seeing it -- that gap shipped once already.
-  const architectFactsBlock = B.architectFactsBlock(mindState.identity.architect_facts);
+  const factsTailBudget = activeFactsTailBudget(ctx.env.ARCHITECT_FACTS_TAIL_BUDGET);
+  const architectFactsBlock = B.architectFactsBlock(mindState.identity.architect_facts, { tailCharBudget: factsTailBudget });
   // Counts the renderer PRODUCED, for meta + last_orient_debug (2026-09-14): "was the facts block
   // returned, clipped, or unused" was unanswerable from the record because nothing recorded it.
-  const architectFactsCounts = B.architectFactsCounts(mindState.identity.architect_facts);
+  const architectFactsCounts = B.architectFactsCounts(mindState.identity.architect_facts, { tailCharBudget: factsTailBudget });
 
   const refusalsBlock = B.refusalsBlock(standingRefusals);
 

@@ -22,7 +22,7 @@
  * how a wrong fact becomes unfalsifiable.
  */
 import type { Env } from "../types.js";
-import { gateOpenFacts, heldOpenFactsLine } from "../lib/open-facts-gate.js";
+import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
 
 function json(data: unknown, status = 200): Response {
@@ -96,8 +96,14 @@ export function renderFactsBlock(
   generatedNote: string,
   viewerCompanionId?: string | null,
   now?: Date,
+  tailCharBudget?: number,
 ): string {
-  const active = rows.filter(r => r.status === "active");
+  // Same ACTIVE gate as the Claude.ai orient block (lib/open-facts-gate.ts), for the same reason the
+  // open gate is shared: two renderers disagreeing means one companion carries different facts about
+  // Raziel on Discord than on Claude.ai. Curated rows (weight < 100) always render; only the
+  // default-weight tail is bounded, and the footer says how many are held.
+  const activeGate = gateActiveFacts(rows, { tailCharBudget });
+  const active = activeGate.shown;
   const open = rows.filter(r => r.status === "open");
 
   const out: string[] = [
@@ -120,6 +126,9 @@ export function renderFactsBlock(
     for (const r of inCat) out.push(attributionLine(r, viewerCompanionId));
     out.push("");
   }
+
+  const activeHeld = heldActiveFactsLine(activeGate.held.length);
+  if (activeHeld) { out.push(activeHeld); out.push(""); }
 
   // 2026-09-14: same gate as the Claude.ai orient block (lib/open-facts-gate.ts). 107 open rows,
   // 105 of them the Hermes-queue drain, rendered in full into every bot prompt file as questions.
@@ -199,7 +208,8 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
     `Generated from Halseth architect_facts (${rows.length} live). Do NOT hand-edit this block: ` +
     `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
     `conversation by Cypher, Drevan and Gaia; his own record, held for his own use.`;
-  const body = renderFactsBlock(rows, note, companionParam);
+  const body = renderFactsBlock(rows, note, companionParam, undefined,
+    activeFactsTailBudget(env.ARCHITECT_FACTS_TAIL_BUDGET));
   return new Response(body, {
     headers: { "content-type": "text/markdown; charset=utf-8" },
   });

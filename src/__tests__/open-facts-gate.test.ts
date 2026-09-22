@@ -65,7 +65,7 @@ describe("architectFactsBlock with the gate", () => {
     expect(block.match(/• fact fresh/g)).toHaveLength(8);
     expect(block).not.toContain("fact stale");
     expect(block).toContain("99 older open questions held back, oldest 33d");
-    expect(architectFactsCounts([...active, ...fresh, ...stale], { now: NOW })).toEqual({ active: 45, open_shown: 8, open_held: 99 });
+    expect(architectFactsCounts([...active, ...fresh, ...stale], { now: NOW })).toEqual({ active: 45, open_shown: 8, open_held: 99, active_shown: 45, active_held: 0 });
   });
 
   it("renders nothing for no facts and no OPEN section when there are none", () => {

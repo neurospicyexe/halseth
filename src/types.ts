@@ -22,6 +22,10 @@ export interface Env {
   PLURALITY_ENABLED:   string;  // "true" | "false"
   COMPANIONS_ENABLED:  string;  // "true" | "false"
   COORDINATION_ENABLED: string; // "true" | "false"
+  /** Chars of DEFAULT-weight architect facts that render at orient (lib/open-facts-gate.ts).
+   *  Unset = 4000. Widen it or set it huge to disable the gate without a code change; the
+   *  number is a judgement about Raziel's data, not a technical constant. */
+  ARCHITECT_FACTS_TAIL_BUDGET?: string;
   SYSTEM_NAME:         string;
   SYSTEM_OWNER:        string;
   // Raziel's PluralKit system id. NOT a secret -- the member list is public and unauthenticated,

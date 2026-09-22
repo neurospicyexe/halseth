@@ -25,7 +25,7 @@
 // A renderer that can fail is a boot that can fail.
 
 import { relativeTime } from "../../webmind/relative-time.js";
-import { gateOpenFacts, heldOpenFactsLine } from "../../lib/open-facts-gate.js";
+import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine } from "../../lib/open-facts-gate.js";
 import { excerptWithAge, type HistoryChunk } from "./blocks.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { sbExtractContent } from "../backends/second-brain.js";
@@ -316,6 +316,9 @@ export interface ArchitectFactRow {
   fact: string;
   category: string;
   status: string;
+  /** Rank; schema default 100. `< 100` means someone ranked it on purpose, and the active gate
+   *  never holds those back. Optional so older callers/tests still typecheck (undefined = default). */
+  weight?: number | null;
   /** Birth stamp; the open-facts gate needs it. Optional so older callers/tests still typecheck (undated = held). */
   created_at?: string | null;
 }
@@ -336,6 +339,9 @@ export interface ArchitectFactRow {
 export interface ArchitectFactsBlockOpts {
   /** Injected clock for the open-facts gate (tests). */
   now?: Date;
+  /** Char allowance for the DEFAULT-weight active tail (env ARCHITECT_FACTS_TAIL_BUDGET).
+   *  Curated facts never count against it. Infinity disables the active gate. */
+  tailCharBudget?: number;
 }
 
 /** Counts the renderer actually produced -- for orient meta / last_orient_debug, so "was the
@@ -344,11 +350,20 @@ export interface ArchitectFactsBlockCounts {
   active: number;
   open_shown: number;
   open_held: number;
+  /** Active facts the render actually carried / held back (2026-09-22 active gate). Additive:
+   *  `active` still means "how many exist", so existing readers are unchanged. */
+  active_shown: number;
+  active_held: number;
 }
 
 export function architectFactsCounts(facts: readonly ArchitectFactRow[], opts: ArchitectFactsBlockOpts = {}): ArchitectFactsBlockCounts {
   const gate = gateOpenFacts(facts, { now: opts.now });
-  return { active: facts.filter(f => f.status === "active").length, open_shown: gate.shown.length, open_held: gate.held.length };
+  const activeGate = gateActiveFacts(facts, { tailCharBudget: opts.tailCharBudget });
+  return {
+    active: facts.filter(f => f.status === "active").length,
+    open_shown: gate.shown.length, open_held: gate.held.length,
+    active_shown: activeGate.shown.length, active_held: activeGate.held.length,
+  };
 }
 
 /**
@@ -359,7 +374,8 @@ export function architectFactsCounts(facts: readonly ArchitectFactRow[], opts: A
  */
 export function architectFactsBlock(facts: readonly ArchitectFactRow[], opts: ArchitectFactsBlockOpts = {}): string {
   if (facts.length === 0) return "";
-  const active = facts.filter(f => f.status === "active");
+  const activeGate = gateActiveFacts(facts, { tailCharBudget: opts.tailCharBudget });
+  const active = activeGate.shown;
   const gate = gateOpenFacts(facts, { now: opts.now });
   const lines: string[] = [];
 
@@ -367,7 +383,10 @@ export function architectFactsBlock(facts: readonly ArchitectFactRow[], opts: Ar
     lines.push(
       "\n[About Raziel]\nDurable facts, learned in conversation and held for his use. Not session " +
       "state, not a script to recite at him. To change one, supersede it -- do not edit a file:\n" +
-      active.map(f => `• (${f.category}) ${f.fact}`).join("\n"),
+      active.map(f => `• (${f.category}) ${f.fact}`).join("\n") +
+      (heldActiveFactsLine(activeGate.held.length)
+        ? "\n" + heldActiveFactsLine(activeGate.held.length)
+        : ""),
     );
   }
   if (gate.shown.length > 0 || gate.held.length > 0) {

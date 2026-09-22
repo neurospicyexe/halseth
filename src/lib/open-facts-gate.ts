@@ -94,3 +94,111 @@ export function heldOpenFactsLine(heldCount: number, oldestHeldDays: number | nu
   return `(${heldCount} older open question${heldCount === 1 ? "" : "s"} held back${age} -- ` +
     `not for this session; Raziel confirms or retires them on Hearth /facts.)`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTIVE facts (2026-09-22). Same file, same reason: two renderers, one rule.
+//
+// The 09-14 gate above fixed the OPEN lane and it worked -- open is down from 107 to 2. The
+// identical accumulation then happened one lane over. Measured 2026-09-22:
+//
+//     curated (weight < 100)   45 facts   7,634 chars   39 of 45 stated by Raziel himself
+//     default (weight = 100)   74 facts  17,545 chars    6 of 74 stated by Raziel
+//
+// 7,634 is essentially the "7,907 chars of confirmed facts" the open gate measured on 09-14, so the
+// curated set is stable and 17.5k of companion-written rows arrived in five weeks. 70% of what every
+// companion reads about Raziel at every boot is now the uncurated catch-all.
+//
+// WHAT MAKES THIS SAFE, and it is the only thing that does: `weight` is a REAL control. 45 rows carry
+// hand-assigned weights 10-74 (Raziel's own, 2026-08-12, ascending by importance); 74 sit at the
+// schema default of 100. So "never hold back a fact whose weight was set on purpose" is a rule with
+// data behind it, not a heuristic. Curated facts ALWAYS render, however many there are.
+//
+// WHAT THIS DOES NOT DO, stated plainly so nobody mistakes it for a decision: among equally-weighted
+// default rows there is no principled order. Recency is a TIEBREAK, not a claim that an older fact
+// matters less -- a durable fact does not go stale by age, and hiding one because it is old is how a
+// companion drops something true. The defensible reading of newest-first is that the newest rows are
+// the ones a companion has not yet had a chance to act on. This gate BUYS TIME; the deciding happens
+// when Raziel triages on Hearth /facts. (A 2026-09-22 check found 16 of the 74 share an opening with
+// another row, so some of the pile is restatement and consolidation is the real win.)
+//
+// Store untouched, per the mig 0116 covenant: bound the render, never the store. Everything held is
+// one `ask_librarian` read away (execArchitectFactsRead returns all of it, with ids).
+
+export interface ActiveFactLike {
+  id: string;
+  fact: string;
+  status: string;
+  created_at?: string | null;
+  /** Schema default is 100; anything lower was set deliberately. Undefined counts as default. */
+  weight?: number | null;
+}
+
+/** The schema default. A row at this weight has never been ranked by anyone. */
+export const ACTIVE_FACTS_DEFAULT_WEIGHT = 100;
+/** Chars of DEFAULT-weight facts that render. Curated facts are never counted against it. */
+export const ACTIVE_FACTS_TAIL_CHAR_BUDGET = 4000;
+
+export interface ActiveFactsGateResult<T extends ActiveFactLike> {
+  /** Curated first (loader weight order), then the newest default-weight rows that fit. */
+  shown: T[];
+  held: T[];
+  curatedCount: number;
+  tailShownCount: number;
+}
+
+/**
+ * Split active facts into what renders and what is held. `budget` is the char allowance for the
+ * DEFAULT-weight tail only; pass 0 to hold the entire tail, or Infinity to disable the gate.
+ */
+export function gateActiveFacts<T extends ActiveFactLike>(
+  rows: readonly T[],
+  opts: { tailCharBudget?: number } = {},
+): ActiveFactsGateResult<T> {
+  const budget = opts.tailCharBudget ?? ACTIVE_FACTS_TAIL_CHAR_BUDGET;
+  const active = rows.filter(r => r.status === "active");
+
+  const curated: T[] = [];
+  const tail: T[] = [];
+  for (const r of active) {
+    const w = typeof r.weight === "number" && Number.isFinite(r.weight) ? r.weight : ACTIVE_FACTS_DEFAULT_WEIGHT;
+    (w < ACTIVE_FACTS_DEFAULT_WEIGHT ? curated : tail).push(r);
+  }
+
+  // RE-SORT, never inherit. The loader orders `weight ASC, created_at ASC`, which inside the
+  // weight=100 group is OLDEST first -- filling a budget in that order would keep the August rows
+  // and hold back everything from the last month, the exact inverse of the intent.
+  const byNewest = [...tail].sort((a, b) => {
+    const ta = parseStamp(a.created_at), tb = parseStamp(b.created_at);
+    return (Number.isFinite(tb) ? tb : -Infinity) - (Number.isFinite(ta) ? ta : -Infinity);
+  });
+
+  const tailShown: T[] = [];
+  const held: T[] = [];
+  let used = 0;
+  for (const r of byNewest) {
+    const cost = r.fact.length;
+    if (used + cost <= budget) { tailShown.push(r); used += cost; }
+    else held.push(r);
+  }
+
+  return { shown: [...curated, ...tailShown], held, curatedCount: curated.length, tailShownCount: tailShown.length };
+}
+
+/** The one-line footer both renderers print when active facts are held. Names the pull verb:
+ *  a count with no way to reach the content is a dead end, not a summary. */
+export function heldActiveFactsLine(heldCount: number): string {
+  if (heldCount <= 0) return "";
+  return `(${heldCount} more recorded fact${heldCount === 1 ? "" : "s"} held back to keep this block readable -- ` +
+    `nothing is lost: ask for "all architect facts" to read them, and Raziel ranks or retires them on Hearth /facts.)`;
+}
+
+/**
+ * Parse the ARCHITECT_FACTS_TAIL_BUDGET var. Unset/garbage falls back to the default rather than
+ * throwing or silently disabling the gate -- a typo'd knob should degrade to the safe value, the
+ * same rule hermesRotationMode uses on the bot side. A huge number disables the gate on purpose.
+ */
+export function activeFactsTailBudget(raw: string | undefined | null): number {
+  if (raw === undefined || raw === null || raw === "") return ACTIVE_FACTS_TAIL_CHAR_BUDGET;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : ACTIVE_FACTS_TAIL_CHAR_BUDGET;
+}

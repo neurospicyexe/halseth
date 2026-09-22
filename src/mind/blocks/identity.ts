@@ -43,6 +43,10 @@ export interface ArchitectFactEntry {
   /** Birth stamp (D1 `datetime('now')`). The open-facts gate (lib/open-facts-gate.ts) renders only
    *  open facts young enough to still be a live question; without this every open row rendered forever. */
   created_at: string | null;
+  /** Rank (schema default 100). The ACTIVE-facts gate never holds back a row whose weight was set
+   *  deliberately (< 100), so this column is what makes bounding the render safe -- without it the
+   *  gate could not tell Raziel's hand-ranked facts from the companion-written catch-all. */
+  weight?: number | null;
 }
 
 export interface IdentityBlocks {
@@ -99,7 +103,7 @@ export async function loadIdentityBlocks(env: Env, companionId: WmAgentId): Prom
     // store is exactly what caused six weeks of data loss in the Hermes layer. Bound the RENDER if
     // it ever needs bounding; never the store.
     env.DB.prepare(
-      `SELECT id, fact, category, status, created_at FROM architect_facts
+      `SELECT id, fact, category, status, created_at, weight FROM architect_facts
         WHERE status IN ('active', 'open') ORDER BY weight ASC, created_at ASC`,
     ).all<ArchitectFactEntry>().catch(() => null),
     // LIMIT 12 with a strength ordering means this cap decides which preferences a companion
