@@ -3,7 +3,7 @@
 // vault-history excerpts. Missing timestamps render nothing -- never "NaN ago".
 
 import { describe, it, expect } from "vitest";
-import { buildClubBlock, excerptWithAge, type ClubRoundRow } from "../librarian/response/blocks.js";
+import { buildClubBlock, excerptWithProvenance, type ClubRoundRow } from "../librarian/response/blocks.js";
 import { buildContinuityBlock } from "../librarian/response/builder.js";
 import type { WmOrientResponse } from "../webmind/types.js";
 
@@ -66,25 +66,25 @@ describe("buildClubBlock", () => {
   });
 });
 
-// ── excerptWithAge ───────────────────────────────────────────────────────────
+// ── excerptWithProvenance ───────────────────────────────────────────────────────────
 
-describe("excerptWithAge", () => {
+describe("excerptWithProvenance", () => {
   it("prefixes the relative age so the date survives the slice", () => {
     const long = "x".repeat(500);
-    const out = excerptWithAge({ chunk_text: long, created_at: "2026-06-26 12:00:00" }, 250, NOW);
+    const out = excerptWithProvenance({ chunk_text: long, created_at: "2026-06-26 12:00:00" }, 250, NOW);
     expect(out.startsWith("(2 days ago) ")).toBe(true);
     // body still capped at maxLen; the prefix rides outside the slice
     expect(out.length).toBe("(2 days ago) ".length + 250);
   });
 
   it("renders bare excerpts unchanged when the chunk carries no date", () => {
-    expect(excerptWithAge({ chunk_text: "plain memory" }, 250, NOW)).toBe("plain memory");
-    expect(excerptWithAge({ text: "alt field" }, 250, NOW)).toBe("alt field");
+    expect(excerptWithProvenance({ chunk_text: "plain memory" }, 250, NOW)).toBe("plain memory");
+    expect(excerptWithProvenance({ text: "alt field" }, 250, NOW)).toBe("alt field");
   });
 
   it("returns empty string for empty chunks (filter(Boolean) drops them)", () => {
-    expect(excerptWithAge({}, 250, NOW)).toBe("");
-    expect(excerptWithAge({ chunk_text: "", created_at: ago(1) }, 250, NOW)).toBe("");
+    expect(excerptWithProvenance({}, 250, NOW)).toBe("");
+    expect(excerptWithProvenance({ chunk_text: "", created_at: ago(1) }, 250, NOW)).toBe("");
   });
 });
 
@@ -193,5 +193,59 @@ describe("buildContinuityBlock active_conversations", () => {
     expect(block).not.toContain("[Live conversation threads]");
     const blockAbsent = buildContinuityBlock(wmFixture({} as never));
     expect(blockAbsent).not.toContain("[Live conversation threads]");
+  });
+});
+
+// ── inline provenance at retrieval (2026-09-22, candidate T) ─────────────────
+//
+// "A model cannot honour provenance it cannot see." The principle was already applied to the
+// HISTORY vault lane and not the RAG lane, so `[Vault excerpts]` reached every companion on every
+// surface as undated, unattributed text -- while the chunks carried created_at, vault_path and
+// section the whole time (verified live: 12 of 12).
+
+import { chunkSource } from "../librarian/response/blocks.js";
+
+describe("chunkSource", () => {
+  it("uses the vault file's basename, not the whole path", () => {
+    expect(chunkSource({ vault_path: "vault/notes/2026/2026-06-planning.md" })).toBe("2026-06-planning");
+  });
+  it("strips md/markdown/txt but leaves other names alone", () => {
+    expect(chunkSource({ vault_path: "a/b.markdown" })).toBe("b");
+    expect(chunkSource({ vault_path: "a/b.txt" })).toBe("b");
+    expect(chunkSource({ vault_path: "a/b.canvas" })).toBe("b.canvas");
+  });
+  it("falls back to section when there is no path", () => {
+    expect(chunkSource({ section: "Boot ritual" })).toBe("Boot ritual");
+  });
+  it("is empty when the chunk carries neither", () => {
+    expect(chunkSource({})).toBe("");
+    expect(chunkSource({ vault_path: "   " })).toBe("");
+  });
+});
+
+describe("excerptWithProvenance -- source alongside age", () => {
+  it("renders age and source together, prefix first so it survives the slice", () => {
+    const out = excerptWithProvenance(
+      { chunk_text: "x".repeat(400), created_at: "2026-06-26 12:00:00", vault_path: "vault/2026-06-planning.md" },
+      50, NOW);
+    expect(out.startsWith("(")).toBe(true);
+    expect(out).toContain("2026-06-planning");
+    expect(out.indexOf(")")).toBeLessThan(40);
+  });
+
+  it("renders source alone when the chunk has no date", () => {
+    expect(excerptWithProvenance({ chunk_text: "body", vault_path: "notes/thing.md" }, 250, NOW))
+      .toBe("(thing) body");
+  });
+
+  // The degrade-cleanly guarantee: this can never make an excerpt worse than it was.
+  it("is byte-identical to the old age-only render when there is no source", () => {
+    const out = excerptWithProvenance({ chunk_text: "plain", created_at: "2026-06-26 12:00:00" }, 250, NOW);
+    expect(out).toMatch(/^\([^,)]+\) plain$/);
+    expect(out).not.toContain(",");
+  });
+
+  it("returns the bare body when the chunk carries no provenance at all", () => {
+    expect(excerptWithProvenance({ chunk_text: "nothing known" }, 250, NOW)).toBe("nothing known");
   });
 });

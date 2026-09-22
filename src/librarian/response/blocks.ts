@@ -51,6 +51,10 @@ export interface HistoryChunk {
   text?: string;
   created_at?: string;
   date?: string;
+  /** Where it came from. Present on every /mind/search chunk (verified live 2026-09-22: 12 of 12
+   *  carried created_at, vault_path AND section) and discarded by every renderer until then. */
+  vault_path?: string;
+  section?: string;
 }
 
 /**
@@ -58,9 +62,42 @@ export interface HistoryChunk {
  * carries a date column -- the prefix survives the slice, so the date does too. Chunks
  * without a date render exactly as before.
  */
-export function excerptWithAge(c: HistoryChunk, maxLen: number, now: number = Date.now()): string {
+/**
+ * A short, human source label for a recalled chunk: the vault file's basename, or its section, or
+ * "" when neither is present. Deliberately not the full path -- this rides in a budgeted prompt
+ * block, and `2026-06-planning` is as identifying as `vault/notes/2026/2026-06-planning.md`.
+ */
+export function chunkSource(c: HistoryChunk): string {
+  const path = (c.vault_path ?? "").trim();
+  if (path) {
+    const base = path.split("/").pop() ?? path;
+    return base.replace(/\.(md|markdown|txt)$/i, "");
+  }
+  return (c.section ?? "").trim();
+}
+
+/**
+ * INLINE PROVENANCE AT RETRIEVAL (2026-09-22, review candidate T): "a model cannot honour
+ * provenance it cannot see."
+ *
+ * Renders `(age, source) body`. The prefix leads so it survives the slice -- the same reasoning
+ * that put the age first in the bots' vault recall, and the reason this file already dated the
+ * history lane: *an excerpt with no age reads as present-tense news*.
+ *
+ * WHY IT SHIPPED. That principle was applied to ONE of the two vault lanes. `historyBlock` and
+ * `parseExcerpts(dated=true)` dated their chunks; `ragBlock` and `parseExcerpts(dated=false)` --
+ * the `[Vault excerpts]` every companion reads at every boot, on every surface -- rendered raw
+ * sliced text with no date and no source, while the chunks carried both the whole time. An undated
+ * vault excerpt is exactly how a companion states something stale as though it were current.
+ *
+ * Degrades cleanly: no timestamp and no path renders precisely as before, so this can never make
+ * an excerpt worse than it was.
+ */
+export function excerptWithProvenance(c: HistoryChunk, maxLen: number, now: number = Date.now()): string {
   const body = String(c.chunk_text ?? c.text ?? "").slice(0, maxLen);
   if (!body) return "";
   const ts = c.created_at ?? c.date;
-  return ts ? `(${relativeTime(ts, now)}) ${body}` : body;
+  const bits = [ts ? relativeTime(ts, now) : "", chunkSource(c)].filter(Boolean);
+  return bits.length ? `(${bits.join(", ")}) ${body}` : body;
 }
+

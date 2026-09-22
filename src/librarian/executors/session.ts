@@ -15,7 +15,7 @@ import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../bac
 import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
 import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom } from "../../webmind/feeling-line-loader.js";
 import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
-import { buildClubBlock, excerptWithAge, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
+import { buildClubBlock, excerptWithProvenance, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, MOTIF_TUNING, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
@@ -1200,16 +1200,16 @@ export async function execBotOrient(
     });
   }
 
-  const parseExcerpts = (raw: string | null, n: number, dated: boolean): string[] => {
+  // BOTH vault lanes carry provenance as of 2026-09-22 (candidate T), so the `dated` flag that used
+  // to separate them is gone -- it distinguished nothing except which lane silently lost its date.
+  // The rag lane rendered raw sliced text while the chunks carried created_at and vault_path the
+  // whole time, and an excerpt with no age reads as present-tense news.
+  const parseExcerpts = (raw: string | null, n: number): string[] => {
     if (!raw) return [];
     try {
-      const parsed = JSON.parse(raw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+      const parsed = JSON.parse(raw) as { chunks?: HistoryChunk[] };
       const chunks = parsed?.chunks ?? [];
-      return dated
-        // Dated chunks get a relative-age prefix so the date survives the slice -- an excerpt with no age
-        // reads as present-tense news.
-        ? chunks.slice(0, 3).map(c => excerptWithAge(c as HistoryChunk, n)).filter(Boolean)
-        : chunks.slice(0, 3).map(c => String(c.chunk_text ?? c.text ?? "").slice(0, n)).filter(Boolean);
+      return chunks.slice(0, 3).map(c => excerptWithProvenance(c, n)).filter(Boolean);
     } catch { return [raw.slice(0, n)]; }
   };
 
@@ -1217,8 +1217,8 @@ export async function execBotOrient(
     ms,
     {
       synthesis_summary: sbExtractContent(synthRow?.content ?? null),
-      rag_excerpts: parseExcerpts(ragRaw, 250, false),
-      history_excerpts: parseExcerpts(historyRaw, 250, true),
+      rag_excerpts: parseExcerpts(ragRaw, 250),
+      history_excerpts: parseExcerpts(historyRaw, 250),
       continuity_notes,
       owner: ctx.env.SYSTEM_OWNER,
     },

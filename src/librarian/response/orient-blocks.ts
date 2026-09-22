@@ -26,7 +26,7 @@
 
 import { relativeTime } from "../../webmind/relative-time.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine } from "../../lib/open-facts-gate.js";
-import { excerptWithAge, type HistoryChunk } from "./blocks.js";
+import { excerptWithProvenance, type HistoryChunk } from "./blocks.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { sbExtractContent } from "../backends/second-brain.js";
 
@@ -88,10 +88,13 @@ export function siblingBlock(siblings: readonly string[], siblingRows: ReadonlyA
 export function ragBlock(ragRaw: string | null): string {
   if (!ragRaw) return "";
   try {
-    const parsed = JSON.parse(ragRaw) as { chunks?: Array<{ chunk_text?: string; text?: string }> };
+    // Provenance, 2026-09-22 (candidate T). These chunks always carried created_at and vault_path;
+    // this lane threw both away while the history lane below kept the date. See
+    // excerptWithProvenance -- an undated vault excerpt reads as present-tense news.
+    const parsed = JSON.parse(ragRaw) as { chunks?: HistoryChunk[] };
     const excerpts = (parsed?.chunks ?? [])
       .slice(0, 5)
-      .map(c => String(c.chunk_text ?? c.text ?? "").slice(0, 400))
+      .map(c => excerptWithProvenance(c, 400))
       .filter(Boolean);
     return excerpts.length > 0 ? "\n[Vault excerpts]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
   } catch {
@@ -110,7 +113,7 @@ export function historyBlock(historyRaw: string | null): string {
     const parsed = JSON.parse(historyRaw) as { chunks?: HistoryChunk[] };
     const excerpts = (parsed?.chunks ?? [])
       .slice(0, 3)
-      .map(c => excerptWithAge(c, 350))
+      .map(c => excerptWithProvenance(c, 350))
       .filter(Boolean);
     return excerpts.length > 0 ? "\n[Vault history]\n" + excerpts.map(e => `• ${e}`).join("\n") : "";
   } catch {
