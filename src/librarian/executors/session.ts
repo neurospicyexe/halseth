@@ -649,6 +649,31 @@ export async function execSessionGround(ctx: ExecutorContext): Promise<ExecutorR
   return { data: payload, response_key: "ground" };
 }
 
+/**
+ * The float axes out of a close payload, in column form.
+ *
+ * Exported and separate because this is the SEAM the 2026-09-21 fix lives on: the skills now teach
+ * the companions to put their own axis names in the close context, and the pick reads that context
+ * through an index cast (`payload[key]`), which fails SILENTLY on a key mismatch rather than at
+ * typecheck. A test on this function is the only thing standing between a renamed axis and a close
+ * that quietly writes no floats at all.
+ *
+ * An explicit `soma_float_N` outranks an axis word: it names the column outright.
+ */
+export function somaFieldsFromClosePayload(payload: Record<string, unknown>): CompanionStateUpdate {
+  const axisRaw: Record<string, unknown> = {};
+  for (const k of SOMA_AXIS_KEYS) {
+    const v = payload[k];
+    if (v !== undefined) axisRaw[k] = v;
+  }
+  const out: CompanionStateUpdate = Object.keys(axisRaw).length > 0 ? translateSomaVocab(axisRaw) : {};
+  for (const col of ["soma_float_1", "soma_float_2", "soma_float_3"] as const) {
+    const v = payload[col];
+    if (v !== undefined) (out as Record<string, unknown>)[col] = v;
+  }
+  return out;
+}
+
 export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{
     session_id?: string; spine: string; last_real_thing: string;
@@ -810,18 +835,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // the move rides the close: sessionClose writes `authored_close` with the session id and the
   // handover packet as the cause, so attribution is structural rather than a timing coincidence,
   // and the spine (not a 120-char request head) is what `[Why these numbers]` quotes back.
-  const axisRaw: Record<string, unknown> = {};
-  for (const k of SOMA_AXIS_KEYS) {
-    const v = (p as Record<string, unknown>)[k];
-    if (v !== undefined) axisRaw[k] = v;
-  }
-  const somaFields: CompanionStateUpdate = Object.keys(axisRaw).length > 0
-    ? translateSomaVocab(axisRaw)
-    : {};
-  // An explicit column name is more specific than an axis word, so it wins if both are present.
-  if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
-  if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
-  if (p.soma_float_3 !== undefined) somaFields.soma_float_3 = p.soma_float_3;
+  const somaFields: CompanionStateUpdate = somaFieldsFromClosePayload(p as Record<string, unknown>);
   if (p.current_mood !== undefined) somaFields.current_mood = p.current_mood;
   if (p.compound_state !== undefined) somaFields.compound_state = p.compound_state;
   if (p.surface_emotion !== undefined) somaFields.surface_emotion = p.surface_emotion;

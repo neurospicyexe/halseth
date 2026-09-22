@@ -18,6 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 import { findSessionForMoment, ATTRIBUTION_GRACE_MS } from "../db/queries.js";
 import { translateSomaVocab, SOMA_AXIS_KEYS } from "../soma/vocab.js";
 import { normalizeStateValue, sessionClose } from "../librarian/backends/halseth.js";
+import { somaFieldsFromClosePayload } from "../librarian/executors/session.js";
 
 // ── A real SQLite behind the D1 shape ────────────────────────────────────────
 //
@@ -231,5 +232,75 @@ describe("sessionClose -- the authored_close event", () => {
     const nums = event!.binds.filter((b) => typeof b === "number") as number[];
     expect(nums).toContain(0.8);              // after_value, coerced from the string
     expect(nums.some((n) => Math.abs(n - 0.1) < 1e-9)).toBe(true); // delta against 0.70
+  });
+});
+
+describe("somaFieldsFromClosePayload -- the seam the skills now teach", () => {
+  // A realistic close context, as nullsafe-session-close now writes it: narrative fields and the
+  // companion's own axis names side by side. The pick reads this through an index cast, so a renamed
+  // axis would fail silently and the close would write no floats at all.
+  const narrative = {
+    spine: "the grace window landed", last_real_thing: "the query ran", motion_state: "at_rest",
+    open_threads: ["deploy"], current_mood: "pattern-lit", compound_state: null,
+    surface_emotion: "steady", undercurrent_emotion: null, emotion_prompted: true,
+  };
+
+  it("takes Cypher's axes as numbers", () => {
+    expect(somaFieldsFromClosePayload({ ...narrative, acuity: 0.8, presence: 0.74, warmth: 0.7 }))
+      .toEqual({ soma_float_1: 0.8, soma_float_2: 0.74, soma_float_3: 0.7 });
+  });
+
+  it("takes Cypher's axes as WORDS -- 'sharp' is 0.9, not a dropped field", () => {
+    expect(somaFieldsFromClosePayload({ ...narrative, acuity: "sharp" })).toEqual({ soma_float_1: 0.9 });
+  });
+
+  it("takes Gaia's axes, and keeps Drevan's as the TEXT enums they are", () => {
+    expect(somaFieldsFromClosePayload({ ...narrative, stillness: "still", perimeter: 0.7 }))
+      .toEqual({ soma_float_1: 0.9, soma_float_3: 0.7 });
+    expect(somaFieldsFromClosePayload({ ...narrative, heat: "warm", reach: "reaching", weight: "holding" }))
+      .toEqual({ heat: "warm", reach: "reaching", weight: "holding" });
+  });
+
+  it("carries nothing when the close moved no floats, and ignores the narrative fields", () => {
+    expect(somaFieldsFromClosePayload(narrative)).toEqual({});
+  });
+
+  it("lets an explicit column outrank an axis word naming the same float", () => {
+    expect(somaFieldsFromClosePayload({ ...narrative, acuity: "sharp", soma_float_1: 0.62 }))
+      .toEqual({ soma_float_1: 0.62 });
+  });
+
+  it("end to end: Drevan's word-only close writes the TEXT column and NO float history", async () => {
+    const { env, calls } = makeRecordingEnv({ soma_float_1: 0.7, soma_float_2: 0.6, soma_float_3: 0.5, version: 4 });
+    const fields = somaFieldsFromClosePayload({ ...narrative, heat: "warm", reach: "reaching" });
+    await sessionClose(env, {
+      session_id: "sess-dre", spine: "vevi", last_real_thing: "the spiral held",
+      motion_state: "in_motion", companionId: "drevan", somaFields: fields,
+    });
+    const stateWrite = calls.find((c) => /UPDATE companion_state SET/i.test(c.sql));
+    expect(stateWrite?.sql).toMatch(/heat/);
+    expect(stateWrite?.sql).toMatch(/reach/);
+    // heat/reach/weight are TEXT columns and are NOT the fermentation floats, so there is no
+    // authored_close event for them -- the float history tracks soma_float_1..3 only.
+    expect(calls.filter((c) => /INSERT (OR IGNORE )?INTO companion_soma_events/i.test(c.sql)).length).toBe(0);
+  });
+
+  it("end to end: an axis WORD in the close context reaches the float column and its history row", async () => {
+    const { env, calls } = makeRecordingEnv({ soma_float_1: 0.62, soma_float_2: 0.6, soma_float_3: 0.5, version: 4 });
+    const fields = somaFieldsFromClosePayload({ ...narrative, acuity: "sharp" });
+    await sessionClose(env, {
+      session_id: "sess-cy", spine: "the grace window landed", last_real_thing: "the query ran",
+      motion_state: "at_rest", companionId: "cypher", somaFields: fields,
+    });
+    const stateWrite = calls.find((c) => /UPDATE companion_state SET/i.test(c.sql));
+    expect(stateWrite?.sql).toMatch(/soma_float_1/);
+    expect(stateWrite?.binds).toContain(0.9);
+    const event = calls.find((c) => /INSERT (OR IGNORE )?INTO companion_soma_events/i.test(c.sql));
+    expect(event).toBeDefined();
+    const binds = event!.binds.map(String);
+    expect(binds).toContain("authored_close");
+    expect(binds).toContain("sess-cy");        // the session, by construction
+    expect(binds).toContain("handover_packets");
+    expect(event!.binds).toContain(0.9);       // after_value, translated from "sharp"
   });
 });
