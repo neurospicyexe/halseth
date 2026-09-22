@@ -70,6 +70,86 @@ export async function findOpenSession(
   ).bind(companionId, surface, windowStart).first<OpenSessionMatch>();
 }
 
+// ── The attribution grace window (2026-09-21) ────────────────────────────────
+//
+// findOpenSession answers "which session am I IN". This answers a different question: "which
+// session moved this float", asked at a moment that may fall just outside any open row.
+//
+// Why it has to exist. Graph memory Phase 2 gave every authored float move a history row with the
+// session that caused it (mig 0130). In the week after it shipped there were exactly two real
+// authored updates in prod, and BOTH carried session_id NULL: 2026-09-15T08:44:14Z fired 31s after
+// its own session closed (08:43:43), and 2026-09-21T12:58:49Z fired 85s before the next one opened
+// (13:00:14). The close ritual moves floats ADJACENT to the session window, not inside it, so the
+// orient block could only ever render "you set it <day>" and never "during <type> session".
+//
+// The rule. Nearest session on the SAME (companion, surface), by distance in time from the moment:
+//   * inside [opened, closed] -- or opened and not yet closed -- is distance 0;
+//   * otherwise the distance to whichever edge is nearer, accepted only within the grace window.
+// An open session therefore always beats a closed one, deliberately: an open session on the surface
+// IS the session, even if another closed thirty seconds ago.
+//
+// Surface is REQUIRED, same as findOpenSession and for a sharper reason here: the bots open a
+// session per companion every few minutes, so a surface-agnostic grace window would attribute a
+// Claude.ai float move to whichever Discord row happened to be nearby. A wrong session is worse
+// than no session -- the whole point of the row is writer and cause being true.
+export interface NearbySessionMatch {
+  id: string;
+  created_at: string;
+  session_type: string | null;
+  /** 0 when the moment falls inside the session's window. */
+  distance_ms: number;
+}
+
+/** Two minutes: wide enough for a close ritual's own ordering, too narrow to reach a neighbour. */
+export const ATTRIBUTION_GRACE_MS = 120 * 1000;
+
+export async function findSessionForMoment(
+  env: Env,
+  companionId: string | undefined | null,
+  surface: string | undefined | null,
+  /** The moment to attribute. Defaults to now (the write-time caller). ISO 8601. */
+  atIso: string = new Date().toISOString(),
+  graceMs: number = ATTRIBUTION_GRACE_MS,
+): Promise<NearbySessionMatch | null> {
+  if (!companionId || !surface) return null;
+  const graceDays = graceMs / 86_400_000;
+  // julianday() parses both stamp shapes this DB holds (ISO with T/Z from live writes, space-form
+  // from backfills), so no replace() normalisation is needed to compare them -- unlike string
+  // ordering, which is why SOMA_EVENT_ORDER_DESC exists next door.
+  //
+  // `closed_at` is the handover's own timestamp; an open session has none and its window runs to
+  // the moment being attributed, which makes its distance 0 by construction.
+  const row = await env.DB.prepare(
+    `SELECT s.id, s.created_at, s.session_type,
+            CASE
+              WHEN julianday(?) >= julianday(s.created_at)
+               AND (s.handover_id IS NULL OR julianday(?) <= julianday(h.created_at)) THEN 0.0
+              WHEN julianday(?) < julianday(s.created_at)
+                THEN (julianday(s.created_at) - julianday(?))
+              ELSE (julianday(?) - julianday(h.created_at))
+            END AS distance_days
+       FROM sessions s
+       LEFT JOIN handover_packets h ON h.id = s.handover_id
+      WHERE s.companion_id = ? AND s.surface = ?
+        AND julianday(s.created_at) >= julianday(?) - ?
+        AND julianday(s.created_at) <= julianday(?) + ?
+      ORDER BY distance_days ASC, julianday(s.created_at) DESC
+      LIMIT 1`
+  ).bind(
+    atIso, atIso, atIso, atIso, atIso,
+    companionId, surface,
+    // Candidate rows must START within a day of the moment (an index-friendly coarse filter; the
+    // fine grain is the distance test below). A session that opened long ago and is STILL open is
+    // matched by findOpenSession's own 24h window, which the caller tries first.
+    atIso, 1,
+    atIso, graceDays,
+  ).first<{ id: string; created_at: string; session_type: string | null; distance_days: number }>();
+  if (!row) return null;
+  const distance_ms = Math.round((row.distance_days ?? 0) * 86_400_000);
+  if (!Number.isFinite(distance_ms) || distance_ms > graceMs) return null;
+  return { id: row.id, created_at: row.created_at, session_type: row.session_type, distance_ms };
+}
+
 // ── Who opened this session (mig 0114) ───────────────────────────────────────
 //
 // A session row records WHERE it was opened from (surface, mig 0113) but recorded nothing about

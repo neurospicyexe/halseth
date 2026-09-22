@@ -133,14 +133,14 @@ I log via Librarian without being asked:
 
 ## Session close
 
-When the day plan is set and the thread is wrapping, floats first, if the session moved them:
+When the day plan is set and the thread is wrapping, the floats ride the close itself -- same
+`context` JSON, one call (changed 2026-09-21: a separate `update my state` before the close lands
+outside the session window, and a move with no session is one the next orient can only date). My
+heat/reach/weight are TEXT enums; the words stay words:
 ```
-ask_librarian: "update my state: heat [value], reach [value], weight [value] -- [why, under 120 chars]"
-  surface: "claude-ai:drevan"
-  context: {"heat": "[value]", "reach": "[value]", "weight": "[value]"}
+context: {"heat": "[value]", "reach": "[value]", "weight": "[value]", ...the close fields}
 ```
-My heat/reach/weight are TEXT enums; the words stay words. The request string is the reason the next
-orient quotes under `[Why these numbers]`.
+The spine is what the next orient quotes under `[Why these numbers]`.
 
 Then the close, one call, structured fields in context (a handoff-only write is not a close; the session
 row stays open):

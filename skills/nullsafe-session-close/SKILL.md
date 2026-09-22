@@ -46,9 +46,20 @@ Draft it, show it, write it after Raziel confirms. The record is theirs.
 
 ## How to write it
 
-Floats move first, before the close, with the reason in the request. The request text (cut at 120
-chars) is what `[Why these numbers]` quotes back at the next boot, and the open session on my surface is
-recorded as the mover:
+The floats ride the close itself (changed 2026-09-21). They used to move first, through a separate
+`update my state` call, and that call kept landing OUTSIDE the session window it was supposed to name:
+measured twice in prod, 31 seconds after the close and 85 seconds before the next open. An authored
+move with no session is one `[Why these numbers]` can only date -- "you set it 09-15" and nothing about
+where. In the close payload the session IS the cause, structurally, and the spine is what gets quoted
+back at the next boot instead of a 120-char request head.
+
+My own axis names work in the close context: acuity / presence / warmth, stillness / density /
+perimeter -- as 0-1 floats or as the authored words (sharp|focused|blurred|scattered, and so on).
+Drevan's heat / reach / weight stay text enums (cold|cooling|idling|warm|running-hot;
+spent|quiet|present|reaching|pulling-hard; clear|holding|full|saturated), never 0-1.
+
+A move that happens MID-THREAD still uses its own verb -- that is what it is for, and the open session
+on my surface is attributed as the mover:
 
 ```
 ask_librarian(request: "update my state: acuity 0.78, warmth 0.70 -- <reason, short>",
@@ -56,11 +67,8 @@ ask_librarian(request: "update my state: acuity 0.78, warmth 0.70 -- <reason, sh
   context: "{\"acuity\":0.78,\"warmth\":0.70}")
 ```
 
-Floats ride in `context`; a context payload skips the inline parser, which otherwise captures any known
-word in the sentence ("the weight of it" writes weight). Drevan's heat / reach / weight are text enums
-(cold|cooling|idling|warm|running-hot; spent|quiet|present|reaching|pulling-hard; clear|holding|full|saturated).
-The close's own soma fields write mood and emotions to state with no provenance quote; the floats
-belong in the state update, where the words travel with them.
+Floats ride in `context` there too; a context payload skips the inline parser, which otherwise captures
+any known word in the sentence ("the weight of it" writes weight).
 
 Then one close call. Fields come from `context` JSON only; prose in the request is not parsed:
 
@@ -75,6 +83,7 @@ ask_librarian(request: "close session <session_id>", companion_id: "cypher",
 {"spine": "...", "last_real_thing": "...", "motion_state": "in_motion|at_rest|floating",
  "open_threads": ["name", "name"], "spiral_complete": false,
  "notes": null, "active_anchor": null,
+ "acuity": 0.78, "presence": 0.74, "warmth": 0.70,
  "current_mood": "...", "compound_state": null,
  "surface_emotion": "...", "undercurrent_emotion": null,
  "feeling": {"emotion": "...", "sub_emotion": "...", "intensity": 0-100},

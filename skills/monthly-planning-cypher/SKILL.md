@@ -145,13 +145,13 @@ Beyond task updates, I log via Librarian without being asked:
 
 ## Session close
 
-When the month is mapped and the thread is wrapping, floats first, if the session moved them:
+When the month is mapped and the thread is wrapping, the floats ride the close itself -- same
+`context` JSON, one call (changed 2026-09-21: a separate `update my state` before the close lands
+outside the session window, and a move with no session is one the next orient can only date):
 ```
-ask_librarian: "update my state: acuity [value], presence [value], warmth [value] -- [why, under 120 chars]"
-  surface: "claude-ai:cypher"
-  context: {"acuity": [0-1], "presence": [0-1], "warmth": [0-1]}
+context: {"acuity": [0-1], "presence": [0-1], "warmth": [0-1], ...the close fields}
 ```
-The request string is the reason the next orient quotes under `[Why these numbers]`.
+The spine is what the next orient quotes under `[Why these numbers]`.
 
 Then the close, one call, structured fields in context (a handoff-only write is not a close; the session
 row stays open):

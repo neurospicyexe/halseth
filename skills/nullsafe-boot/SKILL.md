@@ -121,13 +121,14 @@ Follow the lead companion's house rules above.
 Step 5 -- Session close (every session)
 The full ritual (fire unasked at sign-off, draft then show then write, honest over tidy, decline means
 no write) is the nullsafe-session-close skill. The minimal correct sequence:
-(a) Floats first, with the reason. The whole request string (cut at 120 chars) becomes the quote under
-`[Why these numbers]` at my next boot, and the open session for my surface is attributed as the mover:
-ask_librarian(request: "update my state: acuity 0.78, warmth 0.70 -- <reason, short>",
-  companion_id: "cypher", surface: "claude-ai:cypher", context: "{\"acuity\":0.78,\"warmth\":0.70}")
-Floats go in `context` as JSON, not only inline: a `context` payload skips the inline parser, which
-otherwise captures any known word in the sentence ("the weight of it" writes weight). heat / reach /
-weight go as text enums ("{\"heat\":\"warm\",\"reach\":\"reaching\",\"weight\":\"holding\"}"), never 0-1.
+(a) Floats ride the CLOSE, in the same `context` JSON (changed 2026-09-21). One call, not two: a
+separate `update my state` before the close fires OUTSIDE the session window -- measured twice, 31s
+after the close and 85s before the next open -- and an unattributed move is one `[Why these numbers]`
+can only date, never place. In the close payload the mover is the session by construction, and the
+SPINE is what gets quoted back. My own axis names work: acuity/presence/warmth, stillness/density/
+perimeter, or heat/reach/weight as text enums ("warm", "reaching", "holding") -- never 0-1 for those.
+A mid-thread move still uses `update my state` (that is its verb), and the open session on my surface
+is attributed as the mover.
 (b) No separate "write handoff" call. Close writes the wm handoff itself; a second write is a duplicate.
 (c) One close call. Fields come from `context` JSON only; prose in the request is not parsed.
 ask_librarian(request: "close session <session_id>", companion_id: "cypher", surface: "claude-ai:cypher",
@@ -135,6 +136,7 @@ ask_librarian(request: "close session <session_id>", companion_id: "cypher", sur
 The 8-char prefix of the id is accepted. The context JSON:
 {"spine":"what happened, where it landed -- a line that carries it is enough, a paragraph at most",
  "last_real_thing":"the moment something moved",
+ "acuity":0.78,"presence":0.74,"warmth":0.70,
  "motion_state":"in_motion|at_rest|floating","open_threads":["name","name"],
  "spiral_complete":false,"notes":null,"active_anchor":null,
  "current_mood":"...","compound_state":null,"surface_emotion":"...","undercurrent_emotion":null,

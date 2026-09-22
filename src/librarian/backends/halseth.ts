@@ -414,16 +414,24 @@ export async function sessionClose(env: Env, params: {
   if (params.companionId && params.somaFields && Object.keys(params.somaFields).length > 0) {
     const assignments: string[] = [];
     const bindings: unknown[] = [];
+    // Normalised, not bound raw (2026-09-21): the close payload now accepts the companions' axis
+    // words, so a value that is not a finite number must be DROPPED here rather than reach a REAL
+    // column -- and `written` is what the history row differences, so it must be the coerced value.
+    const written: Partial<Record<SomaFloatKey, number | null>> = {};
     for (const col of ALLOWED_STATE_COLUMNS) {
-      if (params.somaFields[col] !== undefined) {
-        assignments.push(`${col} = ?`);
-        bindings.push(params.somaFields[col] ?? null);
+      if (params.somaFields[col] === undefined) continue;
+      const { write, value } = normalizeStateValue(col, params.somaFields[col]);
+      if (!write) continue;
+      assignments.push(`${col} = ?`);
+      bindings.push(value);
+      if ((SOMA_FLOAT_KEYS as readonly string[]).includes(col)) {
+        written[col as SomaFloatKey] = value as number | null;
       }
     }
     if (assignments.length > 0) {
       // Pre-read ONLY when a float is actually being written: this is the before half of the
       // float history (mig 0130), and a mood-only close must not pay for a query it cannot use.
-      const touchesFloats = SOMA_FLOAT_KEYS.some((k) => params.somaFields?.[k] !== undefined);
+      const touchesFloats = Object.keys(written).length > 0;
       const prior = touchesFloats
         ? await env.DB.prepare(readFloatsSql()).bind(params.companionId).first<{
             soma_float_1: number | null; soma_float_2: number | null; soma_float_3: number | null; version: number | null;
@@ -451,10 +459,7 @@ export async function sessionClose(env: Env, params: {
       // Since 2026-09-14 the live graph edges (moved_by -> that packet, follows -> the previous
       // event, logged_in -> this session) ride the same batch too (src/graph/live.ts, site 4).
       if (touchesFloats) {
-        const after: Partial<Record<SomaFloatKey, number | null>> = {};
-        for (const k of SOMA_FLOAT_KEYS) {
-          if (params.somaFields[k] !== undefined) after[k] = params.somaFields[k] as number | null;
-        }
+        const after: Partial<Record<SomaFloatKey, number | null>> = written;
         const events = assignSomaEventIds(diffFloats(
           {
             soma_float_1: prior?.soma_float_1 ?? null,
@@ -1051,6 +1056,30 @@ const ALLOWED_STATE_COLUMNS: (keyof CompanionStateUpdate)[] = [
   "heat", "reach", "weight",
 ];
 
+/**
+ * One value, ready for its column -- or a refusal to write it.
+ *
+ * The finite guard used to live inline in updateCompanionState only. sessionClose's own float write
+ * (the `authored_close` path) bound whatever the caller passed, which was harmless while the close
+ * payload accepted `soma_float_N: number` and nothing else, and stopped being harmless on
+ * 2026-09-21 when it started accepting the companions' axis WORDS: an unknown word ("warm" on an
+ * axis with no such enum) would have reached a REAL column and diffFloats would have differenced
+ * NaN. Same trap as the 2026-08-16 word-payload bug, one call site over -- so the guard is a
+ * function both writers call ([[audit-the-shape-not-the-symptom]]).
+ */
+export function normalizeStateValue(col: string, v: unknown): { write: boolean; value: unknown } {
+  if (!NUMERIC_STATE_COLUMNS.has(col)) return { write: true, value: v ?? null };
+  // Explicit null clears the column; anything non-finite (NaN, Infinity, non-numeric string) is
+  // dropped so it can never clobber a good value or land as "NaN" in the column.
+  if (v === null) return { write: true, value: null };
+  // Empty/whitespace string is a hole in the Number() guard: Number("") === 0, so a field the
+  // model left blank would silently ZERO the float instead of skipping.
+  if (typeof v === "string" && v.trim() === "") return { write: false, value: null };
+  const n = Number(v);
+  if (!Number.isFinite(n)) return { write: false, value: null };
+  return { write: true, value: n };
+}
+
 export async function updateCompanionState(
   env: Env,
   companionId: string,
@@ -1064,29 +1093,14 @@ export async function updateCompanionState(
 
   for (const col of ALLOWED_STATE_COLUMNS) {
     if (fields[col] === undefined) continue;
-    const v = fields[col];
-    if (NUMERIC_STATE_COLUMNS.has(col)) {
-      // Explicit null clears the column; anything non-finite (NaN, Infinity,
-      // non-numeric string) is dropped so it can never clobber a good value or
-      // land as "NaN" in the column. `??` alone would let NaN through.
-      if (v === null) {
-        assignments.push(`${col} = ?`);
-        bindings.push(null);
-        continue;
-      }
-      // Empty/whitespace string is a hole in the Number() guard: Number("") === 0, so an
-      // extract field the model left blank would silently ZERO the float instead of skipping.
-      if (typeof v === "string" && v.trim() === "") continue;
-      const n = Number(v);
-      if (!Number.isFinite(n)) continue;
-      assignments.push(`${col} = ?`);
-      bindings.push(n);
-      // Record the COERCED value, not the caller's raw one: the float history must carry the
-      // number that reached the column.
-      if ((SOMA_FLOAT_KEYS as readonly string[]).includes(col)) writtenFloats[col as SomaFloatKey] = n;
-    } else {
-      assignments.push(`${col} = ?`);
-      bindings.push(v ?? null);
+    const { write, value } = normalizeStateValue(col, fields[col]);
+    if (!write) continue;
+    assignments.push(`${col} = ?`);
+    bindings.push(value);
+    // Record the COERCED value, not the caller's raw one: the float history must carry the
+    // number that reached the column.
+    if ((SOMA_FLOAT_KEYS as readonly string[]).includes(col)) {
+      writtenFloats[col as SomaFloatKey] = value as number | null;
     }
   }
 

@@ -54,6 +54,10 @@ vi.mock("../mind/changelog.js", () => ({ runChangelogAnnounce: vi.fn().mockResol
 beforeEach(() => vi.clearAllMocks());
 
 describe("runScheduledWork -- one rider's failure never breaks the others", () => {
+  // 20s, not the 5s default (2026-09-21): this test dynamically imports src/index.ts -- the whole
+  // worker graph -- and that import, not the assertions, is what it spends its time on (2.1s alone,
+  // over 5s when the suite grew by one file and the workers competed for the transform). A timeout
+  // that trips on a neighbour's arrival reports a load condition as a broken rider.
   it("a throwing graph-rebuild tick does not propagate out of runScheduledWork, and every sibling rider still runs", async () => {
     const { runScheduledWork } = await import("../index.js");
     const { runGraphRebuildTick } = await import("../graph/tick.js");
@@ -78,5 +82,5 @@ describe("runScheduledWork -- one rider's failure never breaks the others", () =
     expect(runChangelogAnnounce).toHaveBeenCalledTimes(1);
 
     consoleErr.mockRestore();
-  });
+  }, 20_000);
 });

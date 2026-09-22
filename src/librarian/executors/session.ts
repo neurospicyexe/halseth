@@ -1,4 +1,5 @@
 import { loadTitleLabels } from "../../graph/labels.js";
+import { SOMA_AXIS_KEYS, translateSomaVocab } from "../../soma/vocab.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck, SUPERSEDE_CANDIDATE_WINDOW_DAYS } from "../../webmind/novelty.js";
@@ -668,6 +669,13 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     open_threads?: string[]; motion_state: string; active_anchor?: string;
     notes?: string; spiral_complete?: boolean; facet?: string;
     soma_float_1?: number; soma_float_2?: number; soma_float_3?: number;
+    /** 2026-09-21: the same axis words `update my state` accepts, so the floats can ride the close
+     *  itself. acuity/presence/warmth (Cypher), stillness/density/perimeter (Gaia) map to the
+     *  numeric columns; heat/reach/weight (Drevan) are TEXT enums. Words or numbers, either way --
+     *  translateSomaVocab resolves the word, the write chokepoint guards the number. */
+    acuity?: number | string; presence?: number | string; warmth?: number | string;
+    stillness?: number | string; density?: number | string; perimeter?: number | string;
+    heat?: string; reach?: string; weight?: string;
     current_mood?: string; compound_state?: string | null;
     surface_emotion?: string; surface_intensity?: number;
     undercurrent_emotion?: string; undercurrent_intensity?: number;
@@ -795,7 +803,22 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
       };
     }
   }
-  const somaFields: CompanionStateUpdate = {};
+  // Floats in the close payload (2026-09-21). Until now this path read `soma_float_N` only, so a
+  // companion writing their OWN axis words at close ("acuity": 0.8, "heat": "warm") wrote nothing,
+  // and the ritual moved floats through a separate `update my state` call instead -- which fired
+  // 30-90s outside its own session window and left every authored move in prod unattributed. Here
+  // the move rides the close: sessionClose writes `authored_close` with the session id and the
+  // handover packet as the cause, so attribution is structural rather than a timing coincidence,
+  // and the spine (not a 120-char request head) is what `[Why these numbers]` quotes back.
+  const axisRaw: Record<string, unknown> = {};
+  for (const k of SOMA_AXIS_KEYS) {
+    const v = (p as Record<string, unknown>)[k];
+    if (v !== undefined) axisRaw[k] = v;
+  }
+  const somaFields: CompanionStateUpdate = Object.keys(axisRaw).length > 0
+    ? translateSomaVocab(axisRaw)
+    : {};
+  // An explicit column name is more specific than an axis word, so it wins if both are present.
   if (p.soma_float_1 !== undefined) somaFields.soma_float_1 = p.soma_float_1;
   if (p.soma_float_2 !== undefined) somaFields.soma_float_2 = p.soma_float_2;
   if (p.soma_float_3 !== undefined) somaFields.soma_float_3 = p.soma_float_3;
