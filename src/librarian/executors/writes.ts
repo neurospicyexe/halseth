@@ -3,6 +3,7 @@ import { findOpenSession, findSessionForMoment } from "../../db/queries.js";
 import { translateSomaVocab } from "../../soma/vocab.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
+import { effectiveHeatSql } from "../../webmind/heat.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
 import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
@@ -744,7 +745,9 @@ export async function execAutonomyClaim(ctx: ExecutorContext): Promise<ExecutorR
 
 export async function execConclusionsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const rows = await ctx.env.DB.prepare(
-    "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY created_at DESC LIMIT 10"
+    // Heat-ranked and PURE READ -- see the note in handlers/conclusions.ts. This is the
+    // companion's own pull verb, so it reaches further than the boot block (40 vs orient's 6).
+    `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`
   ).bind(ctx.req.companion_id).all();
   return { data: rows.results ?? [], meta: { operation: "conclusions_read" } };
 }

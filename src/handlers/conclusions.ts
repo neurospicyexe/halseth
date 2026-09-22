@@ -11,6 +11,7 @@ import type { WmAgentId } from "../webmind/types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../mcp/embed.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../graph/live.js";
+import { effectiveHeatSql } from "../webmind/heat.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -207,12 +208,39 @@ export async function getConclusions(
   const url = new URL(request.url);
   const includeSuperseded = url.searchParams.get("include_superseded") === "true";
 
+// 2026-09-22 (Raziel's decision 3): the LISTING paths now rank the same way orient does.
+//
+// Before this, orient ranked conclusions by effective heat while every listing ranked by
+// created_at -- so a companion booted seeing one set and listed another, two memories of its own
+// beliefs. Three call sites, two answers, no decision behind the split
+// ([[two-pools-one-ordered-window]], [[three-consumers-three-files]]).
+//
+// THE BINDING CONSTRAINT: a listing ranks by heat and NEVER WARMS. orient warms what it surfaces
+// (mig 0105) and that is already a ranking signal written by the act of reading
+// ([[ranking-signal-written-by-reading]]); adding two more writers would have tripled it. The
+// pattern to copy is orient.ts's own `opts.readOnly` guard, which exists for exactly this reason.
+// These paths are pure reads by contract.
+//
+// The limit went 10 -> 40 at the same time, and the response now states the total. Measured on
+// prod the same day: 138 eligible conclusions across the triad and only 22 had EVER been surfaced,
+// with effective heat spanning 77x -- so a heat-ranked read of 10 would have handed back the same
+// frozen foreground orient already shows. A deliberate pull should reach further than the boot
+// block, and `total` makes the rest countable instead of invisible.
+  const COLS = "id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged";
   const query = includeSuperseded
-    ? "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? ORDER BY created_at DESC LIMIT 20"
-    : "SELECT id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY created_at DESC LIMIT 10";
+    ? `SELECT ${COLS} FROM companion_conclusions WHERE companion_id = ? ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`
+    : `SELECT ${COLS} FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`;
 
-  const rows = await env.DB.prepare(query).bind(agentId).all();
-  return json({ conclusions: rows.results ?? [] });
+  const [rows, totalRow] = await Promise.all([
+    env.DB.prepare(query).bind(agentId).all(),
+    env.DB.prepare(
+      includeSuperseded
+        ? "SELECT COUNT(*) AS n FROM companion_conclusions WHERE companion_id = ?"
+        : "SELECT COUNT(*) AS n FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0",
+    ).bind(agentId).first<{ n: number }>().catch(() => null),
+  ]);
+  const conclusions = rows.results ?? [];
+  return json({ conclusions, shown: conclusions.length, total: totalRow?.n ?? conclusions.length });
 }
 
 // POST /companion-conclusions/:id/supersede
