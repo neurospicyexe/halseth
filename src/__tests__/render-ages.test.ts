@@ -206,20 +206,39 @@ describe("buildContinuityBlock active_conversations", () => {
 import { chunkSource } from "../librarian/response/blocks.js";
 
 describe("chunkSource", () => {
-  it("uses the vault file's basename, not the whole path", () => {
-    expect(chunkSource({ vault_path: "vault/notes/2026/2026-06-planning.md" })).toBe("2026-06-planning");
+  // `section` is the part of a vault chunk with meaning in it -- sampled live 2026-09-22.
+  it("prefers the section over the filename", () => {
+    expect(chunkSource({ section: "Database & Memory Architecture", vault_path: "x/2025-09-09-383267a1.md" }))
+      .toBe("Database & Memory Architecture");
   });
-  it("strips md/markdown/txt but leaves other names alone", () => {
-    expect(chunkSource({ vault_path: "a/b.markdown" })).toBe("b");
-    expect(chunkSource({ vault_path: "a/b.txt" })).toBe("b");
-    expect(chunkSource({ vault_path: "a/b.canvas" })).toBe("b.canvas");
+  it("treats a bare dash section as absent (that is how the index writes 'none')", () => {
+    expect(chunkSource({ section: "-", vault_path: "notes/PHOENIX-RECKONING.md" })).toBe("PHOENIX-RECKONING");
   });
-  it("falls back to section when there is no path", () => {
-    expect(chunkSource({ section: "Boot ritual" })).toBe("Boot ritual");
+
+  // THE BUG THIS REPLACED: the first cut shipped `(2 weeks ago, b2e47f25-3672-41d7...)` into orient.
+  // A uuid is not provenance -- it identifies nothing and costs budget in a block that has one.
+  it("drops an id-like basename rather than rendering it", () => {
+    expect(chunkSource({ vault_path: "v/04e4cb5c-c71b-4a8b-84d1-e242b5d4dd9c.md" })).toBe("");
+  });
+  it("drops date+hex export names -- the date is already the age prefix", () => {
+    expect(chunkSource({ vault_path: "v/2025-09-09-383267a1.md" })).toBe("");
+    expect(chunkSource({ vault_path: "v/2025-06-25-685c4bbe.part1" })).toBe("");
+  });
+  it("drops bare ordinals", () => {
+    expect(chunkSource({ vault_path: "v/3" })).toBe("");
+    expect(chunkSource({ vault_path: "v/6.md" })).toBe("");
+  });
+
+  it("keeps a real filename and strips only text extensions", () => {
+    expect(chunkSource({ vault_path: "vault/notes/boot-ritual.md" })).toBe("boot-ritual");
+    expect(chunkSource({ vault_path: "a/diagram.canvas" })).toBe("diagram.canvas");
   });
   it("is empty when the chunk carries neither", () => {
     expect(chunkSource({})).toBe("");
     expect(chunkSource({ vault_path: "   " })).toBe("");
+  });
+  it("caps a very long section so it cannot eat the excerpt budget", () => {
+    expect(chunkSource({ section: "z".repeat(200) }).length).toBe(40);
   });
 });
 

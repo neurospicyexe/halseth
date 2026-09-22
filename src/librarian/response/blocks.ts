@@ -63,17 +63,37 @@ export interface HistoryChunk {
  * without a date render exactly as before.
  */
 /**
- * A short, human source label for a recalled chunk: the vault file's basename, or its section, or
- * "" when neither is present. Deliberately not the full path -- this rides in a budgeted prompt
- * block, and `2026-06-planning` is as identifying as `vault/notes/2026/2026-06-planning.md`.
+ * A short, HUMAN source label for a recalled chunk, or "" when nothing useful exists.
+ *
+ * Sampled against the live index 2026-09-22 before settling this, because the first cut shipped a
+ * UUID into orient and a UUID is not provenance -- it identifies nothing a companion can act on,
+ * and it costs budget in a block that has one. What the vault actually holds:
+ *
+ *     2025-09-09-383267a1            date + opaque suffix -- the date is ALREADY the age prefix
+ *     2025-06-25-685c4bbe.part1      same, chunked
+ *     04e4cb5c-c71b-4a8b-84d1-...    bare uuid
+ *     3  /  6                        bare ordinals
+ *     section: "Database & Memory Architecture", "Is This A Problem?"
+ *
+ * So `section` is the part with meaning in it, and the filename is mostly a restatement of the age
+ * or an opaque id. Prefer the section; fall back to a basename only when it reads like a NAME, and
+ * otherwise return nothing -- an honest blank beats a label the model might quote back as though it
+ * were a fact about the memory. (Same reasoning as chunkAge returning "" rather than "unknown".)
  */
+const SOURCE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i;
+const SOURCE_DATE_HEX = /^\d{4}-\d{2}-\d{2}-[0-9a-f]{6,}(\.part\d+)?$/i;
+const SOURCE_HAS_WORD = /[a-z]{3}/i;
+const SOURCE_MAX = 40;
+
 export function chunkSource(c: HistoryChunk): string {
+  const section = (c.section ?? "").trim();
+  if (section && section !== "-") return section.slice(0, SOURCE_MAX);
+
   const path = (c.vault_path ?? "").trim();
-  if (path) {
-    const base = path.split("/").pop() ?? path;
-    return base.replace(/\.(md|markdown|txt)$/i, "");
-  }
-  return (c.section ?? "").trim();
+  if (!path) return "";
+  const base = (path.split("/").pop() ?? path).replace(/\.(md|markdown|txt)$/i, "");
+  if (!base || SOURCE_UUID.test(base) || SOURCE_DATE_HEX.test(base) || !SOURCE_HAS_WORD.test(base)) return "";
+  return base.slice(0, SOURCE_MAX);
 }
 
 /**
