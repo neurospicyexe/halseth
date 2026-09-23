@@ -306,6 +306,15 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // a sibling's closing line is exactly the kind of context that should still arrive -- just
     // behind the companion's own. LIMIT 4, one more than the active block, because an ending is
     // one line where an active thread is a running ledger.
+    //
+    // HOW MUCH IT ACTUALLY BITES, measured 2026-09-23 rather than assumed: across 40 landed
+    // threads, 23 were NOT all-three (`["drevan"]` and `["gaia"]` alone are common), so the
+    // predicate is real -- but within a given 7-day window most survivors are commons threads
+    // carrying the whole triad, and on the day this shipped it separated exactly one row for one
+    // companion. So in practice this usually degrades to recency, which is a fine order; it is
+    // documented here so a future reader does not credit the ordering with more work than it
+    // does. The substring match is safe only because no companion id is a substring of another
+    // (cypher/drevan/gaia/raziel) -- adding an id that is would silently make `mine` lie.
     env.DB.prepare(
       `SELECT id, channel_id, seed_author, substr(seed_text, 1, 140) AS seed_gist,
               CASE
