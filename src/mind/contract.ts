@@ -19,7 +19,7 @@ import type {
   WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState,
   WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion,
   WmBiometricSnapshot, WmHouseState, WmFeeling, WmOpenLoop, WmSittingNote,
-  WmArchiveDigest, WmRecentSpiralTurn, HomeEvent, WmActiveConversation, WmClosedConversation,
+  WmArchiveDigest, WmRecentSpiralTurn, HomeEvent, WmActiveConversation, WmClosedConversation, WmCaptureNote,
 } from "../webmind/types.js";
 import type { GrowthBlocks } from "./blocks/growth.js";
 import type { WorldBlocks } from "./blocks/world.js";
@@ -29,7 +29,11 @@ import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 import type { GraphBlocks } from "./blocks/graph.js";
 
-/** 0.15.0 -- the close half of the Discord thread lifecycle (2026-09-23): `continuity.closed_conversations`.
+/** 0.16.0 -- captures finally read back (2026-09-23): `continuity.recent_captures`. The [Capture]
+ *  affordance tells companions a Claude.ai conversation is recorded nowhere unless they write it; they
+ *  wrote it, at salience 'normal', into the one table no boot path and no vault puller reads. Absent from
+ *  every boot on every surface, 100% of the time, since the verb shipped.
+ *  0.15.0 -- the close half of the Discord thread lifecycle (2026-09-23): `continuity.closed_conversations`.
  *  The spine itself has been live since July (thread-spine.ts, THREADS_ENABLED=true, 10 channels); what was
  *  missing was any read of an ENDING. orient queried `state IN ('open','moving')` only, so a companion's own
  *  closing line was written and never met again. Measured before the change: 100+ landed threads every one
@@ -92,7 +96,7 @@ import type { GraphBlocks } from "./blocks/graph.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.15.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.16.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -186,6 +190,10 @@ export interface MindState {
      *  still running, which is why a closed thread used to vanish from the boot context the
      *  moment it closed. Empty by design during a quiet week -- see the query's window note. */
     closed_conversations: WmClosedConversation[];
+    /** 0.16.0 (2026-09-23): exchanges this companion captured on ANOTHER surface, last 3 days.
+     *  Kept apart from `surfaced_notes` because those are filtered to salience 'high' and a
+     *  capture is written 'normal' -- which is exactly why none of them had ever been read back. */
+    recent_captures: WmCaptureNote[];
   };
 
   /** What I'm carrying -- unresolved, unexamined, still-metabolizing. */

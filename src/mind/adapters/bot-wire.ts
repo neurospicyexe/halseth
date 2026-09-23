@@ -112,6 +112,13 @@ export function botWireFromMindState(
     // own projection and never calls buildContinuityBlock, so shipping the field to the Claude.ai
     // path alone would have left the bots exactly as blind as before
     // ([[three-consumers-three-files]] -- verifying the loader is not verifying a reply).
+    // Captures reach the BOT wire too. This adapter builds its own projection and never calls
+    // buildContinuityBlock, so a halseth-only change leaves Discord exactly as blind as before --
+    // the same trap that nearly shipped with 0.15.0 ([[three-consumers-three-files]]). Discord is
+    // also the surface that needs this most: it is where he talks to them when Blue is away.
+    recent_captures: ms.continuity.recent_captures.map(c => ({
+      content: text(c.content, 400), created_at: c.created_at,
+    })),
     closed_conversations: ms.continuity.closed_conversations.map(c => ({
       seed_author: c.seed_author, seed_gist: text(c.seed_gist, 140), ending: c.ending,
       resolution: c.resolution ? text(c.resolution, 200) : null,

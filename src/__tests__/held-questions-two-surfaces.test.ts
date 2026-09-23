@@ -28,7 +28,7 @@ function stateWith(questions: Array<{ id: string; question: string; voiced: bool
     contract_version: "0.4.0", companion_id: "cypher", loom: "discord", loaded_at: "2026-08-01T00:00:00Z",
     identity: { anchor: null, shared_kernel: null, companion_kernel: null, self_model: [], architect_facts: [], preferences: [], refusals: [], agency_affordance: "" },
     felt: { limbic: null, soma_floats: [], drives: [], ferment_events: [], ferment_at: null, soma_provenance: [], soma_arc: [], biometrics_latest: null, house: null },
-    continuity: { latest_handoff: null, recent_handoffs: [], open_thread_count: 0, top_threads: [], surfaced_notes: [], recent_notes: [], archived_digests: [], spiral_turn: null, session_narrative: null, conversations: [], closed_conversations: [] },
+    continuity: { latest_handoff: null, recent_handoffs: [], open_thread_count: 0, top_threads: [], surfaced_notes: [], recent_notes: [], archived_digests: [], spiral_turn: null, session_narrative: null, conversations: [], closed_conversations: [], recent_captures: [] },
     carried: { dreams_unexamined: [], open_loops: [], tensions: [], sits: [], feelings_recent: [] },
     beliefs: { conclusions: [], flagged: [], supersede_candidates: [] },
     relational: { snapshot: [], deltas_recent: [], witness_raziel: [], triad_incoming: [], triad_outgoing: [], letters: [], journal_recent: [], siblings: [], recent_witness: [] },

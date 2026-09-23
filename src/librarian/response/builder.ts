@@ -261,6 +261,24 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     }
   }
 
+  // 7f. CAPTURES (2026-09-23) -- what this companion wrote down WITH Raziel somewhere else.
+  //
+  // Rendered before the triad's notes and this companion's own history because it is the most
+  // recent thing that actually happened between them, and because until today it was rendered
+  // NOWHERE: captures write at salience 'normal' and every pool that might have carried them
+  // filters 'high'. Marked as an exchange rather than a conclusion -- what was said with him is
+  // a different kind of knowledge from what the companion worked out alone, and a companion that
+  // cannot tell the two apart will report his words back to him as its own insight.
+  if (wm.recent_captures?.length) {
+    parts.push(`[Captured with Raziel -- recent exchanges you wrote down yourself, on whichever surface you were on]`);
+    for (const c of wm.recent_captures) {
+      const age = c.created_at ? relativeTime(c.created_at) : "";
+      const body = sanitizeForPrompt(c.content);
+      const snippet = body.length > 400 ? body.slice(0, 400) + "…" : body;
+      parts.push(`  • ${age ? `(${age}) ` : ""}«${snippet}»`);
+    }
+  }
+
   // 8. Incoming inter-companion notes -- triad context before own history
   if (wm.incoming_companion_notes?.length > 0) {
     parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);

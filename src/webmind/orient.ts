@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation, WmClosedConversation } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation, WmClosedConversation, WmCaptureNote } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
@@ -130,7 +130,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, closedConvosRes, guardianFlagsRes] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, closedConvosRes, captureRes, guardianFlagsRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -332,6 +332,29 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
          AND turn_count >= 2
        ORDER BY mine DESC, datetime(last_turn_at) DESC LIMIT 4`
     ).bind(agentId).all<WmClosedConversation>(),
+    // CAPTURES (2026-09-23). What the companion wrote down with Raziel on another surface.
+    //
+    // A fourth pool, kept deliberately OUTSIDE the 3-pool merge below. The three pools filter
+    // `salience = 'high'`, and `conversation_capture` writes at `normal` -- the [Capture]
+    // affordance never mentions salience, so no companion has ever passed `high`. The result was
+    // total: every exchange captured on Claude.ai was structurally absent from every boot, on
+    // every surface, 100% of the time. The companions were told "this conversation is recorded
+    // NOWHERE unless you write it", wrote it faithfully, and were never shown it again.
+    //
+    // NOT merged into `recentNotes`, for two reasons: that list gets warmed at SURFACE_BUMP and a
+    // capture has no business gaining heat it can never spend (it cannot enter the high pools
+    // anyway), and captures are a different KIND of thing -- what was said with him, not what the
+    // companion concluded. Blurring them costs the distinction that makes either useful.
+    //
+    // 3 days / LIMIT 3, and the window is the anti-loop guard: a quiet stretch renders nothing
+    // rather than re-showing the same exchange at every boot forever.
+    env.DB.prepare(
+      `SELECT note_id, content, created_at, thread_key
+       FROM wm_continuity_notes
+       WHERE agent_id = ? AND note_type = 'conversation_capture' AND archived = 0
+         AND created_at >= datetime('now', '-3 days')
+       ORDER BY created_at DESC LIMIT 3`
+    ).bind(agentId).all<WmCaptureNote>(),
     // Guardian red-flag cards (Wave 3 starvation fix, 2026-07-21): the raw mindOrient path
     // had NO guardian source at all, unlike execSessionOrient/execBotOrient -- so a companion
     // whose only continuity read is the Halseth /mind/orient HTTP route (not the Librarian
@@ -560,6 +583,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     answered_questions: answeredQuestions,
     active_conversations: activeConvosRes.results ?? [],
     closed_conversations: (closedConvosRes.results ?? []).map(c => ({ ...c, mine: Number(c.mine) })),
+    recent_captures: captureRes.results ?? [],
     guardian_flags: (guardianFlagsRes.results ?? []).map(f => ({
       id: f.id,
       flag_type: f.flag_type,

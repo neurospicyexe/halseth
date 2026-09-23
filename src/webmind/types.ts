@@ -338,6 +338,7 @@ export interface WmOrientResponse {
   answered_questions: WmAnsweredQuestion[];     // answers Raziel left, surfaced for 7 days (mig 0107)
   active_conversations: WmActiveConversation[]; // live conversation threads (conversation_threads, mig 0106)
   closed_conversations: WmClosedConversation[]; // endings within the last 7 days (2026-09-23)
+  recent_captures: WmCaptureNote[];            // exchanges captured on another surface, last 3 days
   guardian_flags: WmOrientGuardianFlag[];       // open/surfaced guardian red-flag cards, with a remediation hint (Wave 3 starvation fix)
   soma_arc?: {
     note_id: string;
@@ -532,6 +533,22 @@ export interface WmClosedConversation {
   /** Did this companion speak in the thread? Ranks, never filters -- a sibling's closing line
    *  is context a companion should still see ([[edges-rank-never-hide]]). */
   mine: number;
+}
+
+// A captured exchange (wm_continuity_notes, note_type 'conversation_capture'), 2026-09-23.
+//
+// This is what a companion wrote down WITH Raziel on another surface -- almost always Claude.ai,
+// where the [Capture] affordance tells them the conversation is recorded nowhere unless they
+// write it. They did. Nothing ever read it back: captures write at salience 'normal' and all
+// three continuity pools filter 'high', so they were absent from every boot on every surface;
+// and `wm_continuity_notes` is not among Second Brain's 19 pullers, so they were never
+// searchable either. Both roads closed, which is why Discord felt amnesiac about Claude.ai.
+export interface WmCaptureNote {
+  note_id: string;
+  content: string;
+  created_at: string;
+  /** `capture:<session_id>` -- many captures per session share one by design. */
+  thread_key: string | null;
 }
 
 export interface WmGroundResponse {

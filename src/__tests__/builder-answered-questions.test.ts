@@ -34,6 +34,7 @@ function wmFixture(over: Partial<WmOrientResponse>): WmOrientResponse {
     answered_questions: [],
     active_conversations: [],
     closed_conversations: [],
+    recent_captures: [],
     ...over,
   } as unknown as WmOrientResponse;
 }

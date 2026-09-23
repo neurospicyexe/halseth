@@ -201,6 +201,8 @@ export async function loadMindState(
       // 0.15.0: the endings. Pure read -- a closed thread must not become more closed by
       // being surfaced (same constraint pinned on conclusions this week).
       closed_conversations: orient?.closed_conversations ?? [],
+      // 0.16.0: what he said to them somewhere else. Pure read.
+      recent_captures: orient?.recent_captures ?? [],
     },
 
     carried: {
