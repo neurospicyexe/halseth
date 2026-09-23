@@ -19,7 +19,7 @@ import type {
   WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState,
   WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion,
   WmBiometricSnapshot, WmHouseState, WmFeeling, WmOpenLoop, WmSittingNote,
-  WmArchiveDigest, WmRecentSpiralTurn, HomeEvent, WmActiveConversation,
+  WmArchiveDigest, WmRecentSpiralTurn, HomeEvent, WmActiveConversation, WmClosedConversation,
 } from "../webmind/types.js";
 import type { GrowthBlocks } from "./blocks/growth.js";
 import type { WorldBlocks } from "./blocks/world.js";
@@ -29,7 +29,13 @@ import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 import type { GraphBlocks } from "./blocks/graph.js";
 
-/** 0.14.0 -- graph memory Phase 2, tranche 2 (2026-09-14): `felt.soma_provenance` entries gain `detail`
+/** 0.15.0 -- the close half of the Discord thread lifecycle (2026-09-23): `continuity.closed_conversations`.
+ *  The spine itself has been live since July (thread-spine.ts, THREADS_ENABLED=true, 10 channels); what was
+ *  missing was any read of an ENDING. orient queried `state IN ('open','moving')` only, so a companion's own
+ *  closing line was written and never met again. Measured before the change: 100+ landed threads every one
+ *  carrying an authored resolution, and 66 faded threads holding 967 turns of which 850 had nothing recorded.
+ *  Seven-day window with no fallback, so a quiet week renders the block empty rather than repeating itself.
+ *  0.14.0 -- graph memory Phase 2, tranche 2 (2026-09-14): `felt.soma_provenance` entries gain `detail`
  *  (the writer's own words, 120 chars) and a bare state_update now names its open session as the cause
  *  (cause_table 'sessions'). Authored writers emit moved_by / follows / logged_in edges LIVE in the same
  *  D1 batch as the float write (src/graph/live.ts site 4); rebuild source (i) `alongside` grows from two
@@ -86,7 +92,7 @@ import type { GraphBlocks } from "./blocks/graph.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.14.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.15.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -176,6 +182,10 @@ export interface MindState {
      *  durable reply-to and Discord thread mapping, yet orient returned it in a raw field no contract
      *  surface could see. mindOrient selects state IN ('open','moving') LIMIT 3, seed_text clipped. */
     conversations: WmActiveConversation[];
+    /** 0.15.0 (2026-09-23): the ENDINGS, last 7 days. `conversations` above holds only threads
+     *  still running, which is why a closed thread used to vanish from the boot context the
+     *  moment it closed. Empty by design during a quiet week -- see the query's window note. */
+    closed_conversations: WmClosedConversation[];
   };
 
   /** What I'm carrying -- unresolved, unexamined, still-metabolizing. */

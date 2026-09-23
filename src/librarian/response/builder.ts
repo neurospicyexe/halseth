@@ -235,6 +235,32 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     }
   }
 
+  // 7e. Recently ENDED threads (2026-09-23). The close half of the lifecycle, which was
+  // write-only until now: a companion would author a closing line and never meet it again.
+  //
+  // Each ending renders as what it actually was. A landed thread gets the companion's own
+  // sentence, ATTRIBUTED -- threads are triad-shared, and an unattributed closing line reads
+  // to the next companion as their own conclusion ([[an-address-needs-its-speakers]],
+  // [[shared-bank-distinct-selves]]). A spent thread says the counter tripped; its stored
+  // `resolution` is a bracketed reason code, never prose, so it is not quoted as a sentence.
+  // A quiet thread says exactly that and nothing more -- nothing is summarised on its behalf,
+  // because inventing a resolution is the counter-not-narrator rule this system already
+  // settled in fadeConversation (docs/close-the-187-2026-08-04.md).
+  if (wm.closed_conversations?.length) {
+    parts.push(`[Recently ended]`);
+    for (const c of wm.closed_conversations) {
+      const opened = `${c.seed_author} opened «${c.seed_gist}»`;
+      if (c.ending === "landed" && c.resolution) {
+        const who = c.landed_by ?? "someone";
+        parts.push(`- ${opened} — ${c.turn_count} turns, closed by ${who}: «${sanitizeForPrompt(c.resolution)}»`);
+      } else if (c.ending === "spent") {
+        parts.push(`- ${opened} — ${c.turn_count} turns, retired on length. Nobody closed it.`);
+      } else {
+        parts.push(`- ${opened} — ${c.turn_count} turns, then it went quiet. Never closed.`);
+      }
+    }
+  }
+
   // 8. Incoming inter-companion notes -- triad context before own history
   if (wm.incoming_companion_notes?.length > 0) {
     parts.push(`[Incoming triad notes: ${wm.incoming_companion_notes.length}]`);

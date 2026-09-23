@@ -198,6 +198,9 @@ export async function loadMindState(
       session_narrative: narrative?.full_ref ?? null,
       // 0.5.0 (coherence review D5): the conversation ledger finally has a contract home.
       conversations: orient?.active_conversations ?? [],
+      // 0.15.0: the endings. Pure read -- a closed thread must not become more closed by
+      // being surfaced (same constraint pinned on conclusions this week).
+      closed_conversations: orient?.closed_conversations ?? [],
     },
 
     carried: {

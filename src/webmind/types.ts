@@ -337,6 +337,7 @@ export interface WmOrientResponse {
   open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)
   answered_questions: WmAnsweredQuestion[];     // answers Raziel left, surfaced for 7 days (mig 0107)
   active_conversations: WmActiveConversation[]; // live conversation threads (conversation_threads, mig 0106)
+  closed_conversations: WmClosedConversation[]; // endings within the last 7 days (2026-09-23)
   guardian_flags: WmOrientGuardianFlag[];       // open/surfaced guardian red-flag cards, with a remediation hint (Wave 3 starvation fix)
   soma_arc?: {
     note_id: string;
@@ -495,6 +496,42 @@ export interface WmActiveConversation {
   ref_label: string | null;
   turn_count: number;
   last_turn_at: string;
+}
+
+// Recently CLOSED conversation threads (mig 0106), 2026-09-23.
+//
+// The close half of the Discord thread lifecycle was write-only. A thread opens, accrues a
+// ledger, and ends one of two ways -- a companion writes `[LANDS: ...]`, or it goes quiet and
+// getActiveConversation fades it on the next read -- and orient then reads ONLY
+// `state IN ('open','moving')`. So the moment a conversation ended, every trace of it left the
+// boot context. That is the asymmetry against Claude.ai, where the close writes the spine the
+// next session opens on.
+//
+// Measured on prod the day this shipped, and the numbers are the design:
+//   landed  100+ rows / 267 turns  = 2.7 turns each, ALL with a companion-authored resolution
+//   faded    66 rows / 967 turns   = 14.6 turns each, 59 of them with NO resolution at all
+// The short exchanges got a closing line; the 850 turns of substance got silence, including
+// two of Raziel's own threads with Drevan at 39 and 40 turns.
+//
+// `ending` is what actually happened, never a judgement:
+//   "landed" -- a companion wrote the resolution. Render it as their sentence, attributed.
+//   "spent"  -- the turn budget tripped; `resolution` holds a bracketed `[faded: <code>]`
+//               REASON CODE, not prose (see fadeConversation's counter-not-narrator rule).
+//   "quiet"  -- it simply stopped and the 12h read-fade retired it. Nothing was authored, and
+//               nothing is invented here: the seed and the turn count are all that is true.
+export interface WmClosedConversation {
+  id: string;
+  channel_id: string;
+  seed_author: string;
+  seed_gist: string;
+  ending: "landed" | "spent" | "quiet";
+  resolution: string | null;
+  landed_by: string | null;
+  turn_count: number;
+  last_turn_at: string;
+  /** Did this companion speak in the thread? Ranks, never filters -- a sibling's closing line
+   *  is context a companion should still see ([[edges-rank-never-hide]]). */
+  mine: number;
 }
 
 export interface WmGroundResponse {

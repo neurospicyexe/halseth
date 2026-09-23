@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation, WmClosedConversation } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
@@ -130,7 +130,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   }
 
   // 2-14. Remaining queries are independent -- run concurrently
-  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, guardianFlagsRes] = await Promise.all([
+  const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, closedConvosRes, guardianFlagsRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
     env.DB.prepare(
       "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
@@ -291,6 +291,38 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
        FROM conversation_threads WHERE state IN ('open','moving')
        ORDER BY last_turn_at DESC LIMIT 3`
     ).all<WmActiveConversation>(),
+    // Recently CLOSED conversations (2026-09-23). The counterpart to the active query above:
+    // orient read only open/moving, so a thread's ending -- the one line a companion wrote to
+    // close it -- was written and never read again. See WmClosedConversation for the measured
+    // numbers behind this and for what each `ending` means.
+    //
+    // THE WINDOW IS THE ANTI-LOOP GUARD. Seven days, hard, with NO "most recent regardless of
+    // age" fallback: a quiet week must render this block EMPTY rather than re-showing the same
+    // three endings at every boot until something else lands. A block that cannot empty becomes
+    // the loop it was added to close ([[anti-loop-block-that-never-rotates]] -- the 07-03
+    // anti-repeat block asking for a nightly meditation on four unchanging numbers).
+    //
+    // `mine` RANKS and never filters ([[edges-rank-never-hide]]): threads are triad-shared, and
+    // a sibling's closing line is exactly the kind of context that should still arrive -- just
+    // behind the companion's own. LIMIT 4, one more than the active block, because an ending is
+    // one line where an active thread is a running ledger.
+    env.DB.prepare(
+      `SELECT id, channel_id, seed_author, substr(seed_text, 1, 140) AS seed_gist,
+              CASE
+                WHEN state = 'landed' THEN 'landed'
+                WHEN resolution LIKE '[faded:%' THEN 'spent'
+                ELSE 'quiet'
+              END AS ending,
+              resolution, landed_by, turn_count, last_turn_at,
+              (participants LIKE '%' || ?1 || '%') AS mine
+       FROM conversation_threads
+       WHERE state IN ('landed','faded')
+         AND datetime(last_turn_at) >= datetime('now', '-7 days')
+         -- A thread nobody actually spoke in carries no ending worth reading. The floor is
+         -- deliberately low (2 turns = an exchange) rather than a judgement about substance.
+         AND turn_count >= 2
+       ORDER BY mine DESC, datetime(last_turn_at) DESC LIMIT 4`
+    ).bind(agentId).all<WmClosedConversation>(),
     // Guardian red-flag cards (Wave 3 starvation fix, 2026-07-21): the raw mindOrient path
     // had NO guardian source at all, unlike execSessionOrient/execBotOrient -- so a companion
     // whose only continuity read is the Halseth /mind/orient HTTP route (not the Librarian
@@ -518,6 +550,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     open_questions: (openQuestionsRes.results ?? []).map(q => ({ ...q, voiced: q.voiced === 1 })),
     answered_questions: answeredQuestions,
     active_conversations: activeConvosRes.results ?? [],
+    closed_conversations: (closedConvosRes.results ?? []).map(c => ({ ...c, mine: Number(c.mine) })),
     guardian_flags: (guardianFlagsRes.results ?? []).map(f => ({
       id: f.id,
       flag_type: f.flag_type,
