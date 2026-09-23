@@ -40,7 +40,7 @@ import { getHealth } from "./handlers/health.js";
 import { getEdges } from "./handlers/edges.js";
 import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
 import { postSomaBackfillEvents, getSomaEvents } from "./handlers/soma-events.js";
-import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, getMindNotesSearch, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "./handlers/director.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
@@ -314,6 +314,9 @@ const router = new Router()
   .on("POST", "/mind/notes/recall",            (request, env) => postMindNotesRecall(request, env))
   .on("POST", "/mind/notes/demote",            (request, env) => postMindNotesDemote(request, env))
   .on("GET",  "/mind/notes/recent",            (request, env) => getMindNotesRecent(request, env))
+  // Meaning-search over a companion's own notes. The AUTOMATIC path (per-message bot recall);
+  // the Librarian's notes_recall_meaning stays the companion-initiated, loop-guarded one.
+  .on("GET",  "/mind/notes/search",            (request, env) => getMindNotesSearch(request, env))
   .on("POST", "/mind/limbic",           (request, env) => postMindLimbic(request, env))
   .on("GET",  "/mind/limbic/current",   (request, env) => getMindLimbicCurrent(request, env))
   .on("POST", "/mind/dream",            (request, env) => postMindDream(request, env))

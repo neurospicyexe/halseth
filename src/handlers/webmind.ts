@@ -11,7 +11,7 @@ import { loadMindState } from "../mind/loader.js";
 import { isValidLoom, VALID_LOOMS } from "../mind/contract.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
-import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
+import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, recallNotesByMeaning, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
@@ -929,6 +929,59 @@ export async function postMindNotesArchive(
 // POST /mind/notes/recall
 // Deliberate recall of specific continuity notes: returns their content and warms them
 // (heat bump + last_access_at), which clears the Guardian's orphan_memory condition.
+/**
+ * GET /mind/notes/search -- meaning-search over a companion's OWN continuity notes (2026-09-23).
+ *
+ * The AUTOMATIC enrichment path, deliberately parallel to `/mind/search` (the vault) and
+ * deliberately NOT the Librarian's `notes_recall_meaning` route, even though both end in
+ * `recallNotesByMeaning`. The distinction is who decided to search:
+ *
+ *   - Librarian route  = a COMPANION chose to look something up. Loop-guarded, correctly: that
+ *     guard exists because the memory judge once ran 150 turns and burned 100.6M tokens.
+ *   - This route       = the bot's per-message enrichment, one call per inbound Discord message,
+ *     no model decision involved -- exactly like the vault search beside it.
+ *
+ * Routing the automatic caller through the Librarian tripped the guard at 12 repeats in 10
+ * minutes ("Retrieval is not going to change the answer. Stop searching") -- which is right for a
+ * looping agent and catastrophic for per-message recall, because an ACTIVE conversation is
+ * precisely when it fires most and precisely when memory matters most. It failed silently, too:
+ * a witness response carries no `data`, so the bot saw an empty recall rather than an error.
+ *
+ * Pure read. `recallNotesByMeaning` does not warm what it returns from here.
+ */
+export async function getMindNotesSearch(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const agentId = url.searchParams.get("agent_id")?.trim() ?? "";
+  if (!isValidAgentId(agentId)) {
+    return json({ error: "agent_id required and must be cypher, drevan, or gaia" }, 400);
+  }
+  const query = url.searchParams.get("query")?.trim();
+  if (!query) return json({ error: "query is required" }, 400);
+  if (query.length > 500) return json({ error: "query must be 500 characters or fewer" }, 400);
+
+  const rawLimit = parseInt(url.searchParams.get("limit") ?? "", 10);
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 10) : 4;
+  const sourceClass = url.searchParams.get("source_class") === "all" ? "all" as const : "life" as const;
+
+  try {
+    const notes = await recallNotesByMeaning(env, agentId as WmAgentId, query, limit, sourceClass);
+    return json({ notes });
+  } catch (e) {
+    // "Nothing matched" and "I could not look" must never collapse into the same answer --
+    // Workers AI is quota-bound on the free tier. The caller renders nothing either way, but the
+    // distinction has to exist in the logs or a dead embedder reads as an empty memory.
+    const msg = String(e);
+    console.warn(`[notes-search] ${agentId} failed: ${msg.slice(0, 200)}`);
+    return json({ notes: [], error: "recall_failed" }, 200);
+  }
+}
+
 export async function postMindNotesRecall(
   request: Request,
   env: Env,
