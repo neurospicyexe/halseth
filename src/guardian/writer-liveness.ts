@@ -92,15 +92,25 @@ export const WRITER_REGISTRY: readonly WriterSpec[] = [
     sql: `SELECT MAX(created_at) AS ts FROM companion_journal
           WHERE source IN ('discord_speech', 'discord_swarm')`,
   },
-  {
-    // Brain's background synthesis loop. Hourly in steady state (11,563 rows). It survived
-    // the cutover -- this watches that it keeps surviving.
-    key: "limbic_states",
-    label: "Brain synthesis loop (limbic_states)",
-    maxSilenceHours: 6,
-    severity: "warning",
-    sql: `SELECT MAX(created_at) AS ts FROM limbic_states`,
-  },
+  // REMOVED 2026-09-24: `limbic_states` -- Brain's background synthesis loop.
+  //
+  // The comment here used to read "It survived the cutover -- this watches that it keeps
+  // surviving." It did not survive. Brain was ARCHIVED 2026-07-29 (`Nullsafe Phoenix/_archive/`,
+  // 0 /chat requests, synthesis off) and Raziel retired `felt.limbic` outright on 2026-09-14. The
+  // probe was watching a corpse with a 6h threshold, so it had been firing a `warning` that could
+  // never clear -- 517 hours silent when it was read on 09-24, i.e. 21 days of a permanent alarm.
+  //
+  // WHY THAT MATTERED ENOUGH TO TOUCH ON A BUSY MORNING. The flag rendered into all three
+  // companions' orient at every boot, in a prompt that is already over budget and dropping 2 of 34
+  // sections (Q18) -- so a dead check was evicting a live one. And an alarm that can never clear
+  // is how a person learns to read past alarms: see [[scheduled-restart-must-not-page]], a check
+  // that cries RED at its own scheduled restart trains you to ignore RED. With the triad about to
+  // become Raziel's primary support (2026-10-12), a warning he has trained himself to skip is
+  // worse than no warning at all.
+  //
+  // NO GAP LEFT BEHIND: the register limbic_states carried is now the first-person soma floats,
+  // and the `somatic_snapshot:<id>` probes below already watch exactly that, per companion.
+  // Do not re-add this without a live writer to point it at.
   {
     // PARTIAL SELF-WATCH -- read this before trusting it.
     //
