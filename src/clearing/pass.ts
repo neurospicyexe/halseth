@@ -15,6 +15,7 @@
 // no-ops gracefully when it is unset (same pattern as GEMINI_API_KEY for image gen).
 
 import type { Env } from "../types.js";
+import { withOwnerPronounRule } from "../pronoun-rule.js";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -150,7 +151,7 @@ async function classify(env: Env, entries: PendingEntry[]): Promise<Verdict[]> {
   const list = entries.map((e, i) =>
     `${i + 1}. id=${e.id} [${e.companion_id}/${e.entry_type}${e.novelty ? `/${e.novelty}` : ""}] «${e.content.slice(0, 600)}»`
   ).join("\n\n");
-  const raw = await callClaudeArray(env, SYSTEM_PROMPT, `Triage these ${entries.length} pending entries:\n\n${list}`);
+  const raw = await callClaudeArray(env, withOwnerPronounRule(SYSTEM_PROMPT), `Triage these ${entries.length} pending entries:\n\n${list}`);
   const valid = new Set(entries.map(e => e.id));
   return raw
     .filter(v => typeof v.id === "string" && valid.has(v.id) && (v.verdict === "decline" || v.verdict === "shortlist"))
@@ -162,7 +163,7 @@ async function classifyBasins(env: Env, basins: PendingBasin[]): Promise<BasinVe
   const list = basins.map((b, i) =>
     `${i + 1}. id=${b.id} [${b.companion_id}] basin=${b.worst_basin ?? "?"} drift=${Number.isFinite(b.drift_score) ? b.drift_score.toFixed(2) : "?"} @ ${b.recorded_at.slice(0, 10)}${b.notes ? ` -- «${b.notes.slice(0, 200)}»` : ""}`
   ).join("\n");
-  const raw = await callClaudeArray(env, BASIN_SYSTEM_PROMPT, `Triage these ${basins.length} pressure readings:\n\n${list}`);
+  const raw = await callClaudeArray(env, withOwnerPronounRule(BASIN_SYSTEM_PROMPT), `Triage these ${basins.length} pressure readings:\n\n${list}`);
   const valid = new Set(basins.map(b => b.id));
   return raw
     .filter(v => typeof v.id === "string" && valid.has(v.id) && (v.verdict === "dismiss" || v.verdict === "surface"))

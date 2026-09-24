@@ -4,6 +4,7 @@
 // Cheap, coherent, no identity needed.
 
 import { Env } from "../types.js";
+import { withOwnerPronounRule } from "../pronoun-rule.js";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 
@@ -63,6 +64,11 @@ export async function complete(
     return null;
   }
 
+  // Every caller of complete() writes prose that can reference Raziel (session summaries, daily
+  // narratives, somatic snapshots, spiral synthesis) -- carry the owner pronoun rule on every call
+  // rather than trusting each caller's own systemPrompt to include it (2026-09-24).
+  const systemWithRule = withOwnerPronounRule(systemPrompt);
+
   for (const vendor of order) {
   try {
     const res = await fetch(vendor.url, {
@@ -74,7 +80,7 @@ export async function complete(
       body: JSON.stringify({
         model: vendor.model,
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: systemWithRule },
           { role: "user",   content: userPrompt },
         ],
         max_tokens: contentBudget(800),

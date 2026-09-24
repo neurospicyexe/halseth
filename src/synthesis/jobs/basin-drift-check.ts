@@ -10,6 +10,7 @@
 import { Env } from "../../types.js";
 import { embedText } from "../../mcp/embed.js";
 import { DEEPSEEK_DEFAULT_MODEL, contentBudget } from "../deepseek.js";
+import { withOwnerPronounRule } from "../../pronoun-rule.js";
 
 interface BasinRow {
   basin_name: string;
@@ -153,7 +154,13 @@ drift_score: 0.0 = fully aligned, 2.0 = severe departure`;
       // would have returned "" and the JSON parse below would have thrown on every check.
       // See synthesis/deepseek.ts for the measurement.
       model: DEEPSEEK_DEFAULT_MODEL,
-      messages: [{ role: "user", content: prompt }],
+      // `reasoning` is a free one-sentence field and can reference Raziel -- carry the owner
+      // pronoun rule via a system message even though this call is otherwise a classifier
+      // (drift_type/drift_score/worst_basin are labels, not prose) (2026-09-24).
+      messages: [
+        { role: "system", content: withOwnerPronounRule("") },
+        { role: "user", content: prompt },
+      ],
       max_tokens: contentBudget(120),
       temperature: 0,
     }),

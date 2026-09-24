@@ -12,6 +12,7 @@
 // Cloudflare secret (ANTHROPIC_API_KEY); the pass no-ops gracefully when it is unset (same as clearing).
 
 import type { Env } from "../types.js";
+import { withOwnerPronounRule } from "../pronoun-rule.js";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -100,7 +101,7 @@ export async function runDriftPass(env: Env): Promise<DriftPassResult> {
   const list = drifts.map((d, i) =>
     `${i + 1}. id=${d.id} [${d.companion_id}] «${d.drift_text.slice(0, 500)}»${d.origin ? ` (origin: ${d.origin.slice(0, 200)})` : ""}`
   ).join("\n\n");
-  const raw = await callClaudeArray(env, SYSTEM_PROMPT, `Witness + judge these ${drifts.length} open drifts:\n\n${list}`);
+  const raw = await callClaudeArray(env, withOwnerPronounRule(SYSTEM_PROMPT), `Witness + judge these ${drifts.length} open drifts:\n\n${list}`);
 
   const valid = new Map(drifts.map(d => [d.id, d]));
   const verdicts: DriftVerdict[] = raw

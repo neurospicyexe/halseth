@@ -27,6 +27,7 @@
 
 import type { Env } from "../types.js";
 import { generateId } from "../db/queries.js";
+import { withOwnerPronounRule } from "../pronoun-rule.js";
 import { diffFloats, somaEventStatements, type SomaFloatKey } from "./events.js";
 
 export const EMERGENT_SHIFT_CAP_DEFAULT = 0.03;
@@ -117,7 +118,7 @@ export async function callClaudeForShift(
       model: env.SOMA_SHIFT_MODEL || env.DRIFT_MODEL || env.CLEARING_MODEL || DEFAULT_MODEL,
       max_tokens: 1000,
       output_config: { effort: "low" },
-      system: SYSTEM_PROMPT,
+      system: withOwnerPronounRule(SYSTEM_PROMPT),
       messages: [{ role: "user", content: user }],
     }),
     signal: AbortSignal.timeout(60_000),
