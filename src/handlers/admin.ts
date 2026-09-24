@@ -368,6 +368,13 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     companion_dreams:    "SELECT id, dream_text AS text, companion_id AS companion FROM companion_dreams",
     living_wounds:       "SELECT id, name || ': ' || description AS text, 'gaia' AS companion FROM living_wounds",
     cypher_audit:        "SELECT id, content AS text, 'cypher' AS companion FROM cypher_audit",
+    // architect_facts (2026-09-24). Added to the BACKFILL registry the same day but missed here,
+    // which is the gap that matters: this is the fill-the-missing / verify path, so without it
+    // there was no way to ask "which facts have no vector?" -- and a silently unindexed fact is
+    // invisible to the novelty gate, which degrades back into the duplicate pile it was added to
+    // stop. Retired rows are excluded: indexing a dead fact makes the gate claim a memory the
+    // system no longer renders.
+    architect_facts:     "SELECT id, fact AS text, COALESCE(companion_id, 'shared') AS companion FROM architect_facts WHERE status != 'retired' AND fact IS NOT NULL",
     // Mirrors composeHandoverText() in mcp/embed.ts -- keep the two in sync. open_threads is a
     // JSON array of names; json_valid guards legacy non-JSON rows (composeHandoverText skips those).
     handover_packets:    "SELECT hp.id AS id, hp.spine || CASE WHEN hp.last_real_thing IS NOT NULL AND hp.last_real_thing != '' THEN char(10) || char(10) || 'Last real thing: ' || hp.last_real_thing ELSE '' END || CASE WHEN hp.open_threads IS NOT NULL AND json_valid(hp.open_threads) AND json_array_length(hp.open_threads) > 0 THEN char(10) || 'Open threads: ' || (SELECT group_concat(value, '; ') FROM json_each(hp.open_threads)) ELSE '' END AS text, s.companion_id AS companion FROM handover_packets hp LEFT JOIN sessions s ON s.id = hp.session_id",
