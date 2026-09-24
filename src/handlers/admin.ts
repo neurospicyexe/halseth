@@ -147,6 +147,18 @@ export async function backfillEmbeddings(request: Request, env: Env): Promise<Re
   const table = url.searchParams.get("table");
 
   const TABLES: Record<string, { sql: string; getText: (r: Record<string, unknown>) => string; getCompanion: (r: Record<string, unknown>) => string }> = {
+    // architect_facts (2026-09-24): added when the novelty gate was wired onto the fact write.
+    // Without a backfill the gate protects only facts written AFTER it shipped -- the existing
+    // pile stays unindexed, so a new write restating one of them still sails through, which is
+    // most of what the gate exists to stop. Retired rows are excluded deliberately: indexing a
+    // dead fact makes the gate answer "I already know that" about something nothing renders.
+    architect_facts: {
+      sql:          "SELECT id, fact, companion_id FROM architect_facts WHERE status != 'retired' AND fact IS NOT NULL",
+      getText:      (r) => r.fact as string,
+      // Matches the write path's sentinel. Facts are shared, so the gate queries by table alone
+      // and this value is metadata rather than a filter -- but it must never be undefined.
+      getCompanion: (r) => (r.companion_id as string) ?? "shared",
+    },
     relational_deltas: {
       sql:          "SELECT id, delta_text, agent FROM relational_deltas WHERE delta_text IS NOT NULL",
       getText:      (r) => r.delta_text as string,

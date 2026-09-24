@@ -32,6 +32,19 @@ export async function noveltyCheck(
   text: string,
   table: string,
   companionId: string,
+  /**
+   * Whose pile to dedupe against. Default "companion" preserves every existing caller exactly.
+   *
+   * "table" omits the companion filter, and exists because `architect_facts` are facts about
+   * RAZIEL, not beliefs belonging to whoever happened to notice them. Measured 2026-09-24: of the
+   * 9 duplicate clusters in the held pile, **5 spanned more than one companion** -- the largest
+   * (six rows about Rosie and Trigger) was written by all three. A companion-scoped gate would
+   * have missed every one of those, which is most of the problem it was added to solve.
+   *
+   * A conclusion is correctly companion-scoped and must stay that way: two companions reaching
+   * the same belief independently is signal, not duplication.
+   */
+  scope: "companion" | "table" = "companion",
 ): Promise<NoveltyDecision> {
   let embedding: number[] | null = null;
   try {
@@ -53,7 +66,7 @@ export async function noveltyCheck(
     // do not "fix" that one to match this.)
     const res = await env.VECTORIZE.query(embedding, {
       topK: NOVELTY_TOPK,
-      filter: { table, companion_id: companionId },
+      filter: scope === "table" ? { table } : { table, companion_id: companionId },
       returnValues: true,
     });
     matches = (res.matches ?? []).map((m) => ({ id: String(m.id), score: m.score ?? 0 }));
@@ -88,6 +101,24 @@ export async function noveltyCheck(
       candidates = matches.filter((m) => activeIds.has(rowIdOf(m.id)));
     } catch {
       candidates = matches; // fail open: behave as before the defensive check existed
+    }
+  }
+
+  // Same defence as the conclusions block above, for the same reason: a retired fact's vector can
+  // outlive it (the supersede path only best-effort deletes), and matching a dead row would hand
+  // the caller a `skip` pointing at a fact nothing renders -- which reads to a companion as "I
+  // already know that" about something the system has actually forgotten.
+  if (table === "architect_facts") {
+    try {
+      const rowIds = candidates.map((m) => rowIdOf(m.id));
+      const placeholders = rowIds.map(() => "?").join(", ");
+      const live = await env.DB.prepare(
+        `SELECT id FROM architect_facts WHERE id IN (${placeholders}) AND status != 'retired'`,
+      ).bind(...rowIds).all<{ id: string }>();
+      const liveIds = new Set((live.results ?? []).map((r) => r.id));
+      candidates = candidates.filter((m) => liveIds.has(rowIdOf(m.id)));
+    } catch {
+      candidates = candidates; // fail open
     }
   }
 

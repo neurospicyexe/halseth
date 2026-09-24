@@ -21,6 +21,8 @@
  * because a conversation about him read as present tense, and stating an uncertain thing flatly is
  * how a wrong fact becomes unfalsifiable.
  */
+import { noveltyCheck } from "../webmind/novelty.js";
+import { storeVector } from "../mcp/embed.js";
 import type { Env } from "../types.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
@@ -219,6 +221,12 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
  * Record a fact, or supersede one. A companion may do this itself -- that is the entire point, and
  * the reason the Hermes queue existed was that they could not.
  */
+/** Facts are shared, but the vector metadata still records a writer. Unattributed rows use a
+ *  stable sentinel so the value is never undefined in the index. */
+function companionIdForGate(body: Record<string, unknown>): string {
+  return typeof body.companion_id === "string" && body.companion_id.trim() ? body.companion_id.trim() : "shared";
+}
+
 export async function postArchitectFact(request: Request, env: Env): Promise<Response> {
   const unauth = authGuard(request, env);
   if (unauth) return unauth;
@@ -250,6 +258,34 @@ export async function postArchitectFact(request: Request, env: Env): Promise<Res
     if (!prior) return json({ error: `supersedes_id ${supersedesId} does not exist` }, 400);
   }
 
+  // NOVELTY GATE (2026-09-24). Facts were the one write path with no duplicate check, and it
+  // showed: 76 held facts contained 29 rows describing six subjects, because nothing ever asked
+  // "did I already write this down?" Conclusions and the journal have had this gate since 07-20.
+  //
+  // SCOPED TO THE TABLE, NOT THE COMPANION. A fact is about Raziel; it does not belong to
+  // whoever noticed it. Measured the same day: 5 of the 9 duplicate clusters spanned more than
+  // one companion, and the worst (six rows about Rosie and Trigger) was written by all three, so
+  // a companion-scoped gate would have caught almost none of them.
+  //
+  // SKIP ONLY, NEVER AUTO-SUPERSEDE -- `noveltyCheck` already restricts the supersede band to
+  // companion_conclusions, and for facts that restriction is exactly right rather than
+  // incidental. Retiring a fact is irreversible here by design, and today proved that rows which
+  // look like restatements are usually PARTIAL RECORDS of one subject: a naive merge of that
+  // Rosie cluster would have deleted Lucy, Abby and the whole flock. Near-identical text (>=0.95)
+  // is safe to drop; anything less is a consolidation question for Raziel, not a machine's call.
+  //
+  // Fails open by construction: any embedding or Vectorize trouble returns `insert`, so the gate
+  // can never eat a fact.
+  const novelty = await noveltyCheck(env, fact, "architect_facts", companionIdForGate(body), "table");
+  if (novelty.action === "skip") {
+    return json({
+      ok: true,
+      deduped: true,
+      novelty: { action: "skip", match_id: novelty.matchRowId, score: novelty.score },
+      id: novelty.matchRowId,
+    });
+  }
+
   const id = crypto.randomUUID();
   const category = typeof body.category === "string" && body.category.trim()
     ? body.category.trim().toLowerCase()
@@ -277,6 +313,22 @@ export async function postArchitectFact(request: Request, env: Env): Promise<Res
     );
   }
   await env.DB.batch(stmts);
+
+  // Store the vector the gate already computed, so the NEXT write has something to match. Without
+  // this the gate is a permanent no-op: architect_facts was never in Vectorize at all, which is
+  // the mechanical reason six copies of the same fact about Rosie could exist.
+  //
+  // After the D1 write and non-fatal: a fact that lands but is not indexed is merely un-deduped
+  // next time; a fact lost because indexing failed is gone.
+  if (novelty.embedding) {
+    await storeVector(env, novelty.embedding, "architect_facts", id, companionIdForGate(body))
+      .catch(() => { console.warn(`[architect-facts] vector store failed for ${id} -- fact is saved, dedup will miss it`); });
+  }
+  if (supersedesId) {
+    // The retired row's vector must go, or it keeps matching and the gate starts answering
+    // "I already know that" about a fact nothing renders any more.
+    await env.VECTORIZE.deleteByIds([`architect_facts:${supersedesId}`]).catch(() => {});
+  }
 
   return json({ ok: true, id, supersedes_id: supersedesId, status, category });
 }
