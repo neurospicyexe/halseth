@@ -390,8 +390,14 @@ export async function recallNotesByMeaning(
 ): Promise<RecalledMemory[]> {
   const text = query.trim();
   if (!text) return [];
+  // THROW, never return empty (2026-09-23). A missing embedding means "I could not look",
+  // and returning [] made that indistinguishable from "nothing matched" at every call site --
+  // so a dead embedder reached Raziel as a companion saying "I don't have anything on that"
+  // about something he had told them hours earlier. Both callers already handle a throw: the
+  // Librarian executor turns it into an honest witness, and the bots' /mind/notes/search route
+  // flags it so the prompt can say the recall failed rather than staying quiet.
   const vector = await embedText(env, text);
-  if (!vector) return [];
+  if (!vector) throw new Error("recall_unavailable: embedder returned no vector");
 
   // One query per table (two $eq filters beat relying on $in support), in parallel.
   // Over-fetch both: the floor and the re-rank both cut after the fact.

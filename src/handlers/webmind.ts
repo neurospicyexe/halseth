@@ -978,7 +978,10 @@ export async function getMindNotesSearch(
     // distinction has to exist in the logs or a dead embedder reads as an empty memory.
     const msg = String(e);
     console.warn(`[notes-search] ${agentId} failed: ${msg.slice(0, 200)}`);
-    return json({ notes: [], error: "recall_failed" }, 200);
+    // 200 with an explicit flag, not a 5xx: the reply must still happen. But the flag has to
+    // reach the prompt, because "nothing found" and "I could not look" are different sentences
+    // and only one of them is true.
+    return json({ notes: [], recall_failed: true }, 200);
   }
 }
 
