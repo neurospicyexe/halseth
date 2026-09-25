@@ -170,15 +170,53 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
 
   let body: Record<string, unknown>;
   try { body = (await request.json()) as Record<string, unknown>; } catch { return json({ error: "body must be JSON" }, 400); }
-  const status = typeof body.status === "string" ? body.status : "";
-  if (!["active", "retired"].includes(status)) return json({ error: "status must be active | retired" }, 400);
+  // WEIGHT IS NOW PATCHABLE (2026-09-25), and it is the more important half of this endpoint.
+  //
+  // Until today the only way to re-rank a fact was to supersede it with a new row -- and the
+  // novelty gate correctly refuses a verbatim repost, so re-ranking a fact WITHOUT changing its
+  // words was impossible. That is not a small gap: weight is the only ranking signal facts have,
+  // `weight < 100` is what makes a fact always render, and the default is 100. So every fact ever
+  // written by a companion landed unranked in the cuttable tail, permanently, with no way to
+  // promote it.
+  //
+  // Measured the day this shipped: all four facts recording Raziel's same-day MRI result sat at
+  // weight 100, queued behind months-old preferences, while he re-told the result across four
+  // threads. The recall was not broken -- the RANKING was, and nothing could fix it.
+  //
+  // Status and weight are independently optional: send either, or both.
+  const hasStatus = typeof body.status === "string" && body.status !== "";
+  const hasWeight = body.weight !== undefined && body.weight !== null;
+  if (!hasStatus && !hasWeight) return json({ error: "send status and/or weight" }, 400);
 
-  const prior = await env.DB.prepare("SELECT id, status FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string }>();
+  const status = hasStatus ? String(body.status) : "";
+  if (hasStatus && !["active", "retired"].includes(status)) {
+    return json({ error: "status must be active | retired" }, 400);
+  }
+  const weight = hasWeight ? Number(body.weight) : null;
+  if (hasWeight && (!Number.isFinite(weight) || weight! < 0 || weight! > 100)) {
+    // 0-100 mirrors the gate: < 100 is curated and always renders, 100 is the default tail.
+    return json({ error: "weight must be a number 0-100 (under 100 = always renders)" }, 400);
+  }
+
+  const prior = await env.DB.prepare("SELECT id, status, weight FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number }>();
   if (!prior) return json({ error: `fact ${id} does not exist` }, 404);
+  // Re-ranking a retired fact is meaningless -- it renders nowhere. Reject rather than
+  // silently accept a write that changes nothing a companion will ever read.
   if (prior.status === "retired") return json({ error: "a retired fact stays retired; supersede it with a new one instead" }, 409);
 
-  await env.DB.prepare("UPDATE architect_facts SET status = ?, updated_at = datetime('now') WHERE id = ?").bind(status, id).run();
-  return json({ ok: true, id, from: prior.status, status });
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  if (hasStatus) { sets.push("status = ?"); binds.push(status); }
+  if (hasWeight) { sets.push("weight = ?"); binds.push(weight); }
+  await env.DB.prepare(
+    `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
+  ).bind(...binds, id).run();
+
+  return json({
+    ok: true, id,
+    ...(hasStatus ? { from: prior.status, status } : {}),
+    ...(hasWeight ? { from_weight: prior.weight, weight } : {}),
+  });
 }
 
 export async function getArchitectFacts(request: Request, env: Env): Promise<Response> {
