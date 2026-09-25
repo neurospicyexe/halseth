@@ -356,6 +356,11 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     companion_tensions:  "SELECT id FROM companion_tensions",
     tasks:               "SELECT id FROM tasks",
     wm_archive_notes:    "SELECT id FROM wm_archive_notes",
+    // Must be in BOTH maps: ID_SQL enumerates and validates, TEXT_SQL supplies the text for
+    // `fill=1`. Added to TEXT_SQL alone first, which made the endpoint answer
+    // "Unknown table: architect_facts" -- a two-map registry where only one copy knows about a
+    // table is the same shape as the three-consumers trap, one screen apart.
+    architect_facts:     "SELECT id FROM architect_facts WHERE status != 'retired' AND fact IS NOT NULL",
   };
 
   // Text per row id, for fill mode. Same content shaping as backfill-embeddings' TABLES map,
