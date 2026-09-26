@@ -6,7 +6,7 @@ import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../webmind/notes.js";
 import { noveltyCheck } from "../webmind/novelty.js";
-import { reviewStateFor } from "../webmind/review-state.js";
+import { journalInsert, journalBirthState } from "../webmind/tray-insert.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -116,16 +116,13 @@ export async function postCompanionJournal(
   }
 
   // Imp tray (mig 0132): the companion's own speech and any clerk's note in its voice are born
-  // `draft` and never reach recall until the owner keeps them. Decided in one place.
-  const reviewState = reviewStateFor("journal", { source: safeSource });
-
-  // The unique index (mig 0098) is PARTIAL, so the conflict target must repeat its predicate
-  // or SQLite rejects it with "does not match any PRIMARY KEY or UNIQUE constraint".
-  const res = await env.DB.prepare(`
-    INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags, external_id, review_state)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO NOTHING
-  `).bind(id, now, agent, trimmedText, safeTags, safeSessionId, safeSource, topicTags, safeExternalId, reviewState).run();
+  // `draft` and never reach recall until the owner keeps them. Decided in one place: journalInsert()
+  // stamps review_state from the birth rule (webmind/tray-insert.ts, the only INSERT into this table).
+  // The unique index (mig 0098) is PARTIAL; onConflictExternalId repeats its predicate.
+  const res = await journalInsert(env.DB, {
+    id, created_at: now, agent, note_text: trimmedText, tags: safeTags, session_id: safeSessionId,
+    source: safeSource, topic_tags: topicTags, external_id: safeExternalId,
+  }, { onConflictExternalId: true }).run();
 
   // Conflict => this exact message was already journaled. Don't re-embed (Vectorize upsert is
   // idempotent by deterministic id, but the embed call still costs a Workers AI invocation).
@@ -166,7 +163,7 @@ export async function postCompanionJournal(
     }
   }
 
-  return new Response(JSON.stringify({ id, created_at: now, review_state: reviewState }), {
+  return new Response(JSON.stringify({ id, created_at: now, review_state: journalBirthState({ source: safeSource }) }), {
     status: 201,
     headers: { "Content-Type": "application/json" },
   });

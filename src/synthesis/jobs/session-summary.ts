@@ -10,6 +10,7 @@ import { sbSaveDocument, sbIngestRaw } from "../../librarian/backends/second-bra
 import { generateId } from "../../db/queries.js";
 import { extractDomains, SUPPORTED_MEMORY_DOMAINS } from "../domains.js";
 import { effectiveHeatSql } from "../../webmind/heat.js";
+import { KEPT_LIVE_SQL } from "../../webmind/review-state.js";
 
 const SYSTEM_PROMPT = `You are a synthesis clerk. Your job is to write a structured session summary from raw session data.
 You do not interpret or editorialize. You assemble clearly and concisely.
@@ -60,7 +61,9 @@ export async function runSessionSummary(
       .bind(sessionId).first<HandoverRow>(),
     env.DB.prepare("SELECT delta_text, agent FROM relational_deltas WHERE session_id = ? ORDER BY created_at LIMIT 20")
       .bind(sessionId).all<DeltaRow>(),
-    env.DB.prepare("SELECT note_text, agent FROM companion_journal WHERE session_id = ? ORDER BY created_at LIMIT 10")
+    // KEPT_LIVE_SQL (tray pass 2): had neither filter -- a retracted row or an unreviewed draft of
+    // the session's speech went straight into the summary the next boot reads.
+    env.DB.prepare(`SELECT note_text, agent FROM companion_journal WHERE session_id = ? AND ${KEPT_LIVE_SQL} ORDER BY created_at LIMIT 10`)
       .bind(sessionId).all<NoteRow>(),
   ]);
 

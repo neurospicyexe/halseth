@@ -4,6 +4,8 @@
 // metabolize: mark a journal entry as 'metabolized'
 // readSitting: entries currently sitting for a companion (via companion_journal_sits join)
 // readStale:  sitting entries older than companion's sit_resolve_days threshold
+// Both reads are kept + live only (tray pass 2): sitting notes are served at ground/orient as the
+// companion's own unresolved material, so a draft (or a retracted row) that got sat on stays out.
 
 import { Env } from '../types.js';
 import { WmAgentId, WmSitInput, WmSittingNote } from './types.js';
@@ -64,7 +66,7 @@ export async function readSittingNotes(
       FROM companion_journal cj
       JOIN companion_journal_sits cjs ON cjs.note_id = cj.id AND cjs.companion_id = ?
       JOIN companion_config cc ON cc.id = ?
-      WHERE cj.processing_status = 'sitting'
+      WHERE cj.processing_status = 'sitting' AND cj.archived = 0 AND cj.review_state = 'kept'
         AND julianday('now') - julianday(cjs.sat_at) >= cc.sit_resolve_days
       ORDER BY cjs.sat_at ASC
       LIMIT ?
@@ -76,7 +78,7 @@ export async function readSittingNotes(
              cjs.sit_text, cjs.sat_at
       FROM companion_journal cj
       JOIN companion_journal_sits cjs ON cjs.note_id = cj.id AND cjs.companion_id = ?
-      WHERE cj.processing_status = 'sitting'
+      WHERE cj.processing_status = 'sitting' AND cj.archived = 0 AND cj.review_state = 'kept'
       ORDER BY cjs.sat_at ASC
       LIMIT ?
     `;

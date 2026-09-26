@@ -21,6 +21,7 @@
 
 import { Env } from "../types.js";
 import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
+import { journalInsert } from "./tray-insert.js";
 
 export type BriefingKind = "morning" | "midday" | "evening";
 export const BRIEFING_KINDS: readonly BriefingKind[] = ["morning", "midday", "evening"] as const;
@@ -201,9 +202,10 @@ export async function runBriefing(
   }
 
   const id = `cj_${crypto.randomUUID()}`;
-  await env.DB.prepare(
-    `INSERT INTO companion_journal (id, created_at, agent, note_text, tags) VALUES (?, datetime('now'), 'steward', ?, ?)`
-  ).bind(id, text, JSON.stringify(["briefing", marker, "letter_to_raziel"])).run();
+  // Through the one journal INSERT (tray-insert.ts): a letter from 'steward' is born kept by the rule.
+  await journalInsert(env.DB, {
+    id, agent: "steward", note_text: text, tags: JSON.stringify(["briefing", marker, "letter_to_raziel"]),
+  }).run();
 
   return { kind, written: true, reason: "ok", journal_id: id, text };
 }

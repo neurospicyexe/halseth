@@ -8,6 +8,7 @@ import { Env } from "../../types.js";
 import { complete } from "../deepseek.js";
 import { generateId } from "../../db/queries.js";
 import { TRANSCRIPT_SOURCES_SQL } from "../../webmind/notes.js";
+import { KEPT_LIVE_SQL } from "../../webmind/review-state.js";
 
 const SYSTEM_PROMPT = `You are a synthesis clerk. Your job is to write a compact somatic state snapshot for a companion system.
 A somatic snapshot describes the companion's current felt/body state in 2-3 sentences: what they're carrying, how it sits, what the texture of their presence is right now.
@@ -97,8 +98,10 @@ export async function runSomaticSnapshot(companionId: string, env: Env): Promise
       // NULL source is kept, not excluded: it is the default for the companion's own reflection
       // writes (mig 0103 backfilled history but new rows still land NULL), and it is 84 of Gaia's
       // 88 non-transcript rows. Dropping NULL here would empty the section for the quietest member.
+      // KEPT_LIVE_SQL (tray pass 2): the snapshot is felt state derived from these rows; a draft
+      // must not reach it before its owner keeps it.
       `SELECT note_text, created_at FROM companion_journal
-       WHERE agent = ? AND archived = 0
+       WHERE agent = ? AND ${KEPT_LIVE_SQL}
          AND (source IS NULL OR source NOT IN (${TRANSCRIPT_SOURCES_SQL}))
        ORDER BY created_at DESC LIMIT 6`
     ).bind(companionId).all<JournalRow>(),

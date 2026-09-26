@@ -16,6 +16,7 @@ import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { COMPANIONS } from "../guardian/detectors.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
+import { KEPT_LIVE_SQL } from "../webmind/review-state.js";
 import {
   extractMotifs, trustForRecurrence, selectResurrections, MOTIF_TUNING, CANON_TRUST, effectiveTrustSql, type MotifRow,
 } from "../webmind/motifs.js";
@@ -54,9 +55,12 @@ export async function postMotifsDetect(request: Request, env: Env): Promise<Resp
         // [Motifs] slot at every boot. A motif is what a companion keeps thinking
         // about, not what the transport keeps stamping.
         // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
+        // KEPT only (tray pass 2): a motif is surfaced at boot as "what you keep thinking about"; a
+        // clerk's draft must not vote in that count. Gated here, not in the lane constant, so the
+        // lane stays a lane.
         env.DB.prepare(
           `SELECT note_text AS t FROM companion_journal
-           WHERE agent = ?1 AND archived = 0 AND ${SUBSTANTIVE_JOURNAL_CLAUSE}
+           WHERE agent = ?1 AND ${KEPT_LIVE_SQL} AND ${SUBSTANTIVE_JOURNAL_CLAUSE}
              AND created_at > COALESCE(?2, datetime('now','-' || ?3 || ' days'))
            ORDER BY created_at DESC LIMIT 400`
         ).bind(id, since, windowDays).all<{ t: string }>(),

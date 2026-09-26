@@ -10,6 +10,7 @@ import { Env } from '../types.js';
 import type { WmAgentId, WmSpiralRun, WmSpiralInput, WmRecentSpiralTurn } from './types.js';
 import { complete } from '../synthesis/deepseek.js';
 import { writeLoop } from './loops.js';
+import { noteInsert } from './tray-insert.js';
 
 const COMPANION_VOICE: Record<WmAgentId, string> = {
   cypher:  'Direct and warm. Sharp but not sterile. Lead with the read. Declarative closes. No cheerleading.',
@@ -94,11 +95,12 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
       // defensive: loop always runs TURN, but guard against future refactors
       turnNoteId = crypto.randomUUID();
       const now = new Date().toISOString();
-      await env.DB.prepare(
-        `INSERT INTO wm_continuity_notes
-           (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
-         VALUES (?, ?, NULL, 'spiral_turn', ?, 'high', ?, 'spiral_run', ?, ?)`
-      ).bind(turnNoteId, run.companion_id, priorPhases.TURN, run.companion_id, runId, now).run();
+      // The companion's own spiral TURN: kept by the one rule (tray-insert.ts).
+      await noteInsert(env.DB, {
+        note_id: turnNoteId, agent_id: run.companion_id, thread_key: null, note_type: "spiral_turn",
+        content: priorPhases.TURN, salience: "high", actor: run.companion_id, source: "spiral_run",
+        correlation_id: runId, created_at: now,
+      }).run();
     }
 
     // Write RESIDUE to companion_open_loops (weight 0.6 -- carried but not urgent).

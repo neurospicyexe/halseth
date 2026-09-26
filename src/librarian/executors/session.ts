@@ -38,6 +38,7 @@ import { OPENED_BY } from "../../db/queries.js";
 import { loadMindState } from "../../mind/loader.js";
 import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
 import { KEPT_SQL } from "../../webmind/review-state.js";
+import { journalInsert } from "../../webmind/tray-insert.js";
 
 // Interoception fields the raw MCP tool halseth_session_load accepts (see
 // src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
@@ -120,7 +121,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       "SELECT spine FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<{ spine: string }>().catch(() => null),
     ctx.env.DB.prepare(
-      `SELECT content FROM wm_continuity_notes WHERE agent_id = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 1`
+      `SELECT content FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 1`
     ).bind(agentId).first<{ content: string }>().catch(() => null),
     ctx.env.DB.prepare(
       // status='open' -- writers only ever set 'open'; the old 'active' filter matched nothing,
@@ -946,10 +947,11 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     const wid = crypto.randomUUID();
     fanoutWrites.push({
       label: "witness_note",
-      promise: ctx.env.DB.prepare(
-        "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(wid, now, ctx.req.companion_id, p.witness_note,
-        JSON.stringify(["witness", "session_close"]), resolvedSessionId, "session_close").run(),
+      // Written by the companion at its own close (source session_close, HUMAN_SOURCES): kept by the rule.
+      promise: journalInsert(ctx.env.DB, {
+        id: wid, created_at: now, agent: ctx.req.companion_id, note_text: p.witness_note,
+        tags: JSON.stringify(["witness", "session_close"]), session_id: resolvedSessionId, source: "session_close",
+      }).run(),
     });
   }
 

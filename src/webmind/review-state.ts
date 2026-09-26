@@ -8,8 +8,8 @@
 // keeps (optionally rewriting), or drops. Only `kept` rows are first-person memory: every recall and
 // orient read filters `review_state = 'kept'`. The keep rate is the falsifier (100% = nobody reviews).
 //
-// This module is the ONE place that decides draft-vs-kept at insert time. Both journal insert paths
-// (POST /companion-journal, Librarian companionJournalAdd) and the note write (addNote) call it. Rows
+// This module is the ONE place that decides draft-vs-kept at insert time. It is called from exactly one
+// file, webmind/tray-insert.ts, which holds the only INSERTs into either table (tray-sweep.test.ts). Rows
 // from writers it does not name default to 'kept', which is the column default too: a human-authored
 // row was never a draft, and an unknown writer must not silently lose its memory.
 //
@@ -27,7 +27,18 @@ export const COMPANION_SPEECH_JOURNAL_SOURCES: ReadonlySet<string> = new Set([
   "memory_judge",     // the judge's note in the companion's voice, external_id judge:<msg>
   "autonomous",       // the companion's own autonomous-time posts
   "vibecheck",        // Gaia's digest quoting discord_speech/autonomous lines (was source NULL)
+  // 2026-09-26 (pass 2): the metronome's journal copy of its own post. Cron-prompted clerk text --
+  // the [metronome/ note twin was already drafted, so the journal copy was the same words born kept.
+  "metronome",
 ]);
+
+/**
+ * The source a tray rewrite stamps ("keep draft <id>: <my words>"). The words are the owner's own,
+ * chosen as memory -- so it weighs as human-session (HUMAN_SOURCES in notes.ts: recall 1.0, never
+ * salience-pruned) rather than inheriting the clerk's machine source. Deliberately NOT claimable on
+ * the NL write path (writes.ts NL_CLAIMABLE_SOURCES is machine classes only).
+ */
+export const TRAY_REWRITE_SOURCE = "tray_rewrite";
 
 /** wm_continuity_notes content prefixes a clerk stamps on a note written in the companion's voice. */
 export const DRAFT_NOTE_CONTENT_PREFIXES: readonly string[] = [
@@ -60,5 +71,15 @@ export function isReviewState(v: unknown): v is ReviewState {
   return typeof v === "string" && REVIEW_STATES.has(v);
 }
 
+/**
+ * Regex source for a tray id or id prefix in free text (router guard + executor verbs). Prod census
+ * 2026-09-26: every id is a lowercase uuid, `cj_` + uuid, or 32 hex -- so hex-and-dash after an
+ * optional cj_. Ordinary words ("thinking", "everything", "drafting") cannot match it.
+ */
+export const TRAY_ID_TOKEN = "(?:cj_)?[0-9a-f][0-9a-f-]{7,}";
+
 /** Hardcoded predicate fragment for recall/orient reads. No input reaches it. */
 export const KEPT_SQL = "review_state = 'kept'";
+
+/** Kept AND live: what every DERIVED input (synthesis, motifs, pattern recall, search) must read. */
+export const KEPT_LIVE_SQL = "archived = 0 AND review_state = 'kept'";

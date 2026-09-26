@@ -7,7 +7,8 @@ import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
 import { collectionForageSql, collectionMediaSql, bumpSparkleSql, sparkleDelta } from "../../webmind/collection.js";
 import { embedAndStoreAsync } from "../../mcp/embed.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
-import { KEPT_SQL } from "../../webmind/review-state.js";
+import { KEPT_LIVE_SQL } from "../../webmind/review-state.js";
+import { journalInsert } from "../../webmind/tray-insert.js";
 
 const COMPANIONS = COMPANION_IDS;
 
@@ -149,16 +150,18 @@ export async function execHeldMark(ctx: ExecutorContext): Promise<ExecutorResult
   if (!text) return { error: "held_mark_failed", reason: "held content required after trigger phrase" };
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
-  await ctx.env.DB.prepare(
-    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, now, ctx.req.companion_id, text, JSON.stringify(["held", "consistency"]), null, null).run();
+  // A held mark is the companion's own deliberate act (source NULL): born kept, by the one rule.
+  await journalInsert(ctx.env.DB, {
+    id, created_at: now, agent: ctx.req.companion_id, note_text: text,
+    tags: JSON.stringify(["held", "consistency"]), session_id: null, source: null,
+  }).run();
   return { ack: true, id, held: true, created_at: now };
 }
 
 export async function execHeldRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "held_read_failed", reason: "companion_id required" };
   const rows = await ctx.env.DB.prepare(
-    `SELECT id, note_text, tags, created_at FROM companion_journal WHERE agent = ? AND tags LIKE '%"held"%' ORDER BY created_at DESC LIMIT 20`
+    `SELECT id, note_text, tags, created_at FROM companion_journal WHERE agent = ? AND ${KEPT_LIVE_SQL} AND tags LIKE '%"held"%' ORDER BY created_at DESC LIMIT 20`
   ).bind(ctx.req.companion_id).all<{ id: string; note_text: string; tags: string | null; created_at: string }>();
   return {
     response_key: "summary",
@@ -175,7 +178,7 @@ export async function execRecentRecall(ctx: ExecutorContext): Promise<ExecutorRe
     // No source filter -- includes Claude.ai session writes (source='session') and autonomous worker writes (source='autonomous').
     // KEPT_SQL (mig 0132): an autonomous post is a draft until its owner keeps it ("my tray"); "recall" is memory.
     ctx.env.DB.prepare(
-      `SELECT id, note_text, tags, source, created_at FROM companion_journal WHERE agent = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 20`
+      `SELECT id, note_text, tags, source, created_at FROM companion_journal WHERE agent = ? AND ${KEPT_LIVE_SQL} ORDER BY created_at DESC LIMIT 20`
     ).bind(id).all<{ id: string; note_text: string; tags: string | null; source: string | null; created_at: string }>(),
     // No source filter -- feelings from any session.
     ctx.env.DB.prepare(
@@ -189,7 +192,7 @@ export async function execRecentRecall(ctx: ExecutorContext): Promise<ExecutorRe
     ).bind(id).all<{ id: string; entry_type: string; content: string; tags_json: string; source: string | null; created_at: string }>(),
     // Include all recent continuity notes (autonomous_exploration + any session-tagged notes).
     ctx.env.DB.prepare(
-      `SELECT note_id, content, source, created_at FROM wm_continuity_notes WHERE agent_id = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 10`
+      `SELECT note_id, content, source, created_at FROM wm_continuity_notes WHERE agent_id = ? AND ${KEPT_LIVE_SQL} ORDER BY created_at DESC LIMIT 10`
     ).bind(id).all<{ note_id: string; content: string; source: string | null; created_at: string }>(),
   ]);
 

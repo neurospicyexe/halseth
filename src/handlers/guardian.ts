@@ -14,6 +14,7 @@ import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { runAllDetectors, COMPANIONS } from "../guardian/detectors.js";
 import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
+import { journalInsert } from "../webmind/tray-insert.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -149,9 +150,11 @@ async function composeWeeklyLetter(env: Env): Promise<string> {
   lines.push(`Tension pool: ${tensions?.n ?? 0} simmering. Ratification queue: ${pendingRows?.n ?? 0} pending.`);
 
   const id = `cj_${crypto.randomUUID()}`;
-  await env.DB.prepare(
-    `INSERT INTO companion_journal (id, created_at, agent, note_text, tags) VALUES (?, datetime('now'), 'guardian', ?, ?)`
-  ).bind(id, lines.join("\n").slice(0, 4000), JSON.stringify(["guardian", "letter_to_raziel"])).run();
+  // Through the one journal INSERT (tray-insert.ts): a letter from 'guardian' is born kept by the rule.
+  await journalInsert(env.DB, {
+    id, agent: "guardian", note_text: lines.join("\n").slice(0, 4000),
+    tags: JSON.stringify(["guardian", "letter_to_raziel"]),
+  }).run();
   return id;
 }
 

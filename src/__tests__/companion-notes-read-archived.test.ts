@@ -61,7 +61,7 @@ describe("halseth_companion_notes_read -- archived = 0 filter (task 20)", () => 
     await server.tools["halseth_companion_notes_read"]!.handler({ agent: "cypher", limit: 20 });
 
     const sql = preparedSql.find((s) => s.includes("FROM companion_journal"));
-    expect(sql).toContain("WHERE archived = 0 AND agent = ?");
+    expect(sql).toContain("WHERE archived = 0 AND review_state = 'kept' AND agent = ?");
   });
 
   it("combines archived = 0 with both optional filters when both are given", async () => {
@@ -72,6 +72,6 @@ describe("halseth_companion_notes_read -- archived = 0 filter (task 20)", () => 
     await server.tools["halseth_companion_notes_read"]!.handler({ agent: "cypher", session_id: "s1", limit: 20 });
 
     const sql = preparedSql.find((s) => s.includes("FROM companion_journal"));
-    expect(sql).toContain("WHERE archived = 0 AND agent = ? AND session_id = ?");
+    expect(sql).toContain("WHERE archived = 0 AND review_state = 'kept' AND agent = ? AND session_id = ?");
   });
 });

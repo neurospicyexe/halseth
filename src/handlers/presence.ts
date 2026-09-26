@@ -77,9 +77,13 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
         GROUP BY companion_id
       ) latest ON f.companion_id = latest.companion_id AND f.created_at = latest.max_at
     `).all<{ companion_id: string; emotion: string; intensity: number; created_at: string }>(),
+    // UNGATED ON PURPOSE (tray pass 2, 2026-09-26): /presence is Hearth display only (/halseth, /house,
+    // and the love-meter delta read in hearth app/api/companion/house) -- no companion prompt consumes it.
+    // Raziel seeing a draft on his own dashboard is review, not recall; review_state rides along so the
+    // page can badge it. If a companion surface ever reads /presence, gate this with KEPT_LIVE_SQL.
     env.DB.prepare(
-      "SELECT id, agent, note_text, tags, created_at FROM companion_journal ORDER BY created_at DESC LIMIT 6"
-    ).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string }>(),
+      "SELECT id, agent, note_text, tags, created_at, review_state FROM companion_journal ORDER BY created_at DESC LIMIT 6"
+    ).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string; review_state: string }>(),
   ]);
 
   // Latest open session — kept for backwards compat as single `session` field.

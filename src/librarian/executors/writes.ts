@@ -21,6 +21,7 @@ import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../../graph/live.js";
+import { noteInsert } from "../../webmind/tray-insert.js";
 
 // Strip a leading note-command preamble ("Write a companion note for gaia:", "for drevan:",
 // "Broadcast a note to the triad —") so the routing phrase is never stored as the note body.
@@ -596,11 +597,11 @@ export async function execStateUpdate(ctx: ExecutorContext): Promise<ExecutorRes
 
       const noteId = crypto.randomUUID();
       const now = new Date().toISOString();
-      await ctx.env.DB.prepare(
-        `INSERT INTO wm_continuity_notes
-         (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
-         VALUES (?, ?, NULL, 'soma_arc', ?, 'high', ?, 'soma_update', NULL, ?)`
-      ).bind(noteId, ctx.req.companion_id, content, ctx.req.companion_id, now).run();
+      // The companion's own state write, echoed as an arc note: kept by the one rule (tray-insert.ts).
+      await noteInsert(ctx.env.DB, {
+        note_id: noteId, agent_id: ctx.req.companion_id, thread_key: null, note_type: "soma_arc", content,
+        salience: "high", actor: ctx.req.companion_id, source: "soma_update", correlation_id: null, created_at: now,
+      }).run();
     }
   } catch (err) {
     console.warn('[soma_arc] arc write failed (non-blocking):', err);

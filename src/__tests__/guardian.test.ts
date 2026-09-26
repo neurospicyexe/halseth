@@ -105,9 +105,9 @@ class FakeStatement {
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO companion_journal")) {
-      // agent is a SQL literal ('guardian'), not a binding
-      const [id, note_text, tags] = this.bound as string[];
-      this.db.journal.push({ id, agent: "guardian", note_text, tags });
+      // journalInsert order: (id, agent, note_text, tags, review_state); created_at is SQL datetime('now')
+      const [id, agent, note_text, tags] = this.bound as string[];
+      this.db.journal.push({ id, agent, note_text, tags });
       return { meta: { changes: 1 } };
     }
     return { meta: { changes: 0 } };

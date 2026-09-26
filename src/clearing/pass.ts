@@ -16,6 +16,7 @@
 
 import type { Env } from "../types.js";
 import { withOwnerPronounRule } from "../pronoun-rule.js";
+import { journalInsert } from "../webmind/tray-insert.js";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -258,9 +259,11 @@ export async function runClearingPass(env: Env): Promise<ClearingResult> {
   if (shortlist.length === 0 && basinSurface.length === 0) lines.push("Nothing rose to your desk this round.");
 
   const letterId = `cj_${crypto.randomUUID()}`;
-  await env.DB.prepare(
-    `INSERT INTO companion_journal (id, created_at, agent, note_text, tags) VALUES (?, datetime('now'), 'guardian', ?, ?)`
-  ).bind(letterId, lines.join("\n").slice(0, 4000), JSON.stringify(["clearing", "letter_to_raziel"])).run();
+  // Through the one journal INSERT (tray-insert.ts): a letter from 'guardian' is born kept by the rule.
+  await journalInsert(env.DB, {
+    id: letterId, agent: "guardian", note_text: lines.join("\n").slice(0, 4000),
+    tags: JSON.stringify(["clearing", "letter_to_raziel"]),
+  }).run();
 
   return {
     pending: entries.length, declined, shortlisted: shortlist.length,

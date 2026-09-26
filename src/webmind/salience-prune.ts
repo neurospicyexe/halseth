@@ -49,6 +49,7 @@ import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { effectiveHeatSql } from "./heat.js";
 import { MACHINE_SOURCES } from "./notes.js";
+import { KEPT_SQL } from "./review-state.js";
 import { vectorId } from "../mcp/embed.js";
 
 export const PRUNE_MIN_AGE_DAYS = 30;
@@ -105,12 +106,16 @@ export async function runSaliencePrune(env: Env, opts: { force?: boolean } = {})
     }
   }
 
+  // KEPT only (tray pass 2, 2026-09-26): discord_speech / memory_judge / autonomous are MACHINE_SOURCES
+  // AND the tray's draft sources. Archiving a cold draft here would silently empty the tray (its
+  // count is archived = 0) -- an unreviewed row would vanish without a keep or a drop, and the keep
+  // rate would never see it. Drafts are bounded by review, not by prune.
   const machineSources = Array.from(MACHINE_SOURCES);
   const sourcePlaceholders = machineSources.map(() => "?").join(", ");
 
   const rows = await env.DB.prepare(
     `SELECT id FROM companion_journal
-     WHERE archived = 0
+     WHERE archived = 0 AND ${KEPT_SQL}
        AND source IN (${sourcePlaceholders})
        AND created_at < datetime('now', '-${PRUNE_MIN_AGE_DAYS} days')
        AND ${effectiveHeatSql()} < ${PRUNE_HEAT_FLOOR}

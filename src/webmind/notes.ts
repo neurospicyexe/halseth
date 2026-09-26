@@ -9,7 +9,8 @@ import { effectiveHeatSql, warmSql } from "./heat.js";
 import { embedText, embedAndStoreAsync, composeHandoverText } from "../mcp/embed.js";
 import { neighborhood } from "../graph/traverse.js";
 import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
-import { reviewStateFor, KEPT_SQL } from "./review-state.js";
+import { KEPT_SQL, TRAY_REWRITE_SOURCE } from "./review-state.js";
+import { noteInsert, noteBirthState } from "./tray-insert.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -59,8 +60,14 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   // fast INSERT, so the note always commits. Heavy work runs only when there is genuinely
   // overflow to trim. Guards retained for that path: high notes are never candidates, and
   // `note_id != ?` makes the cap structurally unable to evict the row it just wrote.
+  //
+  // Imp tray pass 2 (2026-09-26): the cap counts, protects and evicts KEPT notes only. A draft or a
+  // dropped row is never digested into wm_archive_notes (a digest is embedded -- recall by another
+  // door) and never hard-deleted (a dropped row is the keep rate's denominator). Drafts therefore sit
+  // outside the cap entirely: review is their bound, not the cap. Were drafts left in the protected
+  // top-100 heat set, 100 hot pulse drafts would push kept notes out of it and get THEM deleted.
   const evictableRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND salience != 'high'`
+    `SELECT COUNT(*) AS c FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND ${KEPT_SQL}`
   ).bind(input.agent_id).first<{ c: number }>();
   const overCap = (evictableRow?.c ?? 0) >= NOTE_CAP;
 
@@ -75,19 +82,14 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   // these statements anyway, per the original comment).
   // Imp tray (mig 0132): a clerk's note in the companion's voice (judge promotion, pulse, metronome
   // fragment) is born `draft`; recall and orient serve `kept` only. Decided in webmind/review-state.ts.
-  const reviewState = reviewStateFor("note", {
-    source: input.source ?? "system", correlation_id: input.correlation_id ?? null, content: input.content,
-  });
-  await env.DB.prepare(`
-    INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at, review_state)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    id, input.agent_id,
-    input.thread_key ?? null, input.note_type ?? "continuity",
-    input.content, input.salience ?? "normal",
-    input.actor ?? "agent", input.source ?? "system",
-    input.correlation_id ?? null, now, reviewState,
-  ).run();
+  const noteRow = {
+    note_id: id, agent_id: input.agent_id, content: input.content, created_at: now,
+    thread_key: input.thread_key ?? null, note_type: input.note_type ?? "continuity",
+    salience: input.salience ?? "normal", actor: input.actor ?? "agent", source: input.source ?? "system",
+    correlation_id: input.correlation_id ?? null,
+  };
+  const reviewState = noteBirthState(noteRow);
+  await noteInsert(env.DB, noteRow).run();
 
   // Reachable by meaning from the moment it exists (2026-07-09). Awaited, not fire-and-forget:
   // a floating promise here dies under write pressure exactly as it did on companion_journal,
@@ -100,9 +102,9 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     // just-inserted row is excluded by id so the cap can never evict what it just wrote.
     const overflow = await env.DB.prepare(`
       SELECT note_id, content, created_at FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND note_id != ? AND note_id NOT IN (
+      WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND ${KEPT_SQL} AND note_id != ? AND note_id NOT IN (
         SELECT note_id FROM wm_continuity_notes
-        WHERE agent_id = ? AND archived = 0 AND salience != 'high' ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
+        WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND ${KEPT_SQL} ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
       )
       ORDER BY created_at ASC
     `).bind(input.agent_id, id, input.agent_id)
@@ -246,8 +248,11 @@ export async function getEligibleNotesForCompression(
 ): Promise<CompressibleNote[]> {
   const ageCutoff = new Date(Date.now() - COMPRESS_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
+  // KEPT only (tray pass 2): compression digests notes into wm_archive_notes, which is embedded and
+  // recalled -- a draft digested here would launder into memory, and a dropped row archived here would
+  // leave the keep rate. Drafts and dropped rows keep their place; the count and the pick agree.
   const countRow = await env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0`
+    `SELECT COUNT(*) as cnt FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL}`
   ).bind(agentId).first<{ cnt: number }>();
   const activeCount = countRow?.cnt ?? 0;
 
@@ -256,10 +261,10 @@ export async function getEligibleNotesForCompression(
   const rows = await env.DB.prepare(
     activeCount > COMPRESS_COUNT_CAP
       ? `SELECT note_id, content, created_at FROM wm_continuity_notes
-         WHERE agent_id = ? AND archived = 0
+         WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL}
          ORDER BY created_at ASC LIMIT ?`
       : `SELECT note_id, content, created_at FROM wm_continuity_notes
-         WHERE agent_id = ? AND archived = 0 AND created_at < ?
+         WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL} AND created_at < ?
          ORDER BY created_at ASC LIMIT ?`
   ).bind(
     agentId,
@@ -292,9 +297,12 @@ export async function archiveNotes(
       JSON.stringify(noteIds), notes.length,
       sortedDates[0], sortedDates[sortedDates.length - 1],
     ),
+    // Owner-scoped and kept-only (tray pass 2): the ids come back from an external summariser, so the
+    // UPDATE re-asserts what getEligibleNotesForCompression promised rather than trusting the list.
     env.DB.prepare(
-      `UPDATE wm_continuity_notes SET archived = 1 WHERE note_id IN (${noteIds.map(() => '?').join(', ')})`
-    ).bind(...noteIds),
+      `UPDATE wm_continuity_notes SET archived = 1
+        WHERE agent_id = ? AND ${KEPT_SQL} AND note_id IN (${noteIds.map(() => '?').join(', ')})`
+    ).bind(agentId, ...noteIds),
   ];
 
   // D1 batch() is NOT a transaction -- partial failure can leave the archive row
@@ -359,6 +367,9 @@ export const HUMAN_SOURCES = new Set([
   // a human session -- human-session by construction. Unlisted (0.85) it lost, live, to a journal a
   // clerk had written eleven seconds earlier memorialising the companion's own wrong answer.
   "conversation_capture",
+  // 2026-09-26 (tray pass 2): a draft the owner KEPT IN ITS OWN WORDS. The clerk's text survives only
+  // in original_content (mig 0133); what remains is the companion's deliberate choice. Weighs as authored.
+  TRAY_REWRITE_SOURCE,
 ]);
 export const MACHINE_SOURCES = new Set([
   // 2026-09-26: the memory-judge is a clerk -- a model reading a conversation and writing a note in
@@ -576,12 +587,15 @@ export async function embedNote(env: Env, noteId: string, agentId: string, conte
 // Deliberate recall: fetch specific notes AND warm them (heat bump + last_access_at).
 // This is the rescue path for the Guardian's orphan_memory flags -- setting
 // last_access_at is what stops the detector re-flagging the same note forever.
+// Kept + live only (tray pass 2): knowing a draft's id must not turn it into recall, and warming a
+// draft would hand an unreviewed clerk note the heat a memory earns. The orphan detector flags kept
+// notes only, so nothing that needs rescuing is excluded here.
 export async function recallNotes(env: Env, agentId: string, noteIds: string[]): Promise<RecalledNote[]> {
   if (noteIds.length === 0) return [];
   const placeholders = noteIds.map(() => "?").join(", ");
   const rows = await env.DB.prepare(
     `SELECT note_id, content, created_at, salience, thread_key FROM wm_continuity_notes
-     WHERE agent_id = ? AND note_id IN (${placeholders})`
+     WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL} AND note_id IN (${placeholders})`
   ).bind(agentId, ...noteIds).all<RecalledNote>();
   const found = rows.results ?? [];
   if (found.length > 0) {

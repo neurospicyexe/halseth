@@ -13,6 +13,7 @@
 
 import type { Env } from "../types.js";
 import { withOwnerPronounRule } from "../pronoun-rule.js";
+import { journalInsert } from "../webmind/tray-insert.js";
 
 const DEFAULT_MODEL = "claude-opus-4-8";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -138,9 +139,11 @@ export async function runDriftPass(env: Env): Promise<DriftPassResult> {
     }
     lines.push("", "These are paused, not overridden. Talk it through; resume it or let it fade together.");
     letterId = `cj_${crypto.randomUUID()}`;
-    await env.DB.prepare(
-      "INSERT INTO companion_journal (id, created_at, agent, note_text, tags) VALUES (?, datetime('now'), 'guardian', ?, ?)"
-    ).bind(letterId, lines.join("\n").slice(0, 4000), JSON.stringify(["drift_floor", "letter_to_raziel"])).run();
+    // Through the one journal INSERT (tray-insert.ts): a letter from 'guardian' is born kept by the rule.
+    await journalInsert(env.DB, {
+      id: letterId, agent: "guardian", note_text: lines.join("\n").slice(0, 4000),
+      tags: JSON.stringify(["drift_floor", "letter_to_raziel"]),
+    }).run();
   }
 
   return { open: drifts.length, witnessed, paused: paused.length, letter_id: letterId };

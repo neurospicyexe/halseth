@@ -15,7 +15,7 @@ import { generateId, findExistingClose, clearSupersededClose, CALLER_CLOSE_KINDS
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
-import { reviewStateFor } from "../../webmind/review-state.js";
+import { journalInsert } from "../../webmind/tray-insert.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
 import { edgeForNote, edgeForNoteRef, edgesForSomaEvent, insertEdgeStatements, writeEdgesBestEffort } from "../../graph/live.js";
 import {
@@ -870,10 +870,11 @@ export async function companionJournalAdd(
   const resolvedTags = tags ?? JSON.stringify(classifyDomainTags(note_text));
   const topicTags = JSON.stringify(classifyKeywordTags(note_text));
   // Imp tray (mig 0132): born `draft` when the source is the companion's own speech or a clerk's
-  // note in its voice; recall serves `kept` only. One decision, in webmind/review-state.ts.
-  await env.DB.prepare(
-    "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags, review_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, now, agent, note_text, resolvedTags, null, source ?? null, topicTags, reviewStateFor("journal", { source })).run();
+  // note in its voice; recall serves `kept` only. journalInsert() applies the one birth rule.
+  await journalInsert(env.DB, {
+    id, created_at: now, agent, note_text, tags: resolvedTags, session_id: null,
+    source: source ?? null, topic_tags: topicTags,
+  }).run();
 
   // AWAIT the embed (2026-07-20, Task 12: fixed a known fire-and-forget hazard -- this writer
   // used bare `embedAndStore()`, a floating promise Workers cancels once the response returns;

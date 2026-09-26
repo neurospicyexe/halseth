@@ -3,7 +3,9 @@ import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
-import { embedAndStore } from "../embed.js";
+import { embedAndStoreAsync } from "../embed.js";
+import { journalInsert, journalBirthState } from "../../webmind/tray-insert.js";
+import { KEPT_SQL } from "../../webmind/review-state.js";
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 
 export function registerCompanionTools(server: McpServer, env: Env): void {
@@ -25,22 +27,19 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
       const resolvedTags = input.tags ? JSON.stringify(input.tags) : JSON.stringify(classifyDomainTags(input.note_text));
       const topicTags = JSON.stringify(classifyKeywordTags(input.note_text));
 
-      await env.DB.prepare(`
-        INSERT INTO companion_journal (id, created_at, agent, note_text, tags, session_id, source, topic_tags)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        id,
-        now,
-        input.agent,
-        input.note_text,
-        resolvedTags,
-        input.session_id ?? null,
-        input.source ?? null,
-        topicTags,
-      ).run();
+      // The birth rule (tray pass 2, 2026-09-26): this tool used to INSERT with no review_state, so a
+      // source:'autonomous' write here was born kept while the same words through the Librarian were
+      // drafted. journalInsert() is the one INSERT; it stamps review_state from reviewStateFor().
+      await journalInsert(env.DB, {
+        id, created_at: now, agent: input.agent, note_text: input.note_text, tags: resolvedTags,
+        session_id: input.session_id ?? null, source: input.source ?? null, topic_tags: topicTags,
+      }).run();
 
-      embedAndStore(env, input.note_text, "companion_journal", id, input.agent);
-      return { content: [{ type: "text", text: JSON.stringify({ id, created_at: now }) }] };
+      // Awaited: the bare embedAndStore() was a floating promise Workers cancels after the response.
+      await embedAndStoreAsync(env, input.note_text, "companion_journal", id, input.agent)
+        .catch((err) => console.warn("[mcp companion_note_add] embed failed (row kept, index stale):", String(err)));
+      const review_state = journalBirthState({ source: input.source ?? null });
+      return { content: [{ type: "text", text: JSON.stringify({ id, created_at: now, review_state }) }] };
     },
   );
 
@@ -51,9 +50,12 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
       agent:      z.enum(COMPANION_IDS).optional().describe("Filter by companion. If omitted, returns all agents."),
       session_id: z.string().optional().describe("Filter by session ID."),
       limit:      z.number().int().min(1).max(100).default(20),
+      include_drafts: z.boolean().optional().describe("Default false: only kept entries (memory). true also returns drafts and dropped rows, each with its review_state -- for reviewing, never for recall."),
     },
     async (input) => {
-      const conditions: string[] = ["archived = 0"];
+      // Kept by default (tray pass 2): an agent reads this as the companion's own journal, so a draft
+      // here is recall by another door. include_drafts is the explicit, per-call opt-out.
+      const conditions: string[] = input.include_drafts ? ["archived = 0"] : ["archived = 0", KEPT_SQL];
       const bindings: unknown[]  = [];
 
       if (input.agent)      { conditions.push("agent = ?");      bindings.push(input.agent); }

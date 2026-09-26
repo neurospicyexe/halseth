@@ -17,7 +17,7 @@ export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGround
     ).bind(agentId).all<WmSessionHandoff>(),
     env.DB.prepare(
       // review_state = 'kept' (mig 0132): ground is a boot surface; drafts wait in the tray.
-      "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND review_state = 'kept' ORDER BY created_at DESC LIMIT 10"
+      "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND review_state = 'kept' ORDER BY created_at DESC LIMIT 10"
     ).bind(agentId).all<WmContinuityNote>(),
     // Open loops: unresolved things with weight -- heaviest first
     env.DB.prepare(

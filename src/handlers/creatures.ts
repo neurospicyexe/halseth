@@ -43,6 +43,7 @@ import {
   type LastActed,
 } from "../webmind/creatures.js";
 import { performTend, evictForRoom } from "../webmind/creature-interact.js";
+import { KEPT_LIVE_SQL } from "../webmind/review-state.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -321,7 +322,9 @@ export async function tickCreatures(request: Request, env: Env): Promise<Respons
             "SELECT body AS t FROM commons_posts WHERE created_at >= datetime('now', '-3 days') ORDER BY created_at DESC LIMIT 10",
           ).all<{ t: string }>(),
           env.DB.prepare(
-            "SELECT note_text AS t FROM companion_journal WHERE created_at >= datetime('now', '-3 days') ORDER BY created_at DESC LIMIT 5",
+            // KEPT_LIVE_SQL (tray pass 2): the nest fragment is quoted back to the house as something
+            // a companion said; a draft or a retracted line must not become Sol's hoard.
+            `SELECT note_text AS t FROM companion_journal WHERE ${KEPT_LIVE_SQL} AND created_at >= datetime('now', '-3 days') ORDER BY created_at DESC LIMIT 5`,
           ).all<{ t: string }>(),
         ]);
         const texts = [...(commons.results ?? []), ...(journal.results ?? [])].map(r => r.t);

@@ -51,6 +51,7 @@ import { generateId } from "../../db/queries.js";
 import { extractDomains, SUPPORTED_MEMORY_DOMAINS } from "../domains.js";
 import { effectiveHeatSql } from "../../webmind/heat.js";
 import { TRANSCRIPT_SOURCES_SQL } from "../../webmind/notes.js";
+import { KEPT_LIVE_SQL } from "../../webmind/review-state.js";
 import { extractSection } from "./session-summary.js";
 
 const SYSTEM_PROMPT = `You are a synthesis clerk. Your job is to write a structured daily narrative for a companion from raw data.
@@ -86,8 +87,10 @@ export async function runDailyNarrative(companionId: string, env: Env): Promise<
       // Transcript rows barred: raw channel dialogue would swamp the window and re-read the
       // siblings' sentences as this companion's own day. NULL source is kept -- it is the default
       // for their own reflection writes.
+      // KEPT_LIVE_SQL (tray pass 2): the narrative is written from this and read at boot as the day
+      // lived -- a draft here is laundered into memory with one hop, so the job reads kept rows only.
       `SELECT note_text AS t, created_at AS at FROM companion_journal
-       WHERE agent = ? AND archived = 0 AND created_at > datetime('now', ?)
+       WHERE agent = ? AND ${KEPT_LIVE_SQL} AND created_at > datetime('now', ?)
          AND (source IS NULL OR source NOT IN (${TRANSCRIPT_SOURCES_SQL}))
        ORDER BY created_at DESC LIMIT 14`
     ).bind(companionId, since).all<TextRow>(),

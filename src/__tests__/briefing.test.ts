@@ -113,7 +113,7 @@ function mockEnv(opts: { enabled?: boolean; dedupHit?: boolean; onInsert?: (tags
           return { n: 0 } as T; // COUNT(*) AS n
         },
         async run() {
-          if (sql.includes("INSERT INTO companion_journal")) opts.onInsert?.(String(binds[2]));
+          if (sql.includes("INSERT INTO companion_journal")) opts.onInsert?.(String(binds[3])); // (id, agent, note_text, tags, ...) via journalInsert
           return { meta: { changes: 1 } };
         },
       };
