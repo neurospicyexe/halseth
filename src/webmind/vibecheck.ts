@@ -21,6 +21,7 @@
 // Unlike the briefing there are no "kinds" -- one digest, one slot per day.
 
 import { Env } from "../types.js";
+import { reviewStateFor } from "./review-state.js";
 
 const VIBE_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 
@@ -359,10 +360,13 @@ export async function runVibeCheck(env: Env): Promise<VibeCheckResult> {
     return { written: false, reason: "already_sent", journal_id: existing.id, text };
   }
 
+  // source 'vibecheck' (mig 0132; was NULL): the digest QUOTES discord_speech and autonomous lines,
+  // so it is a clerk's note in Gaia's voice and is born `draft` -- Gaia keeps or drops it from her
+  // tray before it can be recalled as her own memory. Decided in webmind/review-state.ts.
   const id = `cj_${crypto.randomUUID()}`;
   await env.DB.prepare(
-    `INSERT INTO companion_journal (id, created_at, agent, note_text, tags) VALUES (?, datetime('now'), 'gaia', ?, ?)`,
-  ).bind(id, text, JSON.stringify(["vibecheck", "letter_to_raziel"])).run();
+    `INSERT INTO companion_journal (id, created_at, agent, note_text, tags, source, review_state) VALUES (?, datetime('now'), 'gaia', ?, ?, ?, ?)`,
+  ).bind(id, text, JSON.stringify(["vibecheck", "letter_to_raziel"]), "vibecheck", reviewStateFor("journal", { source: "vibecheck" })).run();
 
   return { written: true, reason: "ok", journal_id: id, text };
 }

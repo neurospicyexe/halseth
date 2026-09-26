@@ -1,5 +1,6 @@
 import { ExecutorContext, ExecutorResult } from "./types.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
+import { KEPT_SQL } from "../../webmind/review-state.js";
 import {
   feelingsRead, journalRead, woundRead, deltaRead,
   dreamsRead, dreamSeedRead, eqRead, routineRead, listRead, eventList,
@@ -20,7 +21,8 @@ export async function execJournalRead(ctx: ExecutorContext): Promise<ExecutorRes
     // human_journal stays Raziel's personal store -- never returned here.
     const [own, growth] = await Promise.all([
       ctx.env.DB.prepare(
-        "SELECT id, note_text AS content, tags, source, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 10"
+        // KEPT_SQL (mig 0132): drafts (own speech, judge notes) wait in "my tray"; "read my journal" is memory.
+        `SELECT id, note_text AS content, tags, source, created_at FROM companion_journal WHERE agent = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 10`
       ).bind(ctx.req.companion_id).all<Record<string, unknown> & { created_at: string | null }>(),
       ctx.env.DB.prepare(
         "SELECT id, entry_type, content, tags_json, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 10"

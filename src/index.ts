@@ -17,6 +17,7 @@ import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getW
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
+import { getAdminTray, postAdminTrayReview } from "./handlers/tray.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
@@ -172,6 +173,10 @@ const router = new Router()
   .on("POST", "/admin/reindex-existing",      (request, env) => reindexExisting(request, env))
   // Retract one mistake from every Halseth store it reached (archive + logged release). 2026-09-26.
   .on("POST", "/admin/retract",               (request, env) => adminRetract(request, env))
+  // The imp tray (mig 0132, 2026-09-26): a companion's own speech is a draft until its owner keeps it.
+  // Hearth/ops door; companions use the Librarian verbs "my tray" / "keep draft <id>" / "drop draft <id>".
+  .on("GET",  "/admin/tray",                  (request, env) => getAdminTray(request, env))
+  .on("POST", "/admin/tray/review",           (request, env) => postAdminTrayReview(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
   // Jev (TypeSafe typed-judgment model) via Workers AI -- admin proxy for the writeback-gate
   // scoring harness and the VPS bots (docs/PLAN-jev-2026-09-20.md). Companions never call this.

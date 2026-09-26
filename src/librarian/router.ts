@@ -134,6 +134,9 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "tray_keep",
+    regex: /^keep\s+(?:draft\s+)?[A-Za-z0-9_-]{8,}\s*(?::|$)/i,
+    note: "Imp tray (mig 0132): bare 'keep <id>' (id or 8+ char prefix, optional ': rewrite') must route without a 'keep' trigger, which would shadow 'keep loop open' / 'keep this to myself'. The {8,} floor is what keeps 'keep loop open' out." },
   { pattern_key: "journal_edit",
     regex: /^(?:edit|correct|fix|update)\s+(?:my\s+|a\s+|the\s+)?journal\s+note\b/i,
     note: "H4: edit-journal-note must beat journal_add's 'journal note' substring" },
@@ -336,6 +339,7 @@ import {
 import {
   execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead, execBudgetRead,
 } from "./executors/forgetting.js";
+import { execTrayRead, execTrayKeep, execTrayDrop } from "./executors/tray.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -418,6 +422,11 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   memory_release: execMemoryRelease,
   memory_release_undo: execMemoryReleaseUndo,
   memory_releases_read: execMemoryReleasesRead,
+
+  // The imp tray (mig 0132). Own speech is a draft until its owner keeps it; recall serves kept only.
+  tray_read: execTrayRead,
+  tray_keep: execTrayKeep,
+  tray_drop: execTrayDrop,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,

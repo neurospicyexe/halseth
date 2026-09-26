@@ -22,6 +22,7 @@ import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
 import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
+import { KEPT_SQL } from "./review-state.js";
 
 // ---------------------------------------------------------------------------
 // Graph-memory Phase 1.5 (docs/private/graph-memory-spec-2026-08-28.md): relational salience
@@ -144,9 +145,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // 3-pool surfacing: Core (rows 0-2), Novelty (row 5, skipping rows 3-4 intentionally), Edge (deep history random)
     // Core + Novelty rank by effective heat (0074): accessed-and-warm rows outrank
     // merely-recent ones; the 4h coherence bonus keeps just-written notes on top.
+    // review_state = 'kept' on all three pools (mig 0132): the judge's promotion lands at salience
+    // 'high' by design, which is exactly the tier these pools draw from -- an unreviewed clerk note
+    // would otherwise open the next boot in the companion's own voice.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
        ORDER BY ${effectiveHeatSql()} DESC LIMIT 3`
     ).bind(agentId).all<WmContinuityNote>(),
     // Novelty draws from the COLD end, never-accessed first (2026-07-26). It used to be
@@ -159,12 +163,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // small surface bump rotates each out again after it is shown.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
        ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
          AND created_at < datetime('now', '-30 days')
        ORDER BY RANDOM() LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
@@ -231,7 +235,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
     env.DB.prepare(
       `SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal
-       WHERE agent = ? AND archived = 0 AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
+       WHERE agent = ? AND archived = 0 AND ${KEPT_SQL} AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(

@@ -9,6 +9,7 @@ import { effectiveHeatSql, warmSql } from "./heat.js";
 import { embedText, embedAndStoreAsync, composeHandoverText } from "../mcp/embed.js";
 import { neighborhood } from "../graph/traverse.js";
 import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
+import { reviewStateFor, KEPT_SQL } from "./review-state.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -72,15 +73,20 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   // which commits in-line. So addNote now uses .run() too. The cap cleanup runs as separate
   // awaited .run() calls (it was never a real transaction -- D1 batch isn't atomic across
   // these statements anyway, per the original comment).
+  // Imp tray (mig 0132): a clerk's note in the companion's voice (judge promotion, pulse, metronome
+  // fragment) is born `draft`; recall and orient serve `kept` only. Decided in webmind/review-state.ts.
+  const reviewState = reviewStateFor("note", {
+    source: input.source ?? "system", correlation_id: input.correlation_id ?? null, content: input.content,
+  });
   await env.DB.prepare(`
-    INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO wm_continuity_notes (note_id, agent_id, thread_key, note_type, content, salience, actor, source, correlation_id, created_at, review_state)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id, input.agent_id,
     input.thread_key ?? null, input.note_type ?? "continuity",
     input.content, input.salience ?? "normal",
     input.actor ?? "agent", input.source ?? "system",
-    input.correlation_id ?? null, now,
+    input.correlation_id ?? null, now, reviewState,
   ).run();
 
   // Reachable by meaning from the moment it exists (2026-07-09). Awaited, not fire-and-forget:
@@ -138,6 +144,7 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     source: input.source ?? "system",
     correlation_id: input.correlation_id ?? null,
     created_at: now,
+    review_state: reviewState,
   };
 }
 
@@ -163,7 +170,8 @@ export async function readRecentNotes(
   const limit = Math.min(opts.limit ?? 30, 100);
   const cutoff = new Date(Date.now() - sinceHours * 3600_000).toISOString();
 
-  const conditions = ["archived = 0", "created_at > ?"];
+  // KEPT_SQL (mig 0132): this feeds halseth_session_load's recent_notes -- a boot surface.
+  const conditions = ["archived = 0", KEPT_SQL, "created_at > ?"];
   const bindings: unknown[] = [cutoff];
   if (opts.source) {
     conditions.push("source = ?");
@@ -452,8 +460,11 @@ export async function recallNotesByMeaning(
     const rows = await env.DB.prepare(
       // archived = 0: a released note keeps its vector (release archives, never deletes), so
       // this hydration is where the release must hold or vector recall un-releases it (C7).
+      // review_state = 'kept' (mig 0132): a draft is embedded too (D1 is truth, the index is
+      // rebuildable), so THIS is also where the tray holds -- an unreviewed clerk note has a vector
+      // and must still never come back as the companion's own memory.
       `SELECT note_id, content, created_at, salience, thread_key, source FROM wm_continuity_notes
-       WHERE agent_id = ? AND archived = 0 AND note_id IN (${placeholders})`
+       WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL} AND note_id IN (${placeholders})`
     ).bind(agentId, ...noteCands.map(c => c.rowId))
       .all<RecalledNote & { source: string | null }>();
     const scoreById = new Map(noteCands.map(c => [c.rowId, c.score]));
@@ -493,8 +504,10 @@ export async function recallNotesByMeaning(
   if (journalCands.length > 0) {
     const placeholders = journalCands.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
+      // review_state = 'kept' (mig 0132): same reason as the notes hydration above -- the 09-26
+      // fabrication came back through exactly this query, ranked first, as a discord_speech row.
       `SELECT id, note_text, created_at, source FROM companion_journal
-       WHERE agent = ? AND archived = 0 AND id IN (${placeholders})`
+       WHERE agent = ? AND archived = 0 AND ${KEPT_SQL} AND id IN (${placeholders})`
     ).bind(agentId, ...journalCands.map(c => c.rowId))
       .all<{ id: string; note_text: string; created_at: string; source: string | null }>();
     const scoreById = new Map(journalCands.map(c => [c.rowId, c.score]));

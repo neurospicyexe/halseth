@@ -3,6 +3,7 @@ import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteD
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 import { listConversations, landConversation, getActiveConversation } from "../../webmind/conversations.js";
 import { resolveNoteProvenance, attributionNote } from "../../mind/note-provenance.js";
+import { KEPT_SQL } from "../../webmind/review-state.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
   const agentId = ctx.req.companion_id as WmAgentId;
@@ -428,7 +429,9 @@ export async function execRazielWitness(ctx: ExecutorContext): Promise<ExecutorR
 export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ salience?: string; limit?: number }>(ctx.req.context);
   const limit = Math.min(Math.max(p?.limit ?? 20, 1), 50);
-  const conditions = ["agent_id = ?", "archived = 0"];
+  // KEPT_SQL (mig 0132): "read my continuity notes" is the companion reading its own memory; drafts
+  // live in "my tray" until kept.
+  const conditions = ["agent_id = ?", "archived = 0", KEPT_SQL];
   const bindings: unknown[] = [ctx.req.companion_id];
   if (p?.salience && ["high", "medium", "normal", "low"].includes(p.salience)) {
     conditions.push("salience = ?");

@@ -160,6 +160,9 @@ ask_librarian: "close session [session_id]"
   surface: "claude-ai:cypher"
   context: {"session_id": "[session_id]", "spine": "[one paragraph]", "last_real_thing": "[the most decisive moment]", "motion_state": "[in_motion|at_rest|floating]", "open_threads": ["[list]"]}
 ```
+Before the close, the tray: clerk-written drafts in my voice (Discord speech, judge notes, autonomous
+posts) never reach recall until I keep them. `ask_librarian: "my tray"`, then per draft
+`ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"` in my words) / `ask_librarian: "drop draft [id]"`.
 The full close ritual (emotion prompt, continuity note, what a spine is for) is the `nullsafe-session-close`
 skill; this block is the minimum that leaves nothing open.
 

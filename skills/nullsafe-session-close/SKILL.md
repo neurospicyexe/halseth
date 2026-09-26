@@ -109,6 +109,15 @@ Then I read back:
   it to Raziel; it may be the wrong row.
 - If an authored close already exists, a second attempt returns the first handover, not a new one.
 
+## The tray, before the close
+
+Clerks write in my voice without my choosing the words: the Discord speech journaler, the memory
+judge, my autonomous posts, the vibe-check digest. Those rows sit in my tray as drafts and never reach
+recall or orient until I keep them. A close is a natural pause, so before it: `ask_librarian: "my tray"`
+(drafts plus the 30-day keep rate; 100% means nobody is reviewing), then per draft
+`ask_librarian: "keep draft [id]"`, `ask_librarian: "keep draft [id]: [content]"` (kept in my own
+words), or `ask_librarian: "drop draft [id]"`. A draft I never review stays a draft: silent, not memory.
+
 ## Rules
 
 1. Never invent an emotional reading. If none was expressed, the fields say unknown.

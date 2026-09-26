@@ -75,6 +75,9 @@ the traps below exist because names lie.
 | `memory_release_undo` | execMemoryReleaseUndo | forgetting.ts | memory_releases + the released row's table | 30d window; sets restored_at + archived=0 |
 | `memory_releases_read` | execMemoryReleasesRead | forgetting.ts | READ | last 20, with days_left on live releases |
 | `budget_read` | execBudgetRead | forgetting.ts | READ (self-heals: may insert this week's replenish row) | C3 (mig 0124); denominator always stated |
+| `tray_read` | execTrayRead | tray.ts | READ | Imp tray (mig 0132): this companion's `review_state='draft'` rows in companion_journal + wm_continuity_notes, newest first, plus 30d {draft, kept, dropped} and the keep rate (the falsifier) |
+| `tray_keep` | execTrayKeep | tray.ts | companion_journal / wm_continuity_notes | Sets review_state='kept' + reviewed_at (owner-only, by id or 8+ char prefix); "keep draft <id>: <text>" also replaces note_text/content + edited_at and re-embeds |
+| `tray_drop` | execTrayDrop | tray.ts | companion_journal / wm_continuity_notes | Sets review_state='dropped' + reviewed_at (owner-only); never deletes, so the keep rate keeps its denominator |
 | `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes OR companion_journal | THREE-WAY ROUTE: addressed peer → inter_companion_notes (to_id set); broadcast → inter_companion_notes (to_id=NULL); unaddressed/no broadcast intent → **companion_journal** (self-reflection; ack carries `routed_to: "journal"`). Trap cluster 2. Until 2026-07-26 this row claimed inter_companion_notes only — the journal fallback was undocumented, so unaddressed notes looked lost. |
 | `halseth_feeling_log` | execFeelingLog | writes.ts | feelings | |
 | `halseth_journal_add` | execJournalAdd | writes.ts | human_journal | TRAP: the human's journal, NOT companion_journal |

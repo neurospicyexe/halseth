@@ -74,6 +74,7 @@ export const SUPPLY_SOURCES: SupplySource[] = [
   { kind: "sibling_note", table: "wm_continuity_notes", sql:
     `SELECT note_id AS id, agent_id AS owner, note_type AS title, content AS body, ${NORM("created_at")} AS created_at, NULL AS heat
        FROM wm_continuity_notes WHERE note_type IN ('day_distillation','discord_session') AND archived = 0
+        AND review_state = 'kept'
         AND content NOT LIKE '[%' AND ${CURSOR_PREDICATE("created_at", "note_id")}
        ORDER BY ${NORM("created_at")} ASC, note_id ASC LIMIT ?` },
   { kind: "care_fact", table: "care_actions", sql:

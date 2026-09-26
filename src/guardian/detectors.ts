@@ -353,7 +353,7 @@ export async function detectRatificationBacklog(env: Env): Promise<CandidateFlag
 export async function detectOrphanedMemories(env: Env): Promise<CandidateFlag[]> {
   const rows = await env.DB.prepare(
     `SELECT note_id, agent_id, content, created_at FROM wm_continuity_notes
-     WHERE last_access_at IS NULL AND archived = 0
+     WHERE last_access_at IS NULL AND archived = 0 AND review_state = 'kept'
        AND created_at < datetime('now','-' || ?1 || ' days')
      ORDER BY created_at ASC LIMIT ?2`
   ).bind(GUARDIAN_THRESHOLDS.ORPHAN_COLD_DAYS, GUARDIAN_THRESHOLDS.ORPHAN_LIMIT)

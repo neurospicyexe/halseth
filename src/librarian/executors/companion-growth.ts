@@ -7,6 +7,7 @@ import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
 import { collectionForageSql, collectionMediaSql, bumpSparkleSql, sparkleDelta } from "../../webmind/collection.js";
 import { embedAndStoreAsync } from "../../mcp/embed.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
+import { KEPT_SQL } from "../../webmind/review-state.js";
 
 const COMPANIONS = COMPANION_IDS;
 
@@ -172,8 +173,9 @@ export async function execRecentRecall(ctx: ExecutorContext): Promise<ExecutorRe
 
   const [notes, feelings, dreams, growthEntries, explorations] = await Promise.all([
     // No source filter -- includes Claude.ai session writes (source='session') and autonomous worker writes (source='autonomous').
+    // KEPT_SQL (mig 0132): an autonomous post is a draft until its owner keeps it ("my tray"); "recall" is memory.
     ctx.env.DB.prepare(
-      "SELECT id, note_text, tags, source, created_at FROM companion_journal WHERE agent = ? ORDER BY created_at DESC LIMIT 20"
+      `SELECT id, note_text, tags, source, created_at FROM companion_journal WHERE agent = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 20`
     ).bind(id).all<{ id: string; note_text: string; tags: string | null; source: string | null; created_at: string }>(),
     // No source filter -- feelings from any session.
     ctx.env.DB.prepare(
@@ -187,7 +189,7 @@ export async function execRecentRecall(ctx: ExecutorContext): Promise<ExecutorRe
     ).bind(id).all<{ id: string; entry_type: string; content: string; tags_json: string; source: string | null; created_at: string }>(),
     // Include all recent continuity notes (autonomous_exploration + any session-tagged notes).
     ctx.env.DB.prepare(
-      "SELECT note_id, content, source, created_at FROM wm_continuity_notes WHERE agent_id = ? ORDER BY created_at DESC LIMIT 10"
+      `SELECT note_id, content, source, created_at FROM wm_continuity_notes WHERE agent_id = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 10`
     ).bind(id).all<{ note_id: string; content: string; source: string | null; created_at: string }>(),
   ]);
 

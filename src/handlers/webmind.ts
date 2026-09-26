@@ -1458,6 +1458,8 @@ export async function getMindCommonsSupply(
         WHERE n.agent_id != ?
           AND n.note_type IN ('day_distillation', 'discord_session')
           AND n.archived = 0
+          -- review_state (mig 0132): a sibling's unreviewed draft is not its lived experience either.
+          AND n.review_state = 'kept'
           -- Machine-tagged notes are not lived experience. See the note above: this single condition is what
           -- keeps metronome readouts and sibling-exploration broadcasts out of the commons.
           AND n.content NOT LIKE '[%'

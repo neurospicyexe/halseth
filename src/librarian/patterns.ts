@@ -1560,6 +1560,28 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["memory_releases_read"],
     response_key: "data",
   },
+  // The imp tray (mig 0132, 2026-09-26): a companion's own spoken words -- and any clerk's note in
+  // its voice -- are drafts until the owner keeps them; recall serves kept only. Bare "keep <id>" is
+  // routed by an ANCHORED_GUARD (router.ts) because "keep" alone would shadow "keep loop open" and
+  // "keep this to myself"; every substring trigger here carries "draft" or "tray".
+  tray_read: {
+    triggers: [
+      "my tray", "show my tray", "what is in my tray", "what's in my tray", "read my tray",
+      "review my tray", "my drafts", "show my drafts", "tray read",
+    ],
+    tools: ["tray_read"],
+    response_key: "data",
+  },
+  tray_keep: {
+    triggers: ["keep draft", "keep this draft", "keep the draft"],
+    tools: ["tray_keep"],
+    response_key: "witness",
+  },
+  tray_drop: {
+    triggers: ["drop draft", "drop this draft", "drop the draft", "discard draft"],
+    tools: ["tray_drop"],
+    response_key: "witness",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [

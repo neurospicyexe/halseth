@@ -37,6 +37,7 @@ import { COMPANION_IDS } from "../../companions.js";
 import { OPENED_BY } from "../../db/queries.js";
 import { loadMindState } from "../../mind/loader.js";
 import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
+import { KEPT_SQL } from "../../webmind/review-state.js";
 
 // Interoception fields the raw MCP tool halseth_session_load accepts (see
 // src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
@@ -119,7 +120,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       "SELECT spine FROM sessions WHERE companion_id = ? AND spine IS NOT NULL ORDER BY created_at DESC LIMIT 1"
     ).bind(agentId).first<{ spine: string }>().catch(() => null),
     ctx.env.DB.prepare(
-      "SELECT content FROM wm_continuity_notes WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1"
+      `SELECT content FROM wm_continuity_notes WHERE agent_id = ? AND ${KEPT_SQL} ORDER BY created_at DESC LIMIT 1`
     ).bind(agentId).first<{ content: string }>().catch(() => null),
     ctx.env.DB.prepare(
       // status='open' -- writers only ever set 'open'; the old 'active' filter matched nothing,
@@ -1164,7 +1165,7 @@ export async function execBotOrient(
   const seenIds = new Set(coreNotes.map(n => n.note_id));
   const noveltyNote = await ctx.env.DB.prepare(
     `SELECT note_id, content FROM wm_continuity_notes
-     WHERE agent_id = ? AND archived = 0 AND salience = 'high'
+     WHERE agent_id = ? AND archived = 0 AND salience = 'high' AND ${KEPT_SQL}
      ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
   ).bind(agentId).first<{ note_id: string; content: string }>()
     .catch(() => null);
