@@ -353,6 +353,10 @@ export const HUMAN_SOURCES = new Set([
   "conversation_capture",
 ]);
 export const MACHINE_SOURCES = new Set([
+  // 2026-09-26: the memory-judge is a clerk -- a model reading a conversation and writing a note in
+  // the companion's voice. Unkeyed and source-NULL (0.85) one of its rows outranked the true
+  // capture with a fabricated number. It is machine output and weighs like it.
+  "memory_judge",
   "synthesis_loop", "system", "soma_update", "autonomous", "discord_swarm", "discord_speech",
   "deploy-verified", "evaluator", "metronome", "pattern_worker", "synthesis-gap-detector",
 ]);

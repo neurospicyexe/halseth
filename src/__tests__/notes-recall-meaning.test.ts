@@ -83,6 +83,22 @@ describe("recallNotesByMeaning -- 2026-09-26, the night a capture lost to a fabr
     expect(out.map(n => n.note_id)).toEqual(["n-capture", "j-legacy"]);
   });
 
+  // The memory-judge is a clerk: a model reading a conversation and writing a note in the
+  // companion's voice. Until 2026-09-26 its rows landed with source NULL (0.85, the "unknown"
+  // tier) and one of them outranked the true capture with a fabricated number. Now the judge
+  // stamps source "memory_judge" and it weighs as machine output (0.6), below what Raziel said.
+  it("a memory_judge journal weighs 0.6, under a capture of what was actually said", async () => {
+    const { env } = makeEnv({
+      notes: [{ score: 0.60, metadata: { table: "wm_continuity_notes", row_id: "n-capture", companion_id: "drevan" } }],
+      journal: [{ score: 0.90, metadata: { table: "companion_journal", row_id: "j-judge", companion_id: "drevan" } }],
+      noteRows: [noteRow("n-capture", "conversation_capture")],
+      journalRows: [journalRow("j-judge", "memory_judge")],
+    });
+    const out = await recallNotesByMeaning(env, "drevan", "the number", 5);
+    // capture 0.60*1.0=0.60 beats judge 0.90*0.6=0.54
+    expect(out.map(n => n.note_id)).toEqual(["n-capture", "j-judge"]);
+  });
+
   // Vectorize refuses topK > 50 with returnMetadata "all" (VECTOR_QUERY_ERROR 40025). limit*6 crossed
   // that at limit 9, so `recall my notes about X` with limit 10 was a hard error dressed as
   // "the search path is down". Seen live 2026-09-26.

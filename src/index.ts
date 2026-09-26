@@ -16,6 +16,7 @@ import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } fr
 import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
+import { adminRetract } from "./handlers/retract.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal } from "./handlers/human-journal";
@@ -169,6 +170,8 @@ const router = new Router()
   // Zero-neuron reindex: re-upsert existing vectors so they index under metadata indexes
   // created after they were first inserted (fixes filtered recall without spending neurons).
   .on("POST", "/admin/reindex-existing",      (request, env) => reindexExisting(request, env))
+  // Retract one mistake from every Halseth store it reached (archive + logged release). 2026-09-26.
+  .on("POST", "/admin/retract",               (request, env) => adminRetract(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
   // Jev (TypeSafe typed-judgment model) via Workers AI -- admin proxy for the writeback-gate
   // scoring harness and the VPS bots (docs/PLAN-jev-2026-09-20.md). Companions never call this.
