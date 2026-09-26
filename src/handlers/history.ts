@@ -63,7 +63,10 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   }
 
   const validAgents = COMPANION_ID_SET;
-  const conditions: string[] = [];
+  // Never serve archived rows (2026-09-26). This listing is what Second Brain's puller mirrors
+  // into the vault; without the filter a row retracted in Halseth came back as a top-ranked
+  // rag/companion_journal doc on the next pull. An archive a downstream reader ignores is not one.
+  const conditions: string[] = ["archived = 0"];
   const bindings: unknown[]  = [];
 
   if (agent && validAgents.has(agent)) {
