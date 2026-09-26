@@ -107,8 +107,15 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   if (since !== undefined) {
     if (reviewedCursor) {
       // ISO_SQL("?") expands to two placeholders (strftime(?) and its fallback): bind `since` twice.
-      conditions.push(`${JOURNAL_CURSOR_SQL} > ${ISO_SQL("?")}`);
-      bindings.push(since, since);
+      //
+      // RESTORED rows too (2026-09-26, recall reconcile). A released journal row is archived; Second
+      // Brain's reconcile then deletes its rag/ mirror. A restore (forgetting.ts) only flips archived
+      // back to 0 -- the row's cursor never moves, so without this clause the restored memory would
+      // never be pulled again and would be gone from the vault for good. memory_releases.restored_at
+      // is the one stamp a restore writes; the subquery is uncorrelated (evaluated once, small table).
+      // The row keeps its OLD cursor_at, so the puller's mark never moves backward on it (hwmAfter).
+      conditions.push(`(${JOURNAL_CURSOR_SQL} > ${ISO_SQL("?")} OR id IN (${RESTORED_JOURNAL_SINCE_SQL}))`);
+      bindings.push(since, since, since, since);
     } else {
       conditions.push("created_at > ?");
       bindings.push(since);
@@ -137,6 +144,69 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
 const ISO_SQL = (expr: string) => `COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', ${expr}), ${expr})`;
 /** When a journal row became memory: its keep, or its birth if it was born kept. */
 const JOURNAL_CURSOR_SQL = ISO_SQL("COALESCE(reviewed_at, created_at)");
+/** Journal ids whose release was restored after a bound (two `?` placeholders, both the bound). */
+const RESTORED_JOURNAL_SINCE_SQL =
+  `SELECT ref_id FROM memory_releases WHERE kind = 'journal' AND restored_at IS NOT NULL AND ${ISO_SQL("restored_at")} > ${ISO_SQL("?")}`;
+
+// GET /ingest/recall-ineligible?limit=500[&since=<ISO>&after_id=<id>]   (2026-09-26, recall reconcile)
+//
+// The ids of companion_journal rows that are NOT recall-eligible: review_state <> 'kept' OR
+// archived = 1. Second Brain mirrors journal rows as rag/companion_journal/<id>; the feed above is
+// kept-only now, so a mirror pulled BEFORE mig 0132 (the backfill turned ~600 rows into drafts), or
+// of a row dropped / retracted / released / salience-pruned since, can never correct itself. SB's
+// reconcile pages this list and deletes those mirrors. Measured 2026-09-26: 2038 of 5392 mirrors
+// were of ineligible rows (510 draft, 64 dropped, 1464 archived).
+//
+// Two modes, both keyset-paged (never OFFSET, no self-join -- D1 hit its CPU limit on one today):
+//   - FULL (no `since`): every ineligible id, ordered by id; page with after_id = the last id.
+//   - INCREMENTAL (`since`): rows whose cursor (COALESCE(reviewed_at, created_at), the same
+//     normalised stamp the journal feed uses) is after the bound, ordered by (cursor, id); page with
+//     since = last cursor_at AND after_id = last id, so ties on a page boundary are never dropped.
+// STATED BLIND SPOT: an archive stamps nothing (retract.ts, salience-prune.ts and forgetting.ts all
+// only SET archived = 1), so a row archived long after its cursor is caught by a FULL sweep only.
+// SB runs the full sweep at startup and daily; incremental rides every pull tick.
+//
+// Response: { mode, items: [{ id, agent, review_state, archived, cursor_at }], next } -- `next` is the
+// params for the following page, null on the last one. wm_continuity_notes are not listed: SB has
+// no puller for them (measured: zero rag/wm_continuity_notes docs), so there is nothing to reconcile.
+export async function getRecallIneligible(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const url = new URL(request.url);
+  const limit = clampLimit(url.searchParams.get("limit"), 500, 1000);
+  const since = url.searchParams.get("since") ?? undefined;
+  const afterId = url.searchParams.get("after_id") ?? "";
+  if (since !== undefined && isNaN(Date.parse(since))) {
+    return new Response(JSON.stringify({ error: "invalid since parameter" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const incremental = since !== undefined;
+  // ISO_SQL("?") is two placeholders; the tie branch compares the cursor to the same bound again.
+  const keyset = incremental
+    ? `(${JOURNAL_CURSOR_SQL} > ${ISO_SQL("?")} OR (${JOURNAL_CURSOR_SQL} = ${ISO_SQL("?")} AND id > ?))`
+    : "id > ?";
+  const binds: unknown[] = incremental ? [since, since, since, since, afterId] : [afterId];
+  const orderBy = incremental ? "cursor_at ASC, id ASC" : "id ASC";
+
+  const result = await env.DB.prepare(`
+    SELECT id, agent, review_state, archived, ${JOURNAL_CURSOR_SQL} AS cursor_at
+    FROM companion_journal
+    WHERE (review_state <> 'kept' OR archived = 1) AND ${keyset}
+    ORDER BY ${orderBy}
+    LIMIT ?
+  `).bind(...binds, limit).all<{ id: string; agent: string; review_state: string; archived: number; cursor_at: string }>();
+
+  const items = result.results ?? [];
+  const last = items[items.length - 1];
+  const next = items.length < limit || !last
+    ? null
+    : incremental ? { since: last.cursor_at, after_id: last.id } : { after_id: last.id };
+  return new Response(JSON.stringify({ mode: incremental ? "incremental" : "full", items, next }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 // GET /cypher-audit?limit=50
 export async function getCypherAudit(request: Request, env: Env): Promise<Response> {

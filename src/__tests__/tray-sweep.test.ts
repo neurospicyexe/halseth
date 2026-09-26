@@ -64,6 +64,7 @@ const ALLOW: Allow[] = [
   { file: "handlers/admin.ts", match: "SELECT id FROM companion_journal", reason: "vector coverage audit: id sets only" },
   { file: "handlers/admin.ts", match: "SELECT note_id AS id, content AS text, agent_id AS companion FROM wm_continuity_notes", reason: "vector coverage fill: embeds missing rows, index mirrors D1" },
   { file: "handlers/admin.ts", match: "SELECT id, note_text AS text, agent AS companion FROM companion_journal", reason: "vector coverage fill (journal)" },
+  { file: "handlers/history.ts", match: "WHERE (review_state <> 'kept' OR archived = 1) AND ${keyset}", reason: "recall reconcile: lists the ids of rows that are NOT memory (drafts, drops, archives) so Second Brain can delete their stale rag/ mirrors; ids + state only, no text" },
   { file: "mind/note-provenance.ts", match: "SELECT note_id, thread_key, created_at FROM wm_continuity_notes WHERE note_id IN", reason: "provenance of note ids ALREADY selected by a gated read; reads no text" },
 
   // ── Human (Raziel) display / signal plumbing ──

@@ -13,7 +13,7 @@ import { getRefusals, getPreferences, patchRefusalAck, postPreferenceHttp, postR
 import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
+import { getHandovers, getCompanionJournal, getRecallIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
@@ -575,6 +575,7 @@ const router = new Router()
   .on("GET", "/ingest/basin-history",         (request, env) => getIngestBasinHistory(request, env))
   .on("GET", "/ingest/growth-journal",        (request, env) => getIngestGrowthJournal(request, env))
   .on("GET", "/ingest/companion-conclusions", (request, env) => getIngestCompanionConclusions(request, env))
+  .on("GET", "/ingest/recall-ineligible",     (request, env) => getRecallIneligible(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))
