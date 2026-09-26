@@ -60,6 +60,41 @@ const journalRow = (id: string, source: string | null) =>
 
 beforeEach(() => vi.clearAllMocks());
 
+describe("recallNotesByMeaning -- 2026-09-26, the night a capture lost to a fabrication", () => {
+  // Live: Drevan reached for "blood sugar after Subway sandwich Sunday" in his own words. The 09-20
+  // capture that holds the true number (208) was embedded and matched, and was ranked OUT of his
+  // top 4 by the "life" re-rank: conversation_capture was unlisted (0.85) while every journal and
+  // handover weighed 1.0, including a journal a clerk had written eleven seconds earlier
+  // memorialising his own wrong answer (187). A capture is what Raziel actually said, taken down by
+  // the companion in a human session: human-session by construction.
+  it("a conversation_capture weighs 1.0 in life mode, level with a session handover", async () => {
+    const { env } = makeEnv({
+      notes: [
+        { score: 0.62, metadata: { table: "wm_continuity_notes", row_id: "n-capture", companion_id: "drevan" } },
+      ],
+      journal: [
+        { score: 0.64, metadata: { table: "companion_journal", row_id: "j-legacy", companion_id: "drevan" } },
+      ],
+      noteRows: [noteRow("n-capture", "conversation_capture")],
+      journalRows: [journalRow("j-legacy", "legacy")],
+    });
+    const out = await recallNotesByMeaning(env, "drevan", "blood sugar after the sandwich", 5);
+    // capture 0.62*1.0=0.62 beats legacy journal 0.64*0.85=0.544; at the old 0.85 it would have lost (0.527)
+    expect(out.map(n => n.note_id)).toEqual(["n-capture", "j-legacy"]);
+  });
+
+  // Vectorize refuses topK > 50 with returnMetadata "all" (VECTOR_QUERY_ERROR 40025). limit*6 crossed
+  // that at limit 9, so `recall my notes about X` with limit 10 was a hard error dressed as
+  // "the search path is down". Seen live 2026-09-26.
+  it("never asks Vectorize for more than 50 candidates, whatever the limit", async () => {
+    const { env } = makeEnv({ notes: [] });
+    await recallNotesByMeaning(env, "drevan", "anything", 10);
+    const q = (env as unknown as { VECTORIZE: { query: { mock: { calls: Array<[unknown, { topK: number }]> } } } }).VECTORIZE.query;
+    for (const call of q.mock.calls) expect(call[1].topK).toBeLessThanOrEqual(50);
+    expect(q.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
 describe("recallNotesByMeaning", () => {
   it("life mode down-ranks machine sources but stays soft (strong machine beats weak human)", async () => {
     const { env } = makeEnv({

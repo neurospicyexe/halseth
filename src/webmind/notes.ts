@@ -347,6 +347,10 @@ export interface RecalledMemory {
 // new writers land at 0.85 until classified, never silently zeroed.
 export const HUMAN_SOURCES = new Set([
   "claude_code", "session_close", "session", "session-log", "cypher-session", "hearth_ritual_compost",
+  // 2026-09-26: a conversation_capture is what Raziel actually said, taken down by the companion in
+  // a human session -- human-session by construction. Unlisted (0.85) it lost, live, to a journal a
+  // clerk had written eleven seconds earlier memorialising the companion's own wrong answer.
+  "conversation_capture",
 ]);
 export const MACHINE_SOURCES = new Set([
   "synthesis_loop", "system", "soma_update", "autonomous", "discord_swarm", "discord_speech",
@@ -401,7 +405,9 @@ export async function recallNotesByMeaning(
 
   // One query per table (two $eq filters beat relying on $in support), in parallel.
   // Over-fetch both: the floor and the re-rank both cut after the fact.
-  const topK = Math.min(limit * 6, 60);
+  // Vectorize refuses topK > 50 with returnMetadata "all" (VECTOR_QUERY_ERROR 40025); 60 was a hard
+  // error for any limit >= 9, reported to the companion as "the search path is down" (2026-09-26).
+  const topK = Math.min(limit * 6, 50);
   const [noteRes, handoverRes, journalRes] = await Promise.all([
     env.VECTORIZE.query(vector, {
       topK, returnMetadata: "all",
