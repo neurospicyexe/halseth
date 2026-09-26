@@ -17,9 +17,19 @@
  *     archived.
  *   - One memory_releases row per archived item, so "restore release <id>" undoes each within
  *     the 30-day window exactly like a companion's own chosen forgetting (executors/forgetting.ts).
+ *   - Optional `stm: { channel_id, content }` (rotate-on-retract, 2026-09-26): the retracted reply
+ *     kept echoing from the bot's own STM window (`stm_entries`, the transcript the bot re-sends to
+ *     the gateway) until the daily rotation, so a retracted mistake stayed in the model's context
+ *     for hours after every memory store had let it go. When present, the matching `assistant`
+ *     rows for that agent+channel are HARD deleted (`instr(content, ?) > 0`). Hard delete is
+ *     correct here and is the one exception to the archive rail: stm_entries is a 50-row rolling
+ *     transcript window, not memory; rows are pruned on every write anyway, and there is nothing
+ *     to restore that the transcript would not have discarded on its own within the day. Reported
+ *     as `stm_deleted` (0 when `stm` is absent). Additive: the key rule below is unchanged.
  *
  * RAILS
- *   - Archive, never delete. Owner-scoped: every UPDATE binds the agent.
+ *   - Archive, never delete (stm_entries excepted, see above). Owner-scoped: every UPDATE and the
+ *     stm DELETE bind the agent.
  *   - Reason required; an unexplained retraction is indistinguishable from data loss.
  *   - Key lists capped at 50: this is a scalpel for one exchange, not a purge.
  *   - The vault copy (Second Brain discord-live) is retracted by the caller against Second
@@ -29,6 +39,8 @@ import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 
 const MAX_KEYS = 50;
+/** instr() needle cap: a Discord reply is <= 2000 chars, so this loses nothing and bounds the bind. */
+const STM_NEEDLE_MAX = 2000;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
@@ -55,6 +67,17 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
   if (!externalIds.length && !correlationIds.length) return json({ error: "external_ids or correlation_ids is required" }, 400);
   if (externalIds.length > MAX_KEYS || correlationIds.length > MAX_KEYS) return json({ error: `at most ${MAX_KEYS} keys per list` }, 400);
 
+  // STM window drop (additive; a malformed `stm` is ignored rather than failing the archive half).
+  const stmRaw = body.stm && typeof body.stm === "object" ? body.stm as Record<string, unknown> : null;
+  const stmChannel = stmRaw && typeof stmRaw.channel_id === "string" ? stmRaw.channel_id.trim() : "";
+  const stmContent = stmRaw && typeof stmRaw.content === "string" ? stmRaw.content.trim().slice(0, STM_NEEDLE_MAX) : "";
+  const stmStmt = stmChannel && stmContent
+    ? env.DB.prepare(
+        "DELETE FROM stm_entries WHERE companion_id = ? AND channel_id = ? AND role = 'assistant' AND instr(content, ?) > 0",
+      ).bind(agent, stmChannel, stmContent)
+    : null;
+  const stmDeleted = (r: { meta?: { changes?: number } } | undefined) => r?.meta?.changes ?? 0;
+
   const journalIds: string[] = [];
   if (externalIds.length) {
     const ph = externalIds.map(() => "?").join(", ");
@@ -73,7 +96,8 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
   }
 
   if (!journalIds.length && !noteIds.length) {
-    return json({ archived: { journal: [], notes: [] }, release_ids: [] });
+    const stm_deleted = stmStmt ? stmDeleted(await stmStmt.run()) : 0;
+    return json({ archived: { journal: [], notes: [] }, release_ids: [], stm_deleted });
   }
 
   const releaseIds: string[] = [];
@@ -93,7 +117,9 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
     stmts.push(env.DB.prepare("UPDATE wm_continuity_notes SET archived = 1 WHERE note_id = ? AND agent_id = ?").bind(id, agent));
     stmts.push(release("note", id));
   }
-  await env.DB.batch(stmts);
+  if (stmStmt) stmts.push(stmStmt);
+  const results = await env.DB.batch(stmts);
+  const stm_deleted = stmStmt ? stmDeleted(results[results.length - 1]) : 0;
 
-  return json({ archived: { journal: journalIds, notes: noteIds }, release_ids: releaseIds });
+  return json({ archived: { journal: journalIds, notes: noteIds }, release_ids: releaseIds, stm_deleted });
 }
