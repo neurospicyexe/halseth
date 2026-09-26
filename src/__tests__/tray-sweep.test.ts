@@ -32,7 +32,8 @@ const ALLOW: Allow[] = [
   // ── Idempotency / write gates: a draft must still dedupe, or it is re-written every run ──
   { file: "webmind/notes.ts", match: "SELECT note_id, content, created_at FROM wm_continuity_notes\n       WHERE agent_id = ? AND archived = 0 AND thread_key = ?", reason: "addNote's 10-minute thread write gate: drafts must dedupe too, or a pulse floods the thread" },
   { file: "librarian/executors/writes.ts", match: "WHERE agent_id = ? AND note_type = 'soma_arc' AND archived = 0", reason: "soma_arc 15-minute inflection gate (soma_arc is companion-authored, born kept)" },
-  { file: "webmind/vibecheck.ts", match: "FROM companion_journal", reason: "vibecheck once-a-day idempotency lookup: today's digest is a draft, so gating it re-sends the letter every run" },
+  { file: "webmind/vibecheck.ts", match: "WHERE agent = 'gaia' AND created_at >= date('now') AND tags LIKE ?", reason: "vibecheck once-a-day idempotency lookup: today's digest is a draft, so gating it re-sends the letter every run" },
+  { file: "webmind/vibecheck.ts", match: "SELECT COUNT(*) AS n FROM companion_journal WHERE agent = ? AND source = 'discord_speech'", reason: "day ledger: how many times each companion SPOKE today -- a count of speech (which is drafts by design), no text read" },
   { file: "webmind/briefing.ts", match: "WHERE agent = 'steward' AND created_at >= date('now') AND tags LIKE ?", reason: "briefing once-a-day idempotency lookup (steward letters, born kept)" },
 
   // ── Liveness / health / counts: a draft is still a WRITE ──
@@ -77,9 +78,11 @@ const READ_RE = /\b(?:FROM|JOIN)\s+(?:companion_journal|wm_continuity_notes)\b/i
 const INSERT_RE = /\b(?:INSERT|REPLACE)\s+(?:OR\s+\w+\s+)?INTO\s+(?:companion_journal|wm_continuity_notes)\b/i;
 // A PREDICATE on review_state -- a SELECT that merely lists the column is not a gate.
 const GATE_RE = /review_state\s*(?:=|IN\b)|\$\{\s*KEPT_(?:LIVE_)?SQL\s*\}/i;
+// archived = 0 (literal, a KEPT_LIVE_SQL interpolation, or an aliased cj.archived = 0).
+const LIVE_RE = /\barchived\s*=\s*0|\$\{\s*KEPT_LIVE_SQL\s*\}/i;
 const DYNAMIC_WHERE_RE = /\$\{\s*(?:where|conditions\.join\([^)]*\))\s*\}/;
 
-interface Hit { file: string; line: number; text: string; gated: boolean }
+interface Hit { file: string; line: number; text: string; gated: boolean; live?: boolean }
 
 function walk(dir: string, out: string[]): void {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -111,12 +114,15 @@ function scan(): { reads: Hit[]; inserts: Hit[] } {
         if (INSERT_RE.test(text)) inserts.push({ file: rel, line, text, gated: false });
         if (READ_RE.test(text)) {
           let gated = GATE_RE.test(text);
-          if (!gated && DYNAMIC_WHERE_RE.test(text)) {
+          let live = LIVE_RE.test(text);
+          if (DYNAMIC_WHERE_RE.test(text)) {
             let fn: ts.Node | undefined = node.parent;
             while (fn && !ts.isFunctionLike(fn)) fn = fn.parent;
-            if (fn) gated = /\bKEPT_(?:LIVE_)?SQL\b|["'`]review_state\s*(?:=|IN\b)/i.test(stripComments(fn.getText(sf)));
+            const code = fn ? stripComments(fn.getText(sf)) : "";
+            if (!gated) gated = /\bKEPT_(?:LIVE_)?SQL\b|["'`]review_state\s*(?:=|IN\b)/i.test(code);
+            if (!live) live = /\bKEPT_LIVE_SQL\b|["'`][^"'`]*\barchived\s*=\s*0/i.test(code);
           }
-          reads.push({ file: rel, line, text, gated });
+          reads.push({ file: rel, line, text, gated, live });
         }
       }
       ts.forEachChild(node, (c) => visit(c, insideTemplate || ts.isTemplateExpression(node)));
@@ -143,11 +149,18 @@ describe("tray sweep: every read of the two first-person stores is gated or allo
     expect(report, "ungated reads of companion_journal / wm_continuity_notes -- add the review_state gate, or an ALLOW entry with a reason").toEqual([]);
   });
 
-  it("every allowlist entry still matches an ungated read (no stale exemptions)", () => {
+  it("every allowlist entry matches exactly one ungated read (no stale, no file-wide exemptions)", () => {
     const ungated = reads.filter(r => !r.gated);
-    const stale = ALLOW.filter(a => !ungated.some(r => r.file === a.file && normalize(r.text).includes(a.match)));
-    expect(stale.map(a => `${a.file}: ${a.match.slice(0, 80)}`)).toEqual([]);
+    const counts = ALLOW.map(a => ({ a, n: ungated.filter(r => r.file === a.file && normalize(r.text).includes(a.match)).length }));
+    expect(counts.filter(c => c.n !== 1).map(c => `${c.a.file} (${c.n} matches): ${c.a.match.slice(0, 80)}`)).toEqual([]);
     for (const a of ALLOW) expect(a.reason.length, a.match).toBeGreaterThan(15);
+  });
+
+  it("every gated read also excludes archived rows (kept AND live) -- a retracted kept row is not memory either", () => {
+    // The tray's own lookups read any archived state on purpose (readDraft says so; locate refuses
+    // archived rows itself).
+    const missing = reads.filter(r => r.gated && !r.live && r.file !== "webmind/tray.ts");
+    expect(missing.map(r => `${r.file}:${r.line}  ${normalize(r.text).replace(/\s+/g, " ").slice(0, 160)}`)).toEqual([]);
   });
 
   it("no INSERT INTO either store outside webmind/tray-insert.ts (the birth rule is the only door in)", () => {
