@@ -20,7 +20,7 @@ import { adminRetract } from "./handlers/retract.js";
 import { getAdminTray, postAdminTrayReview } from "./handlers/tray.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
-import { getJournal } from "./handlers/human-journal";
+import { getJournal, postJournal } from "./handlers/human-journal";
 import { getBridgeShared, postBridgeAct, postBridgeToggle } from "./handlers/bridge";
 import {
   getOAuthProtectedResource,
@@ -608,6 +608,7 @@ const router = new Router()
 
   // Human journal
   .on("GET", "/journal", (request, env) => getJournal(request, env))
+  .on("POST", "/journal", (request, env) => postJournal(request, env))
 
   // Tasks, events, lists (direct access — no bridge required)
   .on("GET",   "/tasks",       (request, env) => getTasks(request, env))
