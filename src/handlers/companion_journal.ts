@@ -6,7 +6,7 @@ import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../webmind/notes.js";
 import { noveltyCheck } from "../webmind/novelty.js";
-import { reviewStateFor, isReviewState, KEPT_SQL } from "../webmind/review-state.js";
+import { reviewStateFor } from "../webmind/review-state.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -172,46 +172,3 @@ export async function postCompanionJournal(
   });
 }
 
-// GET /companion-notes?agent=drevan&limit=20 — reads from the companion journal.
-// The companion journal is written only via MCP (attribution is sacred).
-// This endpoint is read-only.
-//
-// `review_state` (mig 0132): defaults to `kept` -- this is the Second Brain puller's feed
-// (rag/companion_journal mirrors), and a draft that reaches the vault is recall by another door.
-// Hearth and ops pass `review_state=all` (or `draft` / `dropped`) to see the tray; every row
-// carries the column either way.
-export async function getCompanionJournal(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const agent = url.searchParams.get("agent");
-  const rawLimit = parseInt(url.searchParams.get("limit") ?? "20", 10);
-  const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 20 : rawLimit), 100);
-  const reviewParam = url.searchParams.get("review_state") ?? "kept";
-
-  const conditions: string[] = [];
-  const bindings: unknown[] = [];
-
-  if (agent && COMPANION_ID_SET.has(agent)) {
-    conditions.push("agent = ?");
-    bindings.push(agent);
-  }
-  if (reviewParam !== "all") {
-    if (isReviewState(reviewParam) && reviewParam !== "kept") {
-      conditions.push("review_state = ?");
-      bindings.push(reviewParam);
-    } else {
-      conditions.push(KEPT_SQL);
-    }
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  bindings.push(limit);
-
-  const result = await env.DB.prepare(
-    `SELECT * FROM companion_journal ${where} ORDER BY created_at DESC LIMIT ?`
-  ).bind(...bindings).all<CompanionJournalEntry>();
-
-  return new Response(JSON.stringify(result.results ?? []), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}

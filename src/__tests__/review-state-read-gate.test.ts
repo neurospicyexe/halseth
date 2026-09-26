@@ -26,7 +26,7 @@ import { execContinuityNotesRead } from "../librarian/executors/webmind.js";
 import { execRecentRecall } from "../librarian/executors/companion-growth.js";
 import { SUPPLY_SOURCES } from "../director/supply-query.js";
 import { detectOrphanedMemories } from "../guardian/detectors.js";
-import { getCompanionJournal } from "../handlers/companion_journal.js";
+import { getCompanionJournal } from "../handlers/history.js";
 
 const KEPT = "review_state = 'kept'";
 
@@ -43,6 +43,7 @@ function makeEnv(vectorMatches: Array<{ table: string; row_id: string }> = []) {
   });
   const env = {
     SYSTEM_OWNER: "raziel",
+    ADMIN_SECRET: "t",
     DB: { prepare: (sql: string) => { sqls.push(sql); return mk(sql); } },
     VECTORIZE: {
       query: vi.fn(async (_v: number[], q: { filter: { table: string } }) => ({
@@ -135,13 +136,13 @@ describe("other prompt feeds", () => {
 
   it("GET /companion-journal (the Second Brain puller's feed) is kept by default; review_state=all|draft opens the tray", async () => {
     const a = makeEnv();
-    await getCompanionJournal(new Request("https://x/companion-journal?agent=drevan"), a.env);
+    await getCompanionJournal(new Request("https://x/companion-journal?agent=drevan", { headers: { Authorization: "Bearer t" } }), a.env);
     expect(journalSelects(a.sqls)[0]).toContain(KEPT);
     const b = makeEnv();
-    await getCompanionJournal(new Request("https://x/companion-journal?agent=drevan&review_state=all"), b.env);
-    expect(journalSelects(b.sqls)[0]).not.toContain("review_state");
+    await getCompanionJournal(new Request("https://x/companion-journal?agent=drevan&review_state=all", { headers: { Authorization: "Bearer t" } }), b.env);
+    expect((journalSelects(b.sqls)[0] ?? "").split("WHERE")[1] ?? "").not.toContain("review_state");
     const c = makeEnv();
-    await getCompanionJournal(new Request("https://x/companion-journal?agent=drevan&review_state=draft"), c.env);
+    await getCompanionJournal(new Request("https://x/companion-journal?agent=drevan&review_state=draft", { headers: { Authorization: "Bearer t" } }), c.env);
     expect(journalSelects(c.sqls)[0]).toContain("review_state = ?");
   });
 });

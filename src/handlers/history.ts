@@ -8,6 +8,7 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
 import { COMPANION_ID_SET } from "../companions.js";
+import { isReviewState, KEPT_SQL } from "../webmind/review-state.js";
 import { completeTask } from "../lib/task-completion.js";
 import type {
   HandoverPacket,
@@ -69,6 +70,21 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   const conditions: string[] = ["archived = 0"];
   const bindings: unknown[]  = [];
 
+  // review_state (mig 0132, 2026-09-26): kept by default -- this is the puller's feed, and a draft
+  // that reaches the vault is recall by another door. Hearth and ops pass `review_state=all` (or
+  // `draft` / `dropped`) to see the tray; every row carries the column either way. NOTE: this is
+  // the handler `/companion-journal` and `/companion-notes` are actually wired to (index.ts); a
+  // second copy in companion_journal.ts was unreachable and was removed the same day.
+  const reviewParam = url.searchParams.get("review_state") ?? "kept";
+  if (reviewParam !== "all") {
+    if (isReviewState(reviewParam) && reviewParam !== "kept") {
+      conditions.push("review_state = ?");
+      bindings.push(reviewParam);
+    } else {
+      conditions.push(KEPT_SQL);
+    }
+  }
+
   if (agent && validAgents.has(agent)) {
     conditions.push("agent = ?");
     bindings.push(agent);
@@ -85,7 +101,7 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
-    SELECT id, created_at, agent, note_text, tags, session_id, source
+    SELECT id, created_at, agent, note_text, tags, session_id, source, review_state, reviewed_at
     FROM companion_journal
     ${where}
     ORDER BY created_at ${orderDir}
