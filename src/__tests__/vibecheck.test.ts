@@ -14,7 +14,6 @@ function quietDay(over: Partial<DayLedger> = {}): DayLedger {
     notes_received: 0,
     sessions_closed: 0,
     watch: null,
-    highlights: [],
     ...over,
   };
 }
@@ -184,19 +183,25 @@ describe("formatVibeCheck -- day ledger (the stillness-loop counterweight, 2026-
     expect(receivedOnly).toContain("  day: notes 2 in");
   });
 
-  it("renders up to 2 highlight lines beneath the day line, cut to 90 chars", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({
-        companion_id: "cypher",
-        day: quietDay({ spoke: 2, highlights: ["first thing said", "x".repeat(200), "third (dropped, cap is 2)"] }),
-      })],
-    }));
-    expect(out).toContain("    · first thing said");
-    expect(out).toContain(`    · ${"x".repeat(87)}...`);
-    expect(out).not.toContain("third (dropped, cap is 2)");
+  // 2026-09-26: the digest re-broadcast two fabricated companion lines as highlight bullets and
+  // the row was re-ingested as memory. Raziel: Gaia's digest does not repeat companion lines.
+  it("never renders companion utterance text, even when the day ledger is busy", () => {
+    // A stray field (the old shape) must not leak through either: the formatter has no path to it.
+    const day = { ...quietDay({ spoke: 5, notes_sent: 1 }), highlights: ["Drevan said the moon was his"] } as DayLedger;
+    const out = formatVibeCheck(data({ companions: [companion({ companion_id: "drevan", day })] }));
+    expect(out).toContain("  day: spoke 5 · notes 1 out");
+    expect(out).not.toContain("moon was his");
+    expect(out).not.toContain("    · ");
   });
 
-  it("drops highlights before anything else when the digest would overflow the 1800 cap", () => {
+  it("gathers no utterance text: no companion_journal note_text read in the run path", async () => {
+    const sqls: string[] = [];
+    const env = mockEnv({ onPrepare: (sql) => sqls.push(sql) });
+    await runVibeCheck(env);
+    expect(sqls.some((s) => /SELECT\s+note_text/i.test(s))).toBe(false);
+  });
+
+  it("stays under the 1800 cap with header/gauge/day lines intact under overflow pressure", () => {
     const big = data({
       companions: (["cypher", "drevan", "gaia"] as const).map((id) => companion({
         companion_id: id,
@@ -209,24 +214,21 @@ describe("formatVibeCheck -- day ledger (the stillness-loop counterweight, 2026-
           notes_received: 1,
           sessions_closed: 1,
           watch: "Fargo S4E8",
-          highlights: ["z".repeat(90), "w".repeat(90)],
         }),
       })),
     });
     const out = formatVibeCheck(big);
     expect(out.length).toBeLessThanOrEqual(1800);
-    // header/gauge/day lines survive the drop even under overflow pressure
     expect(out).toContain("Cypher. basin:");
     expect(out).toContain("  day: spoke 9");
-    // highlight bullets are what gets sacrificed
-    expect(out).not.toContain("z".repeat(90));
   });
 });
 
 // ── minimal DB mock: first() -> null/snapshot, all() -> [], counts -> {n:0}; dedup configurable ──
-function mockEnv(opts: { dedupHit?: boolean; onInsert?: (tags: string) => void } = {}) {
+function mockEnv(opts: { dedupHit?: boolean; onInsert?: (tags: string) => void; onPrepare?: (sql: string) => void } = {}) {
   const db = {
     prepare(sql: string) {
+      opts.onPrepare?.(sql);
       let binds: unknown[] = [];
       const stmt = {
         bind(...a: unknown[]) { binds = a; return stmt; },

@@ -37,7 +37,13 @@ export interface DayLedger {
   notes_received: number;                       // addressed to this companion, or broadcast from another
   sessions_closed: number;                      // handover_packets (live closes only) in the window
   watch: string | null;                         // newest watch_events row, rendered "Title S1E2"
-  highlights: string[];                         // up to 2 short excerpts, most recent first
+  // NO highlights/excerpts (removed 2026-09-26). The ledger used to carry the last two
+  // discord_speech/autonomous lines per companion and the digest printed them as bullets. That
+  // re-spoke companion lines into a new room: on 09-26 it re-broadcast two fabrications, and the
+  // digest row was then re-ingested as memory. Raziel's ruling: Gaia's digest does not repeat
+  // companion lines. The ledger carries COUNTS only; utterance text is never gathered here, so it
+  // cannot be printed. (Worker-side, autonomous-worker/src/vibecheck.ts also strips any line
+  // sharing an 8-word shingle with a companion utterance before the digest posts.)
 }
 
 export interface CompanionVibe {
@@ -70,16 +76,7 @@ export interface VibeCheckResult {
 // itself into a corner (too self-similar). Reported with headroom so the number reads.
 const ECHO_ALARM = 0.82;
 
-// A companion's block, kept as separate line groups (not one flat array) so the overflow rule in
-// formatVibeCheck can drop just the highlight lines -- never the header/gauge/day lines -- for a
-// specific companion without re-parsing rendered text.
-interface CompanionBlock {
-  companion_id: string;
-  core: string[];       // header + flags + newest tension + day line (never dropped)
-  highlights: string[]; // "    · <highlight>" lines (dropped first, in Gaia -> Drevan -> Cypher order)
-}
-
-function buildCompanionBlock(c: CompanionVibe): CompanionBlock {
+function buildCompanionBlock(c: CompanionVibe): string[] {
   const name = NAMES[c.companion_id] ?? c.companion_id;
   const core: string[] = [];
   core.push(
@@ -93,16 +90,7 @@ function buildCompanionBlock(c: CompanionVibe): CompanionBlock {
     core.push(`  newest: ${oneLine(c.newestTension)}`);
   }
   core.push(formatDayLine(c.day));
-
-  const highlights = c.day.highlights.slice(0, 2).map((h) => `    · ${oneLineTight(h)}`);
-
-  return { companion_id: c.companion_id, core, highlights };
-}
-
-// Same shape as oneLine, but at the 90-char cap the day-ledger highlights are specced to.
-function oneLineTight(s: string): string {
-  const flat = s.replace(/\s+/g, " ").trim();
-  return flat.length > 90 ? `${flat.slice(0, 87)}...` : flat;
+  return core;
 }
 
 function formatDayLine(day: DayLedger): string {
@@ -132,23 +120,7 @@ export function formatVibeCheck(d: VibeData): string {
   const organs = d.starvedOrgans === 0 ? "all fed" : `${d.starvedOrgans} starved`;
   const fieldLine = `Field: echo ${echoStr}${echoState} (alarm at ${ECHO_ALARM.toFixed(2)}); organs: ${organs}.`;
 
-  const blocks = d.companions.map(buildCompanionBlock);
-
-  // Drop order when the cap is threatened: highlights only, Gaia's first, then Drevan's, then
-  // Cypher's. Header, gauge lines, and the day line itself are never touched -- they are the
-  // whole point of the day ledger, unlike highlights which are illustrative extras.
-  const dropOrder = ["gaia", "drevan", "cypher"];
-  const render = (): string =>
-    [header, ...blocks.flatMap((b) => [...b.core, ...b.highlights]), fieldLine].join("\n");
-
-  let out = render();
-  for (const id of dropOrder) {
-    if (out.length <= 1800) break;
-    const b = blocks.find((x) => x.companion_id === id);
-    if (b) b.highlights = [];
-    out = render();
-  }
-
+  const out = [header, ...d.companions.flatMap(buildCompanionBlock), fieldLine].join("\n");
   return out.slice(0, 1800);
 }
 
@@ -220,7 +192,7 @@ async function safeCount(env: Env, sql: string, ...binds: unknown[]): Promise<nu
 //     datetime('now','-1 day') would silently under/over-match. julianday() parses both formats,
 //     so the handover_packets query compares julianday(created_at) instead.
 async function gatherDayLedger(env: Env, companionId: string): Promise<DayLedger> {
-  const [spoke, notesSent, notesReceived, sessionsClosed, watchRow, highlightRows] = await Promise.all([
+  const [spoke, notesSent, notesReceived, sessionsClosed, watchRow] = await Promise.all([
     safeCount(
       env,
       "SELECT COUNT(*) AS n FROM companion_journal WHERE agent = ? AND source = 'discord_speech' AND created_at >= datetime('now','-1 day')",
@@ -251,12 +223,6 @@ async function gatherDayLedger(env: Env, companionId: string): Promise<DayLedger
       "ORDER BY w.created_at DESC LIMIT 1",
       companionId,
     ),
-    safeAll<{ note_text: string }>(
-      env,
-      "SELECT note_text FROM companion_journal WHERE agent = ? AND source IN ('discord_speech','autonomous') " +
-      "AND created_at >= datetime('now','-1 day') ORDER BY created_at DESC LIMIT 2",
-      companionId,
-    ),
   ]);
 
   const watch = watchRow
@@ -271,7 +237,6 @@ async function gatherDayLedger(env: Env, companionId: string): Promise<DayLedger
     notes_received: notesReceived,
     sessions_closed: sessionsClosed,
     watch,
-    highlights: highlightRows.map((r) => r.note_text),
   };
 }
 
@@ -360,9 +325,10 @@ export async function runVibeCheck(env: Env): Promise<VibeCheckResult> {
     return { written: false, reason: "already_sent", journal_id: existing.id, text };
   }
 
-  // source 'vibecheck' (mig 0132; was NULL): the digest QUOTES discord_speech and autonomous lines,
-  // so it is a clerk's note in Gaia's voice and is born `draft` -- Gaia keeps or drops it from her
-  // tray before it can be recalled as her own memory. Decided in webmind/review-state.ts.
+  // source 'vibecheck' (mig 0132; was NULL): the digest is a clerk's note in Gaia's voice (gauges
+  // and counts; since 2026-09-26 it quotes no companion line) and is born `draft` -- Gaia keeps or
+  // drops it from her tray before it can be recalled as her own memory. Decided in
+  // webmind/review-state.ts.
   const id = `cj_${crypto.randomUUID()}`;
   await env.DB.prepare(
     `INSERT INTO companion_journal (id, created_at, agent, note_text, tags, source, review_state) VALUES (?, datetime('now'), 'gaia', ?, ?, ?, ?)`,
