@@ -10,7 +10,7 @@
 
 import { Env } from "../types.js";
 import { EMBEDDING_MODEL } from "../mcp/embed.js";
-import { DEEPSEEK_DEFAULT_MODEL, contentBudget } from "../synthesis/deepseek.js";
+import { DEEPSEEK_DEFAULT_MODEL, contentBudget, vendorFailover, logFellBack } from "../synthesis/deepseek.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import { TRAY_ID_TOKEN } from "../webmind/review-state.js";
 import { getCurrentFront, type PluralResult } from "./backends/plural.js";
@@ -614,9 +614,8 @@ export function isCloseShaped(request: string): boolean {
 // balance (DeepSeek $0 on 2026-08-28, the incident this exists for), rate limits, and server
 // errors. A 400 is deterministic -- the payload is malformed on every vendor -- so it stays
 // fatal. Mirrors packages/autonomous-worker/src/deepseek.ts::vendorFailover exactly.
-export function vendorFailover(status: number): boolean {
-  return status === 401 || status === 402 || status === 403 || status === 429 || status >= 500;
-}
+// Canonical definition now lives in synthesis/deepseek.ts (shared with the synthesis clerk).
+export { vendorFailover };
 
 export class LibrarianRouter {
   constructor(private env: Env) {}
@@ -820,6 +819,7 @@ export class LibrarianRouter {
               `[librarian] classify: ${primary.label} unreachable (${e instanceof Error ? e.message : String(e)}) -- ` +
               `failing over to ${fallback.label} for this call`,
             );
+            logFellBack("librarian.classify", `network: ${e instanceof Error ? e.message.slice(0, 80) : String(e).slice(0, 80)}`);
             vendor = fallback;
             attempt--; // redo this attempt on the fallback vendor, not spend it
             continue;
@@ -834,6 +834,7 @@ export class LibrarianRouter {
               `[librarian] classify: ${primary.label} error ${res.status} (${text.slice(0, 120)}) -- ` +
               `failing over to ${fallback.label} for this call`,
             );
+            logFellBack("librarian.classify", `HTTP ${res.status}`);
             vendor = fallback;
             attempt--; // redo this attempt on the fallback vendor, not spend it
             continue;

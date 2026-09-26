@@ -9,8 +9,7 @@
 
 import { Env } from "../../types.js";
 import { embedText } from "../../mcp/embed.js";
-import { DEEPSEEK_DEFAULT_MODEL, contentBudget } from "../deepseek.js";
-import { withOwnerPronounRule } from "../../pronoun-rule.js";
+import { complete } from "../deepseek.js";
 
 interface BasinRow {
   basin_name: string;
@@ -69,8 +68,8 @@ export async function runBasinDriftCheck(
   companionId: string,
   env: Env,
 ): Promise<void> {
-  if (!env.DEEPSEEK_API_KEY) {
-    console.warn("[basin-drift-check] DEEPSEEK_API_KEY not set, skipping");
+  if (!env.DEEPINFRA_API_KEY && !env.DEEPSEEK_API_KEY) {
+    console.warn("[basin-drift-check] neither DEEPINFRA_API_KEY nor DEEPSEEK_API_KEY set, skipping");
     return;
   }
 
@@ -142,36 +141,22 @@ Respond with ONLY valid JSON, no explanation outside it:
 
 drift_score: 0.0 = fully aligned, 2.0 = severe departure`;
 
-  const res = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${env.DEEPSEEK_API_KEY}`,
-    },
-    body: JSON.stringify({
-      // 2026-07-28: was `deepseek-chat` (delisted) at max_tokens 120. Every listed model
-      // reasons, spending max_tokens on the thought before emitting content -- at 120 this
-      // would have returned "" and the JSON parse below would have thrown on every check.
-      // See synthesis/deepseek.ts for the measurement.
-      model: DEEPSEEK_DEFAULT_MODEL,
-      // `reasoning` is a free one-sentence field and can reference Raziel -- carry the owner
-      // pronoun rule via a system message even though this call is otherwise a classifier
-      // (drift_type/drift_score/worst_basin are labels, not prose) (2026-09-24).
-      messages: [
-        { role: "system", content: withOwnerPronounRule("") },
-        { role: "user", content: prompt },
-      ],
-      max_tokens: contentBudget(120),
-      temperature: 0,
-    }),
+  // 2026-09-26: routed through synthesis/deepseek.ts complete() -- DeepInfra first, DeepSeek-direct
+  // only as the emergency fallback. This call used to hit the DeepSeek platform URL directly with no
+  // DeepInfra lane, and at a $0 DeepSeek balance every session-close drift check died on 402.
+  // System prompt is "" on purpose: complete() carries the owner pronoun rule itself (the
+  // `reasoning` field is free prose and can reference Raziel). 120 is the CONTENT ceiling;
+  // complete() adds the reasoning headroom (see synthesis/deepseek.ts for the measurement).
+  const generated = await complete("", prompt, env, {
+    contentTokens: 120,
+    temperature: 0,
+    caller: "basin-drift-check",
   });
-
-  if (!res.ok) {
-    throw new Error(`DeepSeek API error: ${res.status} ${res.statusText}`);
+  if (generated === null) {
+    // Throw so the synthesis queue records the job as failed rather than silently succeeding.
+    throw new Error("basin-drift inference failed on every vendor (DeepInfra, DeepSeek)");
   }
-
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const raw = (data.choices?.[0]?.message?.content ?? "").trim();
+  const raw = generated.trim();
 
   // Strip markdown code fences if DeepSeek wraps its JSON
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();

@@ -90,8 +90,14 @@ describe("prose writers outside complete() reference the pronoun rule", () => {
     "drift/pass.ts",
     "clearing/pass.ts",
     "soma/emergent.ts",
-    "synthesis/jobs/basin-drift-check.ts",
   ];
+  // basin-drift-check.ts left this list 2026-09-26: it now calls complete() (DeepInfra-first),
+  // which carries the rule on every call -- a second wrap at the call site would double it.
+  it("basin-drift-check.ts gets the rule through complete(), not a raw fetch", () => {
+    const src = readFileSync(join(root, "synthesis/jobs/basin-drift-check.ts"), "utf8");
+    expect(src).toMatch(/import\s*\{\s*complete\s*\}\s*from\s*["']\.\.\/deepseek\.js["']/);
+    expect(src).not.toMatch(/api\.deepseek\.com/);
+  });
 
   it.each(mustReference)("%s imports and calls withOwnerPronounRule", (relPath) => {
     const src = readFileSync(join(root, relPath), "utf8");
