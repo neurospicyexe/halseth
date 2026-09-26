@@ -15,6 +15,8 @@
  *     judge: `judge:<msg>`) are archived.
  *   - wm_continuity_notes whose correlation_id is listed (judge promotion: `judge:<msg>`) are
  *     archived.
+ *   - `already_archived: { journal, notes }`: ids under the same keys that an EARLIER call archived,
+ *     so a repeat retract can still reach every downstream mirror. Not re-archived, no new release.
  *   - One memory_releases row per archived item, so "restore release <id>" undoes each within
  *     the 30-day window exactly like a companion's own chosen forgetting (executors/forgetting.ts).
  *   - Optional `stm: { channel_id, content }` (rotate-on-retract, 2026-09-26): the retracted reply
@@ -26,6 +28,10 @@
  *     transcript window, not memory; rows are pruned on every write anyway, and there is nothing
  *     to restore that the transcript would not have discarded on its own within the day. Reported
  *     as `stm_deleted` (0 when `stm` is absent). Additive: the key rule below is unchanged.
+ *     Bounded (2026-09-26, tray pass 2): the needle must be >= STM_NEEDLE_MIN chars (400 otherwise) --
+ *     a short needle like "ok" or "yes" is a substring of half the window -- and if more than
+ *     STM_MAX_DELETE assistant rows match, NOTHING is changed (409 with `stm_matches`), so a wrong
+ *     needle can never wipe the window. The count is returned either way for the bot to report.
  *
  * RAILS
  *   - Archive, never delete (stm_entries excepted, see above). Owner-scoped: every UPDATE and the
@@ -41,6 +47,10 @@ import { authGuard } from "../lib/auth.js";
 const MAX_KEYS = 50;
 /** instr() needle cap: a Discord reply is <= 2000 chars, so this loses nothing and bounds the bind. */
 const STM_NEEDLE_MAX = 2000;
+/** instr() needle floor: shorter than this and the needle is a common phrase, not one reply. */
+export const STM_NEEDLE_MIN = 20;
+/** One retraction is one exchange: more matching rows than this means the needle is wrong. */
+export const STM_MAX_DELETE = 5;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
@@ -71,6 +81,22 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
   const stmRaw = body.stm && typeof body.stm === "object" ? body.stm as Record<string, unknown> : null;
   const stmChannel = stmRaw && typeof stmRaw.channel_id === "string" ? stmRaw.channel_id.trim() : "";
   const stmContent = stmRaw && typeof stmRaw.content === "string" ? stmRaw.content.trim().slice(0, STM_NEEDLE_MAX) : "";
+  if (stmChannel && stmContent && stmContent.length < STM_NEEDLE_MIN) {
+    return json({ error: `stm.content must be at least ${STM_NEEDLE_MIN} characters -- a short needle matches unrelated replies` }, 400);
+  }
+  let stmMatches = 0;
+  if (stmChannel && stmContent) {
+    const c = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM stm_entries WHERE companion_id = ? AND channel_id = ? AND role = 'assistant' AND instr(content, ?) > 0",
+    ).bind(agent, stmChannel, stmContent).first<{ n: number }>();
+    stmMatches = Number(c?.n ?? 0);
+    if (stmMatches > STM_MAX_DELETE) {
+      return json({
+        error: `stm.content matches ${stmMatches} assistant rows (max ${STM_MAX_DELETE}) -- nothing changed; use a longer, more specific needle`,
+        stm_matches: stmMatches,
+      }, 409);
+    }
+  }
   const stmStmt = stmChannel && stmContent
     ? env.DB.prepare(
         "DELETE FROM stm_entries WHERE companion_id = ? AND channel_id = ? AND role = 'assistant' AND instr(content, ?) > 0",
@@ -78,26 +104,34 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
     : null;
   const stmDeleted = (r: { meta?: { changes?: number } } | undefined) => r?.meta?.changes ?? 0;
 
+  // Every review_state on purpose: a retraction must reach drafts too (they are the usual case).
+  // Rows ALREADY archived under the same keys are reported separately (`already_archived`, 2026-09-26):
+  // a repeat retract after a partial failure used to return no ids at all, so the bot could not reach
+  // the Second Brain rag/ mirrors of rows an earlier call had archived. They are not re-archived and
+  // get no second memory_releases row (the unique live-release index would refuse it anyway).
   const journalIds: string[] = [];
+  const alreadyJournal: string[] = [];
   if (externalIds.length) {
     const ph = externalIds.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
-      `SELECT id FROM companion_journal WHERE agent = ? AND archived = 0 AND external_id IN (${ph})`,
-    ).bind(agent, ...externalIds).all<{ id: string }>();
-    for (const r of rows.results ?? []) journalIds.push(r.id);
+      `SELECT id, archived FROM companion_journal WHERE agent = ? AND external_id IN (${ph})`,
+    ).bind(agent, ...externalIds).all<{ id: string; archived: number }>();
+    for (const r of rows.results ?? []) (Number(r.archived) === 1 ? alreadyJournal : journalIds).push(r.id);
   }
   const noteIds: string[] = [];
+  const alreadyNotes: string[] = [];
   if (correlationIds.length) {
     const ph = correlationIds.map(() => "?").join(", ");
     const rows = await env.DB.prepare(
-      `SELECT note_id FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND correlation_id IN (${ph})`,
-    ).bind(agent, ...correlationIds).all<{ note_id: string }>();
-    for (const r of rows.results ?? []) noteIds.push(r.note_id);
+      `SELECT note_id, archived FROM wm_continuity_notes WHERE agent_id = ? AND correlation_id IN (${ph})`,
+    ).bind(agent, ...correlationIds).all<{ note_id: string; archived: number }>();
+    for (const r of rows.results ?? []) (Number(r.archived) === 1 ? alreadyNotes : noteIds).push(r.note_id);
   }
+  const already_archived = { journal: alreadyJournal, notes: alreadyNotes };
 
   if (!journalIds.length && !noteIds.length) {
     const stm_deleted = stmStmt ? stmDeleted(await stmStmt.run()) : 0;
-    return json({ archived: { journal: [], notes: [] }, release_ids: [], stm_deleted });
+    return json({ archived: { journal: [], notes: [] }, release_ids: [], stm_deleted, stm_matches: stmMatches, already_archived });
   }
 
   const releaseIds: string[] = [];
@@ -121,5 +155,5 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
   const results = await env.DB.batch(stmts);
   const stm_deleted = stmStmt ? stmDeleted(results[results.length - 1]) : 0;
 
-  return json({ archived: { journal: journalIds, notes: noteIds }, release_ids: releaseIds, stm_deleted });
+  return json({ archived: { journal: journalIds, notes: noteIds }, release_ids: releaseIds, stm_deleted, stm_matches: stmMatches, already_archived });
 }

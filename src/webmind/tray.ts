@@ -8,15 +8,23 @@
 // - Owner-only: a companion reviews exactly its own rows (agent / agent_id bound on every UPDATE).
 // - Keep or drop, never delete: a dropped row stays in D1 with review_state = 'dropped' so the
 //   keep rate has a denominator. The falsifier is the keep rate -- 100% means nobody reviews.
-// - A rewrite on keep replaces the text (the owner speaks it, the clerk's words go) and re-embeds,
-//   so the vector matches what was kept, not what was drafted.
+// - A rewrite on keep replaces the text (the owner speaks it) and re-embeds, so the vector matches
+//   what was kept. The clerk's words are NOT lost: original_content keeps them and rewritten_by names
+//   the owner (mig 0133). The row's source becomes TRAY_REWRITE_SOURCE (authored weight, never
+//   salience-pruned) and a journal row's topic_tags are re-derived from the new text.
 // - reviewed_at is the timestamp of the decision; a draft has none.
+// - Only a live DRAFT can be kept or dropped (pass 2, 2026-09-26). An already-kept or -dropped row is
+//   refused with its state and date -- a companion cannot quietly re-decide, and a repeat never
+//   re-stamps reviewed_at. The guard is in the UPDATE itself (changes === 1), not just in the lookup.
+//   Only the admin route may reverse a decision, with an explicit { reverse: true } (Raziel's call).
+//   Archived (retracted/released) rows are refused either way: the tray does not un-retract.
 //
 // Shared by the Librarian verbs (executors/tray.ts) and the raw HTTP routes (handlers/tray.ts).
 
 import { Env } from "../types.js";
 import { embedAndStoreAsync } from "../mcp/embed.js";
-import { isReviewState, type ReviewState } from "./review-state.js";
+import { isReviewState, TRAY_REWRITE_SOURCE, type ReviewState } from "./review-state.js";
+import { classifyKeywordTags } from "../synthesis/tag-classifier.js";
 
 export type TrayKind = "journal" | "note";
 export type TrayDecision = "kept" | "dropped";
@@ -72,19 +80,22 @@ export interface TrayView {
 /** Newest-first drafts across both stores for one owner, plus the 30-day decision counts. */
 export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT): Promise<TrayView> {
   const cap = Math.min(Math.max(1, limit), 100);
+  // sort_at: created_at normalised IN SQL to one ISO shape, so the two stores merge in true time order.
+  // Rows carry both 'T...Z' (JS writers) and 'YYYY-MM-DD HH:MM:SS' (datetime('now') writers); a raw
+  // string compare puts every space-form row before every T-form row of the same day.
   const [journal, notes, jStats, nStats] = await Promise.all([
     env.DB.prepare(
-      `SELECT id, source, created_at, substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt
+      `SELECT id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt
          FROM companion_journal
         WHERE agent = ? AND archived = 0 AND review_state = 'draft'
-        ORDER BY created_at DESC LIMIT ?`,
-    ).bind(agent, cap).all<{ id: string; source: string | null; created_at: string; excerpt: string }>(),
+        ORDER BY sort_at DESC LIMIT ?`,
+    ).bind(agent, cap).all<TrayListRow>(),
     env.DB.prepare(
-      `SELECT note_id AS id, source, created_at, substr(content, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt
+      `SELECT note_id AS id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(content, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt
          FROM wm_continuity_notes
         WHERE agent_id = ? AND archived = 0 AND review_state = 'draft'
-        ORDER BY created_at DESC LIMIT ?`,
-    ).bind(agent, cap).all<{ id: string; source: string | null; created_at: string; excerpt: string }>(),
+        ORDER BY sort_at DESC LIMIT ?`,
+    ).bind(agent, cap).all<TrayListRow>(),
     env.DB.prepare(statsSql("companion_journal", "agent")).bind(agent).first<StatsRow>(),
     env.DB.prepare(statsSql("wm_continuity_notes", "agent_id")).bind(agent).first<StatsRow>(),
   ]);
@@ -93,8 +104,9 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
     ...(journal.results ?? []).map((r) => ({ ...r, kind: "journal" as const })),
     ...(notes.results ?? []).map((r) => ({ ...r, kind: "note" as const })),
   ]
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, cap);
+    .sort((a, b) => (b.sort_at ?? "").localeCompare(a.sort_at ?? ""))
+    .slice(0, cap)
+    .map(({ sort_at: _sortAt, ...d }) => d);
 
   const draft = num(jStats?.draft) + num(nStats?.draft);
   const kept = num(jStats?.kept) + num(nStats?.kept);
@@ -111,15 +123,20 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
 }
 
 interface StatsRow { draft: number | null; kept: number | null; dropped: number | null }
+interface TrayListRow { id: string; source: string | null; created_at: string; sort_at: string | null; excerpt: string }
+
+/** One ISO shape for any stored stamp; falls back to the raw value if SQLite cannot parse it. */
+const SORT_AT_SQL = "COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)";
 
 function statsSql(table: string, ownerCol: string): string {
   // `draft` counts live drafts regardless of age (a stale draft is still unreviewed); kept/dropped
   // count DECISIONS in the window (reviewed_at), which is the only honest denominator for a rate:
-  // rows born kept have no reviewed_at and never enter it.
+  // rows born kept have no reviewed_at and never enter it. datetime() on BOTH sides: reviewed_at is
+  // 'T...Z' and datetime('now') is space-form, so a raw compare miscounts the boundary day.
   return `SELECT
             SUM(CASE WHEN review_state = 'draft' AND archived = 0 THEN 1 ELSE 0 END) AS draft,
-            SUM(CASE WHEN review_state = 'kept' AND reviewed_at >= datetime('now', '-${TRAY_STATS_DAYS} days') THEN 1 ELSE 0 END) AS kept,
-            SUM(CASE WHEN review_state = 'dropped' AND reviewed_at >= datetime('now', '-${TRAY_STATS_DAYS} days') THEN 1 ELSE 0 END) AS dropped
+            SUM(CASE WHEN review_state = 'kept' AND datetime(reviewed_at) >= datetime('now', '-${TRAY_STATS_DAYS} days') THEN 1 ELSE 0 END) AS kept,
+            SUM(CASE WHEN review_state = 'dropped' AND datetime(reviewed_at) >= datetime('now', '-${TRAY_STATS_DAYS} days') THEN 1 ELSE 0 END) AS dropped
           FROM ${table} WHERE ${ownerCol} = ?`;
 }
 
@@ -137,12 +154,22 @@ export interface ReviewInput {
   decision: TrayDecision;
   /** Keep-with-rewrite: the owner's words replace the clerk's. Ignored on drop. */
   content?: string | null;
+  /**
+   * Admin only (POST /admin/tray/review { reverse: true }): allow re-deciding a row that is already
+   * kept or dropped. The Librarian verbs never pass it -- a companion decides a draft once.
+   */
+  reverse?: boolean;
 }
 
 export type ReviewResult =
   | { ok: true; kind: TrayKind; id: string; decision: TrayDecision; rewritten: boolean; reviewed_at: string; previous_state: ReviewState }
   | { ok: false; reason: "not_found" | "bad_id" | "empty_content" }
-  | { ok: false; reason: "ambiguous"; matches: TrayMatch[] };
+  | { ok: false; reason: "ambiguous"; matches: TrayMatch[] }
+  /** Not a live draft: already decided (kept/dropped, with when), or archived. Nothing changed. */
+  | { ok: false; reason: "already_reviewed"; kind: TrayKind; id: string; review_state: ReviewState; reviewed_at: string | null }
+  | { ok: false; reason: "archived"; kind: TrayKind; id: string; review_state: string }
+  /** Keep-with-rewrite needs mig 0133 (original_content); refused rather than lose the clerk's words. */
+  | { ok: false; reason: "rewrite_unavailable" };
 
 export const MIN_ID_PREFIX = 8;
 const ID_CHARS_RE = /^[A-Za-z0-9_-]+$/;
@@ -163,7 +190,7 @@ const MATCH_EXCERPT_CHARS = 80;
 export interface TrayMatch { kind: TrayKind; id: string; created_at: string; review_state: string; excerpt: string }
 
 type LocateResult =
-  | { ok: true; kind: TrayKind; id: string; review_state: string }
+  | { ok: true; kind: TrayKind; id: string; review_state: string; archived: boolean; reviewed_at: string | null }
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "ambiguous"; matches: TrayMatch[] };
 
@@ -177,32 +204,41 @@ type LocateResult =
  */
 async function locate(env: Env, agent: string, id: string, kind: TrayKind | null | undefined): Promise<LocateResult> {
   const kinds: TrayKind[] = kind ? [kind] : ["journal", "note"];
-  const found: Array<TrayMatch & { exact: boolean }> = [];
+  const found: Array<TrayMatch & { exact: boolean; archived: boolean; reviewed_at: string | null; sort_at: string }> = [];
   for (const k of kinds) {
     const w = KIND_TABLE[k];
     const res = await env.DB.prepare(
-      `SELECT ${w.idCol} AS id, review_state, created_at, substr(${w.textCol}, 1, ${MATCH_EXCERPT_CHARS}) AS excerpt
+      `SELECT ${w.idCol} AS id, review_state, reviewed_at, archived, created_at, ${SORT_AT_SQL} AS sort_at,
+              substr(${w.textCol}, 1, ${MATCH_EXCERPT_CHARS}) AS excerpt
          FROM ${w.table}
         WHERE ${w.ownerCol} = ? AND (${w.idCol} = ? OR substr(${w.idCol}, 1, ?) = ?)
-        ORDER BY (${w.idCol} = ?) DESC, created_at DESC LIMIT ?`,
+        ORDER BY (${w.idCol} = ?) DESC, sort_at DESC LIMIT ?`,
     ).bind(agent, id, id.length, id, id, AMBIGUOUS_LIST_CAP + 1)
-      .all<{ id: string; review_state: string; created_at: string; excerpt: string | null }>();
+      .all<{ id: string; review_state: string; reviewed_at: string | null; archived: number; created_at: string; sort_at: string | null; excerpt: string | null }>();
     for (const r of res.results ?? []) {
-      found.push({ kind: k, id: r.id, review_state: r.review_state, created_at: r.created_at ?? "", excerpt: r.excerpt ?? "", exact: r.id === id });
+      found.push({
+        kind: k, id: r.id, review_state: r.review_state, created_at: r.created_at ?? "", excerpt: r.excerpt ?? "",
+        exact: r.id === id, archived: num(r.archived) === 1, reviewed_at: r.reviewed_at ?? null, sort_at: r.sort_at ?? "",
+      });
     }
   }
+  const hit = (m: (typeof found)[number]): LocateResult =>
+    ({ ok: true, kind: m.kind, id: m.id, review_state: m.review_state, archived: m.archived, reviewed_at: m.reviewed_at });
   const exact = found.find((m) => m.exact);
-  if (exact) return { ok: true, kind: exact.kind, id: exact.id, review_state: exact.review_state };
+  if (exact) return hit(exact);
   if (found.length === 0) return { ok: false, reason: "not_found" };
-  if (found.length === 1) return { ok: true, kind: found[0]!.kind, id: found[0]!.id, review_state: found[0]!.review_state };
+  if (found.length === 1) return hit(found[0]!);
   const matches = found
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .sort((a, b) => b.sort_at.localeCompare(a.sort_at))
     .slice(0, AMBIGUOUS_LIST_CAP)
-    .map(({ exact: _exact, ...m }) => m);
+    .map(({ exact: _e, archived: _a, reviewed_at: _r, sort_at: _s, ...m }) => m);
   return { ok: false, reason: "ambiguous", matches };
 }
 
-/** Keep or drop one draft. Owner-scoped; idempotent on a repeat of the same decision. */
+/**
+ * Keep or drop one live draft. Owner-scoped. A row that is not a live draft is refused with its state
+ * (see file header); only { reverse: true } -- the admin route -- may re-decide a kept/dropped row.
+ */
 export async function reviewDraft(env: Env, input: ReviewInput): Promise<ReviewResult> {
   const id = input.id.trim();
   if (!isTrayId(id)) return { ok: false, reason: "bad_id" };
@@ -215,20 +251,59 @@ export async function reviewDraft(env: Env, input: ReviewInput): Promise<ReviewR
   if (!found.ok) return found;
   const w = KIND_TABLE[found.kind];
   const now = new Date().toISOString();
-  const previous = isReviewState(found.review_state) ? found.review_state : "kept";
+  const previous: ReviewState = isReviewState(found.review_state) ? found.review_state : "kept";
+
+  if (found.archived) return { ok: false, reason: "archived", kind: found.kind, id: found.id, review_state: found.review_state };
+  if (previous !== "draft" && !input.reverse) {
+    return { ok: false, reason: "already_reviewed", kind: found.kind, id: found.id, review_state: previous, reviewed_at: found.reviewed_at };
+  }
+
+  // The guard lives in the UPDATE (a second decision racing this one, or a retraction landing between
+  // locate() and here, changes 0 rows instead of overwriting). reverse lifts only the draft clause.
+  const guard = input.reverse ? "archived = 0" : "archived = 0 AND review_state = 'draft'";
+  let changes = 0;
 
   if (content) {
-    await env.DB.prepare(
-      `UPDATE ${w.table} SET review_state = ?, reviewed_at = ?, ${w.textCol} = ?, edited_at = ?
-        WHERE ${w.idCol} = ? AND ${w.ownerCol} = ?`,
-    ).bind(input.decision, now, content, now, found.id, input.agent).run();
-    // The vector must say what was KEPT. Non-fatal: D1 is truth, the index is rebuildable.
-    await embedAndStoreAsync(env, content, w.table, found.id, input.agent)
-      .catch((err) => console.warn(`[tray] re-embed failed for ${w.table}:${found.id} (row kept, index stale):`, String(err)));
+    // SQLite evaluates every SET right-hand side against the PRE-update row, so original_content
+    // captures the clerk's text in the same statement that replaces it; COALESCE keeps the FIRST
+    // original if a reversed row is ever rewritten again.
+    const topicSet = found.kind === "journal" ? ", topic_tags = ?" : "";
+    const topicBind = found.kind === "journal" ? [JSON.stringify(classifyKeywordTags(content))] : [];
+    try {
+      const r = await env.DB.prepare(
+        `UPDATE ${w.table}
+            SET review_state = ?, reviewed_at = ?, edited_at = ?,
+                original_content = COALESCE(original_content, ${w.textCol}), rewritten_by = ?,
+                ${w.textCol} = ?, source = ?${topicSet}
+          WHERE ${w.idCol} = ? AND ${w.ownerCol} = ? AND ${guard}`,
+      ).bind(input.decision, now, now, input.agent, content, TRAY_REWRITE_SOURCE, ...topicBind, found.id, input.agent).run();
+      changes = r.meta?.changes ?? 0;
+    } catch (err) {
+      if (/no such column/i.test(String(err))) {
+        console.warn("[tray] keep-with-rewrite refused: mig 0133 (original_content) not applied yet");
+        return { ok: false, reason: "rewrite_unavailable" };
+      }
+      throw err;
+    }
+    if (changes === 1) {
+      // The vector must say what was KEPT. Non-fatal: D1 is truth, the index is rebuildable.
+      await embedAndStoreAsync(env, content, w.table, found.id, input.agent)
+        .catch((err) => console.warn(`[tray] re-embed failed for ${w.table}:${found.id} (row kept, index stale):`, String(err)));
+    }
   } else {
-    await env.DB.prepare(
-      `UPDATE ${w.table} SET review_state = ?, reviewed_at = ? WHERE ${w.idCol} = ? AND ${w.ownerCol} = ?`,
+    const r = await env.DB.prepare(
+      `UPDATE ${w.table} SET review_state = ?, reviewed_at = ? WHERE ${w.idCol} = ? AND ${w.ownerCol} = ? AND ${guard}`,
     ).bind(input.decision, now, found.id, input.agent).run();
+    changes = r.meta?.changes ?? 0;
+  }
+
+  if (changes !== 1) {
+    // Lost a race: re-read what is there now and refuse with it.
+    const again = await locate(env, input.agent, found.id, found.kind);
+    if (!again.ok) return { ok: false, reason: "not_found" };
+    if (again.archived) return { ok: false, reason: "archived", kind: again.kind, id: again.id, review_state: again.review_state };
+    return { ok: false, reason: "already_reviewed", kind: again.kind, id: again.id,
+      review_state: isReviewState(again.review_state) ? again.review_state : "kept", reviewed_at: again.reviewed_at };
   }
 
   return { ok: true, kind: found.kind, id: found.id, decision: input.decision, rewritten: content.length > 0, reviewed_at: now, previous_state: previous };

@@ -31,6 +31,8 @@ function fakeDb(rows: { journal?: Array<{ id: string }>; notes?: Array<{ note_id
         if (sql.includes("FROM wm_continuity_notes")) return { results: rows.notes ?? [] };
         return { results: [] };
       },
+      // COUNT pre-check (tray pass 2): the handler counts matching stm rows before deleting any.
+      first: async () => (sql.includes("COUNT(*)") && sql.includes("stm_entries") ? { n: rows.stmChanges ?? 0 } : null),
       run: async () => {
         executed.push({ sql, binds });
         return { meta: { changes: sql.includes("DELETE FROM stm_entries") ? (rows.stmChanges ?? 0) : 1 } };
@@ -125,7 +127,7 @@ describe("POST /admin/retract", () => {
       const db = fakeDb({ journal: [{ id: "j1" }], stmChanges: 2 });
       const res = await adminRetract(req({
         agent: "drevan", external_ids: ["discord:1"], reason: "r",
-        stm: { channel_id: "chan9", content: "the number was 187" },
+        stm: { channel_id: "chan9", content: "the number was 187 mg/dL" },
       }), env(db));
       expect(res.status).toBe(200);
       const out = await res.json() as { stm_deleted: number; archived: { journal: string[] } };
@@ -135,14 +137,14 @@ describe("POST /admin/retract", () => {
       expect(del).toHaveLength(1);
       expect(del[0]!.sql).toContain("role = 'assistant'");
       expect(del[0]!.sql).toContain("instr(content, ?) > 0");
-      expect(del[0]!.binds).toEqual(["drevan", "chan9", "the number was 187"]);
+      expect(del[0]!.binds).toEqual(["drevan", "chan9", "the number was 187 mg/dL"]);
     });
 
     it("still drops the window rows when nothing matched in journal or notes", async () => {
       const db = fakeDb({ stmChanges: 1 });
       const res = await adminRetract(req({
         agent: "drevan", external_ids: ["discord:nope"], reason: "r",
-        stm: { channel_id: "chan9", content: "the number was 187" },
+        stm: { channel_id: "chan9", content: "the number was 187 mg/dL" },
       }), env(db));
       expect(res.status).toBe(200);
       const out = await res.json() as { stm_deleted: number; archived: { journal: string[]; notes: string[] }; release_ids: string[] };

@@ -2,7 +2,10 @@
 // verbs ("my tray", "keep draft <id>", "drop draft <id>"); both doors call webmind/tray.ts.
 //
 //   GET  /admin/tray?agent=<id>&limit=20
-//   POST /admin/tray/review { agent, kind: "journal"|"note", id, decision: "kept"|"dropped", content? }
+//   POST /admin/tray/review { agent, kind: "journal"|"note", id, decision: "kept"|"dropped", content?, reverse? }
+//
+// Only a live draft is reviewed (409 already_reviewed otherwise). { reverse: true } is Raziel's override
+// to re-decide a kept/dropped row; Hearth's /tray lists drafts only and never sends it.
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
@@ -43,12 +46,18 @@ export async function postAdminTrayReview(request: Request, env: Env): Promise<R
   const decision = parseTrayDecision(body["decision"]);
   if (!decision) return json({ error: 'decision must be "kept" or "dropped"' }, 400);
   const content = typeof body["content"] === "string" ? body["content"] : null;
+  const reverse = body["reverse"] === true;
 
-  const r = await reviewDraft(env, { agent, kind, id, decision, content });
+  const r = await reviewDraft(env, { agent, kind, id, decision, content, reverse });
   if (!r.ok) {
     if (r.reason === "not_found") return json({ error: "not found (or not this agent's row)" }, 404);
     if (r.reason === "bad_id") return json({ error: "id must be the full id or a prefix of at least 8 characters (letters, digits, - or _)" }, 400);
     if (r.reason === "ambiguous") return json({ error: "ambiguous id prefix -- nothing changed; use more of the id", matches: r.matches }, 409);
+    if (r.reason === "already_reviewed") {
+      return json({ error: `already ${r.review_state}${r.reviewed_at ? ` on ${r.reviewed_at}` : ""} -- nothing changed; pass reverse: true to re-decide`, ...r }, 409);
+    }
+    if (r.reason === "archived") return json({ error: "row is archived (retracted/released) -- the tray does not un-retract", ...r }, 409);
+    if (r.reason === "rewrite_unavailable") return json({ error: "keep-with-rewrite needs migration 0133 -- keep as written or drop", ...r }, 503);
     return json({ error: "content, when given, must be non-empty" }, 400);
   }
   return json(r);

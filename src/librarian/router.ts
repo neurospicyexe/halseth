@@ -12,6 +12,7 @@ import { Env } from "../types.js";
 import { EMBEDDING_MODEL } from "../mcp/embed.js";
 import { DEEPSEEK_DEFAULT_MODEL, contentBudget } from "../synthesis/deepseek.js";
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
+import { TRAY_ID_TOKEN } from "../webmind/review-state.js";
 import { getCurrentFront, type PluralResult } from "./backends/plural.js";
 import type { ExecutorContext, ExecutorFn } from "./executors/types.js";
 import { triggerMatches } from "./lib/trigger.js";
@@ -135,10 +136,10 @@ export interface AnchoredGuard {
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "tray_keep",
-    regex: /^keep\s+(?:draft\s+)?[A-Za-z0-9_-]{8,}\s*(?::|$)/i,
-    note: "Imp tray (mig 0132): bare 'keep <id>' (id or 8+ char prefix, optional ': rewrite') must route without a 'keep' trigger, which would shadow 'keep loop open' / 'keep this to myself'. The {8,} floor is what keeps 'keep loop open' out." },
+    regex: new RegExp(`^keep\\s+(?:draft\\s+)?${TRAY_ID_TOKEN}(?![A-Za-z0-9_-])\\s*(?::|$)`, "i"),
+    note: "Imp tray (mig 0132): bare 'keep <id>' (id or 8+ char prefix, optional ': rewrite') must route without a 'keep' trigger, which would shadow 'keep loop open' / 'keep this to myself'. Pass 2 (09-26): the id must have ID SHAPE (hex/dash, optional cj_) -- [A-Za-z0-9_-]{8,} caught 'keep thinking', 'keep watching', 'keep everything', 'keep drafting'." },
   { pattern_key: "tray_draft_read",
-    regex: /^(?:read|show|open)\s+(?:the\s+|this\s+)?(?:full\s+)?draft\s+[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])/i,
+    regex: new RegExp(`^(?:read|show|open)\\s+(?:the\\s+|this\\s+)?(?:full\\s+)?draft\\s+${TRAY_ID_TOKEN}(?![A-Za-z0-9_-])`, "i"),
     note: "Imp tray: 'read draft <id>' is anchored so an id or a trailing word can never hand the request to a greedier read trigger; mirrors the tray_keep guard." },
   { pattern_key: "journal_edit",
     regex: /^(?:edit|correct|fix|update)\s+(?:my\s+|a\s+|the\s+)?journal\s+note\b/i,

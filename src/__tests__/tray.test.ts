@@ -57,8 +57,9 @@ const ctxFor = (companionId: string, request: string, context?: unknown): any =>
 describe("listTray", () => {
   it("lists drafts from both stores newest-first, owner-scoped, with the keep rate", async () => {
     const { env, calls } = makeEnv({
-      journalRows: [{ id: "j-old", source: "discord_speech", created_at: "2026-09-25T10:00:00Z", excerpt: "old speech" }],
-      noteRows:    [{ id: "n-new", source: "discord", created_at: "2026-09-26T10:00:00Z", excerpt: "[discord:pulse] x" }],
+      // sort_at is computed IN SQL (normalised ISO); this fake returns it as the query would.
+      journalRows: [{ id: "j-old", source: "discord_speech", created_at: "2026-09-25T10:00:00Z", sort_at: "2026-09-25T10:00:00.000Z", excerpt: "old speech" }],
+      noteRows:    [{ id: "n-new", source: "discord", created_at: "2026-09-26T10:00:00Z", sort_at: "2026-09-26T10:00:00.000Z", excerpt: "[discord:pulse] x" }],
       firsts: [{ draft: 1, kept: 2, dropped: 1 }, { draft: 1, kept: 1, dropped: 0 }],
     });
     const view = await listTray(env, "drevan");
@@ -129,7 +130,10 @@ describe("Librarian verbs", () => {
   it("parseTrayVerb reads the id and the rewrite after the colon", () => {
     expect(parseTrayVerb("keep draft 0f3a9c1e")).toEqual({ id: "0f3a9c1e", content: null });
     expect(parseTrayVerb("keep 0f3a9c1e-1234: I said it was a guess, not a reading")).toEqual({ id: "0f3a9c1e-1234", content: "I said it was a guess, not a reading" });
-    expect(parseTrayVerb("drop draft n-abc12345")).toEqual({ id: "n-abc12345", content: null });
+    expect(parseTrayVerb("drop draft cj_0f3a9c1e")).toEqual({ id: "cj_0f3a9c1e", content: null });
+    // Pass 2: an id has ID SHAPE -- ordinary words are not ids.
+    expect(parseTrayVerb("drop draft n-abc12345")).toBeNull();
+    expect(parseTrayVerb("keep thinking about it")).toBeNull();
     expect(parseTrayVerb("my tray")).toBeNull();
   });
 
@@ -164,18 +168,21 @@ describe("Librarian verbs", () => {
     expect(upd.binds[upd.binds.length - 1]).toBe("drevan");
   });
 
-  it("execTrayKeep: context JSON wins over the request string; a repeat keep says so", async () => {
-    const { env, calls } = makeEnv({ noteRows: [{ id: "n-ctx-prefix-full", review_state: "kept", created_at: "2026-09-26T00:00:00Z", excerpt: "x" }] });
+  it("execTrayKeep: context JSON wins over the request string; a keep of an already-kept row is refused, not repeated", async () => {
+    const { env, calls } = makeEnv({ noteRows: [{ id: "n-ctx-prefix-full", review_state: "kept", reviewed_at: "2026-09-26T01:00:00.000Z", archived: 0, created_at: "2026-09-26T00:00:00Z", excerpt: "x" }] });
     const ctx = ctxFor("gaia", "keep draft ignored-id", { id: "n-ctx-prefix", kind: "note" }); ctx.env = env;
     const r = await execTrayKeep(ctx);
     expect(calls[0]!.sql).toContain("FROM wm_continuity_notes");
     expect(calls[0]!.binds[1]).toBe("n-ctx-prefix");
-    expect(String(r["witness"])).toContain("already was");
+    expect(r["ack"]).toBe(false);
+    expect(String(r["witness"])).toContain("already kept on 2026-09-26T01:00:00.000Z");
+    expect(String(r["witness"])).toContain("read draft");
+    expect(calls.some(c => c.sql.includes("UPDATE"))).toBe(false);
   });
 
   it("execTrayDrop: not-yours is a no-change witness, not an error", async () => {
     const { env } = makeEnv();
-    const ctx = ctxFor("cypher", "drop draft not-mine-1"); ctx.env = env;
+    const ctx = ctxFor("cypher", "drop draft 0f3a9c1e-dead"); ctx.env = env;
     const r = await execTrayDrop(ctx);
     expect(r["ack"]).toBe(false);
     expect(String(r["witness"])).toContain("no change");
@@ -241,7 +248,8 @@ describe("read draft <id> (full text + provenance)", () => {
   it("parseTrayReadVerb takes the id and never a rewrite", () => {
     expect(parseTrayReadVerb("read draft 0f3a9c1e")).toBe("0f3a9c1e");
     expect(parseTrayReadVerb("read draft 0f3a9c1e: keep this instead")).toBe("0f3a9c1e");
-    expect(parseTrayReadVerb("show the draft n-abc12345")).toBe("n-abc12345");
+    expect(parseTrayReadVerb("show the draft cj_0f3a9c1e")).toBe("cj_0f3a9c1e");
+    expect(parseTrayReadVerb("show the draft n-abc12345")).toBeNull();
     expect(parseTrayReadVerb("read my drafts")).toBeNull();
   });
 
@@ -279,15 +287,15 @@ describe("read draft <id> (full text + provenance)", () => {
 
   it("a kept note reads back labelled as already decided, with its prefix and channel from thread_key", async () => {
     const { env } = makeEnv({
-      noteRows: [{ id: "n-77aa0011-x", review_state: "kept", created_at: "2026-09-25T00:00:00Z", excerpt: "[discord:pulse]" }],
+      noteRows: [{ id: "77aa0011-eeee", review_state: "kept", created_at: "2026-09-25T00:00:00Z", excerpt: "[discord:pulse]" }],
       firsts: [{
-        note_id: "n-77aa0011-x", agent_id: "gaia", thread_key: "discord:555", note_type: "continuity",
+        note_id: "77aa0011-eeee", agent_id: "gaia", thread_key: "discord:555", note_type: "continuity",
         content: "[discord:pulse] the room was quiet and I held it.", salience: "normal", actor: "agent",
         source: "discord", correlation_id: null, created_at: "2026-09-25T00:00:00Z", edited_at: null,
         archived: 0, review_state: "kept", reviewed_at: "2026-09-26T02:00:00Z",
       }],
     });
-    const ctx = ctxFor("gaia", "read draft n-77aa0011"); ctx.env = env;
+    const ctx = ctxFor("gaia", "read draft 77aa0011"); ctx.env = env;
     const r = await execTrayDraftRead(ctx);
     const data = r["data"] as any;
     expect(data.draft).toMatchObject({ kind: "note", table: "wm_continuity_notes", review_state: "kept", prefix: "discord:pulse", channel: "555", thread_key: "discord:555", owner: "gaia" });
@@ -297,8 +305,8 @@ describe("read draft <id> (full text + provenance)", () => {
 
   it("an ambiguous prefix (one journal row + one note) is refused with both candidates -- never a guess", async () => {
     const { env, calls } = makeEnv({
-      journalRows: [{ id: "abc12345-journal", review_state: "draft", created_at: "2026-09-25T00:00:00Z", excerpt: "j" }],
-      noteRows:    [{ id: "abc12345-note", review_state: "dropped", created_at: "2026-09-26T00:00:00Z", excerpt: "n" }],
+      journalRows: [{ id: "abc12345-journal", review_state: "draft", created_at: "2026-09-25T00:00:00Z", sort_at: "2026-09-25T00:00:00.000Z", excerpt: "j" }],
+      noteRows:    [{ id: "abc12345-note", review_state: "dropped", created_at: "2026-09-26T00:00:00Z", sort_at: "2026-09-26T00:00:00.000Z", excerpt: "n" }],
     });
     const ctx = ctxFor("drevan", "read draft abc12345"); ctx.env = env;
     const r = await execTrayDraftRead(ctx);
@@ -328,7 +336,7 @@ describe("read draft <id> (full text + provenance)", () => {
     expect(short["error"]).toBe("tray_draft_read_failed");
     expect(a.calls).toHaveLength(0);
     const b = makeEnv();
-    const none = await execTrayDraftRead(Object.assign(ctxFor("cypher", "read draft someone-elses"), { env: b.env }));
+    const none = await execTrayDraftRead(Object.assign(ctxFor("cypher", "read draft 0f3a9c1e-ffff"), { env: b.env }));
     expect(none["ack"]).toBe(false);
     expect(String(none["witness"])).toContain("not yours");
   });

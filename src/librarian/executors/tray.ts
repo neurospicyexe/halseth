@@ -17,11 +17,17 @@
 // fallback, and only for the id and the rewrite after a colon.
 
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
+import { TRAY_ID_TOKEN } from "../../webmind/review-state.js";
 import { listTray, reviewDraft, readDraft, parseTrayKind, type TrayDecision, type TrayMatch } from "../../webmind/tray.js";
 
 // "keep draft <id>: <text>" / "keep <id>" / "drop draft <id>". The id is the token after the verb
 // (a full id or a prefix of 8+ chars); anything after the first colon is the rewrite.
-const VERB_RE = /^(?:keep|drop)\s+(?:draft\s+)?([A-Za-z0-9_-]+)\s*(?::\s*([\s\S]+))?$/i;
+//
+// Id SHAPE, not just id characters (pass 2, 2026-09-26): every id in both tables is a lowercase uuid,
+// `cj_` + uuid, or 32 hex (prod census). [A-Za-z0-9_-]{8,} also matched "keep thinking", "keep
+// watching", "keep everything", "keep drafting" -- ordinary speech routed to a keep. TRAY_ID_TOKEN is
+// hex-and-dash after an optional cj_, so no English word of 8+ letters outside a-f can match.
+const VERB_RE = new RegExp(`^(?:keep|drop)\\s+(?:draft\\s+)?(${TRAY_ID_TOKEN})(?![A-Za-z0-9_-])\\s*(?::\\s*([\\s\\S]+))?$`, "i");
 
 export function parseTrayVerb(request: string): { id: string; content: string | null } | null {
   const m = VERB_RE.exec(request.trim());
@@ -32,7 +38,7 @@ export function parseTrayVerb(request: string): { id: string; content: string | 
 
 // "read draft <id>" / "show draft <id>". Deliberately NOT folded into VERB_RE: a read never carries a
 // rewrite, so anything after the id is ignored rather than mistaken for content.
-const READ_RE = /^(?:read|show|open)\s+(?:the\s+|this\s+)?(?:full\s+)?draft\s+([A-Za-z0-9_-]+)(?![A-Za-z0-9_-])/i;
+const READ_RE = new RegExp(`^(?:read|show|open)\\s+(?:the\\s+|this\\s+)?(?:full\\s+)?draft\\s+(${TRAY_ID_TOKEN})(?![A-Za-z0-9_-])`, "i");
 
 export function parseTrayReadVerb(request: string): string | null {
   return READ_RE.exec(request.trim())?.[1] ?? null;
@@ -100,15 +106,30 @@ async function review(ctx: ExecutorContext, decision: TrayDecision): Promise<Exe
     if (r.reason === "bad_id") return { error: `tray_${verb}_failed`, reason: "id must be the full id or a prefix of at least 8 characters" };
     if (r.reason === "ambiguous") return { error: `tray_${verb}_ambiguous`, reason: `${ambiguousReason(id, r.matches)}. Nothing changed.`, matches: r.matches };
     if (r.reason === "empty_content") return { error: "tray_keep_failed", reason: "a rewrite cannot be empty -- omit the colon to keep the draft as written" };
+    if (r.reason === "already_reviewed") {
+      // Pass 2 (2026-09-26): a decision is made once. Say what it was and when; do not re-decide.
+      const when = r.reviewed_at ? ` on ${r.reviewed_at}` : " (born kept -- it was never a draft)";
+      return {
+        response_key: "witness",
+        witness: `no change -- already ${r.review_state}${when} (${r.kind} ${r.id}); "read draft ${r.id}" to see it. ` +
+          `A decision is not re-made from here; only Raziel can reverse it (admin tray review).`,
+        ack: false, id: r.id, kind: r.kind, review_state: r.review_state,
+      };
+    }
+    if (r.reason === "archived") {
+      return { response_key: "witness", witness: `no change -- that row is archived (retracted or released), not in the tray (${r.kind} ${r.id})`, ack: false };
+    }
+    if (r.reason === "rewrite_unavailable") {
+      return { error: "tray_keep_failed", reason: "keeping in your own words is not available yet (migration 0133 pending) -- keep it as written, or drop it" };
+    }
     return { response_key: "witness", witness: "no change (not found or not yours)", ack: false };
   }
-  const already = r.previous_state === decision;
   const witness = decision === "kept"
     ? (r.rewritten ? `kept, in your words -- it is memory now (${r.kind} ${r.id})` : `kept -- it is memory now (${r.kind} ${r.id})`)
     : `dropped -- it never becomes memory (${r.kind} ${r.id})`;
   return {
     response_key: "witness",
-    witness: already ? `${witness}; it already was` : witness,
+    witness,
     ack: true,
     id: r.id,
     kind: r.kind,

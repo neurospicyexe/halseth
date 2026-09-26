@@ -48,13 +48,26 @@ export async function getHandovers(request: Request, env: Env): Promise<Response
   });
 }
 
-// GET /companion-journal?agent=drevan&limit=20&since=<ISO8601>
+// GET /companion-journal?agent=drevan&limit=20&since=<ISO8601>[&cursor=reviewed]
+//
+// cursor=reviewed (tray pass 2, 2026-09-26) -- the puller's opt-in. A draft kept TODAY that was
+// created LAST WEEK has created_at far behind the puller's high-water mark, so a created_at cursor
+// never serves it and the vault never learns it was kept. With cursor=reviewed the feed filters and
+// orders on COALESCE(reviewed_at, created_at) -- the moment a row became memory -- normalised to one
+// ISO shape in SQL (rows carry both 'T...Z' and datetime('now') space-form stamps), and returns that
+// value as `cursor_at` for the puller to advance on.
+//
+// Opt-in, not a behaviour change: an old puller that never sends the param gets exactly the old
+// created_at feed. (Switching everyone would hand an old puller rows ordered by a cursor it ignores;
+// it would set its mark from created_at, move it BACKWARD, and could re-page the same 100 rows.) A new
+// puller against an old Halseth sees no cursor_at and falls back to created_at.
 export async function getCompanionJournal(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const url   = new URL(request.url);
   const agent = url.searchParams.get("agent");
   const limit = clampLimit(url.searchParams.get("limit"), 20, 100);
   const since = url.searchParams.get("since") ?? undefined;
+  const reviewedCursor = url.searchParams.get("cursor") === "reviewed";
 
   if (since !== undefined && isNaN(Date.parse(since))) {
     return new Response(JSON.stringify({ error: "invalid since parameter" }), {
@@ -92,19 +105,26 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
     conditions.push("agent != 'system'");
   }
   if (since !== undefined) {
-    conditions.push("created_at > ?");
-    bindings.push(since);
+    if (reviewedCursor) {
+      // ISO_SQL("?") expands to two placeholders (strftime(?) and its fallback): bind `since` twice.
+      conditions.push(`${JOURNAL_CURSOR_SQL} > ${ISO_SQL("?")}`);
+      bindings.push(since, since);
+    } else {
+      conditions.push("created_at > ?");
+      bindings.push(since);
+    }
   }
 
   const where    = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const orderDir = since !== undefined ? "ASC" : "DESC";
+  const orderBy  = reviewedCursor ? `cursor_at ${orderDir}, id ${orderDir}` : `created_at ${orderDir}`;
   bindings.push(limit);
 
   const result = await env.DB.prepare(`
-    SELECT id, created_at, agent, note_text, tags, session_id, source, review_state, reviewed_at
+    SELECT id, created_at, agent, note_text, tags, session_id, source, review_state, reviewed_at${reviewedCursor ? `, ${JOURNAL_CURSOR_SQL} AS cursor_at` : ""}
     FROM companion_journal
     ${where}
-    ORDER BY created_at ${orderDir}
+    ORDER BY ${orderBy}
     LIMIT ?
   `).bind(...bindings).all();
 
@@ -112,6 +132,11 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
     headers: { "Content-Type": "application/json" },
   });
 }
+
+/** Any stored stamp -> one ISO shape ('YYYY-MM-DDTHH:MM:SS.SSSZ'); unparseable input passes through. */
+const ISO_SQL = (expr: string) => `COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', ${expr}), ${expr})`;
+/** When a journal row became memory: its keep, or its birth if it was born kept. */
+const JOURNAL_CURSOR_SQL = ISO_SQL("COALESCE(reviewed_at, created_at)");
 
 // GET /cypher-audit?limit=50
 export async function getCypherAudit(request: Request, env: Env): Promise<Response> {
