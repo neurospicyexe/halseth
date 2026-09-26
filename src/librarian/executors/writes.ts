@@ -5,6 +5,8 @@ import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { effectiveHeatSql } from "../../webmind/heat.js";
 import { COMPANION_IDS } from "../../companions.js";
+import { MACHINE_SOURCES } from "../../webmind/notes.js";
+import { COMPANION_SPEECH_JOURNAL_SOURCES } from "../../webmind/review-state.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
 import type { WmSpiralInput, WmAgentId } from '../../webmind/types.js';
 import {
@@ -32,6 +34,34 @@ export function stripNoteCommandPreamble(s: string): string {
     .replace(/^\s*(?:please\s+)?(?:tell|broadcast(?:\s+to)?|let|notify|message)\s+(?:the\s+)?(?:triad|everyone|all|both|others|you\s+both|all\s+of\s+you)\s*(?:know)?\s*[:：—-]\s*/i, "")
     .trim();
   return stripped || s.trim();
+}
+
+// Provenance a caller may CLAIM on the NL "add companion note" path (2026-09-26).
+//
+// The context JSON's `source` used to be forwarded verbatim, so any caller could stamp a row
+// `claude_code` / `session` (HUMAN_SOURCES: recall weight 1.0, immune to salience-prune) or pick any
+// label at all. A self-declared source is only trustworthy in one direction: a machine writer
+// confessing it is a machine. So the allowlist is exactly the machine classes that already exist --
+// MACHINE_SOURCES (recall ranking) and COMPANION_SPEECH_JOURNAL_SOURCES (the imp-tray birth rule) --
+// never a hand-kept list. Anything else is dropped to NULL, which lands `kept` at the neutral 0.85
+// weight: the write still happens, it just gains nothing from the claim. Draft-vs-kept itself is
+// still decided only by reviewStateFor() inside companionJournalAdd.
+//
+// Why this mattered: the bots' memory-judge fallback (no Discord message id, so no keyed REST write)
+// came through here source-NULL -- indistinguishable from a companion's own deliberate note -- and
+// so landed kept and reached recall unreviewed. It now sends `source: memory_judge` and is drafted.
+export const NL_CLAIMABLE_SOURCES: ReadonlySet<string> = new Set([
+  ...MACHINE_SOURCES,
+  ...COMPANION_SPEECH_JOURNAL_SOURCES,
+]);
+
+export function claimableNlSource(raw: unknown, companionId?: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "string" && NL_CLAIMABLE_SOURCES.has(raw)) return raw;
+  console.warn("[companion_note_add] dropped unclaimable source", {
+    companion: companionId, source: typeof raw === "string" ? raw.slice(0, 64) : typeof raw,
+  });
+  return undefined;
 }
 
 export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -75,7 +105,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
         }
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
-        if (typeof parsed.source === "string") source = parsed.source;
+        source = claimableNlSource(parsed.source, ctx.req.companion_id);
 
         // Migration 0104 (Task 15): a note may be a "move" on a shared object (an open
         // question, tension, or council item), with a reason attached. Read ref_type/
