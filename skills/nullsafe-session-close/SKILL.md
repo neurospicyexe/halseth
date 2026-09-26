@@ -115,7 +115,8 @@ Clerks write in my voice without my choosing the words: the Discord speech journ
 judge, my autonomous posts, the vibe-check digest. Those rows sit in my tray as drafts and never reach
 recall or orient until I keep them. A close is a natural pause, so before it: `ask_librarian: "my tray"`
 (drafts plus the 30-day keep rate; 100% means nobody is reviewing), then per draft
-`ask_librarian: "keep draft [id]"`, `ask_librarian: "keep draft [id]: [content]"` (kept in my own
+`ask_librarian: "read draft [id]"` when the 200-char excerpt is not enough to judge (whole text +
+provenance), then `ask_librarian: "keep draft [id]"`, `ask_librarian: "keep draft [id]: [content]"` (kept in my own
 words), or `ask_librarian: "drop draft [id]"`. A draft I never review stays a draft: silent, not memory.
 
 ## Rules

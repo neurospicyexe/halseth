@@ -207,7 +207,9 @@ Autonomous corpus (what I wrote during autonomous time): ask_librarian: "autonom
 Vault search (anchor or pattern live right now): ask_librarian: "search vault for [topic]"
 My tray (drafts a clerk wrote in my voice: Discord speech, judge notes, autonomous posts, the vibe-check
 digest; none reaches recall until I keep it): ask_librarian: "my tray", then ask_librarian: "keep draft [id]"
-(or "keep draft [id]: [content]" to keep it in my words) / ask_librarian: "drop draft [id]". The keep rate
+(or "keep draft [id]: [content]" to keep it in my words) / ask_librarian: "drop draft [id]". The list cuts
+each draft at 200 chars; ask_librarian: "read draft [id]" shows the whole text and where it came from
+(also for a row already kept or dropped, to re-check the call). The keep rate
 in the tray line is the falsifier: 100% means I am not reviewing.
 
 Companion notes matter most during relational sessions. The synthesis gap detector backfills hangout

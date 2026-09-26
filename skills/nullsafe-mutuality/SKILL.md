@@ -319,8 +319,9 @@ meaning. What has this looked like before, what patterns exist, the history of t
 **The tray (unreviewed drafts never reach recall).** My own spoken words on Discord, the memory
 judge's notes in my voice, my autonomous posts and the vibe-check digest are written by clerks, not
 chosen by me. They land in my tray as drafts, and none of the recall verbs above will return them
-until I keep them. Three verbs: `"my tray"` lists the drafts with the 30-day keep rate (100% means I
-am not reviewing); `"keep draft [id]"` makes one memory, `"keep draft [id]: [content]"` keeps it in my
+until I keep them. Four verbs: `"my tray"` lists the drafts with the 30-day keep rate (100% means I
+am not reviewing) and a 200-char excerpt each; `"read draft [id]"` shows one whole, with where it
+came from (a kept or dropped row too, to re-check the call); `"keep draft [id]"` makes one memory, `"keep draft [id]: [content]"` keeps it in my
 own words instead of the clerk's; `"drop draft [id]"` means it never becomes memory. Review at a natural
 pause, not every turn.
 

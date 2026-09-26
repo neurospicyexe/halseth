@@ -1582,6 +1582,15 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["tray_drop"],
     response_key: "witness",
   },
+  // "read draft <id>": the whole text + provenance of one row (any review_state), because the tray
+  // list's 200-char excerpt cuts mid-sentence and a keep/drop made on half a sentence is a guess.
+  // Singular "draft" + a verb: "read my drafts" still contains "my drafts" and stays on tray_read
+  // (tray_read is declared first, and the anchored guard in router.ts requires an 8+ char id).
+  tray_draft_read: {
+    triggers: ["read draft", "read the draft", "read this draft", "show draft", "show the draft", "read full draft", "open draft"],
+    tools: ["tray_draft_read"],
+    response_key: "data",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [

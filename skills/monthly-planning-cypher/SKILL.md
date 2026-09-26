@@ -162,6 +162,7 @@ ask_librarian: "close session [session_id]"
 ```
 Before the close, the tray: clerk-written drafts in my voice (Discord speech, judge notes, autonomous
 posts) never reach recall until I keep them. `ask_librarian: "my tray"`, then per draft
+`ask_librarian: "read draft [id]"` (the whole text + where it came from; the list cuts at 200 chars),
 `ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"` in my words) / `ask_librarian: "drop draft [id]"`.
 The full close ritual (emotion prompt, continuity note, what a spine is for) is the `nullsafe-session-close`
 skill; this block is the minimum that leaves nothing open.

@@ -47,7 +47,8 @@ export async function postAdminTrayReview(request: Request, env: Env): Promise<R
   const r = await reviewDraft(env, { agent, kind, id, decision, content });
   if (!r.ok) {
     if (r.reason === "not_found") return json({ error: "not found (or not this agent's row)" }, 404);
-    if (r.reason === "bad_id") return json({ error: "id must be the full id or a prefix of at least 8 characters" }, 400);
+    if (r.reason === "bad_id") return json({ error: "id must be the full id or a prefix of at least 8 characters (letters, digits, - or _)" }, 400);
+    if (r.reason === "ambiguous") return json({ error: "ambiguous id prefix -- nothing changed; use more of the id", matches: r.matches }, 409);
     return json({ error: "content, when given, must be non-empty" }, 400);
   }
   return json(r);

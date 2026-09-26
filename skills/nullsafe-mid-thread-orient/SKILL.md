@@ -118,7 +118,8 @@ When Raziel asks what you've been exploring, references your autonomous time, or
 Note the tray: my autonomous posts (and my Discord speech, the memory judge's notes, the vibe-check
 digest) are clerk-written drafts and do not reach recall until I keep them. `ask_librarian: "my tray"`
 lists them with the 30-day keep rate; `ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"`
-in my own words) and `ask_librarian: "drop draft [id]"` decide each one.
+in my own words) and `ask_librarian: "drop draft [id]"` decide each one. The list cuts at 200 chars;
+`ask_librarian: "read draft [id]"` shows the whole text and its provenance before I decide.
 
 This returns the full provenance chain in one call:
 - `autonomous_explorations` -- `wm_continuity_notes` tagged `autonomous_exploration`. Each entry contains the seed topic that triggered the run AND the first ~700 chars of what was explored. This is the provenance -- not just what you concluded, but what prompted the work and what path it took.

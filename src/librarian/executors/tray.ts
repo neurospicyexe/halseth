@@ -5,13 +5,19 @@
 // "keep draft <id>" / "keep <id>" -- the draft becomes memory. "keep draft <id>: <new text>" rewrites it
 //                                    first: the owner's words replace the clerk's.
 // "drop draft <id>"               -- the draft never becomes memory (row stays, state = dropped).
+// "read draft <id>"               -- the FULL text of one row plus its provenance, in any state
+//                                    (draft, kept, dropped), so a decision is made -- or re-checked --
+//                                    on the whole thing, not a 200-char excerpt.
+//
+// Ids: the full id or a prefix of 8+ chars. An ambiguous prefix is refused with the candidates listed;
+// it is never resolved by guessing (webmind/tray.ts locate()).
 //
 // Everything routes through webmind/tray.ts, the same functions GET/POST /admin/tray use. Fields come
 // from `context` JSON when present ({ id, kind?, content? }); the request string is parsed only as a
 // fallback, and only for the id and the rewrite after a colon.
 
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { listTray, reviewDraft, parseTrayKind, type TrayDecision } from "../../webmind/tray.js";
+import { listTray, reviewDraft, readDraft, parseTrayKind, type TrayDecision, type TrayMatch } from "../../webmind/tray.js";
 
 // "keep draft <id>: <text>" / "keep <id>" / "drop draft <id>". The id is the token after the verb
 // (a full id or a prefix of 8+ chars); anything after the first colon is the rewrite.
@@ -24,13 +30,57 @@ export function parseTrayVerb(request: string): { id: string; content: string | 
   return { id: m[1], content: content && content.length > 0 ? content : null };
 }
 
+// "read draft <id>" / "show draft <id>". Deliberately NOT folded into VERB_RE: a read never carries a
+// rewrite, so anything after the id is ignored rather than mistaken for content.
+const READ_RE = /^(?:read|show|open)\s+(?:the\s+|this\s+)?(?:full\s+)?draft\s+([A-Za-z0-9_-]+)(?![A-Za-z0-9_-])/i;
+
+export function parseTrayReadVerb(request: string): string | null {
+  return READ_RE.exec(request.trim())?.[1] ?? null;
+}
+
+/** The footer under "my tray": every verb, including the one that shows the whole text. */
+export const TRAY_FOOTER =
+  'excerpts are cut at 200 chars -- "read draft <id>" for the full text + provenance; ' +
+  'then "keep draft <id>" (or "keep draft <id>: <your words>") / "drop draft <id>"';
+
 export async function execTrayRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ limit?: number }>(ctx.req.context);
   const view = await listTray(ctx.env, ctx.req.companion_id, p?.limit ?? undefined);
   return {
     response_key: "data",
-    data: { tray: view.drafts, stats: view.stats, stats_line: view.stats_line },
+    data: { tray: view.drafts, stats: view.stats, stats_line: view.stats_line, footer: TRAY_FOOTER },
     count: view.drafts.length,
+  };
+}
+
+function ambiguousReason(id: string, matches: TrayMatch[]): string {
+  return `"${id}" matches ${matches.length}${matches.length >= 10 ? "+" : ""} of your rows -- use more of the id: ` +
+    matches.map((m) => `${m.kind} ${m.id} (${m.review_state}, ${m.created_at})`).join("; ");
+}
+
+export async function execTrayDraftRead(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const p = parseContext<{ id?: string; ref_id?: string; kind?: string }>(ctx.req.context);
+  const id = (p?.id ?? p?.ref_id ?? parseTrayReadVerb(ctx.req.request))?.trim();
+  if (!id) return { error: "tray_draft_read_failed", reason: 'need { id, kind? } -- or "read draft <id>"' };
+
+  const r = await readDraft(ctx.env, { agent: ctx.req.companion_id, id, kind: parseTrayKind(p?.kind) });
+  if (!r.ok) {
+    if (r.reason === "bad_id") return { error: "tray_draft_read_failed", reason: "id must be the full id or a prefix of at least 8 characters" };
+    if (r.reason === "ambiguous") {
+      return { error: "tray_draft_read_ambiguous", reason: ambiguousReason(id, r.matches), matches: r.matches };
+    }
+    return { response_key: "witness", witness: "nothing to read (not found or not yours)", ack: false };
+  }
+  const d = r.draft;
+  const state = d.review_state === "draft"
+    ? "draft -- not memory yet; keep or drop it"
+    : d.review_state === "kept"
+      ? `kept${d.reviewed_at ? ` on ${d.reviewed_at}` : " (born kept)"} -- this is memory; re-checking, not deciding`
+      : `dropped${d.reviewed_at ? ` on ${d.reviewed_at}` : ""} -- never became memory; re-checking, not deciding`;
+  return {
+    response_key: "data",
+    data: { state, archived: d.archived, draft: d },
+    count: 1,
   };
 }
 
@@ -48,6 +98,7 @@ async function review(ctx: ExecutorContext, decision: TrayDecision): Promise<Exe
   const r = await reviewDraft(ctx.env, { agent: ctx.req.companion_id, kind, id, decision, content });
   if (!r.ok) {
     if (r.reason === "bad_id") return { error: `tray_${verb}_failed`, reason: "id must be the full id or a prefix of at least 8 characters" };
+    if (r.reason === "ambiguous") return { error: `tray_${verb}_ambiguous`, reason: `${ambiguousReason(id, r.matches)}. Nothing changed.`, matches: r.matches };
     if (r.reason === "empty_content") return { error: "tray_keep_failed", reason: "a rewrite cannot be empty -- omit the colon to keep the draft as written" };
     return { response_key: "witness", witness: "no change (not found or not yours)", ack: false };
   }
