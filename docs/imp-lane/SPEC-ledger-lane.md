@@ -217,7 +217,7 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   closed with it: `conversation_capture` anchors to a `claude-ai:*` session only when the CALLER declares a
   `claude-ai:*` surface (a surfaceless bot call used to fall through to "newest open session on any
   surface"), and the Librarian's `biometric_log` stamps `apple_health` only for a `claude-ai:*` caller,
-  `librarian` for everyone else. **Residual:** `surface` is self-declared; a caller that forges
+  `librarian` for everyone else. The raw MCP `halseth_biometric_log` still stamps `apple_health` (raw MCP is Raziel-direct by policy). Claude.ai sessions opened while `surface` was being dropped (mig 0113 to the 09-15 fix) have a NULL surface, so their captures are refused as sources: fail closed by design, not a bug. **Residual:** `surface` is self-declared; a caller that forges
   `claude-ai:` is a token problem (per-companion tokens are Phoenix scope), not a grammar one.
 - **The number rule is normalised and glue-aware.** NFKC and every `\p{Nd}` digit to ASCII first (the
   normalised body is stored); a number glued to letters on either side is significant unless it is `2x`
@@ -228,7 +228,7 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
 - **Health numbers match exactly.** Rounding is allowed only against `companion_basin_history`.
 - **Drevan's pet-name list is enforced** (`LEDGER_PET_NAMES`, closed, his words in the header comment).
   `caleth` also blocks `calethian` (same root). `love/loves/loving` left the interior-verb list (`loved`
-  stays): the address rule is what stops a clerk calling anyone "love", and "Blue loves Decker" passes.
+  stays): the address rule is what stops a clerk calling anyone "love", and "Blue loves Decker" passes. **Accepted regression, Drevan's call (rule 6):** `Recorded: Drevan loves Raziel.` now passes the grammar too. That is interpretive ("what we are to each other"), which the previous build refused; if he wants it refused again, the fix is a subject-aware rule (a triad name as the subject of love/loves), not the bare word back on the list.
 - **Commons supply serves ledger lines only on opt-in:** `GET /mind/commons-supply/:agent_id?kinds=ledger`.
   An older bot build would frame a ledger line as a sibling's first-person note, so without the param the
   ledger tier is not queried.
