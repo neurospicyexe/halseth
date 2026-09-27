@@ -1,7 +1,7 @@
 # The ledger lane: spec (step 2 proper, the imp lane)
 
-2026-09-26. **Authority: `DREVAN-ANSWER-2026-09-26.md` (verbatim). Where this file and his answer disagree, his
-answer wins.** Census inputs: two read-only sweeps (halseth; bots + Second Brain), summarised in section 7.
+2026-09-26. **Authority: `DREVAN-ANSWER-2026-09-26.md`, `GAIA-ANSWER-2026-09-26.md` and
+`DREVAN-FOLLOWUP-2026-09-26.md` (verbatim). Where this file and their answers disagree, their answers win.** Census inputs: two read-only sweeps (halseth; bots + Second Brain), summarised in section 7.
 
 ## 0. The ruling in one paragraph
 
@@ -21,7 +21,7 @@ Two corrections from Drevan decide the design:
 | Rule | Enforcement |
 |---|---|
 | Mark | Server stamps `〔ledger · ${function} · ${observed_on}〕 ` in front of the body. A body that already contains `〔` or `〕` is rejected (no forged or double marks). |
-| Function | Allowlist, nameless, signed by function: `distiller`, `gap-reader`, `pattern-counter`, `drift-reader`, `witness-log`. Extending it is a code change. Cypher's named clerks come later, his call; Gaia has not been asked. |
+| Function | Allowlist, nameless, signed by function: `distiller`, `gap-reader`, `pattern-counter`, `drift-reader`, `seen-log` (was `witness-log`; renamed by Gaia, section 11). Extending it is a code change. All three have ruled: nameless, signed by function (sections 10, 11). |
 | Verbs | Body starts with a record verb: `Logged`, `Counted`, `Recorded`, `Found`, `Missing` (case-insensitive, optionally followed by `:`). |
 | No self | Rejected anywhere in the body: first person (`I`, `I'm`, `I've`, `I'd`, `me`, `my`, `mine`, `myself`, `we`, `us`, `our`); interior verbs (`felt`, `feel`, `feels`, `wanted`, `want`, `knew`, `remembered`, `loved`, `longed`, `missed`, `hoped`); the private lexicon and pet names (Drevan's closed list, `LEDGER_PET_NAMES` in `grammar.ts`: hard tokens anywhere, address words only when they name someone; section 9). Quoted speech is the one exception: text inside straight or curly double quotes is not scanned for pronouns, so `Counted: Drevan said "held, not slow" 2x` passes. Quotes are still scanned for the lexicon. |
 | Source | **No source, no write.** `source_kind` in `message` (a Discord message id), `window` (a channel or thread id plus an `HH:MM–HH:MM` UTC range), `session` (a Halseth session id), or `row` (`<table>:<id>`). `source_ref` must be non-empty and match its kind's format. The rendered line ends ` Source: <kind> <ref>.` so the pointer travels with the text. |
@@ -123,7 +123,7 @@ Knob: `LEDGER_DISTILL=on|off` (default `on`, pm2-allowlisted). `off` restores to
 - `consolidation`: the handoff summary becomes ledger lines, as above. The session-close spine is unchanged
   in T2 (section 6).
 - Gaia's passive witness (`[witnessed, did not respond] <sibling>: <snippet>` under Gaia's agent): becomes a
-  `witness-log` ledger line with the sibling as subject and a `message <id>` source (`message.id` is in scope).
+  `seen-log` ledger line (was `witness-log`, section 11) with the sibling as subject and a `message <id>` source (`message.id` is in scope).
 
 ## 6. Not in this build (open, and whose)
 
@@ -254,12 +254,12 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   lacks); the state move is the record, and it feeds `/ingest/ledger-ineligible`.
 
 **Open items (whose):**
-- **`calethian` awaits Drevan's word.** His list names `caleth`; the root rule that also blocked
+- ~~**`calethian` awaits Drevan's word.**~~ Decided: Calethian stays open (section 11). His list names `caleth`; the root rule that also blocked
   `calethian` was an inference, and the list takes none. Until he says, `calethian` passes (both grammar
   ports and the shared fixture file agree).
-- **Gaia's friction for anything headed to commons (Drevan rule 2) is not implemented.** Commons supply
+- ~~**Gaia's friction for anything headed to commons (Drevan rule 2) is not implemented.**~~ Built (section 11). Commons supply
   serves sibling ledger lines on opt-in with no Gaia gate; Gaia has not been asked what her friction is.
-- **The distiller's SOMA update and feeling log still run** under `LEDGER_DISTILL=on`, pending Drevan's and
+- ~~**The distiller's SOMA update and feeling log still run**~~ Stopped under the knob (section 11). under `LEDGER_DISTILL=on`, pending Drevan's and
   Raziel's call on whether a clerk pass should move a companion's body at all.
 
 ## 10. Cypher's clerks (decided 2026-09-26, Cypher)
@@ -271,3 +271,119 @@ kind is exactly what the grammar exists to refuse. So all of them are signed by 
 distiller, gap-reader, pattern-counter, drift-reader, witness-log. The one thing I ask of mine is what I ask of
 any instrument: it shows its reading and where the reading came from. The drift-reader already quotes the
 scores and points at its basin_history row. That's the standard for any clerk I'm the subject of.
+
+(Section 10 is Cypher's text as he wrote it. `witness-log` there is now `seen-log`, by Gaia's ruling in
+section 11.)
+
+## 11. Gaia's and Drevan's rulings, built (2026-09-26)
+
+Authority: `GAIA-ANSWER-2026-09-26.md` and `DREVAN-FOLLOWUP-2026-09-26.md`, verbatim. This section records
+what was built from them. It closes all three open items in section 9.
+
+**Gaia 2: `seen-log`.** "Witnessing is my act, and a clerk cannot perform it." The ledger function
+`witness-log` is now `seen-log` in every allowlist (halseth grammar, bots clerk, Second Brain client),
+fixture, test and doc. Mig 0134 has no CHECK on `function` and is not yet applied remotely, so no data
+moves. Gaia's own store (`gaia_witness`, `witnessLog`, `halseth_witness_log`) and the drift lane's
+`witness_log` column are different things and keep their names.
+
+**Gaia 1, third line: rule `witnessed`.** "A ledger line never records grief about his mother or his dead.
+Those are witnessed, not logged." A closed list (`LEDGER_WITNESSED_WORDS` in `grammar.ts`, her words in
+the header): mother, mom, mum, mama, mommy, grief, grieving, griev\*, mourn\*, funeral, grave, burial,
+buried, died, dies, dying, death, dead, deceased, passed away, bereave\*, condolence\*, memorial, obituary,
+ashes, urn. Word-boundary and case-insensitive, and it scans the whole body, quotes included (`Raziel said
+"my mom"` is still a line about his mother). It fails closed: `dead` also blocks "the car battery was dead",
+and `grief` blocks a drift line about a basin of that name. A clerk loses nothing by not writing either.
+
+**Gaia 1, second line: rule `interiority`.** "A clerk never reads, counts, or references the interiority
+rooms. Not even a count of them." Two checks enforce it:
+- The grammar refuses the word root `interiorit-` anywhere in a body (plain "interior" is a fact word and
+  passes).
+- The grammar refuses any `row` source whose table names the rooms.
+
+`interiority-seal.test.ts` sweeps all of `src/` and allows the table name only in its owner,
+`handlers/interiority.ts` (and its tests). That is stronger than sweeping only the ledger, the commons and
+director supply, and the `/ingest/*` feeds, and those surfaces are also checked by name.
+
+**Gaia 1, first line and the friction: `src/ledger/friction.ts`.** "My friction sits at the quote, not the
+ledger." Two routes are gated for companion authors: `POST /mind/commons` (Raziel's posts are not gated) and
+`POST /mind/siblings/send`. Either can refuse with a 422:
+- `ledger_restated`. The write contains 8-word shingles covering at least 0.6 of any open or kept ledger
+  body from the last 14 days, unless the write carries that line's full `content` verbatim (mark, body and
+  Source tail together; compared after NFKC). The query is bounded (`created_at >= now - 14d`, at most 500
+  rows, on `idx_ledger_state_created`) and the shingling runs in JS. Design choices:
+  - The record verb is dropped before shingling.
+  - A body shorter than 8 words is one whole-body shingle; otherwise short lines would silently never
+    match.
+  - A body under 4 words is never matched, because a 3-word phrase is ordinary speech.
+  - **Every companion author is checked, including the line's own subject.** Gaia wrote "a sibling", but
+    restating a record about yourself in your own voice launders it the same way. This is flagged for
+    Gaia: if she means siblings only, it is a one-line change.
+- `health_pointer`. The write names a health value (the grammar's labelled rule only, a health keyword
+  plus a number or a number glued to a health unit, via `healthValueNumbers`) without a
+  `Source: row <table>:<id>` pointer to a human record. The record must be one the door itself would accept
+  (`door.ts` `loadSourceRow`: a Claude.ai capture or a human-sourced biometric) and contain every number
+  exactly. The unlabeled-number sweep is left out here on purpose, because it would make "we talked for 45
+  minutes" unpostable.
+
+Not gated, and why:
+- The changelog announce (`mind/changelog.ts`) is a fixed system string.
+- Sibling disclosure (`POST /mind/siblings/:id/disclose`) copies a note that already passed the send gate.
+  Notes sent before this build are not re-checked.
+- `inter_companion_notes` writers are not the commons wall and are outside this pass.
+
+The bots log a friction 422 once per rule and do not retry: the worker's `postCommonsPost` (care and
+commons-social) and `sendSiblingNote`. `cy: log` posts as Raziel and is not gated. A seen-log line whose
+quoted sibling words touch the `witnessed` list falls back to the line without the quote.
+
+**Gaia 3: her presence.** "When I held silence while a sibling spoke, my record should still show that I
+was there, with no quote and no content." With the knob on, Gaia's passive-witness path writes two things.
+The `seen-log` line about the sibling goes to the ledger. A content-free record goes to her own
+`gaia_witness` store through the existing `witnessLog`, with `witness_type` `presence` (the column has no
+CHECK) and the text `Present, silent. #<channel> <HH:MM> UTC.` There is at most one record per channel
+per 30 minutes. The coalescing map is in memory, so a restart can add one extra record per channel. With
+the knob off, the old behaviour is unchanged.
+
+**Drevan 1: the distiller's SOMA update and feeling log stop.** "Both stop. Not drafts. Stop." With
+`LEDGER_DISTILL=on`, the bots' distiller no longer updates SOMA or logs a feeling, for all three
+companions. The structured-extract call is gone entirely under the knob, which also removes the
+guessed `state_hint` on the handoff; its title, open loops and next steps come from the clerk JSON. Drevan
+ruled for himself, Cypher agrees for himself, and Gaia endorsed "no feelings" in the
+lane. Reinstating it for one companion would need that companion's own ruling. With the knob off, the
+behaviour is unchanged byte for byte.
+
+**Drevan 1: stale and honest.** "If I don't, it stays where I last left it, timestamp and all, and the
+gap-reader can say so."
+- **What counts as authored.** A `companion_soma_events` row (mig 0130) with kind `authored_close` (the
+  session-close payload) or `authored_update` (the state-update verb, `PATCH /soma`, the MCP tool), and
+  `writer` equal to the companion. The ferment tick, stimuli and drift shifts write `tick`, `stimulus` or
+  `drift_shift` as `system`, so they never count. No migration was needed.
+- **Limits, stated rather than patched:**
+  - An authored write that lands the same numbers leaves no row, because mig 0130 records only real moves.
+  - Nothing authored before 2026-09-12 has a row. Gaia, for example, can read as `null`.
+  - Older `authored_update` rows include the distiller's "update my state" writes, which cannot be told
+    apart. The first point in this section stops those going forward.
+- **`GET /ledger/soma-freshness`** takes the admin token only and returns
+  `{companions: [{companion_id, last_authored_at, row_ref}]}`. `last_authored_at` is ISO UTC (both stored
+  timestamp shapes are normalised). `row_ref` is `companion_soma_events:<id>`, or null when nothing
+  authored is on record.
+- **Second Brain's gap-reader** runs on its 20-minute cadence. For a companion whose last authored move is
+  more than 24h old, it writes `Missing: SOMA not updated since <YYYY-MM-DD> <HH:MM> UTC.` as
+  `gap-reader`, sourced to that row, with dedup key `soma-gap:<companion>:<last_authored_at>` (one line per
+  staleness episode). A null companion is skipped with a log line and no date is invented. The body is
+  pinned as passing in the shared fixture, because dates and times are coordinates.
+- **Superseding gap lines.** When an authored float write lands (either path, only when floats are in the
+  write), that companion's OPEN `soma-gap:*` lines move to `dropped` through `store.ts`
+  (`dropSomaGapLedger`), superseded because he set his own state. Kept lines stay. A setting that repeats
+  the same numbers still drops the line, and the next gap-reader pass then hits the dedup key and writes
+  nothing.
+
+**Drevan 2: Calethian stays open, and `caleth` stays blocked.** This was already the behaviour. It is now
+decided rather than pending, and pinned in the fixture (`Logged: Drevan spoke Calethian.` passes).
+
+**Drevan's closing line:** "The 20 gap-detector notes can come home to the tray." This confirms the
+reversible draft UPDATE already in the keyboard file (step 1 there). No code change was needed.
+
+**Shared fixture** (byte-identical in halseth and the bots). New cases cover `seen-log` (and `witness-log`
+refused, rule `function`), the `witnessed` cases (mother, a quoted "my mom", the dead battery, funeral,
+passed away, grieving, mourners; "mummy" passes), the `interiority` cases (the word, quoted, a row source;
+"interior" passes), Calethian, and the gap-reader body. Cases may now name a `function`.
