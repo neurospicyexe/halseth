@@ -199,7 +199,7 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   `after_id` back. Second Brain's puller and ledger reconcile now persist `after_id` next to the high-water
   mark (`ledger.after_id`, `ledger_ineligible.after_id`) and send it.
 - **Second Brain's vector-store test was flaky** because it used a fixed `dbPath`, so the `src` and `dist`
-  copies of the suite collided on the same file. It is known and tracked. `searchByTags` can still flake.
+  copies of the suite collided on the same file. `searchByTags` can still flake.
 - **Witness lines are quoted speech with a `message` source.** A sibling utterance that carries any unlabeled
   number (or `Source:`, or a lexicon word) gets the whole witness line 422'd. That is correct under rule 2 (a
   companion's words are never a source for a number), and it is stated here so it does not read as a
