@@ -99,11 +99,13 @@ function buildCompanionBlock(c: CompanionVibe): string[] {
       core.push(`  newest: ${oneLine(c.newestTension)}`);
     }
   }
-  core.push(formatDayLine(c.day));
+  core.push(formatDayLine(c.day, c.companion_id === DIGEST_AUTHOR));
   return core;
 }
 
-function formatDayLine(day: DayLedger): string {
+// `isAuthor`: the day line is under Gaia's agent too, so a sibling's watch TITLE is the same merge as
+// a sibling's tension text (ledger lane rule 5): siblings get "watch logged", never the title.
+function formatDayLine(day: DayLedger, isAuthor: boolean): string {
   const segs: string[] = [];
   if (day.spoke > 0) segs.push(`spoke ${day.spoke}`);
   if (day.notes_sent > 0 || day.notes_received > 0) {
@@ -113,7 +115,7 @@ function formatDayLine(day: DayLedger): string {
     segs.push(`notes ${parts.join(" / ")}`);
   }
   if (day.sessions_closed > 0) segs.push(`sessions closed ${day.sessions_closed}`);
-  if (day.watch) segs.push(oneLine(day.watch));
+  if (day.watch) segs.push(isAuthor ? oneLine(day.watch) : "watch logged");
 
   if (segs.length === 0) return "  day: quiet (no exchanges, notes, sessions, or watch logged)";
   return `  day: ${segs.join(" · ")}`;

@@ -27,6 +27,8 @@ import { companionJournalAdd } from "../librarian/backends/halseth.js";
 import { getMindCommonsSupply, postMindCommonsConsume } from "../handlers/webmind.js";
 import { SUPPLY_SOURCES } from "../director/supply-query.js";
 import { getRecentRelationalSessions } from "../handlers/sessions.js";
+import { execConversationCapture } from "../librarian/executors/webmind.js";
+import { execBiometricLog, execCompanionNoteAdd } from "../librarian/executors/writes.js";
 
 const MSG = "1497734427298762828";
 const SESSION = "5b0c2f9e-1111-4222-8333-944455556666";
@@ -78,10 +80,20 @@ describe("the door", () => {
     expect(await r.json()).toMatchObject({ rule: "health" });
   });
 
-  it("a health line: ACCEPTED with a matching capture row, REJECTED when the row lacks the digits, missing, or not a capture", async () => {
+  // H1 (adversarial review): a capture is the COMPANION's digest; it is a human record only when it is
+  // anchored (capture:<session_id>) to a session of the same companion on a claude-ai:* surface.
+  function seedCaptureSession(db: any, id: string, surface: string | null, companion = "cypher") {
+    seedSession(db, { id, companion_id: companion });
+    db.prepare("UPDATE sessions SET surface = ? WHERE id = ?").run(surface, id);
+  }
+  const cap = (db: any, note_id: string, thread_key: string, content: string, agent_id = "cypher") =>
+    seedNote(db, { note_id, agent_id, note_type: "conversation_capture", source: "conversation_capture", thread_key, content });
+
+  it("a health line: ACCEPTED with a matching Claude.ai capture row, REJECTED when the row lacks the digits, missing, or not a capture", async () => {
     const { db, env } = setup();
-    seedNote(db, { note_id: "cap-1", agent_id: "cypher", note_type: "conversation_capture", source: "conversation_capture", content: "Raziel said his glucose was 187 after the sandwich, at 12:40." });
-    seedNote(db, { note_id: "cap-2", agent_id: "cypher", note_type: "conversation_capture", source: "conversation_capture", content: "Raziel said he ate a sandwich." });
+    seedCaptureSession(db, "sess-ai-1", "claude-ai:cypher");
+    cap(db, "cap-1", "capture:sess-ai-1", "Raziel said his glucose was 187 after the sandwich, at 12:40.");
+    cap(db, "cap-2", "capture:sess-ai-1", "Raziel said he ate a sandwich.");
     seedNote(db, { note_id: "pulse-1", agent_id: "drevan", source: "discord", content: "[discord:pulse] glucose 187" });
     const body = "Recorded: glucose 187 after sandwich.";
     const ok = await writeLedger(env, line({ body, source_kind: "row", source_ref: "wm_continuity_notes:cap-1" }));
@@ -94,11 +106,59 @@ describe("the door", () => {
     expect(await writeLedger(env, line({ body, source_kind: "row", source_ref: "wm_continuity_notes:cap-1" }))).toMatchObject({ ok: false, rule: "health_row" });
   });
 
-  it("biometric_snapshots is a human row; the evaluator's basin row vouches for its own drift score", async () => {
+  it("H1: a capture from a Discord/Hermes/Claude Code/NULL/unknown surface, an unsessioned one, or another companion's session never vouches", async () => {
     const { db, env } = setup();
-    db.prepare("INSERT INTO biometric_snapshots (id, recorded_at, logged_at, hrv_resting, resting_hr) VALUES ('bio-1', '2026-09-25T08:00:00Z', '2026-09-25T08:01:00Z', 42.5, 61)").run();
-    expect(await writeLedger(env, line({ body: "Recorded: HRV 42.5, resting 61.", source_kind: "row", source_ref: "biometric_snapshots:bio-1" }))).toMatchObject({ ok: true });
-    expect(await writeLedger(env, line({ body: "Recorded: HRV 44.", source_kind: "row", source_ref: "biometric_snapshots:bio-1" }))).toMatchObject({ ok: false, rule: "health_numbers" });
+    const content = "Raziel said glucose 187.";
+    seedCaptureSession(db, "sess-discord", "discord:drevan", "drevan");
+    seedCaptureSession(db, "sess-code", "claude-code:c-dev-bigger-better-halseth", "drevan");
+    seedCaptureSession(db, "sess-null", null, "drevan");
+    seedCaptureSession(db, "sess-bare", "claude-ai:", "drevan");
+    seedCaptureSession(db, "sess-hermes", "hermes:drevan", "drevan");
+    seedCaptureSession(db, "sess-ai-cy", "claude-ai:cypher", "cypher");
+    cap(db, "c-discord", "capture:sess-discord", content, "drevan");
+    cap(db, "c-code", "capture:sess-code", content, "drevan");
+    cap(db, "c-null", "capture:sess-null", content, "drevan");
+    cap(db, "c-bare", "capture:sess-bare", content, "drevan");
+    cap(db, "c-hermes", "capture:sess-hermes", content, "drevan");
+    cap(db, "c-unsessioned", "capture:unsessioned:drevan", content, "drevan");
+    cap(db, "c-cross", "capture:sess-ai-cy", content, "drevan"); // drevan's capture on cypher's session
+    for (const id of ["c-discord", "c-code", "c-null", "c-bare", "c-hermes", "c-unsessioned", "c-cross"]) {
+      for (const body of ["Recorded: glucose 187.", "Recorded: Raziel mentioned 187."]) {
+        expect(await writeLedger(env, line({ body, source_kind: "row", source_ref: `wm_continuity_notes:${id}` })), `${id} / ${body}`).toMatchObject({ ok: false, rule: "health_row" });
+      }
+    }
+    seedCaptureSession(db, "sess-ai-dre", "claude-ai:drevan", "drevan");
+    cap(db, "c-ai", "capture:sess-ai-dre", content, "drevan");
+    expect(await writeLedger(env, line({ body: "Recorded: glucose 187.", source_kind: "row", source_ref: "wm_continuity_notes:c-ai" }))).toMatchObject({ ok: true });
+  });
+
+  it("H3: health numbers match EXACTLY (no rounding) in human rows", async () => {
+    const { db, env } = setup();
+    seedCaptureSession(db, "sess-ai-2", "claude-ai:cypher");
+    cap(db, "cap-r", "capture:sess-ai-2", "Raziel said glucose was 186.6 and weight 187.");
+    const w = (body: string) => writeLedger(env, line({ body, source_kind: "row", source_ref: "wm_continuity_notes:cap-r" }));
+    expect(await w("Recorded: glucose 187.")).toMatchObject({ ok: true });
+    expect(await w("Recorded: glucose 186.")).toMatchObject({ ok: false, rule: "health_numbers" });
+    expect(await w("Recorded: glucose 186.6.")).toMatchObject({ ok: true });
+    expect(await w("Recorded: glucose 186.60.")).toMatchObject({ ok: true }); // the same number
+    expect(await w("Recorded: Raziel mentioned 18.")).toMatchObject({ ok: false, rule: "health_numbers" });
+  });
+
+  it("H3: a biometric number is matched only in the column its label names, else notes; bot-written rows never vouch", async () => {
+    const { db, env } = setup();
+    db.prepare("INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, hrv_resting, resting_hr, steps, notes) VALUES ('bio-1', '2026-09-25T08:00:00Z', '2026-09-25T08:01:00Z', 'hearth', 42.5, 61, 8200, 'glucose 187 after lunch')").run();
+    const w = (body: string, ref = "biometric_snapshots:bio-1") => writeLedger(env, line({ body, source_kind: "row", source_ref: ref }));
+    expect(await w("Recorded: HRV 42.5, resting 61.")).toMatchObject({ ok: true });
+    expect(await w("Recorded: HRV 61, resting 42.5.")).toMatchObject({ ok: false, rule: "health_numbers" }); // swapped columns
+    expect(await w("Recorded: HRV 44.")).toMatchObject({ ok: false, rule: "health_numbers" });
+    expect(await w("Recorded: HRV 43.")).toMatchObject({ ok: false, rule: "health_numbers" }); // no rounding
+    expect(await w("Recorded: glucose 187.")).toMatchObject({ ok: true }); // notes
+    expect(await w("Recorded: glucose 61.")).toMatchObject({ ok: false, rule: "health_numbers" }); // 61 is resting_hr, not notes
+    expect(await w("Recorded: 8200 steps on the day.")).toMatchObject({ ok: true }); // unlabeled, attributed to steps
+    // a Librarian row from a non-Claude.ai caller (source 'librarian') is not a human record
+    db.prepare("INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, hrv_resting, notes) VALUES ('bio-bot', '2026-09-25T08:00:00Z', '2026-09-25T08:01:00Z', 'librarian', 42.5, 'glucose 187')").run();
+    expect(await w("Recorded: glucose 187.", "biometric_snapshots:bio-bot")).toMatchObject({ ok: false, rule: "health_row" });
+    // basin history (the evaluator's own drift scores) keeps the clerk's rounding
     db.prepare("INSERT INTO companion_basin_history (id, companion_id, drift_score, drift_type) VALUES ('bh-1', 'drevan', 0.4213, 'pressure')").run();
     expect(await writeLedger(env, line({ function: "drift-reader", body: "Recorded: drift 0.42 on pressure.", source_kind: "row", source_ref: "companion_basin_history:bh-1" }))).toMatchObject({ ok: true });
     expect(await writeLedger(env, line({ function: "drift-reader", body: "Recorded: drift 0.51 on pressure.", source_kind: "row", source_ref: "companion_basin_history:bh-1" }))).toMatchObject({ ok: false, rule: "health_numbers" });
@@ -342,7 +402,7 @@ describe("commons supply: siblings see ledger lines about each other, mark intac
     const kept = await seedLedger(env, db, { companion_id: "gaia", body: "Logged: a kept line.", dedup_key: "c6" });
     db.prepare("UPDATE ledger_entries SET state = 'kept', state_at = ? WHERE id = ?").run(new Date().toISOString(), kept.id);
 
-    const r = await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5"), env, { agent_id: "cypher" });
+    const r = await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5&kinds=ledger"), env, { agent_id: "cypher" });
     expect(r.status).toBe(200);
     const notes = (await r.json() as any).notes as any[];
     expect(notes.map((n) => n.note_id).sort()).toEqual([aboutDrevan.id, aboutGaia.id, kept.id].sort());
@@ -360,10 +420,21 @@ describe("commons supply: siblings see ledger lines about each other, mark intac
     const consume = await postMindCommonsConsume(
       req("/mind/commons-supply/consume", { method: "POST", body: JSON.stringify({ reader_id: "cypher", note_ids: [a.id], channel_id: "c" }) }), env);
     expect(consume.status).toBe(200);
-    const forCypher = await (await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5"), env, { agent_id: "cypher" })).json() as any;
+    const forCypher = await (await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5&kinds=ledger"), env, { agent_id: "cypher" })).json() as any;
     expect(forCypher.notes).toEqual([]);
-    const forGaia = await (await getMindCommonsSupply(req("/mind/commons-supply/gaia?limit=5"), env, { agent_id: "gaia" })).json() as any;
+    const forGaia = await (await getMindCommonsSupply(req("/mind/commons-supply/gaia?limit=5&kinds=ledger"), env, { agent_id: "gaia" })).json() as any;
     expect(forGaia.notes.map((n: any) => n.note_id)).toEqual([a.id]);
+  });
+
+  it("deploy-order safety: WITHOUT ?kinds=ledger (an old bot build) no ledger line is served at all", async () => {
+    const { db, env } = setup();
+    const a = await seedLedger(env, db, { companion_id: "drevan", dedup_key: "k-old" });
+    for (const url of ["/mind/commons-supply/cypher?limit=5", "/mind/commons-supply/cypher?limit=5&kinds=notes", "/mind/commons-supply/cypher?limit=5&kinds="]) {
+      const b = await (await getMindCommonsSupply(req(url), env, { agent_id: "cypher" })).json() as any;
+      expect(b.notes).toEqual([]);
+    }
+    const opted = await (await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5&kinds=notes,ledger"), env, { agent_id: "cypher" })).json() as any;
+    expect(opted.notes.map((n: any) => n.note_id)).toEqual([a.id]);
   });
 
   it("the director's sibling_note tier stays empty (it does not read the ledger) and tolerates it", async () => {
@@ -372,5 +443,60 @@ describe("commons supply: siblings see ledger lines about each other, mark intac
     const src = SUPPLY_SOURCES.find((s) => s.kind === "sibling_note")!;
     const rows = await env.DB.prepare(src.sql).bind("1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "", 50).all();
     expect(rows.results).toEqual([]);
+  });
+});
+
+describe("adversarial review: the writers that feed the door", () => {
+  const sctx = (env: any, companion: string, context: unknown, surface?: string): any => ({
+    env, req: { companion_id: companion, request: "capture this", context: JSON.stringify(context), surface },
+    entry: { pattern: "x" }, frontState: null, pluralAvailable: false,
+  });
+  function openSession(db: any, id: string, companion: string, surface: string | null) {
+    seedSession(db, { id, companion_id: companion });
+    db.prepare("UPDATE sessions SET surface = ? WHERE id = ?").run(surface, id);
+  }
+
+  it("H1: a capture anchors to a Claude.ai session only when the caller declares a claude-ai:* surface", async () => {
+    const { db, env } = setup();
+    openSession(db, "5b0c2f9e-aaaa-4222-8333-944455556666", "drevan", "claude-ai:drevan");
+    const content = "Raziel said glucose 187 after lunch.";
+    // a bot with no surface: the newest-open fallback would have found the Claude.ai session
+    const bare = await execConversationCapture(sctx(env, "drevan", { content }));
+    expect(bare).toMatchObject({ ack: true, session_id: null, thread_key: "capture:unsessioned:drevan" });
+    expect((bare as any).anchor_refused).toBeTruthy();
+    // a Discord caller naming the Claude.ai session id outright
+    const named = await execConversationCapture(sctx(env, "drevan", { content, session_id: "5b0c2f9e-aaaa-4222-8333-944455556666" }, "discord:drevan"));
+    expect(named).toMatchObject({ session_id: null, thread_key: "capture:unsessioned:drevan" });
+    for (const r of [bare, named]) {
+      expect(await writeLedger(env, line({ body: "Recorded: glucose 187.", source_kind: "row", source_ref: `wm_continuity_notes:${(r as any).note_id}` }))).toMatchObject({ ok: false, rule: "health_row" });
+    }
+    // the Claude.ai caller anchors, and its capture vouches
+    const ai = await execConversationCapture(sctx(env, "drevan", { content }, "claude-ai:drevan"));
+    expect(ai).toMatchObject({ session_id: "5b0c2f9e-aaaa-4222-8333-944455556666", thread_key: "capture:5b0c2f9e-aaaa-4222-8333-944455556666" });
+    expect((ai as any).anchor_refused).toBeUndefined();
+    expect(await writeLedger(env, line({ body: "Recorded: glucose 187.", source_kind: "row", source_ref: `wm_continuity_notes:${(ai as any).note_id}` }))).toMatchObject({ ok: true });
+  });
+
+  it("H1: a Librarian biometric is stamped apple_health only for a claude-ai:* caller; anyone else's is 'librarian'", async () => {
+    const { db, env } = setup();
+    const ctxB = (surface?: string) => sctx(env, "drevan", { recorded_at: "2026-09-25T08:00:00Z", notes: "glucose 187" }, surface);
+    const bot = await execBiometricLog(ctxB("discord:drevan")) as any;
+    const none = await execBiometricLog(ctxB()) as any;
+    const ai = await execBiometricLog(ctxB("claude-ai:drevan")) as any;
+    const src = (id: string) => (db.prepare("SELECT source FROM biometric_snapshots WHERE id = ?").get(id) as any).source;
+    expect([src(bot.id), src(none.id), src(ai.id)]).toEqual(["librarian", "librarian", "apple_health"]);
+    expect(await writeLedger(env, line({ body: "Recorded: glucose 187.", source_kind: "row", source_ref: `biometric_snapshots:${bot.id}` }))).toMatchObject({ ok: false, rule: "health_row" });
+    expect(await writeLedger(env, line({ body: "Recorded: glucose 187.", source_kind: "row", source_ref: `biometric_snapshots:${ai.id}` }))).toMatchObject({ ok: true });
+  });
+
+  it("H4: the Librarian journal path refuses synthesis-gap-detector with a structured 410 naming /ledger (no 500, nothing written)", async () => {
+    const { db, env } = setup();
+    const r = await execCompanionNoteAdd(sctx(env, "drevan", { content: "I sat with it.", source: "synthesis-gap-detector" })) as any;
+    expect(r).toMatchObject({ error: "journal_source_retired", status: 410, use: "/ledger", source: "synthesis-gap-detector" });
+    expect(r.reason).toMatch(/\/ledger/);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM companion_journal").get() as any).n).toBe(0);
+    // an ordinary note still lands
+    const ok = await execCompanionNoteAdd(sctx(env, "drevan", { content: "I sat with it." })) as any;
+    expect(ok).toMatchObject({ ack: true, routed_to: "journal" });
   });
 });

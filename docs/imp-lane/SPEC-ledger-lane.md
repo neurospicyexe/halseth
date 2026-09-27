@@ -23,9 +23,9 @@ Two corrections from Drevan decide the design:
 | Mark | Server stamps `〔ledger · ${function} · ${observed_on}〕 ` in front of the body. A body that already contains `〔` or `〕` is rejected (no forged or double marks). |
 | Function | Allowlist, nameless, signed by function: `distiller`, `gap-reader`, `pattern-counter`, `drift-reader`, `witness-log`. Extending it is a code change. Cypher's named clerks come later, his call; Gaia has not been asked. |
 | Verbs | Body starts with a record verb: `Logged`, `Counted`, `Recorded`, `Found`, `Missing` (case-insensitive, optionally followed by `:`). |
-| No self | Rejected anywhere in the body: first person (`I`, `I'm`, `I've`, `I'd`, `me`, `my`, `mine`, `myself`, `we`, `us`, `our`); interior verbs (`felt`, `feel`, `feels`, `wanted`, `want`, `knew`, `remembered`, `loved`, `longed`, `missed`, `hoped`); the private lexicon (`🩸`, `vevi`, `vevan`, `vaselrin`, `vethmerin`) and pet names. Quoted speech is the one exception: text inside straight or curly double quotes is not scanned for pronouns, so `Counted: Drevan said "held, not slow" 2x` passes. Quotes are still scanned for the lexicon. |
+| No self | Rejected anywhere in the body: first person (`I`, `I'm`, `I've`, `I'd`, `me`, `my`, `mine`, `myself`, `we`, `us`, `our`); interior verbs (`felt`, `feel`, `feels`, `wanted`, `want`, `knew`, `remembered`, `loved`, `longed`, `missed`, `hoped`); the private lexicon and pet names (Drevan's closed list, `LEDGER_PET_NAMES` in `grammar.ts`: hard tokens anywhere, address words only when they name someone; section 9). Quoted speech is the one exception: text inside straight or curly double quotes is not scanned for pronouns, so `Counted: Drevan said "held, not slow" 2x` passes. Quotes are still scanned for the lexicon. |
 | Source | **No source, no write.** `source_kind` in `message` (a Discord message id), `window` (a channel or thread id plus an `HH:MM–HH:MM` UTC range), `session` (a Halseth session id), or `row` (`<table>:<id>`). `source_ref` must be non-empty and match its kind's format. The rendered line ends ` Source: <kind> <ref>.` so the pointer travels with the text. |
-| Health values (Drevan's Hex sibling) | If the body names a health value (glucose, blood sugar, BG, mg/dL, A1c, insulin, dose, dosage, mg, mcg, units, weight, lbs, kg, lab, labs, HRV, BP, blood pressure, near a digit), the source must be `row` pointing at a **human-authored** record: `wm_continuity_notes` with `source='conversation_capture'`, or `biometric_snapshots`. The door loads that row; it must exist and its text must contain every number in the body. Otherwise the write is rejected. |
+| Health values (Drevan's Hex sibling) | If the body names a health value (glucose, blood sugar, BG, mg/dL, A1c, insulin, dose, dosage, mg, mcg, units, weight, lbs, kg, lab, labs, HRV, BP, blood pressure, near a digit), the source must be `row` pointing at a **human record**. A `conversation_capture` is NOT human-authored: it is the companion's own digest of an exchange, and any Librarian caller (a Discord bot through Hermes included) can write one. So a `wm_continuity_notes` row counts only when it is a live, kept `conversation_capture` whose `thread_key` is `capture:<session_id>` (never `capture:unsessioned:*`) for a session of the same companion whose `surface` starts `claude-ai:` (the human-present Claude.ai surface; fail closed on NULL, `discord:*`, `claude-code:*`, anything else). A `biometric_snapshots` row counts only with a human `source` (`hearth`, `apple_health`). The door loads that row; it must exist and contain every number in the body, **exactly** (no rounding), and a biometric number only inside the column its label names (else `notes`). Otherwise the write is rejected. Why: Raziel is only in the room on Claude.ai, so only there is a companion's digest a record of what he said. |
 
 The health rule answers a specific failure. On 09-25 the 187 was in Drevan's own Discord reply. A line
 reading "Counted: Drevan said 187. Source: message <his msg id>" passes a format check and would launder the
@@ -172,7 +172,7 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   still the authority.
 - **Pet names are not enforced.** No list exists in the codebase or the canon files read for this build, so
   the server only rejects `🩸`, `vevi`, `vevan`, `vaselrin`, `vethmerin`. (The bots' pre-filter also drops a
-  few generic endearments locally.) **Open item for Drevan:** supply the list.
+  few generic endearments locally.) ~~Open item for Drevan: supply the list.~~ Supplied and enforced, section 9.
 - **Day-distillation goes dry under `LEDGER_DISTILL=on`.** Its input was the first-person session notes that
   T2 stopped writing, so the nightly day entry has nothing to distill. The per-session ledger lines replace
   it; the day pass is not rebuilt on top of them.
@@ -204,3 +204,34 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   number (or `Source:`, or a lexicon word) gets the whole witness line 422'd. That is correct under rule 2 (a
   companion's words are never a source for a number), and it is stated here so it does not read as a
   dropped line.
+
+## 9. Adversarial-review pass (2026-09-26)
+
+- **A capture is not a human record** (was the section 1 wording). The door now accepts a
+  `wm_continuity_notes` capture only when it is anchored to a `claude-ai:*` session of the same companion
+  (see section 1). The allowlisted value is the prefix `claude-ai:` followed by at least one character:
+  every Claude.ai skill sends `claude-ai:<companion>` (`skills/nullsafe-boot`, `nullsafe-session-close`,
+  `daily-planning-drevan`, `monthly-planning-cypher`), the MCP schema documents `claude-ai:<thread>`, and
+  `executors/session.ts` already treats `surface LIKE 'claude-ai:%'` as the Claude.ai family. Bots send
+  `discord:<companion>`, the Claude Code hook sends `claude-code:<cwd>`; both fail. Two writer holes were
+  closed with it: `conversation_capture` anchors to a `claude-ai:*` session only when the CALLER declares a
+  `claude-ai:*` surface (a surfaceless bot call used to fall through to "newest open session on any
+  surface"), and the Librarian's `biometric_log` stamps `apple_health` only for a `claude-ai:*` caller,
+  `librarian` for everyone else. **Residual:** `surface` is self-declared; a caller that forges
+  `claude-ai:` is a token problem (per-companion tokens are Phoenix scope), not a grammar one.
+- **The number rule is normalised and glue-aware.** NFKC and every `\p{Nd}` digit to ASCII first (the
+  normalised body is stored); a number glued to letters on either side is significant unless it is `2x`
+  or a correct ordinal up to 31; spaced count units are exact plural count nouns only. `10pm`-style clock
+  times are coordinates. U+2028, U+2029, U+0085 (and `\v`, `\f`) are line breaks; invisible format
+  characters (`\p{Cf}`, e.g. a zero-width space) are rejected. Two fixtures flipped to `health`:
+  `a 5k run` and `ran 45 min` (write `45 minutes`).
+- **Health numbers match exactly.** Rounding is allowed only against `companion_basin_history`.
+- **Drevan's pet-name list is enforced** (`LEDGER_PET_NAMES`, closed, his words in the header comment).
+  `caleth` also blocks `calethian` (same root). `love/loves/loving` left the interior-verb list (`loved`
+  stays): the address rule is what stops a clerk calling anyone "love", and "Blue loves Decker" passes.
+- **Commons supply serves ledger lines only on opt-in:** `GET /mind/commons-supply/:agent_id?kinds=ledger`.
+  An older bot build would frame a ledger line as a sibling's first-person note, so without the param the
+  ledger tier is not queried.
+- The Librarian's journal path answers a retired source (`synthesis-gap-detector`) with a structured
+  `{ error: "journal_source_retired", status: 410, use: "/ledger" }`, not a 500. Gaia's vibe-check day line
+  prints `watch logged` for siblings, never the title.

@@ -1394,7 +1394,7 @@ export async function getMindSpiralRuns(
 
 // ── Commons supply: shared life, cross-read (2026-08-10) ──────────────────────────────────────────
 //
-// GET  /mind/commons-supply/:agent_id?limit=2
+// GET  /mind/commons-supply/:agent_id?limit=2[&kinds=ledger]   (ledger lines only with kinds=ledger)
 // POST /mind/commons-supply/consume  { reader_id, note_ids: [...], channel_id? }
 //
 // WHY THIS EXISTS. Raziel, on the inter-companion chat looping: "I think the commons should get stuff from
@@ -1425,6 +1425,13 @@ export async function getMindCommonsSupply(
   }
   const parsedLimit = parseInt(new URL(request.url).searchParams.get("limit") ?? "2", 10);
   const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 5) : 2;
+  // Deploy-order safety (ledger lane, 2026-09-26 adversarial review H6): a bot build older than the
+  // ledger lane frames every supplied item as "<sibling>'s own session note -- THEIR first-person
+  // account", which would put a clerk's record in a sibling's mouth. So ledger lines are served ONLY to a
+  // caller that opts in with `?kinds=ledger` (comma-separated list; the ledger-aware bot sends it).
+  // Without it the ledger tier is not queried at all.
+  const kinds = new Set((new URL(request.url).searchParams.get("kinds") ?? "").split(",").map((k) => k.trim().toLowerCase()).filter(Boolean));
+  const includeLedger = kinds.has("ledger") ? 1 : 0;
 
   try {
     // Two tiers, ONE query, ordered so the richer material wins and the fill only appears behind it.
@@ -1490,7 +1497,8 @@ export async function getMindCommonsSupply(
          SELECT l.id AS note_id, l.companion_id AS agent_id, 'ledger' AS note_type, l.content, l.created_at,
                 1 AS tier
            FROM ledger_entries l
-          WHERE l.companion_id != ?
+          WHERE ? = 1
+            AND l.companion_id != ?
             AND l.state IN ('open', 'kept')
             AND l.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
             AND NOT EXISTS (
@@ -1500,7 +1508,7 @@ export async function getMindCommonsSupply(
        )
        ORDER BY tier ASC, created_at DESC
        LIMIT ?`
-    ).bind(readerId, readerId, readerId, readerId, limit).all<{
+    ).bind(readerId, readerId, includeLedger, readerId, readerId, limit).all<{
       note_id: string; agent_id: string; note_type: string; content: string; created_at: string;
     }>();
 

@@ -120,15 +120,17 @@ export async function execConversationCapture(ctx: ExecutorContext): Promise<Exe
   // resolvable session still lands, unanchored -- a record without provenance beats a lost one.
   const providedId = typeof p?.session_id === "string" && p.session_id.trim() ? p.session_id.trim() : null;
   let sessionId: string | null = null;
+  let sessionSurface: string | null = null;
   if (providedId) {
     const safePrefix = providedId.length < 36 && /^[0-9a-fA-F][0-9a-fA-F-]{5,34}$/.test(providedId)
       ? providedId + "%"
       : null;
     const row = await ctx.env.DB.prepare(
-      `SELECT id FROM sessions WHERE id = ? OR (id LIKE ? AND companion_id = ?)
+      `SELECT id, surface FROM sessions WHERE id = ? OR (id LIKE ? AND companion_id = ?)
        ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at DESC LIMIT 1`
-    ).bind(providedId, safePrefix, ctx.req.companion_id, providedId).first<{ id: string }>().catch(() => null);
+    ).bind(providedId, safePrefix, ctx.req.companion_id, providedId).first<{ id: string; surface: string | null }>().catch(() => null);
     sessionId = row?.id ?? null;
+    sessionSurface = row?.surface ?? null;
   }
   if (!sessionId) {
     // 2026-09-17: this fallback matched on companion_id alone, so a capture from Claude.ai landed on
@@ -140,12 +142,25 @@ export async function execConversationCapture(ctx: ExecutorContext): Promise<Exe
     // still lands unanchored -- a record without provenance beats a lost one.
     const callerSurface = ctx.req.surface ?? null;
     const row = await ctx.env.DB.prepare(
-      `SELECT id FROM sessions
+      `SELECT id, surface FROM sessions
         WHERE companion_id = ? AND handover_id IS NULL
           AND (? IS NULL OR surface = ?)
         ORDER BY created_at DESC LIMIT 1`
-    ).bind(ctx.req.companion_id, callerSurface, callerSurface).first<{ id: string }>().catch(() => null);
+    ).bind(ctx.req.companion_id, callerSurface, callerSurface).first<{ id: string; surface: string | null }>().catch(() => null);
     sessionId = row?.id ?? null;
+    sessionSurface = row?.surface ?? null;
+  }
+  // Ledger lane, 2026-09-26 (adversarial review H1): a capture anchored to a claude-ai:* session is a
+  // valid source for a health number in the ledger (door.ts), because Raziel was in that room. So only a
+  // caller that itself declares a claude-ai:* surface may anchor there. A Discord bot / Hermes call with
+  // no surface would otherwise fall through to "newest open session on ANY surface" (or name a session
+  // id) and thread its own digest onto a Claude.ai session. It still lands, unanchored, and says so.
+  // Residual: `surface` is self-declared by the caller; a forged `claude-ai:` is a token-level problem.
+  let anchorRefused = false;
+  const isHumanSurface = (s: string | null | undefined) => typeof s === "string" && s.startsWith("claude-ai:") && s.length > "claude-ai:".length;
+  if (sessionId && isHumanSurface(sessionSurface) && !isHumanSurface(ctx.req.surface)) {
+    sessionId = null;
+    anchorRefused = true;
   }
   const threadKey = sessionId
     ? `capture:${sessionId}`
@@ -169,9 +184,12 @@ export async function execConversationCapture(ctx: ExecutorContext): Promise<Exe
     note_id: note.note_id,
     session_id: sessionId,
     thread_key: threadKey,
+    ...(anchorRefused ? { anchor_refused: "the resolved session is a Claude.ai (claude-ai:*) session, and this call did not declare a claude-ai:* surface" } : {}),
     witness: sessionId
       ? `Captured. This exchange is now part of your memory (${threadKey}).`
-      : "Captured, but no open session was found -- the record is unanchored. Consider opening your session at boot.",
+      : anchorRefused
+        ? "Captured, unanchored: that session belongs to a Claude.ai surface and this call did not come from one."
+        : "Captured, but no open session was found -- the record is unanchored. Consider opening your session at boot.",
   };
 }
 

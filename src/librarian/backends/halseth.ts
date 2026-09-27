@@ -581,15 +581,21 @@ export async function biometricLog(env: Env, params: {
   sleep_quality?: string; stress_score?: number; steps?: number; active_energy?: number; notes?: string;
   // Subjective ND-state layer (migration 0081)
   mood?: string; pain?: number; energy?: number; focus?: number; spoons?: number; meds_taken?: number | boolean;
-}): Promise<{ id: string; logged_at: string }> {
+}, callerSurface?: string | null): Promise<{ id: string; logged_at: string; source: string }> {
   const id = generateId();
   const now = new Date().toISOString();
   const meds = params.meds_taken === undefined || params.meds_taken === null
     ? null : (params.meds_taken ? 1 : 0);
+  // Ledger lane (2026-09-26, adversarial review H1): a biometric row is a valid source for a health
+  // number only when a human wrote it (door.ts HUMAN_BIOMETRIC_SOURCES). The Librarian is reachable by
+  // the Discord bots (Hermes has ask_librarian), so 'apple_health' is stamped only for a claude-ai:*
+  // caller; every other caller's row is 'librarian' and never vouches for a ledger number.
+  const source = typeof callerSurface === "string" && callerSurface.startsWith("claude-ai:") && callerSurface.length > "claude-ai:".length
+    ? "apple_health" : "librarian";
   await env.DB.prepare(
-    "INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken) VALUES (?, ?, ?, 'apple_health', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(id, params.recorded_at, now, params.hrv_resting ?? null, params.resting_hr ?? null, params.sleep_hours ?? null, params.sleep_quality ?? null, params.stress_score ?? null, params.steps ?? null, params.active_energy ?? null, params.notes ?? null, params.mood ?? null, params.pain ?? null, params.energy ?? null, params.focus ?? null, params.spoons ?? null, meds).run();
-  return { id, logged_at: now };
+    "INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(id, params.recorded_at, now, source, params.hrv_resting ?? null, params.resting_hr ?? null, params.sleep_hours ?? null, params.sleep_quality ?? null, params.stress_score ?? null, params.steps ?? null, params.active_energy ?? null, params.notes ?? null, params.mood ?? null, params.pain ?? null, params.energy ?? null, params.focus ?? null, params.spoons ?? null, meds).run();
+  return { id, logged_at: now, source };
 }
 
 export async function auditLog(env: Env, params: {

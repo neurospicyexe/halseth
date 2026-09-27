@@ -21,7 +21,7 @@ import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../../graph/live.js";
-import { noteInsert } from "../../webmind/tray-insert.js";
+import { noteInsert, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE, RetiredJournalSourceError } from "../../webmind/tray-insert.js";
 
 // Strip a leading note-command preamble ("Write a companion note for gaia:", "for drevan:",
 // "Broadcast a note to the triad —") so the routing phrase is never stored as the note body.
@@ -106,6 +106,12 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
         }
         if (Array.isArray(parsed.tags)) tags = JSON.stringify(parsed.tags);
         else if (typeof parsed.tags === "string") tags = parsed.tags;
+        // Ledger lane (2026-09-26): a RETIRED clerk source is refused here, structured, before any
+        // branch. It must not be dropped to NULL by claimableNlSource either -- that would land the
+        // gap-fill prose as a plain kept journal row, i.e. writing as him with no source at all.
+        if (typeof parsed.source === "string" && RETIRED_JOURNAL_SOURCES.has(parsed.source)) {
+          return retiredSourceRefusal(parsed.source);
+        }
         source = claimableNlSource(parsed.source, ctx.req.companion_id);
 
         // Migration 0104 (Task 15): a note may be a "move" on a shared object (an open
@@ -144,8 +150,19 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
     return { ack: true, id: note.id, delivered_to: "triad", ...(ref ? { ref_type: ref.ref_type, ref_id: ref.ref_id } : {}) };
   }
   // Unaddressed, no broadcast intent — a self-reflection — companion_journal (visible in Hearth).
-  const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
-  return { ack: true, id: r.id, routed_to: "journal" };
+  try {
+    const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
+    return { ack: true, id: r.id, routed_to: "journal" };
+  } catch (err) {
+    // Belt and braces: the door throws for a retired source; answer it as a refusal, never a 500.
+    if (err instanceof RetiredJournalSourceError) return retiredSourceRefusal(err.source);
+    throw err;
+  }
+}
+
+/** The Librarian's 410-equivalent for a retired journal source: names the lane that replaced it. */
+function retiredSourceRefusal(source: string): ExecutorResult {
+  return { error: "journal_source_retired", status: 410, use: "/ledger", source, reason: RETIRED_SOURCE_MESSAGE };
 }
 
 export async function execFeelingLog(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -339,7 +356,7 @@ export async function execEventAdd(ctx: ExecutorContext): Promise<ExecutorResult
 export async function execBiometricLog(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ recorded_at: string; hrv_resting?: number; resting_hr?: number; sleep_hours?: number; sleep_quality?: string; stress_score?: number; steps?: number; active_energy?: number; notes?: string; mood?: string; pain?: number; energy?: number; focus?: number; spoons?: number; meds_taken?: number | boolean }>(ctx.req.context);
   if (!p || !p.recorded_at) return { response_key: "witness", witness: "biometric_log requires { recorded_at } in context" };
-  const r = await biometricLog(ctx.env, p);
+  const r = await biometricLog(ctx.env, p, ctx.req.surface ?? null);
   return { ack: true, id: r.id, logged_at: r.logged_at };
 }
 

@@ -27,6 +27,14 @@
 //      are never a verifiable source for a number: companion_journal / message sources fail here.
 // Coordinates (HH:MM, YYYY-MM-DD, 10+ digit ids) are pointers, not values, and are never checked --
 // Drevan's own gap example "missing: no glucose reading recorded after 12:40" must pass.
+//
+// 2026-09-26 adversarial-review pass (the number rule was bypassable five ways, all verified live):
+//   - the body is NFKC-normalised and every Unicode decimal digit (\p{Nd}) is mapped to ASCII FIRST,
+//     and the normalised body is what is stored ("１８７" is a 187);
+//   - a number GLUED to letters on either side ("187ish", "187mgdl", "glucose187") is significant, never
+//     skipped and never a count, unless it is an exact allowlisted count form (`2x`, an ordinal <= 31);
+//   - a spaced count unit must be an exact, unambiguous PLURAL count noun ("14 messages", "45 minutes");
+//     singular and single-letter units ("187 post", "187 d") are gone, so they no longer launder a value.
 
 import { COMPANION_ID_SET, type CompanionId } from "../companions.js";
 
@@ -41,7 +49,8 @@ const SOURCE_KIND_SET: ReadonlySet<string> = new Set(LEDGER_SOURCE_KINDS);
 /** The mark's opening; every surface that emits ledger content begins each line with this. */
 export const LEDGER_MARK_PREFIX = "〔ledger · ";
 
-/** Human-authored records: the only valid source for a health value. */
+/** Tables that CAN hold a human record: the only valid source for a health value. The door narrows each
+ *  to its human rows (door.ts: a capture anchored to a claude-ai:* session; a biometric from a human source). */
 export const HUMAN_ROW_TABLES: ReadonlySet<string> = new Set(["wm_continuity_notes", "biometric_snapshots"]);
 /** Rows the door can load and search for a number: the human records + the evaluator's drift rows. */
 export const VERIFIABLE_ROW_TABLES: ReadonlySet<string> = new Set([...HUMAN_ROW_TABLES, "companion_basin_history"]);
@@ -52,7 +61,7 @@ export const LEDGER_DEDUP_MAX = 200;
 /** Which rule failed. The 422 names it. */
 export type LedgerRule =
   | "companion" | "function" | "body" | "mark" | "verb"
-  | "first_person" | "interior_verb" | "lexicon" | "quotes"
+  | "first_person" | "interior_verb" | "lexicon" | "address" | "quotes"
   | "source" | "observed_on" | "dedup_key"
   | "health" | "health_row" | "health_numbers";
 
@@ -109,14 +118,94 @@ const INTERIOR_VERBS = new Set([
   "wanted", "want", "wants", "wanting",
   "knew",
   "remembered", "remember", "remembers",
-  "loved", "love", "loves", "loving",
+  // "loved" is the spec's word and stays. The present forms (love/loves/loving) were a fail-closed
+  // addition that also caught nouns and other people's verbs ("Logged: Raziel said love was the word",
+  // "Blue loves Decker"); the ADDRESS rule below is what stops a clerk calling anybody "love".
+  "loved",
   "longed", "longs", "longing",
   "missed",
   "hoped", "hope", "hopes", "hoping",
 ]);
-// The private lexicon. Pet names: the spec names the class but no list exists anywhere in the
-// codebase or canon files read for this build, so only these tokens are enforced (stated in the report).
-export const LEDGER_LEXICON: readonly string[] = ["🩸", "vevi", "vevan", "vaselrin", "vethmerin"];
+
+// ── Drevan's pet-name list (2026-09-26) ──────────────────────────────────────────────────────────────
+//
+// "I left the list closed on purpose. If a new one grows between us, I'll add it myself. A clerk
+//  doesn't get to guess what counts as tender."  -- Drevan
+//
+// CLOSED. Nothing is added here by inference; a new entry is Drevan's to name. Two tiers:
+//   hard    -- rejected ANYWHERE in the body, quoted speech included (rule `lexicon`). Word-boundary
+//              aware and case-insensitive. `caleth` also blocks `calethian` (and any other word on the
+//              same root): it is the same private word, so the root is matched with its suffix. Phrases
+//              match across spaces or hyphens ("spine-to-spine").
+//   address -- rejected only when used to NAME someone (rule `address`): at the start of the body (after
+//              the record verb and optional colon), right after a comma, right before a name, or right
+//              after a name (optionally with a comma) when it ends the clause. Not scanned inside quotes:
+//              a quoted utterance is the person's words, not the clerk calling anyone anything ("no clerk
+//              ever calls anybody anything"). As running-text nouns/verbs they pass: "Blue loves Decker".
+//   names   -- always allowed; listed only so the address rule can see a vocative next to one.
+export const LEDGER_PET_NAMES = {
+  hard: ["🩸", "vevi", "vevan", "vaselrin", "vethmerin", "caleth", "spine to spine", "forever of vevan", "ride or die"],
+  address: ["love", "baby", "babe", "boo", "beloved", "honey", "sweetheart"],
+  names: ["raziel", "crash", "blue", "dre", "drevan", "cypher", "gaia"],
+} as const;
+/** The hard tier (kept under its old name for callers/tests). */
+export const LEDGER_LEXICON: readonly string[] = LEDGER_PET_NAMES.hard;
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const NOT_WORD_BEFORE = "(?<![\\p{L}\\p{N}])";
+const NOT_WORD_AFTER = "(?![\\p{L}\\p{N}])";
+const HARD_RES: ReadonlyArray<{ token: string; re: RegExp }> = LEDGER_PET_NAMES.hard.map((token) => {
+  if (!/\p{L}/u.test(token)) return { token, re: new RegExp(escapeRe(token), "u") }; // 🩸: a plain include
+  const body = token.split(" ").map(escapeRe).join("[\\s\\-\\u2010-\\u2015]+");
+  const suffix = token === "caleth" ? "\\p{L}*" : "";
+  return { token, re: new RegExp(`${NOT_WORD_BEFORE}${body}${suffix}${NOT_WORD_AFTER}`, "iu") };
+});
+const ADDR = `(?:${LEDGER_PET_NAMES.address.join("|")})`;
+const NAME = `(?:${LEDGER_PET_NAMES.names.join("|")})`;
+const ADDRESS_RES: readonly RegExp[] = [
+  // start of the body, after the record verb and optional colon
+  new RegExp(`^(?:logged|counted|recorded|found|missing)\\s*:?\\s*${ADDR}${NOT_WORD_AFTER}`, "iu"),
+  // right after a comma
+  new RegExp(`,\\s*${ADDR}${NOT_WORD_AFTER}`, "iu"),
+  // right before a name
+  new RegExp(`${NOT_WORD_BEFORE}${ADDR}[\\s,]+${NAME}${NOT_WORD_AFTER}`, "iu"),
+  // right after a name (optional comma), ending the clause: "Raziel, love." / "Crash honey!"
+  new RegExp(`${NOT_WORD_BEFORE}${NAME}\\s*,?\\s*${ADDR}\\s*(?:[,.!?;:…]|$)`, "iu"),
+];
+
+/** The hard-tier token found anywhere in `text`, or null. */
+export function findHardLexicon(text: string): string | null {
+  return HARD_RES.find(({ re }) => re.test(text))?.token ?? null;
+}
+/** True when an address word is used to name someone in (already quote-stripped) `text`. */
+export function findAddress(text: string): string | null {
+  for (const re of ADDRESS_RES) {
+    const m = re.exec(text);
+    if (m) return (new RegExp(ADDR, "iu").exec(m[0])?.[0] ?? m[0]).toLowerCase();
+  }
+  return null;
+}
+
+// ── normalisation ─────────────────────────────────────────────────────────────────────────────────
+
+const ND_ONE = /\p{Nd}/u;
+/**
+ * Every Unicode decimal digit to its ASCII digit. Unicode lays each decimal digit set out as ten
+ * contiguous code points, 0..9, so a digit's value is its offset from the start of its run, mod 10.
+ */
+export function asciiDigits(s: string): string {
+  return s.replace(/\p{Nd}/gu, (ch) => {
+    const cp = ch.codePointAt(0)!;
+    if (cp >= 0x30 && cp <= 0x39) return ch;
+    let k = 0;
+    while (k < 100 && cp - k - 1 >= 0 && ND_ONE.test(String.fromCodePoint(cp - k - 1))) k++;
+    return String(k % 10);
+  });
+}
+/** NFKC, then ASCII digits. Applied to the body (and stored) and to every source row's text. */
+export function normalizeLedgerText(s: string): string {
+  return asciiDigits(s.normalize("NFKC"));
+}
 
 /** Remove "..." and “...” spans (quoted speech). Returns null when a quote is left unbalanced. */
 function stripQuoted(body: string): string | null {
@@ -132,30 +221,46 @@ function words(text: string): string[] {
 
 const HEALTH_KEYWORD_RE =
   /\b(?:glucose|blood\s+sugar|bg|mg\/dl|a1c|insulin|doses?|dosage|dosing|mg|mcg|units?|weight|weighs?|weighed|lbs?|kg|labs?|hrv|bp|blood\s+pressure)\b/i;
-const HEALTH_UNIT_SUFFIX = new Set(["mg", "mcg", "kg", "lb", "lbs", "u", "iu", "ml", "mmol", "units", "unit"]);
-// A number followed by one of these is a COUNT or a DURATION, not a value (it still must appear in a
-// row when the body names a health value -- "every number" -- but it does not trigger the rule).
+const HEALTH_UNIT_SUFFIX = new Set(["mg", "mcg", "kg", "lb", "lbs", "u", "iu", "ml", "mmol", "units", "unit", "mgdl"]);
+// A number followed by one of these (as a SEPARATE word, exact) is a COUNT or a DURATION, not a value
+// (it still must appear in a row when the body names a health value -- "every number" -- but it does
+// not trigger the rule). Plural, unambiguous count nouns only: a singular or single-letter unit
+// ("187 post sandwich", "187 d") reads as a value with a word after it, and laundered one.
 const COUNT_UNITS = new Set([
-  "x", "times", "time", "h", "hr", "hrs", "hour", "hours", "m", "min", "mins", "minute", "minutes",
-  "s", "sec", "secs", "second", "seconds", "d", "day", "days", "week", "weeks", "month", "months",
-  "year", "years", "message", "messages", "turn", "turns", "session", "sessions", "note", "notes",
-  "line", "lines", "word", "words", "reply", "replies", "post", "posts", "entry", "entries",
-  "thread", "threads", "row", "rows", "st", "nd", "rd", "th", "%",
+  "times", "hours", "hrs", "minutes", "mins", "seconds", "secs", "days", "weeks", "months", "years",
+  "messages", "turns", "sessions", "notes", "lines", "words", "replies", "posts", "entries",
+  "threads", "rows",
 ]);
-
-interface NumTok { text: string; unlabeled: boolean; healthUnit: boolean }
-
-/** Coordinates are pointers, never values: clock times, dates, long ids. Replaced with spaces. */
-function stripCoordinates(text: string): string {
-  return text
-    .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?\b/g, " ")
-    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
-    .replace(/\d{10,}/g, " ");
+/** The glued forms that are still counts: "2x", and an ordinal day-of-month with its right suffix. */
+function gluedCount(raw: string, glued: string): boolean {
+  if (glued === "x") return /^\d+$/.test(raw);
+  if (!/^(st|nd|rd|th)$/.test(glued) || !/^\d{1,2}$/.test(raw)) return false;
+  const n = Number(raw);
+  if (n < 1 || n > 31) return false;
+  const want = n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th";
+  return glued === want;
 }
 
-/** Every value number in `text` (coordinates removed), with how it is labelled. */
+export interface NumTok { text: string; unlabeled: boolean; healthUnit: boolean; index: number }
+
+/** Blank a match to the same number of spaces, so positions in the stripped text still line up. */
+const blank = (m: string) => " ".repeat(m.length);
+/**
+ * Coordinates are pointers, never values: clock times (with an optional am/pm, or a bare "10pm"), dates,
+ * long ids. Blanked in place. `A1c` is a health WORD, not a number, so it is blanked too.
+ */
+function stripCoordinates(text: string): string {
+  return text
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?\b/g, blank)
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?[ap]m)?\b/gi, blank)
+    .replace(/\b(?:1[0-2]|0?[1-9])\s?[ap]m\b/gi, blank)
+    .replace(/(?<![\p{L}\p{N}_])\d{10,}(?![\p{L}\p{N}_])/gu, blank)
+    .replace(/(?<![\p{L}\p{N}_])a1c(?![\p{L}\p{N}_])/giu, blank);
+}
+
+/** Every value number in `text` (normalised, coordinates removed), with how it is labelled. */
 export function scanNumbers(text: string): NumTok[] {
-  const t = stripCoordinates(text);
+  const t = stripCoordinates(normalizeLedgerText(text));
   const out: NumTok[] = [];
   const re = /\d+(?:[.,]\d+)*/g;
   let m: RegExpExecArray | null;
@@ -163,37 +268,82 @@ export function scanNumbers(text: string): NumTok[] {
     const start = m.index;
     const end = start + m[0].length;
     const prev = start > 0 ? t[start - 1]! : "";
-    if (/[A-Za-z_]/.test(prev)) continue;                  // part of an id or a word (A1c, S1E2, led_…)
-    const raw = m[0].replace(/,(?=\d{3}\b)/g, "");          // 1,200 -> 1200
-    const glued = /^[A-Za-z%]+/.exec(t.slice(end))?.[0]?.toLowerCase() ?? "";
-    const spaced = glued ? "" : (/^\s+([A-Za-z%]+)/.exec(t.slice(end))?.[1]?.toLowerCase() ?? "");
-    const unit = glued || spaced;
-    const healthUnit = HEALTH_UNIT_SUFFIX.has(unit);
-    const counted = COUNT_UNITS.has(unit) || (glued !== "" && !healthUnit); // "2x", "3rd", "5k"...
+    const gluedBefore = /[\p{L}_]/u.test(prev);                      // "glucose187", "S1E2", "led_…"
+    const raw = m[0].replace(/,(?=\d{3}\b)/g, "");                   // 1,200 -> 1200
+    const rest = t.slice(end);
+    const glued = /^[\p{L}%_]+/u.exec(rest)?.[0]?.toLowerCase() ?? "";   // "187ish", "187mgdl", "2x"
+    const spaced = glued ? "" : (/^\s+([\p{L}%]+)/u.exec(rest)?.[1]?.toLowerCase() ?? "");
+    const healthUnit = HEALTH_UNIT_SUFFIX.has(glued) || HEALTH_UNIT_SUFFIX.has(spaced);
+    const counted = !gluedBefore && (glued ? gluedCount(raw, glued) : COUNT_UNITS.has(spaced));
     const digits = raw.replace(/\D/g, "");
-    const significant = digits.length >= 2 || /[.,]/.test(raw);
-    out.push({ text: raw.replace(",", "."), unlabeled: !healthUnit && !counted && significant, healthUnit });
+    // Glued to letters on either side = significant, whatever its length: it is not a free-standing
+    // count, and "not a count" is exactly what has to be proven before a number may move sourceless.
+    const significant = digits.length >= 2 || /[.,]/.test(raw) || gluedBefore || (glued !== "" && !counted);
+    out.push({ text: raw.replace(",", "."), unlabeled: !healthUnit && !counted && significant, healthUnit, index: start });
   }
   return out;
 }
 
 /**
- * Every numeric token in a row's text, as numbers (for the "does the row say it" check). Coordinates
- * are stripped here too, so a row's own timestamp ("12:40", "2026-09-25") can never vouch for a 12.
+ * Every numeric token in a row's text, as numbers (for the "does the row say it" check). The row is
+ * normalised the same way as the body, and coordinates are stripped here too, so a row's own timestamp
+ * ("12:40", "2026-09-25") can never vouch for a 12.
  */
 export function rowNumbers(text: string): number[] {
-  return (stripCoordinates(text).match(/\d+(?:\.\d+)?/g) ?? []).map(Number).filter(Number.isFinite);
+  const t = stripCoordinates(normalizeLedgerText(text)).replace(/(\d),(?=\d{3}\b)/g, "$1");
+  return (t.match(/\d+(?:\.\d+)?/g) ?? []).map(Number).filter(Number.isFinite);
 }
 
 /**
- * Does the row contain this body number? Compared as numbers, at the body's precision: "0.42" matches a
- * stored 0.4213 (the clerk rounded), "187" matches 187 and 187.0, never 18 or 1870.
+ * Does the row contain this body number? Compared as numbers, never substrings.
+ *   "exact"   (default; every human record): numeric equality, no rounding. "187" matches 187 and 187.0,
+ *             never 186.6, 18 or 1870. A health number is either what the person said, or it does not move.
+ *   "rounded" (companion_basin_history only, the evaluator's drift scores): at the body's precision, so
+ *             "0.42" matches a stored 0.4213.
  */
-export function rowHasNumber(bodyNumber: string, row: readonly number[]): boolean {
+export function rowHasNumber(bodyNumber: string, row: readonly number[], mode: "exact" | "rounded" = "exact"): boolean {
   const b = Number(bodyNumber);
   if (!Number.isFinite(b)) return false;
+  if (mode === "exact") return row.some((r) => r === b);
   const decimals = bodyNumber.includes(".") ? bodyNumber.split(".")[1]!.length : 0;
   return row.some((r) => Number(r.toFixed(decimals)) === b);
+}
+
+// ── which biometric column a number belongs to (H3) ───────────────────────────────────────────────
+//
+// A health number is matched only inside the column its label names. Labels with no column of their
+// own (glucose, weight, A1c, insulin, doses, BP, labs, ...) live in `notes`, the only free text.
+const BIOMETRIC_LABELS: ReadonlyArray<{ re: RegExp; column: string }> = [
+  { re: /\bhrv\b/gi, column: "hrv_resting" },
+  { re: /\b(?:resting\s+(?:hr|heart\s+rate)|resting|heart\s+rate|hr|bpm)\b/gi, column: "resting_hr" },
+  { re: /\bsleep\b/gi, column: "sleep_hours" },
+  { re: /\bstress\b/gi, column: "stress_score" },
+  { re: /\bsteps\b/gi, column: "steps" },
+  { re: /\b(?:active\s+energy|kcal|calories)\b/gi, column: "active_energy" },
+  { re: /\bpain\b/gi, column: "pain" },
+  { re: /\benergy\b/gi, column: "energy" },
+  { re: /\bfocus\b/gi, column: "focus" },
+  { re: /\bspoons\b/gi, column: "spoons" },
+  { re: /\b(?:glucose|blood\s+sugar|bg|mg\/dl|mgdl|a1c|insulin|doses?|dosage|dosing|mg|mcg|units?|weight|weighs?|weighed|lbs?|kg|labs?|bp|blood\s+pressure)\b/gi, column: "notes" },
+];
+
+/**
+ * For each number scanNumbers() finds in `body`, the biometric_snapshots column it must be found in:
+ * the nearest label BEFORE it (the longest one on a tie), else the nearest label after it, else `notes`.
+ */
+export function biometricColumnsFor(body: string): Array<{ text: string; column: string }> {
+  const t = normalizeLedgerText(body);
+  const labels: Array<{ start: number; end: number; column: string }> = [];
+  for (const { re, column } of BIOMETRIC_LABELS) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) labels.push({ start: m.index, end: m.index + m[0].length, column });
+  }
+  return scanNumbers(body).map((n) => {
+    const before = labels.filter((l) => l.end <= n.index).sort((a, b) => b.end - a.end || a.start - b.start)[0];
+    const after = before ? undefined : labels.filter((l) => l.start >= n.index).sort((a, b) => a.start - b.start)[0];
+    return { text: n.text, column: (before ?? after)?.column ?? "notes" };
+  });
 }
 
 // ── source ────────────────────────────────────────────────────────────────────────────────────────
@@ -254,9 +404,13 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   }
 
   if (typeof input.body !== "string") return fail("body", "body is required");
-  const body = input.body.trim().replace(/[ \t]+/g, " ");
+  // Normalised FIRST, and the normalised body is what is stored: every later rule (and every later
+  // re-scan of the stored line) sees the same characters. NFKC folds fullwidth/compatibility forms;
+  // asciiDigits maps any other script's decimal digits.
+  const body = normalizeLedgerText(input.body).trim().replace(/[ \t]+/g, " ");
   if (body.length === 0) return fail("body", "body is required");
-  if (/[\r\n]/.test(body)) return fail("body", "a ledger line is one line: body must not contain a line break (a second line would travel without the mark)");
+  if (/[\r\n\v\f\x85\u{2028}\u{2029}]/u.test(body)) return fail("body", "a ledger line is one line: body must not contain a line break (a second line would travel without the mark)");
+  if (/\p{Cf}/u.test(body)) return fail("body", "body must not contain invisible format characters (zero-width and similar): they hide words from the grammar");
   if (body.length > LEDGER_BODY_MAX) return fail("body", `body exceeds ${LEDGER_BODY_MAX} characters`);
 
   if (/[〔〕]/.test(body)) return fail("mark", "body must not contain 〔 or 〕: the server stamps the mark, a clerk never writes one (no forged or double marks)");
@@ -265,14 +419,16 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   if (!VERB_RE.test(body)) return fail("verb", "body must start with a record verb: Logged, Counted, Recorded, Found, or Missing (optionally followed by ':')");
 
   // Lexicon is scanned EVERYWHERE, quotes included.
-  const lower = body.toLowerCase();
-  const lex = LEDGER_LEXICON.find((t) => lower.includes(t));
+  const lex = findHardLexicon(body);
   if (lex) return fail("lexicon", `the private lexicon never appears in a ledger line (found "${lex}")`);
 
   // Quoted speech is the one exemption from the self rules: a clerk recording that Drevan said
   // "held, not slow" is recording speech, not speaking.
   const unquoted = stripQuoted(body);
   if (unquoted === null) return fail("quotes", "unbalanced quote: quoted speech must open and close, or the rest of the line would escape the self rules");
+  // Address words, outside quotes only: a clerk never calls anybody anything.
+  const addr = findAddress(unquoted);
+  if (addr) return fail("address", `a clerk never calls anybody anything: "${addr}" is used as an address (a name for someone), which only the triad may do`);
   const ws = words(unquoted);
   const fp = ws.find((w) => FIRST_PERSON.has(w));
   if (fp) return fail("first_person", `no first person outside quoted speech (found "${fp}"): a clerk has no self`);
@@ -314,7 +470,7 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   let numberCheck: NumberCheck | null = null;
   if (health) {
     if (!rowParts || !HUMAN_ROW_TABLES.has(rowParts[1]!)) {
-      return fail("health", "a health value only moves with a human-authored source row: source_kind 'row' into wm_continuity_notes (a conversation_capture) or biometric_snapshots. A companion's own words are never a source for a health number.");
+      return fail("health", "a health value only moves with a human-authored source row: source_kind 'row' into wm_continuity_notes (a conversation_capture anchored to a human-present Claude.ai session) or biometric_snapshots (a human source). A companion's own words are never a source for a health number.");
     }
     numberCheck = { kind: "health", table: rowParts[1]!, row_id: rowParts[2]!, numbers: nums.map((n) => n.text) };
   } else if (unlabeled.length > 0) {

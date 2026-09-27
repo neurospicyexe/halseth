@@ -182,7 +182,16 @@ describe("formatVibeCheck -- day ledger (the stillness-loop counterweight, 2026-
         }),
       })],
     }));
-    expect(out).toContain("  day: spoke 14 · notes 2 out / 1 in · sessions closed 1 · Fargo S4E8");
+    // cypher is a SIBLING of the digest author: counts only, never his watch title (ledger lane rule 5).
+    expect(out).toContain("  day: spoke 14 · notes 2 out / 1 in · sessions closed 1 · watch logged");
+    expect(out).not.toContain("Fargo");
+  });
+
+  it("the digest author's own day line keeps her watch title", () => {
+    const out = formatVibeCheck(data({
+      companions: [companion({ companion_id: "gaia", day: quietDay({ spoke: 2, watch: "Fargo S4E8" }) })],
+    }));
+    expect(out).toContain("  day: spoke 2 · Fargo S4E8");
   });
 
   it("omits the notes segment entirely when both sent and received are zero", () => {
