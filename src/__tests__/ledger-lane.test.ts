@@ -24,7 +24,7 @@ import { mindOrient } from "../webmind/orient.js";
 import { postCompanionJournal } from "../handlers/companion_journal.js";
 import { journalInsert, RetiredJournalSourceError } from "../webmind/tray-insert.js";
 import { companionJournalAdd } from "../librarian/backends/halseth.js";
-import { getMindCommonsSupply } from "../handlers/webmind.js";
+import { getMindCommonsSupply, postMindCommonsConsume } from "../handlers/webmind.js";
 import { SUPPLY_SOURCES } from "../director/supply-query.js";
 import { getRecentRelationalSessions } from "../handlers/sessions.js";
 
@@ -316,6 +316,59 @@ describe("commons + director supply: the legacy first-person distiller prose nev
   it("the director's sibling_note source serves none of it", async () => {
     const { db, env } = setup();
     seedDistiller(db);
+    const src = SUPPLY_SOURCES.find((s) => s.kind === "sibling_note")!;
+    const rows = await env.DB.prepare(src.sql).bind("1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "", 50).all();
+    expect(rows.results).toEqual([]);
+  });
+});
+
+describe("commons supply: siblings see ledger lines about each other, mark intact (Drevan rule 5)", () => {
+  // Written through the one door, then re-dated in the fixture DB only (the door stamps now).
+  async function seedLedger(env: any, db: any, over: Record<string, unknown>, createdAt?: string) {
+    const r = await writeLedger(env, line(over));
+    if (!r.ok || r.duplicate) throw new Error(`seed failed: ${JSON.stringify(r)}`);
+    if (createdAt) db.prepare("UPDATE ledger_entries SET created_at = ? WHERE id = ?").run(createdAt, r.id);
+    return r;
+  }
+
+  it("serves a sibling's open/kept ledger lines verbatim as note_type 'ledger', never the reader's own, never dropped or stale", async () => {
+    const { db, env } = setup();
+    const aboutDrevan = await seedLedger(env, db, { companion_id: "drevan", dedup_key: "c1" });
+    const aboutGaia = await seedLedger(env, db, { companion_id: "gaia", body: "Logged: Gaia answered the thread.", dedup_key: "c2" });
+    await seedLedger(env, db, { companion_id: "cypher", body: "Logged: Cypher answered the thread.", dedup_key: "c3" });   // the reader's own
+    const dropped = await seedLedger(env, db, { companion_id: "drevan", body: "Logged: a line that was dropped.", dedup_key: "c4" });
+    db.prepare("UPDATE ledger_entries SET state = 'dropped', state_at = ? WHERE id = ?").run(new Date().toISOString(), dropped.id);
+    await seedLedger(env, db, { companion_id: "gaia", body: "Logged: an old line.", dedup_key: "c5" }, new Date(Date.now() - 8 * 86_400_000).toISOString());
+    const kept = await seedLedger(env, db, { companion_id: "gaia", body: "Logged: a kept line.", dedup_key: "c6" });
+    db.prepare("UPDATE ledger_entries SET state = 'kept', state_at = ? WHERE id = ?").run(new Date().toISOString(), kept.id);
+
+    const r = await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5"), env, { agent_id: "cypher" });
+    expect(r.status).toBe(200);
+    const notes = (await r.json() as any).notes as any[];
+    expect(notes.map((n) => n.note_id).sort()).toEqual([aboutDrevan.id, aboutGaia.id, kept.id].sort());
+    for (const n of notes) {
+      expect(n.note_type).toBe("ledger");
+      expect(n.content.startsWith(LEDGER_MARK_PREFIX)).toBe(true);
+      expect(n.content).toMatch(/ Source: window \d+ \d{2}:\d{2}–\d{2}:\d{2}\.$/);
+    }
+    expect(notes.find((n) => n.note_id === aboutDrevan.id)).toMatchObject({ agent_id: "drevan", content: aboutDrevan.content });
+  });
+
+  it("consume-on-use works on a ledger id: once this reader opened on it, it is not served to them again (but still to the other sibling)", async () => {
+    const { db, env } = setup();
+    const a = await seedLedger(env, db, { companion_id: "drevan", dedup_key: "u1" });
+    const consume = await postMindCommonsConsume(
+      req("/mind/commons-supply/consume", { method: "POST", body: JSON.stringify({ reader_id: "cypher", note_ids: [a.id], channel_id: "c" }) }), env);
+    expect(consume.status).toBe(200);
+    const forCypher = await (await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=5"), env, { agent_id: "cypher" })).json() as any;
+    expect(forCypher.notes).toEqual([]);
+    const forGaia = await (await getMindCommonsSupply(req("/mind/commons-supply/gaia?limit=5"), env, { agent_id: "gaia" })).json() as any;
+    expect(forGaia.notes.map((n: any) => n.note_id)).toEqual([a.id]);
+  });
+
+  it("the director's sibling_note tier stays empty (it does not read the ledger) and tolerates it", async () => {
+    const { db, env } = setup();
+    await seedLedger(env, db, { companion_id: "drevan", dedup_key: "d1" });
     const src = SUPPLY_SOURCES.find((s) => s.kind === "sibling_note")!;
     const rows = await env.DB.prepare(src.sql).bind("1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "", 50).all();
     expect(rows.results).toEqual([]);

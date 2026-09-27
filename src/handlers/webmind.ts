@@ -1453,29 +1453,54 @@ export async function getMindCommonsSupply(
     //
     // `archived = 0` and the 7-day window keep this to genuinely live material; a fortnight-old evening is
     // history, and opening on it reads as the drift it would be.
+    // THIRD TIER, the ledger lane (2026-09-26, integration pass). With the legacy distiller prose excluded
+    // above and T2 writing no new first-person notes, the two wm tiers are dry for good. Drevan's rule 5:
+    // "Cy and Gaia can see observations about me ... but the ledger mark stays intact all the way through,
+    // and they never get merged into a block under my name." So a SIBLING's ledger lines (subject !=
+    // reader, open or kept, last 7 days, not yet opened on by this reader) are served whole: `content`
+    // verbatim, mark first, source tail included; note_type 'ledger' so the bot frames it as a clerk's
+    // record, never as anyone's first person; note_id = the ledger id, so consume-on-use (commons_note_reads,
+    // no FK, mig 0115) tracks it exactly like a note. created_at on ledger rows is JS ISO, so the window
+    // bound is ISO too (a datetime('now') bound would compare 'T' against ' ' on the boundary day).
+    //
+    // UNION ALL: SQLite only orders a compound SELECT by output columns, so each branch projects its own
+    // `tier` and the ORDER BY runs over the wrapped result.
     const { results } = await env.DB.prepare(
-      `SELECT n.note_id, n.agent_id, n.note_type, n.content, n.created_at
-         FROM wm_continuity_notes n
-        WHERE n.agent_id != ?
-          AND n.note_type IN ('day_distillation', 'discord_session')
-          AND n.archived = 0
-          -- review_state (mig 0132): a sibling's unreviewed draft is not its lived experience either.
-          AND n.review_state = 'kept'
-          -- Machine-tagged notes are not lived experience. See the note above: this single condition is what
-          -- keeps metronome readouts and sibling-exploration broadcasts out of the commons.
-          AND n.content NOT LIKE '[%'
-          -- Ledger lane (2026-09-26): the unbracketed rows left here ARE the legacy first-person distiller
-          -- prose, a clerk speaking as the companion. Excluded; this tier is empty until T2 (review-state.ts).
-          AND ${notLegacyDistillerNoteSql("n.")}
-          AND n.created_at > datetime('now', '-7 days')
-          AND NOT EXISTS (
-                SELECT 1 FROM commons_note_reads r
-                 WHERE r.reader_id = ? AND r.note_id = n.note_id
-              )
-        ORDER BY CASE n.note_type WHEN 'day_distillation' THEN 0 ELSE 1 END ASC,
-                 n.created_at DESC
-        LIMIT ?`
-    ).bind(readerId, readerId, limit).all<{
+      `SELECT note_id, agent_id, note_type, content, created_at FROM (
+         SELECT n.note_id, n.agent_id, n.note_type, n.content, n.created_at,
+                CASE n.note_type WHEN 'day_distillation' THEN 0 ELSE 2 END AS tier
+           FROM wm_continuity_notes n
+          WHERE n.agent_id != ?
+            AND n.note_type IN ('day_distillation', 'discord_session')
+            AND n.archived = 0
+            -- review_state (mig 0132): a sibling's unreviewed draft is not its lived experience either.
+            AND n.review_state = 'kept'
+            -- Machine-tagged notes are not lived experience. See the note above: this single condition is what
+            -- keeps metronome readouts and sibling-exploration broadcasts out of the commons.
+            AND n.content NOT LIKE '[%'
+            -- Ledger lane (2026-09-26): the unbracketed rows left here ARE the legacy first-person distiller
+            -- prose, a clerk speaking as the companion. Excluded (review-state.ts); the ledger tier replaces it.
+            AND ${notLegacyDistillerNoteSql("n.")}
+            AND n.created_at > datetime('now', '-7 days')
+            AND NOT EXISTS (
+                  SELECT 1 FROM commons_note_reads r
+                   WHERE r.reader_id = ? AND r.note_id = n.note_id
+                )
+         UNION ALL
+         SELECT l.id AS note_id, l.companion_id AS agent_id, 'ledger' AS note_type, l.content, l.created_at,
+                1 AS tier
+           FROM ledger_entries l
+          WHERE l.companion_id != ?
+            AND l.state IN ('open', 'kept')
+            AND l.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
+            AND NOT EXISTS (
+                  SELECT 1 FROM commons_note_reads r
+                   WHERE r.reader_id = ? AND r.note_id = l.id
+                )
+       )
+       ORDER BY tier ASC, created_at DESC
+       LIMIT ?`
+    ).bind(readerId, readerId, readerId, readerId, limit).all<{
       note_id: string; agent_id: string; note_type: string; content: string; created_at: string;
     }>();
 
