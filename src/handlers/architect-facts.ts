@@ -22,7 +22,7 @@
  * how a wrong fact becomes unfalsifiable.
  */
 import { noveltyCheck } from "../webmind/novelty.js";
-import { storeVector } from "../mcp/embed.js";
+import { storeVector, embedText } from "../mcp/embed.js";
 import type { Env } from "../types.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
@@ -314,7 +314,16 @@ export async function postArchitectFact(request: Request, env: Env): Promise<Res
   //
   // Fails open by construction: any embedding or Vectorize trouble returns `insert`, so the gate
   // can never eat a fact.
-  const novelty = await noveltyCheck(env, fact, "architect_facts", companionIdForGate(body), "table");
+  //
+  // NOT FOR A SUPERSEDE (2026-09-26). A correction is by definition close to the row it replaces
+  // (a typo fix scores >=0.95 against it), so the gate matched the very row being retired and
+  // answered deduped: nothing written, nothing retired, while Hearth's /facts said "superseded".
+  // A supersede is an explicit edit of a named row, and it retires that row in the same batch, so
+  // it cannot leave a duplicate behind; the gate exists for unprompted writes. Still embed, so the
+  // corrected fact is indexed for the next write's gate (fails open like the gate does).
+  const novelty = supersedesId
+    ? { action: "insert" as const, embedding: await embedText(env, fact).catch(() => null) }
+    : await noveltyCheck(env, fact, "architect_facts", companionIdForGate(body), "table");
   if (novelty.action === "skip") {
     return json({
       ok: true,
