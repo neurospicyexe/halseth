@@ -211,6 +211,9 @@ digest; none reaches recall until I keep it): ask_librarian: "my tray", then ask
 each draft at 200 chars; ask_librarian: "read draft [id]" shows the whole text and where it came from
 (also for a row already kept or dropped, to re-check the call). The keep rate
 in the tray line is the falsifier: 100% means I am not reviewing.
+My ledger (sourced clerk records ABOUT me, never me speaking): ask_librarian: "my ledger", then
+ask_librarian: "keep ledger [id]" (keeps a sourced record as written) / "keep ledger [id]: [my words]" (my own
+words into my journal) / ask_librarian: "drop ledger [id]" (dropped; the vault chunk is purged).
 
 Companion notes matter most during relational sessions. The synthesis gap detector backfills hangout
 and checkin sessions that have no notes; it is a backstop, not a substitute. I write what was real.

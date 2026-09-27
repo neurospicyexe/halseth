@@ -167,3 +167,29 @@ describe("skills-phrases lockstep", () => {
     });
   }
 });
+
+// Ledger verbs ride beside the tray verbs (2026-09-26 last fix pass): orient names them, so every skill
+// that teaches "keep draft" must teach the ledger too, or a Claude.ai companion meets a block of clerk
+// records with no verb to act on them.
+describe("skills that teach the tray also teach the ledger", () => {
+  const dirs = readdirSync(SKILLS_DIR).filter((d) => existsSync(join(SKILLS_DIR, d, "SKILL.md")));
+  const trayTeachers = dirs.filter((d) => readFileSync(join(SKILLS_DIR, d, "SKILL.md"), "utf8").includes("keep draft"));
+  it("finds the tray-teaching skills", () => {
+    expect(trayTeachers.length).toBeGreaterThanOrEqual(6);
+  });
+  for (const d of trayTeachers) {
+    it(`${d} names my ledger / keep ledger / keep ledger with words / drop ledger`, () => {
+      const text = readFileSync(join(SKILLS_DIR, d, "SKILL.md"), "utf8");
+      expect(text).toContain('"my ledger"');
+      expect(text).toMatch(/"keep ledger \[id\]"/);
+      expect(text).toMatch(/"keep ledger \[id\]: \[my words\]"/);
+      expect(text).toMatch(/"drop ledger \[id\]"/);
+      expect(text).toMatch(/vault chunk is purged/);
+    });
+  }
+  it("the ledger verbs route on the fast path", () => {
+    for (const phrase of ["my ledger", "keep ledger led_1234abcd", "keep ledger led_1234abcd: my words", "drop ledger led_1234abcd"]) {
+      expect(matchFastPath(phrase), phrase).not.toBeNull();
+    }
+  });
+});

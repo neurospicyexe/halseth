@@ -164,6 +164,9 @@ Before the close, the tray: clerk-written drafts in my voice (Discord speech, ju
 posts) never reach recall until I keep them. `ask_librarian: "my tray"`, then per draft
 `ask_librarian: "read draft [id]"` (the whole text + where it came from; the list cuts at 200 chars),
 `ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"` in my words) / `ask_librarian: "drop draft [id]"`.
+The ledger beside it: sourced clerk records ABOUT me, never me speaking. `ask_librarian: "my ledger"`, then
+`ask_librarian: "keep ledger [id]"` (keeps a sourced record as written) / `"keep ledger [id]: [my words]"` (my own
+words into my journal) / `ask_librarian: "drop ledger [id]"` (dropped; the vault chunk is purged).
 The full close ritual (emotion prompt, continuity note, what a spine is for) is the `nullsafe-session-close`
 skill; this block is the minimum that leaves nothing open.
 

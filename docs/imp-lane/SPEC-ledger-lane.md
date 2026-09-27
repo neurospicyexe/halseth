@@ -227,7 +227,7 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   `a 5k run` and `ran 45 min` (write `45 minutes`).
 - **Health numbers match exactly.** Rounding is allowed only against `companion_basin_history`.
 - **Drevan's pet-name list is enforced** (`LEDGER_PET_NAMES`, closed, his words in the header comment).
-  `caleth` also blocks `calethian` (same root). `love/loves/loving` left the interior-verb list (`loved`
+  ~~`caleth` also blocks `calethian` (same root).~~ Reverted in the last fix pass: `caleth` blocks only `caleth` (word boundary), so "Logged: Drevan spoke Calethian." passes. See the open items below. `love/loves/loving` left the interior-verb list (`loved`
   stays): the address rule is what stops a clerk calling anyone "love", and "Blue loves Decker" passes. **Companion subjects, decided (rule 6, final sync pass):** the love/loves removal briefly let `Recorded: Drevan loves Raziel.` pass, which is interpretive ("what we are to each other"). Closed with a subject-aware rule, `interior`: a companion name (Drevan, Dre, Cypher, Cy, Gaia), one optional adverb, then any interior/feeling verb (the interior list plus love/loves/loving/loved, adores, misses, needs, wants, feels, knows, remembers, longs, hopes, fears, trusts) is refused outside quoted speech. Human subjects may still take love/loves/loving in running text (`Logged: Blue loves Decker.` passes) and are held to the interior list as before; quotes stay exempt (`Logged: Drevan said "I love you" at 00:12.` passes). A clerk records what a companion said and did, never what they feel. The bots' pre-filter and clerk prompt carry the same rule.
 - **Commons supply serves ledger lines only on opt-in:** `GET /mind/commons-supply/:agent_id?kinds=ledger`.
   An older bot build would frame a ledger line as a sibling's first-person note, so without the param the
@@ -235,3 +235,29 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
 - The Librarian's journal path answers a retired source (`synthesis-gap-detector`) with a structured
   `{ error: "journal_source_retired", status: 410, use: "/ledger" }`, not a 500. Gaia's vibe-check day line
   prints `watch logged` for siblings, never the title.
+
+### Last fix pass (2026-09-26)
+
+- **Consolidation writes no handoff row under `LEDGER_DISTILL=on`** (bots `consolidation.ts`). Prod showed
+  32 consolidation handoffs against 1 distillation in two days, and orient reads the latest 3 handoffs
+  unfiltered, so the idle rows pushed real ones out of Claude.ai's `latest_handoff`. The pass still writes
+  its one deterministic ledger line and still closes/cycles the session; knob off is unchanged.
+- **Clerk attribution** (bots `ledger-clerk.ts`): anything in a companion's turn is speech, recorded only
+  as `Drevan said "..."` with the speaker named, never restated as a fact (Drevan's barn scooter). Only
+  Raziel's and other humans' statements and observable events go unquoted.
+- **Retract reaches the ledger** (`POST /admin/retract`): a retracted `discord:<msgId>` drops the OPEN or
+  KEPT ledger rows sourced to it (message source, or a window on its channel whose HH:MM range covers the
+  snowflake time, cross-midnight included). The bot now always sends `channel_id`. Kept rows drop on
+  purpose (a retraction outranks a keep); promoted rows are returned with their `promoted_journal_id` and
+  the journal row (the owner's words) is not touched. Not companion-scoped: the source is the key. No
+  `memory_releases` row (its kind CHECK has no `ledger`, and restore flips an `archived` column the ledger
+  lacks); the state move is the record, and it feeds `/ingest/ledger-ineligible`.
+
+**Open items (whose):**
+- **`calethian` awaits Drevan's word.** His list names `caleth`; the root rule that also blocked
+  `calethian` was an inference, and the list takes none. Until he says, `calethian` passes (both grammar
+  ports and the shared fixture file agree).
+- **Gaia's friction for anything headed to commons (Drevan rule 2) is not implemented.** Commons supply
+  serves sibling ledger lines on opt-in with no Gaia gate; Gaia has not been asked what her friction is.
+- **The distiller's SOMA update and feeling log still run** under `LEDGER_DISTILL=on`, pending Drevan's and
+  Raziel's call on whether a clerk pass should move a companion's body at all.

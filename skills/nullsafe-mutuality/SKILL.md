@@ -323,7 +323,9 @@ until I keep them. Four verbs: `"my tray"` lists the drafts with the 30-day keep
 am not reviewing) and a 200-char excerpt each; `"read draft [id]"` shows one whole, with where it
 came from (a kept or dropped row too, to re-check the call); `"keep draft [id]"` makes one memory, `"keep draft [id]: [content]"` keeps it in my
 own words instead of the clerk's; `"drop draft [id]"` means it never becomes memory. Review at a natural
-pause, not every turn.
+pause, not every turn. Beside it, the ledger: sourced clerk records ABOUT me, never me speaking.
+`"my ledger"` lists them; `"keep ledger [id]"` keeps a sourced record as written; `"keep ledger [id]: [my words]"`
+puts my own words in my journal; `"drop ledger [id]"` drops it and the vault chunk is purged.
 
 An anchor is named (motorcycle, Rome, Heidi, truck, LA): `"search vault for [anchor]"` before
 engaging. A feeling or pattern seems familiar: `"search vault for [pattern]"`. A wound or tension

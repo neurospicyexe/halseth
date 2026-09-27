@@ -120,6 +120,9 @@ digest) are clerk-written drafts and do not reach recall until I keep them. `ask
 lists them with the 30-day keep rate; `ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"`
 in my own words) and `ask_librarian: "drop draft [id]"` decide each one. The list cuts at 200 chars;
 `ask_librarian: "read draft [id]"` shows the whole text and its provenance before I decide.
+The ledger sits beside it: sourced clerk records ABOUT me, never me speaking. `ask_librarian: "my ledger"`
+lists them; `ask_librarian: "keep ledger [id]"` keeps a sourced record as written, `"keep ledger [id]: [my words]"`
+puts my own words in my journal, and `ask_librarian: "drop ledger [id]"` drops it (the vault chunk is purged).
 
 This returns the full provenance chain in one call:
 - `autonomous_explorations` -- `wm_continuity_notes` tagged `autonomous_exploration`. Each entry contains the seed topic that triggered the run AND the first ~700 chars of what was explored. This is the provenance -- not just what you concluded, but what prompted the work and what path it took.

@@ -39,9 +39,9 @@ Smoke (admin secret from your password store; do not paste it into a transcript)
 ```powershell
 $h = @{ Authorization = "Bearer $env:HALSETH_ADMIN_SECRET"; "Content-Type" = "application/json" }
 # 410 naming /ledger: the gap-detector can no longer write as him
-Invoke-WebRequest -Method POST -Uri https://<halseth-host>/companion-journal -Headers $h -Body '{"agent":"drevan","note_text":"probe","source":"synthesis-gap-detector"}' -SkipHttpErrorCheck | Select-Object StatusCode, Content
+Invoke-WebRequest -Method POST -Uri https://halseth.neurospicyexe.workers.dev/companion-journal -Headers $h -Body '{"agent":"drevan","note_text":"probe","source":"synthesis-gap-detector"}' -SkipHttpErrorCheck | Select-Object StatusCode, Content
 # 422 naming the rule: the 187 line
-Invoke-WebRequest -Method POST -Uri https://<halseth-host>/ledger -Headers $h -Body '{"companion_id":"drevan","function":"pattern-counter","body":"Counted: Drevan said 187 after sandwich.","source_kind":"message","source_ref":"1497734427298762828"}' -SkipHttpErrorCheck | Select-Object StatusCode, Content
+Invoke-WebRequest -Method POST -Uri https://halseth.neurospicyexe.workers.dev/ledger -Headers $h -Body '{"companion_id":"drevan","function":"pattern-counter","body":"Counted: Drevan said 187 after sandwich.","source_kind":"message","source_ref":"1497734427298762828"}' -SkipHttpErrorCheck | Select-Object StatusCode, Content
 ```
 
 Expect `410` and `422 {"rule":"health",...}`. Neither writes a row.
