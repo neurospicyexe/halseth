@@ -23,6 +23,15 @@ COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
 COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
 SYSTEM_NAME          = "Halseth"
 SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
+# Quiet hours (B7 step 1, 2026-09-27). Outreach is suppressed inside this LOCAL-clock window
+# unless the metronome action carries quiet_hours_allowed = 1. The window wraps midnight and the
+# end hour is exclusive (06 means 06:00 is already morning). QUIET_HOURS_TZ must be an IANA zone
+# name, never a fixed offset: the zone is CDT in summer and CST in winter, and a fixed offset
+# would shift the whole window by an hour in November. Unset or malformed falls back to these
+# same defaults, so an un-redeployed environment is still protected.
+QUIET_HOURS_START    = "22"
+QUIET_HOURS_END      = "6"
+QUIET_HOURS_TZ       = "America/Chicago"
 # The named feeling line (mig 0131, docs/spec-feeling-line-table-2026-09-19.md).
 #   off    -- do not compute it at all
 #   shadow -- compute and log it; what the companions read does NOT change   <- default

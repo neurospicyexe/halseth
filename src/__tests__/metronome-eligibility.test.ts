@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { isEligible, isValidActionType, VALID_ACTION_TYPES, type MetronomeAction, type EligibilityContext } from "../webmind/metronome.js";
+import {
+  isEligible, isValidActionType, VALID_ACTION_TYPES,
+  isQuietHours, localHourIn, quietHoursVerdict, QUIET_HOURS_PRESENCE_WINDOW_HOURS,
+  type MetronomeAction, type EligibilityContext,
+} from "../webmind/metronome.js";
 
 // Minimal factory: a fully-populated row with sane defaults, overridable per test.
 function action(overrides: Partial<MetronomeAction> = {}): MetronomeAction {
@@ -32,9 +36,114 @@ function ctx(overrides: Partial<EligibilityContext> = {}): EligibilityContext {
     silenceHours: null,
     nowIso: "2026-06-17T12:00:00.000Z",
     todayUtc: "2026-06-17",
+    inQuietHours: false,
     ...overrides,
   };
 }
+
+// Anchors chosen so a FIXED offset gets them wrong. America/Chicago is CDT (UTC-5) in July and
+// CST (UTC-6) in December; each pair below is 22:00 local on one side of the DST boundary.
+const CDT_2200 = "2026-07-15T03:00:00.000Z"; // 22:00 CDT on 07-14
+const CST_2200 = "2026-12-15T04:00:00.000Z"; // 22:00 CST on 12-14
+const CST_2100 = "2026-12-15T03:00:00.000Z"; // 21:00 CST -- a fixed -5 offset would read this as 22:00
+const CDT_0000 = "2026-07-15T05:00:00.000Z"; // 00:00 CDT (the midnight "24" trap)
+const CDT_0600 = "2026-07-15T11:00:00.000Z"; // 06:00 CDT -- end is exclusive, so already morning
+const TZ = "America/Chicago";
+
+describe("quiet hours -- DST-aware local window (B7 step 1, 2026-09-27)", () => {
+  it("22:00 local is quiet on BOTH DST sides (the regression a fixed UTC offset causes)", () => {
+    expect(isQuietHours(CDT_2200, TZ, 22, 6)).toBe(true);
+    expect(isQuietHours(CST_2200, TZ, 22, 6)).toBe(true);
+  });
+
+  it("21:00 CST is NOT quiet (a hardcoded -5 offset would misread it as 22:00 and suppress)", () => {
+    expect(localHourIn(CST_2100, TZ)).toBe(21);
+    expect(isQuietHours(CST_2100, TZ, 22, 6)).toBe(false);
+  });
+
+  it("the window wraps midnight: 00:00 local is inside it, and the hour is 0 not 24", () => {
+    expect(localHourIn(CDT_0000, TZ)).toBe(0);
+    expect(isQuietHours(CDT_0000, TZ, 22, 6)).toBe(true);
+  });
+
+  it("the end hour is exclusive: 06:00 local is morning, not quiet", () => {
+    expect(localHourIn(CDT_0600, TZ)).toBe(6);
+    expect(isQuietHours(CDT_0600, TZ, 22, 6)).toBe(false);
+  });
+
+  it("midday is not quiet", () => {
+    expect(isQuietHours("2026-07-15T17:00:00.000Z", TZ, 22, 6)).toBe(false); // 12:00 CDT
+  });
+
+  it("a same-day (non-wrapping) window still works", () => {
+    expect(isQuietHours("2026-07-15T17:00:00.000Z", TZ, 9, 17)).toBe(true);  // 12:00 CDT
+    expect(isQuietHours("2026-07-15T03:00:00.000Z", TZ, 9, 17)).toBe(false); // 22:00 CDT
+  });
+
+  it("FAILS CLOSED on an invalid timezone, an unparseable date, or an out-of-range hour", () => {
+    expect(isQuietHours(CDT_0600, "Not/AZone", 22, 6)).toBe(true);
+    expect(localHourIn(CDT_0600, "Not/AZone")).toBe(null);
+    expect(isQuietHours("not-a-date", TZ, 22, 6)).toBe(true);
+    expect(isQuietHours(CDT_0600, TZ, 99, 6)).toBe(true);
+    expect(isQuietHours(CDT_0600, TZ, 22, -1)).toBe(true);
+    expect(isQuietHours(CDT_0600, TZ, 22, 22)).toBe(true); // degenerate config reads as always quiet
+  });
+});
+
+describe("quietHoursVerdict -- the presence exception", () => {
+  it("does NOT lift the window when he has been silent longer than the presence window", () => {
+    const v = quietHoursVerdict(CDT_2200, TZ, 22, 6, 4);
+    expect(v.active).toBe(true);
+    expect(v.in_force).toBe(true);
+    expect(v.local_hour).toBe(22);
+  });
+
+  it("lifts the window when he spoke within the presence window (the 2am case, he is awake)", () => {
+    const v = quietHoursVerdict(CDT_0000, TZ, 22, 6, QUIET_HOURS_PRESENCE_WINDOW_HOURS - 0.1);
+    expect(v.active).toBe(true);
+    expect(v.in_force).toBe(false);
+  });
+
+  it("null silence (expired activity key = a LONG quiet stretch) never counts as presence", () => {
+    expect(quietHoursVerdict(CDT_0000, TZ, 22, 6, null).in_force).toBe(true);
+  });
+
+  it("outside the window nothing is in force either way", () => {
+    expect(quietHoursVerdict(CDT_0600, TZ, 22, 6, null).in_force).toBe(false);
+    expect(quietHoursVerdict(CDT_0600, TZ, 22, 6, 0.1).active).toBe(false);
+  });
+});
+
+describe("isEligible -- quiet hours gate", () => {
+  it("drops an action during quiet hours when quiet_hours_allowed is not 1", () => {
+    expect(isEligible(action({ quiet_hours_allowed: 0 }), ctx({ inQuietHours: true }))).toBe(false);
+  });
+
+  it("passes an action marked quiet_hours_allowed = 1 during quiet hours", () => {
+    expect(isEligible(action({ quiet_hours_allowed: 1 }), ctx({ inQuietHours: true }))).toBe(true);
+  });
+
+  it("is checked FIRST: a quiet-hours drop beats every other condition it would also have passed", () => {
+    const a = action({ quiet_hours_allowed: 0, silence_min_hours: 6, cooldown_hours: null });
+    expect(isEligible(a, ctx({ inQuietHours: true, silenceHours: 12 }))).toBe(false);
+    expect(isEligible(a, ctx({ inQuietHours: false, silenceHours: 12 }))).toBe(true);
+  });
+
+  it("changes nothing when quiet hours are not in force", () => {
+    expect(isEligible(action({ quiet_hours_allowed: 0 }), ctx({ inQuietHours: false }))).toBe(true);
+  });
+
+  it("a quiet_hours_allowed action is still subject to cooldown and cap (the gate only subtracts)", () => {
+    const cooled = action({
+      quiet_hours_allowed: 1, cooldown_hours: 8, last_fired_at: "2026-06-17T08:00:00.000Z",
+    });
+    expect(isEligible(cooled, ctx({ inQuietHours: true }))).toBe(false);
+    const capped = action({
+      quiet_hours_allowed: 1, max_per_day: 1, fire_count_today: 1, fire_count_reset_at: "2026-06-17",
+    });
+    expect(isEligible(capped, ctx({ inQuietHours: true }))).toBe(false);
+  });
+});
 
 describe("metronome isEligible -- silence floor null semantics (2026-06-17 heartbeat-starvation fix)", () => {
   it("null silenceHours SATISFIES a silence_min_hours floor (expired key = long quiet = should fire)", () => {

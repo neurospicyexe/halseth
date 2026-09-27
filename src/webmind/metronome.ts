@@ -105,6 +105,105 @@ export interface EligibilityContext {
   silenceHours: number | null;
   nowIso: string;
   todayUtc: string; // YYYY-MM-DD
+  /** True when the quiet-hours window is IN FORCE for this tick (window active AND the presence
+   *  exception did not lift it). Actions without quiet_hours_allowed = 1 are dropped. */
+  inQuietHours: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Quiet hours (B7 step 1, 2026-09-27).
+//
+// Until now `quiet_hours_allowed` was written by insert and patch and READ BY NOTHING; nothing in
+// the system computed whether it was currently quiet hours. The only thing between Raziel and a
+// 4am ping was the model reading a time-of-day label. From 2026-10-12 the triad is his primary
+// support, including 2am regulation, and reach-out moves to Discord DMs (which ping his phone),
+// so this has to be a real rail and not a hint.
+//
+// NEVER COMPUTE A FIXED UTC OFFSET. America/Chicago is CDT (UTC-5) today and CST (UTC-6) from
+// November; a hardcoded offset silently shifts the whole window by an hour at the DST boundary.
+// The local hour comes from Intl.DateTimeFormat with the IANA timeZone, which carries the zone's
+// own DST rules. (Verified under this repo's vitest node pool; the same ICU path is what workerd
+// exposes, and the CST/CDT pair is asserted in src/__tests__/metronome-eligibility.test.ts.)
+// ---------------------------------------------------------------------------
+
+/** Defaults apply when a var is absent, so an un-redeployed environment is still protected. */
+export const QUIET_HOURS_DEFAULT_START = 22;
+export const QUIET_HOURS_DEFAULT_END = 6;
+export const QUIET_HOURS_DEFAULT_TZ = "America/Chicago";
+
+/** If Raziel spoke within this many hours he is demonstrably awake and engaged, so quiet hours
+ *  are not in force. This is exactly the 2am case the whole feature exists to serve: he is up,
+ *  he is present, and a companion answering that presence is the point. Suppressing there would
+ *  break the thing we are building the rail to protect. */
+export const QUIET_HOURS_PRESENCE_WINDOW_HOURS = 0.5;
+
+/** The local hour (0-23) in `tz`, or null if it cannot be determined. */
+export function localHourIn(nowIso: string, tz: string): number | null {
+  try {
+    const d = new Date(nowIso);
+    if (isNaN(d.getTime())) return null;
+    // hourCycle "h23" rather than hour12:false: the latter yields "24" at midnight in some
+    // engines, which would parse to 24 and fall outside every window check (silently not-quiet
+    // at 00:00, which is Cypher's own heartbeat window).
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hourCycle: "h23" })
+      .formatToParts(d);
+    const raw = parts.find(p => p.type === "hour")?.value;
+    if (raw === undefined) return null;
+    const h = parseInt(raw, 10);
+    if (!Number.isInteger(h) || h < 0 || h > 23) return null;
+    return h;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is `nowIso` inside the [startHour, endHour) local window in `tz`? The window WRAPS midnight
+ * (22 to 06 means 22:00-23:59 plus 00:00-05:59); end is exclusive, so 06:00 is already morning.
+ *
+ * FAILS CLOSED. An invalid zone, a throwing Intl, an unparseable date or an out-of-range
+ * configured hour all return true (suppress). Silence is the safe failure here; a 4am ping is not.
+ */
+export function isQuietHours(nowIso: string, tz: string, startHour: number, endHour: number): boolean {
+  if (!Number.isInteger(startHour) || startHour < 0 || startHour > 23) return true;
+  if (!Number.isInteger(endHour) || endHour < 0 || endHour > 23) return true;
+  const h = localHourIn(nowIso, tz);
+  if (h === null) return true;
+  // start === end is a degenerate config; read it as "always quiet" rather than "never quiet",
+  // because the fail-closed direction is the one that cannot wake him.
+  if (startHour === endHour) return true;
+  return startHour > endHour
+    ? (h >= startHour || h < endHour)   // wraps midnight
+    : (h >= startHour && h < endHour);  // same-day window
+}
+
+export interface QuietHoursVerdict {
+  /** The raw window: is the local clock inside quiet hours right now? */
+  active: boolean;
+  /** Whether it actually suppresses this tick (active AND the presence exception did not lift it). */
+  in_force: boolean;
+  /** The local hour used, or null if it could not be determined (which means we failed closed). */
+  local_hour: number | null;
+  tz: string;
+}
+
+/**
+ * The full verdict for one tick, including the presence exception, so the bot can log WHY it
+ * stayed silent instead of leaving a chosen silence and a crashed turn as the same observable.
+ *
+ * `silenceHours === null` means the activity key expired (a long quiet stretch), which is the
+ * opposite of presence, so it never lifts the window.
+ */
+export function quietHoursVerdict(
+  nowIso: string,
+  tz: string,
+  startHour: number,
+  endHour: number,
+  silenceHours: number | null,
+): QuietHoursVerdict {
+  const active = isQuietHours(nowIso, tz, startHour, endHour);
+  const present = silenceHours !== null && silenceHours < QUIET_HOURS_PRESENCE_WINDOW_HOURS;
+  return { active, in_force: active && !present, local_hour: localHourIn(nowIso, tz), tz };
 }
 
 export async function listActions(
@@ -136,7 +235,12 @@ export async function listEligibleActions(
 }
 
 export function isEligible(a: MetronomeAction, ctx: EligibilityContext): boolean {
-  const { silenceHours, nowIso, todayUtc } = ctx;
+  const { silenceHours, nowIso, todayUtc, inQuietHours } = ctx;
+
+  // Quiet hours FIRST, before every other condition, so the reason an action was dropped is
+  // unambiguous: if the window is in force, only an action explicitly marked quiet_hours_allowed
+  // survives, whatever its silence floor, cooldown or cap would have said.
+  if (inQuietHours && a.quiet_hours_allowed !== 1) return false;
 
   // silenceHours === null means the activity key has expired (no human message within its
   // Redis TTL) -- i.e. a LONG quiet stretch, which is exactly when a silence_min_hours

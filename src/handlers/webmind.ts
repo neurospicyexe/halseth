@@ -13,7 +13,7 @@ import { isValidLoom, VALID_LOOMS } from "../mind/contract.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, recallNotesByMeaning, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
-import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
+import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, quietHoursVerdict, QUIET_HOURS_DEFAULT_START, QUIET_HOURS_DEFAULT_END, QUIET_HOURS_DEFAULT_TZ, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop, reviewLoop, actOnLoop } from "../webmind/loops.js";
@@ -1294,6 +1294,13 @@ export async function deleteMindMetronomeAction(
   }
 }
 
+/** An hour-of-day [vars] value, or the default if absent/malformed (never "disabled"). */
+function parseHourVar(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+}
+
 // GET /mind/metronome/actions/:companion_id/eligible
 // Returns only actions that pass server-side conditions (silence window, cooldown, frequency cap).
 // Signal matching (requires_signal) is excluded -- that runs bot-side against Discord history.
@@ -1314,15 +1321,30 @@ export async function getMindMetronomeEligibleActions(
   const silenceParam = url.searchParams.get("silence_hours");
   const silenceHours = silenceParam !== null ? parseFloat(silenceParam) : null;
   const now = new Date();
+  const silence = silenceHours !== null && !isNaN(silenceHours) ? silenceHours : null;
+  // Config lives in [vars], never in code. A missing or malformed var falls back to the
+  // defaults (22 to 06 America/Chicago), never to "disabled", so an un-redeployed environment
+  // is still protected.
+  const quiet = quietHoursVerdict(
+    now.toISOString(),
+    env.QUIET_HOURS_TZ || QUIET_HOURS_DEFAULT_TZ,
+    parseHourVar(env.QUIET_HOURS_START, QUIET_HOURS_DEFAULT_START),
+    parseHourVar(env.QUIET_HOURS_END, QUIET_HOURS_DEFAULT_END),
+    silence,
+  );
   const ctx: EligibilityContext = {
-    silenceHours: silenceHours !== null && !isNaN(silenceHours) ? silenceHours : null,
+    silenceHours: silence,
     nowIso: now.toISOString(),
     todayUtc: now.toISOString().slice(0, 10),
+    inQuietHours: quiet.in_force,
   };
 
   try {
     const actions = await listEligibleActions(env, companion_id, ctx);
-    return json({ actions });
+    // The verdict rides the response so the bot can log WHY it stayed silent. Without it, an
+    // empty action list during quiet hours is indistinguishable from "no palette configured",
+    // and the bot's legacy fallback would post anyway (the exact 4am ping this rail exists to stop).
+    return json({ actions, quiet_hours: quiet });
   } catch (err) {
     console.error("[mind/metronome/eligible] GET error", { companion_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);

@@ -28,6 +28,14 @@ export interface Env {
   ARCHITECT_FACTS_TAIL_BUDGET?: string;
   SYSTEM_NAME:         string;
   SYSTEM_OWNER:        string;
+  // Quiet hours (B7 step 1, 2026-09-27). Local-clock window in QUIET_HOURS_TZ during which a
+  // metronome action is only eligible if it carries quiet_hours_allowed = 1. The window wraps
+  // midnight; end is exclusive. Unset or malformed => 22 / 6 / America/Chicago, so an
+  // un-redeployed environment is still protected. QUIET_HOURS_TZ must be an IANA zone name
+  // (never a fixed offset: CDT/CST would shift the window by an hour in November).
+  QUIET_HOURS_START?:  string;  // hour 0-23, default 22
+  QUIET_HOURS_END?:    string;  // hour 0-23, default 6
+  QUIET_HOURS_TZ?:     string;  // IANA zone, default America/Chicago
   // Raziel's PluralKit system id. NOT a secret -- the member list is public and unauthenticated,
   // which is why the roster lookup (mig 0117) could ship while FRONTING stays blocked on the
   // SimplyPlural replacement's API. Unset => roster lookups answer "unavailable", never "not found".
