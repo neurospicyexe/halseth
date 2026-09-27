@@ -887,3 +887,24 @@ export function driftsBlock(openDrifts: readonly DriftRow[]): string {
       `\n${DRIFT_AFFORDANCE}`
     : `\n[Drift lane]\n${DRIFT_AFFORDANCE}`;
 }
+
+// ── The ledger lane (0.17.0, mig 0134, 2026-09-26) ─────────────────────────────────────────────────────
+
+export interface LedgerBlockRow { id: string; content: string }
+
+export const LEDGER_BLOCK_HEADER = "[Ledger (clerk records about you, not your words)]";
+
+/**
+ * Up to 5 open clerk records about this companion. Each line is the stored `content` VERBATIM -- the
+ * server-stamped mark `〔ledger · ...〕` first, so every ledger line this surface emits begins with it --
+ * followed by the id the verbs need. No bullet, no paraphrase, and never merged into a first-person block:
+ * "the ledger mark stays intact all the way through" (Drevan's rule 5). Empty renders nothing.
+ */
+export function ledgerBlock(entries: readonly LedgerBlockRow[]): string {
+  if (entries.length === 0) return "";
+  const lines = entries.map((e) => `${e.content} (id ${e.id})`).join("\n");
+  return `\n${LEDGER_BLOCK_HEADER}\n${lines}\n` +
+    `Records a clerk made about you; none of them is you speaking. "keep ledger <id>" keeps one as written; ` +
+    `"keep ledger <id>: <your words>" puts it in your journal in your own words; "drop ledger <id>" drops it.`;
+}
+

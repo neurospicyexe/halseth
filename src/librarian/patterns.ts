@@ -1591,6 +1591,27 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["tray_draft_read"],
     response_key: "data",
   },
+  // The ledger lane (mig 0134, 2026-09-26): clerk records ABOUT this companion, never in its voice.
+  // Owner-only. The keep/drop verbs are also anchored in router.ts (ANCHORED_GUARDS) so a payload after
+  // the colon ("keep ledger led_...: <my words>") can never hand the request to a trigger in its words.
+  ledger_read: {
+    triggers: [
+      "my ledger", "show my ledger", "read my ledger", "what is in my ledger", "what's in my ledger",
+      "ledger read",
+    ],
+    tools: ["ledger_read"],
+    response_key: "data",
+  },
+  ledger_keep: {
+    triggers: ["keep ledger", "keep this ledger", "keep the ledger"],
+    tools: ["ledger_keep"],
+    response_key: "witness",
+  },
+  ledger_drop: {
+    triggers: ["drop ledger", "drop this ledger", "drop the ledger"],
+    tools: ["ledger_drop"],
+    response_key: "witness",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [

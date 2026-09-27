@@ -36,6 +36,7 @@ function stateWith(questions: Array<{ id: string; question: string; voiced: bool
     oversight: { pressure_flags: [], growth_confirmed: [], guardian_cards: [], tripwires: [], questions, answered_questions: [], growth_unconfirmed: [] },
     world: { home_recent: [], club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [], raziel_state: null },
     graph: { neighborhoods: [] },
+    ledger: { open: [] },
     meta: { datetime_iso: "2026-08-01T00:00:00Z", datetime_local: "2026-08-01", not_yet_loaded: [], degraded: [] },
   } as MindState;
 }

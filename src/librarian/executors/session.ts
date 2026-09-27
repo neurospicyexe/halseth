@@ -581,6 +581,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // 0.10.0: deploy change-notes -- system changes stated near the top so instrument wobbles read
   // as announced changes, not mysteries. Empty renders nothing.
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
+  // 0.17.0 (ledger lane): clerk records ABOUT this companion, their own block, mark intact on every line.
+  const ledgerBlock = B.ledgerBlock(mindState.ledger?.open ?? []);
 
   // The vocabulary the three authored on 09-19, rendered from versioned rows instead of the
   // hand-authored cue text in interoceptionLine -- two of whose fallbacks are live violations of
@@ -593,7 +595,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   }
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine }) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine }) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + ledgerBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
@@ -630,6 +632,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     projects,
     budget: mindState.growth.budget,
     change_notes: mindState.world.change_notes,
+    ledger_open: mindState.ledger?.open ?? [],
     unconfirmed_growth: unconfirmedGrowth,
     sol: solRow ? { name: solRow.name, species: solRow.species, trust: solRow.trust, last_interaction_at: solRow.last_interaction_at, created_at: solRow.created_at } : null,
     meta: { degraded: mindState.meta.degraded, front_state: ctx.frontState, plural_available: ctx.pluralAvailable, unaccepted_growth: unacceptedGrowth, open_questions: openQuestions.length, answered_questions: answeredQuestions.length, commons: commonsPosts.length, forage_finds: forageFinds.length, consumed_forage_finds: consumedForageFinds.length, recent_listens: recentListens.length, club_phase: clubRow?.status ?? null, tripwires: tripwires.length, unclosed_sessions: unclosedSessions.length, self_model_ready: selfModelReady.length, guardian_flags: guardianFlags.length, architect_facts: architectFactsCounts, motifs_active: activeMotifs.length, motifs_resurrected: resurrectedMotifs.length, preferences: preferences.length, standing_refusals: standingRefusals.length, open_drifts: openDrifts.length },

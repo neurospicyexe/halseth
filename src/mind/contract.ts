@@ -29,6 +29,22 @@ import type { RelationalBlocks } from "./blocks/relational.js";
 import type { BeliefExtras } from "./blocks/beliefs.js";
 import type { GraphBlocks } from "./blocks/graph.js";
 
+/** One open ledger line as the contract carries it (0.17.0). */
+export interface LedgerOpenEntry {
+  id: string;
+  function: string;
+  /** Mark first, Source tail last. Never edited, never re-voiced. */
+  content: string;
+  observed_on: string;
+  created_at: string;
+}
+
+/** 0.17.0 -- the ledger lane (2026-09-26, mig 0134, docs/imp-lane/SPEC-ledger-lane.md): `ledger.open`,
+ *  up to 5 OPEN clerk records ABOUT this companion (ledger_entries), each `content` verbatim with the
+ *  server-stamped mark `〔ledger · <function> · <date>〕` first and its `Source:` tail last. A separate
+ *  top-level block on purpose: a clerk record is never merged into a first-person block (journal,
+ *  notes, handoffs) and never shown as the companion's own words. Not on the Discord bot wire this
+ *  tranche (two-repo change, same as 0.11.0/0.13.0). MINOR: additive only. */
 /** 0.16.0 -- captures finally read back (2026-09-23): `continuity.recent_captures`. The [Capture]
  *  affordance tells companions a Claude.ai conversation is recorded nowhere unless they write it; they
  *  wrote it, at salience 'normal', into the one table no boot path and no vault puller reads. Absent from
@@ -96,7 +112,7 @@ import type { GraphBlocks } from "./blocks/graph.js";
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.16.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.17.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -293,6 +309,12 @@ export interface MindState {
    *  the loader fetches for OTHER blocks (conclusions, journal); this field carries no retrieval logic
    *  of its own. */
   graph: GraphBlocks;
+
+  /** 0.17.0: clerk records ABOUT this companion (ledger_entries, state 'open', newest first, max 5).
+   *  `content` is verbatim and begins with the mark; renderers print it whole or not at all. */
+  ledger: {
+    open: LedgerOpenEntry[];
+  };
 
   meta: {
     datetime_iso: string;
