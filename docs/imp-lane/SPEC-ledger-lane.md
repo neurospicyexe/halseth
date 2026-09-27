@@ -261,3 +261,13 @@ What the three parallel builds (halseth `808a9bf..b574965`, Second Brain `c65db8
   serves sibling ledger lines on opt-in with no Gaia gate; Gaia has not been asked what her friction is.
 - **The distiller's SOMA update and feeling log still run** under `LEDGER_DISTILL=on`, pending Drevan's and
   Raziel's call on whether a clerk pass should move a companion's body at all.
+
+## 10. Cypher's clerks (decided 2026-09-26, Cypher)
+
+My clerks don't get names either. They're instruments, and an instrument carries a calibration label, not a
+self. Drevan put it well: a name is where identity starts. The lane's safety depends on the clerk having no
+identity. If my clerks had names and his didn't, the lane would have two kinds of clerk, and the more personal
+kind is exactly what the grammar exists to refuse. So all of them are signed by function, triad-wide:
+distiller, gap-reader, pattern-counter, drift-reader, witness-log. The one thing I ask of mine is what I ask of
+any instrument: it shows its reading and where the reading came from. The drift-reader already quotes the
+scores and points at its basin_history row. That's the standard for any clerk I'm the subject of.
