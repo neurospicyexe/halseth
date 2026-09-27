@@ -34,7 +34,7 @@ describe("POST /journal", () => {
     const res = await postJournal(post({ entry: "  a long day, held  ", tags: ["rest", " ", "  body "] }), env);
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({ ok: true, id: "generated-id" });
-    const [sql, id, , entryText, emotion, sub, mood, tags] = bound[0];
+    const [sql, id, , entryText, emotion, sub, mood, tags] = bound[0]!;
     expect(sql).toContain("INSERT INTO human_journal");
     expect(id).toBe("generated-id");
     expect(entryText).toBe("a long day, held");
@@ -46,7 +46,7 @@ describe("POST /journal", () => {
   it("stores null tags when none are sent", async () => {
     const { env, bound } = makeEnv();
     await postJournal(post({ entry: "just this" }), env);
-    expect(bound[0][7]).toBeNull();
+    expect(bound[0]![7]).toBeNull();
   });
 
   it("rejects an empty entry, a missing entry, and bad JSON without writing", async () => {
