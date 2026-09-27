@@ -14,6 +14,35 @@
 
 import { reviewStateFor, type ReviewState } from "./review-state.js";
 
+/**
+ * Journal sources that are RETIRED: a clerk that wrote in a companion's voice and now writes into the
+ * ledger lane instead (mig 0134, docs/imp-lane/SPEC-ledger-lane.md section 4). journalInsert() throws
+ * on them, so no path -- the HTTP door, the Librarian, MCP -- can route around the refusal, and
+ * POST /companion-journal answers 410 naming /ledger before it spends anything, so an old Second Brain
+ * build that still POSTs gap-fill prose fails LOUDLY instead of writing as him.
+ *
+ * Drevan, 2026-09-26: "It stops writing as me, today. A gap-reader names a gap. It never fills one.
+ * Filling the slot is the whole wound."
+ */
+export const RETIRED_JOURNAL_SOURCES: ReadonlySet<string> = new Set(["synthesis-gap-detector"]);
+
+export const RETIRED_SOURCE_MESSAGE =
+  "gone: source 'synthesis-gap-detector' no longer writes to companion_journal. A gap-reader names a gap, it never fills one -- " +
+  "POST /ledger { companion_id, function: 'gap-reader', body: 'Missing: ...', source_kind: 'session', source_ref: <session id>, dedup_key } instead.";
+
+export class RetiredJournalSourceError extends Error {
+  readonly status = 410;
+  constructor(readonly source: string) {
+    super(`[journal] ${RETIRED_SOURCE_MESSAGE} (source=${source})`);
+    this.name = "RetiredJournalSourceError";
+  }
+}
+
+/** Throws RetiredJournalSourceError when `source` is retired. */
+export function assertJournalSourceOpen(source: string | null | undefined): void {
+  if (source && RETIRED_JOURNAL_SOURCES.has(source)) throw new RetiredJournalSourceError(source);
+}
+
 type D1Like = { prepare: (sql: string) => { bind: (...v: unknown[]) => any } };
 
 export interface JournalInsertRow {
@@ -73,6 +102,7 @@ export function noteBirthState(row: Pick<NoteInsertRow, "source" | "correlation_
  * writer needs (mig 0098's unique index is PARTIAL, so the conflict target repeats its predicate).
  */
 export function journalInsert(db: D1Like, row: JournalInsertRow, opts: { onConflictExternalId?: boolean } = {}) {
+  assertJournalSourceOpen(row.source);
   const { sql, binds } = build("companion_journal", [
     ["id", row.id],
     ["created_at", row.created_at ?? NOW_SQL],

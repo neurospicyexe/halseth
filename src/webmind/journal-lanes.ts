@@ -39,6 +39,19 @@ export const CHATTER_JOURNAL_SOURCES = ["discord_swarm", "discord_speech"] as co
 export const SUBSTANTIVE_JOURNAL_CLAUSE =
   "(source IS NULL OR source NOT IN ('discord_swarm', 'discord_speech'))";
 
+/**
+ * Clerk journal sources (ledger lane, mig 0134, 2026-09-26): Second Brain machine writers whose rows
+ * are born `kept` (they are not speech sources, so the tray never drafts them) yet are written in the
+ * companion's voice. The census found the gap-detector's rows winning orient's three recent-journal
+ * slots -- a clerk's prose presented at boot as the companion's own recent thought. Excluded from that
+ * read; they stay searchable. New clerk output goes to ledger_entries, never here.
+ */
+export const CLERK_JOURNAL_SOURCES = ["synthesis-gap-detector", "evaluator", "pattern_worker"] as const;
+
+/** Hardcoded predicate: not a clerk row. NULL source (legacy/companion-authored) passes. */
+export const NOT_CLERK_JOURNAL_CLAUSE =
+  "(source IS NULL OR source NOT IN ('synthesis-gap-detector', 'evaluator', 'pattern_worker'))";
+
 /** True when an entry with this source belongs to the high-volume chatter lane. */
 export function isChatterSource(source: string | null | undefined): boolean {
   if (source === null || source === undefined) return false;

@@ -6,7 +6,7 @@ import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../webmind/notes.js";
 import { noveltyCheck } from "../webmind/novelty.js";
-import { journalInsert, journalBirthState } from "../webmind/tray-insert.js";
+import { journalInsert, journalBirthState, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE } from "../webmind/tray-insert.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -47,6 +47,17 @@ export async function postCompanionJournal(
   }
 
   const { agent, note_text, session_id, tags, source, external_id } = body;
+
+  // The ledger lane (mig 0134, 2026-09-26): the gap-detector stops writing as him. Refused FIRST --
+  // before validation and before the novelty gate's Workers AI call -- so a refused write spends
+  // nothing, and loudly (410 Gone, naming /ledger) so an old Second Brain build cannot keep writing.
+  if (typeof source === "string" && RETIRED_JOURNAL_SOURCES.has(source)) {
+    console.warn("[journal] refused retired source", { source, agent });
+    return new Response(JSON.stringify({ error: RETIRED_SOURCE_MESSAGE, source, use: "/ledger" }), {
+      status: 410,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   if (typeof agent !== "string" || !VALID_AGENTS.includes(agent as AgentId)) {
     return new Response(JSON.stringify({ error: "agent must be drevan, cypher, or gaia" }), {

@@ -18,7 +18,7 @@ import { effectiveChargeSql } from "../librarian/backends/halseth.js";
 import { neighborhood } from "../graph/traverse.js";
 import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
-import { SUBSTANTIVE_JOURNAL_CLAUSE } from "./journal-lanes.js";
+import { SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
 import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
@@ -233,9 +233,11 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // against ~40/day of authored reflection, so an unfiltered LIMIT 3 surfaced transcript
     // instead of thought. Chatter stays searchable/embedded; it just doesn't win these slots.
     // (2026-07-09 Brain-cutover audit; see webmind/journal-lanes.ts)
+    // 2026-09-26 (ledger lane): kept-gated already, but clerk rows are BORN kept -- the gap-detector's
+    // gap-fill prose won these slots. NOT_CLERK_JOURNAL_CLAUSE keeps machine clerks out of them.
     env.DB.prepare(
       `SELECT id, agent, note_text, tags, session_id, created_at FROM companion_journal
-       WHERE agent = ? AND archived = 0 AND ${KEPT_SQL} AND ${SUBSTANTIVE_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
+       WHERE agent = ? AND archived = 0 AND ${KEPT_SQL} AND ${SUBSTANTIVE_JOURNAL_CLAUSE} AND ${NOT_CLERK_JOURNAL_CLAUSE} ORDER BY created_at DESC LIMIT 3`
     ).bind(agentId).all<WmJournalEntry>(),
     // Wide-window: recent relational deltas logged by this companion (both legacy and MCP rows)
     env.DB.prepare(

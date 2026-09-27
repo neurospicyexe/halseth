@@ -15,7 +15,7 @@ import { generateId, findExistingClose, clearSupersededClose, CALLER_CLOSE_KINDS
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
-import { journalInsert } from "../../webmind/tray-insert.js";
+import { journalInsert, assertJournalSourceOpen } from "../../webmind/tray-insert.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
 import { edgeForNote, edgeForNoteRef, edgesForSomaEvent, insertEdgeStatements, writeEdgesBestEffort } from "../../graph/live.js";
 import {
@@ -841,6 +841,8 @@ export async function companionJournalAdd(
   tags?: string,
   source?: string,
 ): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; match_id?: string; score: number } }> {
+  // Ledger lane (mig 0134): a retired clerk source is refused before the novelty gate spends anything.
+  assertJournalSourceOpen(source);
   // Novelty gate (2026-07-20, Task 12): machine-source writers only -- skip-only, no supersede
   // band (novelty.ts restricts supersede to companion_conclusions). Human sources bypass the
   // gate entirely (attribution is sacred). Fails open on any embedding/Vectorize trouble.
