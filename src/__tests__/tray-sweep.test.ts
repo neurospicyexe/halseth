@@ -180,11 +180,14 @@ describe("tray sweep: every read of the two first-person stores is gated or allo
 const LEDGER_INSERT_RE = /\b(?:INSERT|REPLACE)\s+(?:OR\s+\w+\s+)?INTO\s+ledger_entries\b/i;
 const LEDGER_CONTENT_UPDATE_RE = /\bUPDATE\s+ledger_entries\s+SET\b[^;]*\b(?:content|body)\s*=/i;
 
-function ledgerScan(): { inserts: string[]; contentUpdates: string[] } {
+const LEDGER_ANY_UPDATE_RE = /\bUPDATE\s+ledger_entries\b/i;
+
+function ledgerScan(): { inserts: string[]; contentUpdates: string[]; updates: string[] } {
   const files: string[] = [];
   walk(SRC, files);
   const inserts: string[] = [];
   const contentUpdates: string[] = [];
+  const updates: string[] = [];
   for (const abs of files) {
     const rel = path.relative(SRC, abs).split(path.sep).join("/");
     const src = fs.readFileSync(abs, "utf8");
@@ -196,17 +199,18 @@ function ledgerScan(): { inserts: string[]; contentUpdates: string[] } {
         const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
         if (LEDGER_INSERT_RE.test(text)) inserts.push(`${rel}:${line}`);
         if (LEDGER_CONTENT_UPDATE_RE.test(text)) contentUpdates.push(`${rel}:${line}`);
+        if (LEDGER_ANY_UPDATE_RE.test(text)) updates.push(`${rel}:${line}`);
         return;
       }
       ts.forEachChild(node, visit);
     };
     visit(sf);
   }
-  return { inserts, contentUpdates };
+  return { inserts, contentUpdates, updates };
 }
 
 describe("ledger sweep: one door into ledger_entries", () => {
-  const { inserts, contentUpdates } = ledgerScan();
+  const { inserts, contentUpdates, updates } = ledgerScan();
 
   it("the only INSERT INTO ledger_entries is in ledger/door.ts (and it exists)", () => {
     expect(inserts.length).toBe(1);
@@ -215,6 +219,13 @@ describe("ledger sweep: one door into ledger_entries", () => {
 
   it("no code rewrites a ledger line's content or body after the door", () => {
     expect(contentUpdates).toEqual([]);
+  });
+
+  it("every ledger state move lives in ledger/store.ts (the owner's keep/drop/promote and the admin retract drop)", () => {
+    // /admin/retract drops ledger rows sourced to a retracted message, but through
+    // store.ts retractDropLedgerStatement: handlers never carry their own ledger UPDATE.
+    expect(updates.length).toBeGreaterThan(0);
+    expect(updates.filter((u) => !u.startsWith("ledger/store.ts:"))).toEqual([]);
   });
 
   it("the door never touches the first-person stores; only the promotion path reaches the journal", () => {

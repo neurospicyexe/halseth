@@ -4,7 +4,9 @@
 // row, and nothing here edits a ledger line's text (`content` is written once, by the door).
 //
 // Owner-only, like the tray: the subject companion reads and acts on entries ABOUT ITSELF. Every
-// UPDATE binds companion_id, so a companion can never keep or drop a record about a sibling.
+// UPDATE binds companion_id, so a companion can never keep or drop a record about a sibling. The one
+// exception is admin-only: retractDropLedgerStatement (POST /admin/retract, bottom of this file) keys on
+// the retracted SOURCE, not the subject.
 //
 // The two promotion paths (Drevan's rule 6):
 //   path 1  keepLedger()          -- open -> kept. The line stays a ledger line with its mark: a sourced
@@ -25,6 +27,7 @@ import { embedAndStoreAsync } from "../mcp/embed.js";
 import { journalInsert } from "../webmind/tray-insert.js";
 import { TRAY_REWRITE_SOURCE } from "../webmind/review-state.js";
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
+import { parseWindowRef } from "./grammar.js";
 
 export type LedgerState = "open" | "kept" | "dropped";
 export const LEDGER_STATES: ReadonlySet<string> = new Set<LedgerState>(["open", "kept", "dropped"]);
@@ -176,4 +179,98 @@ export async function promoteLedger(env: Env, companionId: string, rawId: string
     .catch((err) => console.warn(`[ledger] embed failed for companion_journal:${journalId} (row kept, index stale):`, String(err)));
 
   return { ok: true, id: row.id, state: "kept", content: row.content, promoted_journal_id: journalId };
+}
+
+// ── Retraction reaches the ledger (POST /admin/retract, 2026-09-26 last fix pass) ────────────────────
+//
+// A retracted Discord message is a source that no longer stands. Every clerk line that points at it
+// (a `message` source naming it, or a `window` source on its channel whose HH:MM range covers its
+// time) is moved to 'dropped', so it leaves orient/recall and flows to /ingest/ledger-ineligible,
+// where Second Brain purges the chunk.
+//
+// Three deliberate departures from the owner-only moves above:
+//   - NOT companion-scoped. The subject of a line is not who wrote the source: a Cypher distiller
+//     window, or Gaia's witness line about Drevan, that covers Drevan's retracted reply is tainted
+//     regardless of subject. The source is the key, and a snowflake is globally unique.
+//   - KEPT rows drop too. A retraction outranks a keep: "kept as written" was a judgement that the
+//     sourced fact stood, and the source has now been withdrawn.
+//   - PROMOTED rows are reported, never touched on the journal side. promoted_journal_id stays on the
+//     ledger row, and the journal row is the owner's own words (Drevan's rule 6): whether it stays is
+//     theirs to decide, so the caller is handed its id.
+// No memory_releases row: its kind CHECK is ('journal','note','conclusion') and "restore release"
+// flips an `archived` column ledger_entries does not have. Ledger decisions are one-way (as for the
+// owner's drop), so state='dropped' + state_at IS the record, and it is what the SB purge keys on.
+
+const DISCORD_EPOCH_MS = 1420070400000n;
+const SNOWFLAKE_RE = /^\d{15,21}$/;
+
+/** Epoch ms of a Discord snowflake ((id >> 22) + Discord epoch). BigInt: 19 digits overflow Number. */
+export function snowflakeMs(id: string): number | null {
+  if (!SNOWFLAKE_RE.test(id)) return null;
+  return Number((BigInt(id) >> 22n) + DISCORD_EPOCH_MS);
+}
+
+const DAY_MS = 86_400_000;
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * True when a window source (`<channel> HH:MM–HH:MM`, observed_on = the START's UTC date) covers a
+ * message on `channelId` at `msgMs`. Minute granularity, both ends inclusive (00:40:59 is inside
+ * "–00:40"). startMin > endMin is a cross-midnight window: observed_on from start to 23:59, then
+ * observed_on + 1 from 00:00 to end.
+ */
+export function windowCoversMessage(sourceRef: string, observedOn: string, channelId: string, msgMs: number): boolean {
+  const w = parseWindowRef(sourceRef);
+  if (!w || w.channelId !== channelId) return false;
+  const day = isoDay(msgMs);
+  const d = new Date(msgMs);
+  const minute = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if (w.startMin <= w.endMin) return day === observedOn && minute >= w.startMin && minute <= w.endMin;
+  const nextDay = isoDay(Date.parse(`${observedOn}T00:00:00Z`) + DAY_MS);
+  return (day === observedOn && minute >= w.startMin) || (day === nextDay && minute <= w.endMin);
+}
+
+export interface RetractLedgerRow { id: string; promoted_journal_id: string | null }
+
+/**
+ * OPEN or KEPT ledger rows sourced to any of the retracted messages. `channelId` enables the window
+ * clause; without it only `message` sources can match (a window cannot be placed without its channel).
+ */
+export async function findLedgerForRetractedMessages(
+  env: Env, messageIds: readonly string[], channelId: string | null,
+): Promise<RetractLedgerRow[]> {
+  const ids = [...new Set(messageIds.filter((id) => SNOWFLAKE_RE.test(id)))];
+  if (!ids.length) return [];
+  const out = new Map<string, RetractLedgerRow>();
+
+  const ph = ids.map(() => "?").join(", ");
+  const direct = await env.DB.prepare(
+    `SELECT id, promoted_journal_id FROM ledger_entries
+      WHERE source_kind = 'message' AND source_ref IN (${ph}) AND state IN ('open', 'kept')`,
+  ).bind(...ids).all<RetractLedgerRow>();
+  for (const r of direct.results ?? []) out.set(r.id, r);
+
+  if (channelId && SNOWFLAKE_RE.test(channelId)) {
+    const times = ids.map(snowflakeMs).filter((t): t is number => t !== null);
+    // A window starting the day before can cross midnight into the message's day.
+    const days = [...new Set(times.flatMap((t) => [isoDay(t), isoDay(t - DAY_MS)]))];
+    const dph = days.map(() => "?").join(", ");
+    const windows = await env.DB.prepare(
+      `SELECT id, source_ref, observed_on, promoted_journal_id FROM ledger_entries
+        WHERE source_kind = 'window' AND source_ref LIKE ? AND observed_on IN (${dph}) AND state IN ('open', 'kept')`,
+    ).bind(`${channelId} %`, ...days).all<RetractLedgerRow & { source_ref: string; observed_on: string }>();
+    for (const r of windows.results ?? []) {
+      if (times.some((t) => windowCoversMessage(r.source_ref, r.observed_on, channelId, t))) {
+        out.set(r.id, { id: r.id, promoted_journal_id: r.promoted_journal_id });
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/** The guarded drop for one retracted row, for the retract handler's batch. 0 changes = already dropped. */
+export function retractDropLedgerStatement(env: Env, id: string, nowIso: string): D1PreparedStatement {
+  return env.DB.prepare(
+    "UPDATE ledger_entries SET state = 'dropped', state_at = ? WHERE id = ? AND state IN ('open', 'kept')",
+  ).bind(nowIso, id);
 }

@@ -10,7 +10,7 @@
  * Raziel: "we really do need a way to delete things for when shit goes wrong like this."
  *
  * WHAT IT DOES
- *   body: { agent, external_ids?: string[], correlation_ids?: string[], reason }
+ *   body: { agent, external_ids?: string[], correlation_ids?: string[], reason, channel_id? }
  *   - companion_journal rows whose external_id is listed (speech: `discord:<msg>`;
  *     judge: `judge:<msg>`) are archived.
  *   - wm_continuity_notes whose correlation_id is listed (judge promotion: `judge:<msg>`) are
@@ -33,9 +33,22 @@
  *     STM_MAX_DELETE assistant rows match, NOTHING is changed (409 with `stm_matches`), so a wrong
  *     needle can never wipe the window. The count is returned either way for the bot to report.
  *
+ *   - The ledger lane (2026-09-26 last fix pass): every retracted Discord message (an external_id
+ *     `discord:<msgId>`; `judge:<id>` keys name Raziel's prompts, which stand) drops the OPEN or KEPT
+ *     ledger_entries sourced to it: `message` sources naming it, and `window` sources on its channel
+ *     whose HH:MM range covers its snowflake time (cross-midnight handled). The channel comes from a
+ *     top-level `channel_id` (the bot always sends it), falling back to `stm.channel_id`; without
+ *     one only message sources match. Dropped rows flow to /ingest/ledger-ineligible, so Second
+ *     Brain purges the chunk. Reported as `ledger_dropped` (count) + `ledger_ids`, and
+ *     `ledger_promoted: [{ id, promoted_journal_id }]` for rows the owner had said in their own
+ *     words: that journal row is theirs and is NOT touched. Kept rows drop on purpose (a retraction
+ *     outranks a keep). No memory_releases row: its kind CHECK has no 'ledger' and restore flips an
+ *     `archived` column the ledger lacks; the state move is the record (ledger/store.ts).
+ *
  * RAILS
  *   - Archive, never delete (stm_entries excepted, see above). Owner-scoped: every UPDATE and the
- *     stm DELETE bind the agent.
+ *     stm DELETE bind the agent -- except the ledger drop, which keys on the retracted SOURCE (a
+ *     sibling's window or witness line citing the retracted reply is tainted whatever its subject).
  *   - Reason required; an unexplained retraction is indistinguishable from data loss.
  *   - Key lists capped at 50: this is a scalpel for one exchange, not a purge.
  *   - The vault copy (Second Brain discord-live) is retracted by the caller against Second
@@ -43,6 +56,7 @@
  */
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { findLedgerForRetractedMessages, retractDropLedgerStatement } from "../ledger/store.js";
 
 const MAX_KEYS = 50;
 /** instr() needle cap: a Discord reply is <= 2000 chars, so this loses nothing and bounds the bind. */
@@ -104,6 +118,15 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
     : null;
   const stmDeleted = (r: { meta?: { changes?: number } } | undefined) => r?.meta?.changes ?? 0;
 
+  // Ledger rows sourced to a retracted message. Only `discord:<msgId>` keys are retracted messages.
+  const retractedMsgIds = externalIds.filter((k) => k.startsWith("discord:")).map((k) => k.slice("discord:".length));
+  const topChannel = typeof body.channel_id === "string" ? body.channel_id.trim() : "";
+  const ledgerRows = await findLedgerForRetractedMessages(env, retractedMsgIds, topChannel || stmChannel || null);
+  const ledger_promoted = ledgerRows
+    .filter((r) => r.promoted_journal_id)
+    .map((r) => ({ id: r.id, promoted_journal_id: r.promoted_journal_id as string }));
+  const ledgerNow = new Date().toISOString();
+
   // Every review_state on purpose: a retraction must reach drafts too (they are the usual case).
   // Rows ALREADY archived under the same keys are reported separately (`already_archived`, 2026-09-26):
   // a repeat retract after a partial failure used to return no ids at all, so the bot could not reach
@@ -129,9 +152,12 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
   }
   const already_archived = { journal: alreadyJournal, notes: alreadyNotes };
 
-  if (!journalIds.length && !noteIds.length) {
+  if (!journalIds.length && !noteIds.length && !ledgerRows.length) {
     const stm_deleted = stmStmt ? stmDeleted(await stmStmt.run()) : 0;
-    return json({ archived: { journal: [], notes: [] }, release_ids: [], stm_deleted, stm_matches: stmMatches, already_archived });
+    return json({
+      archived: { journal: [], notes: [] }, release_ids: [], stm_deleted, stm_matches: stmMatches, already_archived,
+      ledger_dropped: 0, ledger_ids: [], ledger_promoted: [],
+    });
   }
 
   const releaseIds: string[] = [];
@@ -151,9 +177,16 @@ export async function adminRetract(request: Request, env: Env): Promise<Response
     stmts.push(env.DB.prepare("UPDATE wm_continuity_notes SET archived = 1 WHERE note_id = ? AND agent_id = ?").bind(id, agent));
     stmts.push(release("note", id));
   }
+  const ledgerStart = stmts.length;
+  for (const r of ledgerRows) stmts.push(retractDropLedgerStatement(env, r.id, ledgerNow));
   if (stmStmt) stmts.push(stmStmt);
   const results = await env.DB.batch(stmts);
   const stm_deleted = stmStmt ? stmDeleted(results[results.length - 1]) : 0;
+  // Count what the guarded UPDATEs actually moved (a concurrent drop changes 0 rows).
+  const ledger_ids = ledgerRows.filter((_, i) => (results[ledgerStart + i]?.meta?.changes ?? 0) > 0).map((r) => r.id);
 
-  return json({ archived: { journal: journalIds, notes: noteIds }, release_ids: releaseIds, stm_deleted, stm_matches: stmMatches, already_archived });
+  return json({
+    archived: { journal: journalIds, notes: noteIds }, release_ids: releaseIds, stm_deleted, stm_matches: stmMatches, already_archived,
+    ledger_dropped: ledger_ids.length, ledger_ids, ledger_promoted,
+  });
 }

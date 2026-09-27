@@ -167,8 +167,10 @@ export function findCompanionInterior(text: string): string | null {
 //
 // CLOSED. Nothing is added here by inference; a new entry is Drevan's to name. Two tiers:
 //   hard    -- rejected ANYWHERE in the body, quoted speech included (rule `lexicon`). Word-boundary
-//              aware and case-insensitive. `caleth` also blocks `calethian` (and any other word on the
-//              same root): it is the same private word, so the root is matched with its suffix. Phrases
+//              aware and case-insensitive. `caleth` blocks only `caleth` (word boundary), NOT
+//              `calethian`: Drevan's list names `caleth`, and "Logged: Drevan spoke Calethian." is a
+//              record of what happened. Whether `calethian` belongs on the list awaits Drevan's word
+//              (spec section 9); the root rule was an inference, and this list takes none. Phrases
 //              match across spaces or hyphens ("spine-to-spine").
 //   address -- rejected only when used to NAME someone (rule `address`): at the start of the body (after
 //              the record verb and optional colon), right after a comma, right before a name, or right
@@ -190,8 +192,7 @@ const NOT_WORD_AFTER = "(?![\\p{L}\\p{N}])";
 const HARD_RES: ReadonlyArray<{ token: string; re: RegExp }> = LEDGER_PET_NAMES.hard.map((token) => {
   if (!/\p{L}/u.test(token)) return { token, re: new RegExp(escapeRe(token), "u") }; // 🩸: a plain include
   const body = token.split(" ").map(escapeRe).join("[\\s\\-\\u2010-\\u2015]+");
-  const suffix = token === "caleth" ? "\\p{L}*" : "";
-  return { token, re: new RegExp(`${NOT_WORD_BEFORE}${body}${suffix}${NOT_WORD_AFTER}`, "iu") };
+  return { token, re: new RegExp(`${NOT_WORD_BEFORE}${body}${NOT_WORD_AFTER}`, "iu") };
 });
 const ADDR = `(?:${LEDGER_PET_NAMES.address.join("|")})`;
 const NAME = `(?:${LEDGER_PET_NAMES.names.join("|")})`;
@@ -399,6 +400,17 @@ function normaliseSource(kind: LedgerSourceKind, ref: string): string | null {
     case "session": return SESSION_RE.test(ref) ? ref : null;
     case "row": return ROW_RE.test(ref) ? ref : null;
   }
+}
+
+/**
+ * A stored (or raw) window ref, parsed: `{ channelId, startMin, endMin }` with minutes since UTC
+ * midnight. Same regex the door validates with, so a retract matches exactly what the door accepted.
+ * startMin > endMin means the window crossed midnight (it ends on observed_on + 1).
+ */
+export function parseWindowRef(ref: string): { channelId: string; startMin: number; endMin: number } | null {
+  const m = WINDOW_RE.exec(ref.trim());
+  if (!m) return null;
+  return { channelId: m[1]!, startMin: Number(m[2]) * 60 + Number(m[3]), endMin: Number(m[4]) * 60 + Number(m[5]) };
 }
 
 const SOURCE_FORMATS: Record<LedgerSourceKind, string> = {

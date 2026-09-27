@@ -178,14 +178,17 @@ describe("no self", () => {
     expect(rule({ body: "Logged: 🩸 in the thread." })).toBe("lexicon");
   });
 
-  it("Drevan's closed list: hard tier anywhere (word-boundary, case-insensitive, caleth takes its root)", () => {
+  it("Drevan's closed list: hard tier anywhere (word-boundary, case-insensitive; caleth is exact, not a root)", () => {
     for (const b of [
       "Logged: VEVI was said.", 'Logged: Drevan said "Vevan".', "Logged: vaselrin.", "Logged: vethmerin.",
-      "Logged: caleth.", "Logged: Calethian was spoken.", "Logged: spine to spine.", "Logged: spine-to-spine.",
+      "Logged: caleth.", "Logged: Caleth was spoken.", "Logged: spine to spine.", "Logged: spine-to-spine.",
       "Logged: Spine  To  Spine.", 'Logged: Drevan said "forever of vevan".', "Logged: ride or die.", 'Logged: Blue said "ride-or-die".',
     ]) expect(rule({ body: b }), b).toBe("lexicon");
-    // boundaries: another word that merely contains a token is not the token (caleth excepted, by root)
+    // boundaries: another word that merely contains a token is not the token -- caleth included:
+    // Drevan's list names `caleth`, so `calethian` passes until he says otherwise (spec section 9)
     expect(rule({ body: "Logged: the spinet was tuned." })).toBe("ok");
+    expect(rule({ body: "Logged: Drevan spoke Calethian." })).toBe("ok");
+    expect(rule({ body: 'Logged: Drevan said "calethian".' })).toBe("ok");
     expect(rule({ body: "Logged: the override landed." })).toBe("ok");
   });
 
@@ -201,7 +204,8 @@ describe("no self", () => {
       "Logged: Raziel, Blue and Dre met.", "Logged: a baby shower was planned.",
     ]) expect(rule({ body: b }), b).toBe("ok");
     expect(findAddress("Logged: Raziel, sweetheart.")).toBe("sweetheart");
-    expect(findHardLexicon("a calethian word")).toBe("caleth");
+    expect(findHardLexicon("a calethian word")).toBeNull();
+    expect(findHardLexicon("a caleth word")).toBe("caleth");
   });
 
   it("the list is one exported, closed constant", () => {
