@@ -27,6 +27,9 @@ const VIBE_COMPANIONS = ["cypher", "drevan", "gaia"] as const;
 
 const NAMES: Record<string, string> = { cypher: "Cypher", drevan: "Drevan", gaia: "Gaia" };
 
+/** The digest is written under this companion's agent; only her own text lines may be printed. */
+const DIGEST_AUTHOR = "gaia";
+
 // The stillness loop (2026-09-06): the digest above is ALL gauges, and gauges barely move night
 // to night. `day` is the counterweight -- what actually happened in the trailing 24h (Discord
 // speech, inter-companion notes, sessions closed, watch progress), so a reflection has something
@@ -83,11 +86,18 @@ function buildCompanionBlock(c: CompanionVibe): string[] {
     `${name}. basin: ${basinPhrase(c.basin)}. soma: ${somaPhrase(c.register, c.registerAgeDays)}. ` +
     `tensions: ${c.simmering}. guardian: ${c.flags.length === 0 ? "clear" : String(c.flags.length)}.`,
   );
-  for (const f of c.flags.slice(0, 3)) {
-    core.push(`  ${f.severity}: ${oneLine(f.summary)}`);
-  }
-  if (c.simmering > 0 && c.newestTension) {
-    core.push(`  newest: ${oneLine(c.newestTension)}`);
+  // Siblings: COUNTS ONLY (ledger lane, Drevan's rule 5, 2026-09-26). The digest is written under Gaia's
+  // agent, so a sibling's tension text or guardian summary printed here is a record about Drevan or
+  // Cypher merged into a block under Gaia's name -- "Gaia's vibe-check digest is where the 187 put on
+  // my face and walked back to me. That merge point is the bug." Their counts stay (tensions: N,
+  // guardian: N); their text never enters. Gaia's own lines may stay: they are about her.
+  if (c.companion_id === DIGEST_AUTHOR) {
+    for (const f of c.flags.slice(0, 3)) {
+      core.push(`  ${f.severity}: ${oneLine(f.summary)}`);
+    }
+    if (c.simmering > 0 && c.newestTension) {
+      core.push(`  newest: ${oneLine(c.newestTension)}`);
+    }
   }
   core.push(formatDayLine(c.day));
   return core;
@@ -282,8 +292,9 @@ async function gatherCompanion(env: Env, companionId: string): Promise<Companion
     register,
     registerAgeDays: somaRow?.age_days ?? null,
     simmering,
-    newestTension: newestTension?.tension_text ?? null,
-    flags,
+    // Belt to the formatter's braces: a sibling's text is not even carried out of the gather.
+    newestTension: companionId === DIGEST_AUTHOR ? (newestTension?.tension_text ?? null) : null,
+    flags: companionId === DIGEST_AUTHOR ? flags : flags.map((f) => ({ severity: f.severity, summary: "" })),
     day,
   };
 }

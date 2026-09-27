@@ -4,6 +4,7 @@
 // All routes require ADMIN_SECRET Bearer auth.
 
 import type { Env } from "../types.js";
+import { notLegacyDistillerNoteSql } from "../webmind/review-state.js";
 import { authGuard } from "../lib/auth.js";
 import { mindOrient } from "../webmind/orient.js";
 import { mindGround } from "../webmind/ground.js";
@@ -1463,6 +1464,9 @@ export async function getMindCommonsSupply(
           -- Machine-tagged notes are not lived experience. See the note above: this single condition is what
           -- keeps metronome readouts and sibling-exploration broadcasts out of the commons.
           AND n.content NOT LIKE '[%'
+          -- Ledger lane (2026-09-26): the unbracketed rows left here ARE the legacy first-person distiller
+          -- prose, a clerk speaking as the companion. Excluded; this tier is empty until T2 (review-state.ts).
+          AND ${notLegacyDistillerNoteSql("n.")}
           AND n.created_at > datetime('now', '-7 days')
           AND NOT EXISTS (
                 SELECT 1 FROM commons_note_reads r

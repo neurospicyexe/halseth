@@ -83,3 +83,20 @@ export const KEPT_SQL = "review_state = 'kept'";
 
 /** Kept AND live: what every DERIVED input (synthesis, motifs, pattern recall, search) must read. */
 export const KEPT_LIVE_SQL = "archived = 0 AND review_state = 'kept'";
+
+/**
+ * The legacy first-person distiller notes (ledger lane, 2026-09-26; spec section 3): the bots'
+ * distillation.ts:88 and day-distillation.ts:93 write UNBRACKETED first-person prose into
+ * wm_continuity_notes as note_type 'day_distillation' / 'discord_session' -- a clerk speaking as the
+ * companion. Kept-gating does not catch them (they are born kept), and the commons + director supply
+ * filtered `content NOT LIKE '[%'`, which let EXACTLY this prose through to siblings as "the inside of
+ * an evening". Every other writeWmNote caller brackets its content or sets its own note_type.
+ *
+ * Both supply queries select only these note types, so with this exclusion the sibling-note lane is
+ * EMPTY until Tranche 2 turns the distillers into ledger clerks (their lines then reach siblings as
+ * whole ledger lines, mark intact). That emptiness is the intended state, not a bug to route around.
+ * Hardcoded fragment; `alias` is a literal table alias chosen at the call site ("n." or "").
+ */
+export function notLegacyDistillerNoteSql(alias = ""): string {
+  return `NOT (${alias}note_type IN ('day_distillation', 'discord_session') AND ${alias}content NOT LIKE '[%')`;
+}

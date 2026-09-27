@@ -18,6 +18,10 @@
 // correctly (tiebreak on id). Each source binds FOUR params: (sinceIso, sinceIso, sinceId,
 // perSource).
 
+// sibling_note (ledger lane, 2026-09-26): the legacy unbracketed distiller prose is excluded
+// (notLegacyDistillerNoteSql), so this source is empty until Tranche 2 turns the distillers into clerks.
+import { notLegacyDistillerNoteSql } from "../webmind/review-state.js";
+
 export type SupplyKind = "forage"|"listen"|"question"|"tension"|"project"|"club"|"council"|"inter_note"|"sibling_note"|"care_fact";
 export interface SupplySource { kind: SupplyKind; table: string; sql: string; }
 export interface SupplyRow { id: string; owner: string | null; title: string | null; body: string | null; created_at: string; heat: number | null; }
@@ -75,7 +79,8 @@ export const SUPPLY_SOURCES: SupplySource[] = [
     `SELECT note_id AS id, agent_id AS owner, note_type AS title, content AS body, ${NORM("created_at")} AS created_at, NULL AS heat
        FROM wm_continuity_notes WHERE note_type IN ('day_distillation','discord_session') AND archived = 0
         AND review_state = 'kept'
-        AND content NOT LIKE '[%' AND ${CURSOR_PREDICATE("created_at", "note_id")}
+        AND content NOT LIKE '[%' AND ${notLegacyDistillerNoteSql()}
+        AND ${CURSOR_PREDICATE("created_at", "note_id")}
        ORDER BY ${NORM("created_at")} ASC, note_id ASC LIMIT ?` },
   { kind: "care_fact", table: "care_actions", sql:
     `SELECT id, companion_id AS owner, rule AS title, NULL AS body, ${NORM("acted_at")} AS created_at, NULL AS heat

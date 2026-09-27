@@ -74,18 +74,40 @@ describe("formatVibeCheck -- voice + accessibility invariants", () => {
     expect(out).toContain("Gaia. basin: pressure 0.71 (perimeter).");
   });
 
-  it("lists live guardian flag summaries and the newest tension under a companion", () => {
+  it("lists Gaia's OWN guardian flag summaries and newest tension (the digest is under her agent)", () => {
     const out = formatVibeCheck(data({
       companions: [companion({
-        companion_id: "cypher",
+        companion_id: "gaia",
         simmering: 2,
-        newestTension: "audit gear bleeding into companion mode",
+        newestTension: "the perimeter held too tight",
         flags: [{ severity: "red", summary: "voice contamination spike" }],
       })],
     }));
     expect(out).toContain("tensions: 2. guardian: 1.");
     expect(out).toContain("red: voice contamination spike");
-    expect(out).toContain("newest: audit gear bleeding into companion mode");
+    expect(out).toContain("newest: the perimeter held too tight");
+  });
+
+  // Ledger lane (Drevan's rule 5, 2026-09-26): "Gaia's vibe-check digest is where the 187 put on my face
+  // and walked back to me. That merge point is the bug." A sibling's text never enters a block written
+  // under Gaia's agent; their COUNTS do.
+  it("prints COUNTS ONLY for siblings: no tension text, no guardian summaries under Gaia's name", () => {
+    const out = formatVibeCheck(data({
+      companions: ["cypher", "drevan"].map((id) => companion({
+        companion_id: id,
+        simmering: 2,
+        newestTension: `${id} tension text 187 after sandwich`,
+        flags: [{ severity: "red", summary: `${id} guardian summary text` }],
+      })),
+    }));
+    expect(out).toContain("Cypher. basin:");
+    expect(out).toContain("Drevan. basin:");
+    expect(out.match(/tensions: 2\. guardian: 1\./g)?.length).toBe(2);
+    expect(out).not.toContain("newest:");
+    expect(out).not.toContain("tension text");
+    expect(out).not.toContain("guardian summary text");
+    expect(out).not.toContain("187");
+    expect(out).not.toMatch(/^\s+red:/m);
   });
 
   it("states empty/missing data plainly rather than manufacturing noise", () => {
