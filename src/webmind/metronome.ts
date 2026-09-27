@@ -122,8 +122,17 @@ export interface EligibilityContext {
 // NEVER COMPUTE A FIXED UTC OFFSET. America/Chicago is CDT (UTC-5) today and CST (UTC-6) from
 // November; a hardcoded offset silently shifts the whole window by an hour at the DST boundary.
 // The local hour comes from Intl.DateTimeFormat with the IANA timeZone, which carries the zone's
-// own DST rules. (Verified under this repo's vitest node pool; the same ICU path is what workerd
-// exposes, and the CST/CDT pair is asserted in src/__tests__/metronome-eligibility.test.ts.)
+// own DST rules.
+//
+// VERIFIED IN THE WORKERS RUNTIME, not assumed. This repo's vitest pool is `environment: "node"`,
+// so the tests alone would only prove node's ICU. Probed under `wrangler dev` (workerd, local)
+// on 2026-09-27: 2026-07-15T03:00Z gives hour "22" (CDT), 2026-12-15T04:00Z gives "22" (CST),
+// 2026-12-15T03:00Z gives "21", and midnight gives "00" rather than "24". The same four cases
+// are asserted against node in src/__tests__/metronome-eligibility.test.ts.
+//
+// If a future runtime ever could NOT resolve the zone, localHourIn returns null, isQuietHours
+// fails closed, and the tell is visible on the first daytime tick: every response carries
+// local_hour: null and every tick logs suppressed_quiet_hours around the clock.
 // ---------------------------------------------------------------------------
 
 /** Defaults apply when a var is absent, so an un-redeployed environment is still protected. */
