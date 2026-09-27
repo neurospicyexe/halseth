@@ -45,12 +45,12 @@ export const HUMAN_CAPTURE_SURFACE_PREFIX = "claude-ai:";
  *  Librarian only when the caller is a claude-ai:* surface -- backends/halseth.ts biometricLog). */
 export const HUMAN_BIOMETRIC_SOURCES: readonly string[] = ["hearth", "apple_health"];
 
-type SourceRow =
+export type SourceRow =
   | { kind: "text"; text: string; mode: "exact" | "rounded" }
   | { kind: "biometric"; row: Record<string, unknown> };
 
 /** The referenced row, or null when it does not exist / is not an acceptable source. */
-async function loadSourceRow(env: Env, check: NumberCheck): Promise<SourceRow | null> {
+export async function loadSourceRow(env: Env, check: NumberCheck): Promise<SourceRow | null> {
   if (check.table === "wm_continuity_notes") {
     // Gated (kept AND live): the tray sweep requires it, and a retracted capture must not validate.
     // Anchored to a claude-ai:* session of the same companion (see the header): the join is the rule.
@@ -82,7 +82,7 @@ async function loadSourceRow(env: Env, check: NumberCheck): Promise<SourceRow | 
 }
 
 /** The flagged numbers the row does not contain. */
-function missingNumbers(check: NumberCheck, body: string, src: SourceRow): string[] {
+export function missingNumbers(check: NumberCheck, body: string, src: SourceRow): string[] {
   if (src.kind === "text") {
     const present = rowNumbers(src.text);
     return check.numbers.filter((n) => !rowHasNumber(n, present, src.mode));

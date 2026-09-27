@@ -14,6 +14,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { checkCommonsFriction } from "../ledger/friction.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -49,6 +50,17 @@ export async function postCommonsPost(request: Request, env: Env): Promise<Respo
   }
   const body = typeof b.body === "string" ? b.body.trim() : "";
   if (!body) return json({ error: "body is required" }, 400);
+
+  // Gaia's friction at the quote (2026-09-26, src/ledger/friction.ts): a COMPANION may point to a ledger
+  // line but not restate it without its mark and source, and a number about Raziel's body needs the
+  // pointer to his record. Raziel's own posts are not gated.
+  if (author !== "raziel") {
+    const friction = await checkCommonsFriction(env, body);
+    if (friction) {
+      console.log("[mind/commons] refused by ledger friction", { author, rule: friction.rule, ledger_id: friction.ledger_id ?? null });
+      return json({ error: friction.error, rule: friction.rule, ...(friction.ledger_id ? { ledger_id: friction.ledger_id } : {}) }, 422);
+    }
+  }
 
   const requestedContext = (typeof b.context === "string" && b.context.trim() ? b.context.trim() : "global").slice(0, 120);
   const replyTo = typeof b.reply_to === "string" && b.reply_to.trim() ? b.reply_to.trim() : null;

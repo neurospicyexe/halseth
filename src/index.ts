@@ -18,7 +18,7 @@ import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
 import { getAdminTray, postAdminTrayReview } from "./handlers/tray.js";
-import { postLedger, getLedger, getIngestLedger, getIngestLedgerIneligible } from "./handlers/ledger.js";
+import { postLedger, getLedger, getIngestLedger, getIngestLedgerIneligible, getSomaFreshness } from "./handlers/ledger.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal, postJournal } from "./handlers/human-journal";
@@ -182,6 +182,7 @@ const router = new Router()
   // Hearth/ops read with GET. Companions use "my ledger" / "keep ledger <id>" / "drop ledger <id>".
   .on("POST", "/ledger",                      (request, env) => postLedger(request, env))
   .on("GET",  "/ledger",                      (request, env) => getLedger(request, env))
+  .on("GET",  "/ledger/soma-freshness",       (request, env) => getSomaFreshness(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
   // Jev (TypeSafe typed-judgment model) via Workers AI -- admin proxy for the writeback-gate
   // scoring harness and the VPS bots (docs/PLAN-jev-2026-09-20.md). Companions never call this.

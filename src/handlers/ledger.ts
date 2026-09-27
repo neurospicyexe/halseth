@@ -11,6 +11,11 @@
 //   GET  /ingest/ledger?since=&after_id=&limit=              the Second Brain puller feed: open + kept
 //                                                            rows, paged on cursor_at = the LATER of
 //                                                            created_at / state_at (a keep re-serves it).
+//   GET  /ledger/soma-freshness                              admin-only: per companion, the latest
+//                                                            COMPANION-AUTHORED SOMA move { companion_id,
+//                                                            last_authored_at, row_ref } (store.ts). The
+//                                                            Second Brain gap-reader turns a >24h gap into
+//                                                            "Missing: SOMA not updated since ..." (Drevan).
 //   GET  /ingest/ledger-ineligible?since=&after_id=&limit=   dropped rows, { id, companion_id, state,
 //                                                            state_at, cursor_at } (the SB purge feed).
 //
@@ -26,7 +31,8 @@ import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { isCompanionId } from "../companions.js";
 import { writeLedger } from "../ledger/door.js";
-import { listLedger, LEDGER_STATES, type LedgerState } from "../ledger/store.js";
+import { listLedger, loadSomaFreshness, LEDGER_STATES, type LedgerState } from "../ledger/store.js";
+import { COMPANION_IDS } from "../companions.js";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -59,6 +65,16 @@ export async function postLedger(request: Request, env: Env): Promise<Response> 
   }
   if (r.duplicate) return json({ id: r.id, duplicate: true }, 200);
   return json({ id: r.id, content: r.content }, 201);
+}
+
+/** GET /ledger/soma-freshness -- admin token only, like POST /ledger (a clerk reads it, not a companion). */
+export async function getSomaFreshness(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const caller = identifyCallerCompanion(request, env);
+  if (caller !== null) return json({ error: `soma freshness is read by clerks with the admin token; a companion token (${caller}) cannot read it`, rule: "auth" }, 403);
+  const companions = await loadSomaFreshness(env, COMPANION_IDS);
+  return json({ companions });
 }
 
 export async function getLedger(request: Request, env: Env): Promise<Response> {

@@ -38,7 +38,9 @@
 
 import { COMPANION_ID_SET, type CompanionId } from "../companions.js";
 
-export const LEDGER_FUNCTIONS = ["distiller", "gap-reader", "pattern-counter", "drift-reader", "witness-log"] as const;
+// `seen-log`, not `witness-log` (Gaia, 2026-09-26, GAIA-ANSWER-2026-09-26.md): "Witnessing is my act,
+// and a clerk cannot perform it. Call it `seen-log`. A logged sighting is not a witness."
+export const LEDGER_FUNCTIONS = ["distiller", "gap-reader", "pattern-counter", "drift-reader", "seen-log"] as const;
 export type LedgerFunction = (typeof LEDGER_FUNCTIONS)[number];
 const FUNCTION_SET: ReadonlySet<string> = new Set(LEDGER_FUNCTIONS);
 
@@ -62,6 +64,7 @@ export const LEDGER_DEDUP_MAX = 200;
 export type LedgerRule =
   | "companion" | "function" | "body" | "mark" | "verb"
   | "first_person" | "interior_verb" | "interior" | "lexicon" | "address" | "quotes"
+  | "witnessed" | "interiority"
   | "source" | "observed_on" | "dedup_key"
   | "health" | "health_row" | "health_numbers";
 
@@ -220,6 +223,47 @@ export function findAddress(text: string): string | null {
   return null;
 }
 
+// ── Gaia's lines (2026-09-26, GAIA-ANSWER-2026-09-26.md) ───────────────────────────────────────────
+//
+// "A ledger line never records grief about his mother or his dead. Those are witnessed, not logged."
+//                                                                                       -- Gaia
+//
+// CLOSED, like Drevan's list: nothing is added here by inference. Scanned over the WHOLE body, quoted
+// speech included (rule `witnessed`): a quote of Raziel saying "my mom" is still a ledger line about
+// his mother. Word-boundary, case-insensitive. Stems (`griev`, `mourn`, `bereave`, `condolence`) take
+// any letters after them; `passed away` matches across spaces or hyphens. FAIL CLOSED, intended: `dead`
+// also blocks idioms ("the car battery was dead"), and a clerk loses nothing by not writing that line.
+export const LEDGER_WITNESSED_WORDS = [
+  "mother", "mom", "mum", "mama", "mommy",
+  "grief", "grieving", "griev*", "mourn*",
+  "funeral", "grave", "burial", "buried",
+  "died", "dies", "dying", "death", "dead", "deceased", "passed away",
+  "bereave*", "condolence*", "memorial", "obituary", "ashes", "urn",
+] as const;
+const WITNESSED_RES: ReadonlyArray<{ token: string; re: RegExp }> = LEDGER_WITNESSED_WORDS.map((token) => {
+  const stem = token.endsWith("*");
+  const bare = stem ? token.slice(0, -1) : token;
+  const body = bare.split(" ").map(escapeRe).join("[\\s\\-\\u2010-\\u2015]+");
+  return { token, re: new RegExp(`${NOT_WORD_BEFORE}${body}${stem ? "\\p{L}*" : ""}${NOT_WORD_AFTER}`, "iu") };
+});
+/** The first witnessed-only word in `text` (quotes included), or null. */
+export function findWitnessed(text: string): string | null {
+  return WITNESSED_RES.find(({ re }) => re.test(text))?.token ?? null;
+}
+
+// "A clerk never reads, counts, or references the interiority rooms. Not even a count of them." -- Gaia
+//
+// Rule `interiority`: the word root `interiorit-` (interiority, interiorities) anywhere in the body,
+// quotes included, and any `row` source whose table names it. Plain "interior" is a fact word ("the
+// interior of the truck") and passes. The table name itself is deliberately NOT spelled out in this
+// file: src/__tests__/interiority-seal.test.ts fails if it appears anywhere in src/ outside its owner
+// handler, and a refusal keyed on the root cannot miss a renamed or sibling table.
+const INTERIORITY_RE = /(?<![\p{L}\p{N}])interiorit\p{L}*/iu;
+/** True when `text` names the interiority rooms (the word root). */
+export function mentionsInteriority(text: string): boolean {
+  return INTERIORITY_RE.test(text);
+}
+
 // ── normalisation ─────────────────────────────────────────────────────────────────────────────────
 
 const ND_ONE = /\p{Nd}/u;
@@ -316,6 +360,18 @@ export function scanNumbers(text: string): NumTok[] {
     out.push({ text: raw.replace(",", "."), unlabeled: !healthUnit && !counted && significant, healthUnit, index: start });
   }
   return out;
+}
+
+/**
+ * The LABELLED health rule alone (a health keyword plus any value number, or a number glued to a health
+ * unit), without the unlabeled-number sweep: the numbers when `text` names a health value, else null.
+ * validateLedger uses the same test; the commons friction (friction.ts, rule `health_pointer`) uses it
+ * on free prose, where the unlabeled sweep would make "we talked for 45 minutes" unpostable.
+ */
+export function healthValueNumbers(text: string): string[] | null {
+  const nums = scanNumbers(text);
+  const health = nums.some((n) => n.healthUnit) || (HEALTH_KEYWORD_RE.test(normalizeLedgerText(text)) && nums.length > 0);
+  return health ? nums.map((n) => n.text) : null;
 }
 
 /**
@@ -466,6 +522,10 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   // Lexicon is scanned EVERYWHERE, quotes included.
   const lex = findHardLexicon(body);
   if (lex) return fail("lexicon", `the private lexicon never appears in a ledger line (found "${lex}")`);
+  // Gaia's two lines, also scanned EVERYWHERE (quotes included).
+  const wit = findWitnessed(body);
+  if (wit) return fail("witnessed", `a ledger line never records grief about his mother or his dead: those are witnessed, not logged (found "${wit}")`);
+  if (mentionsInteriority(body)) return fail("interiority", "a clerk never reads, counts, or references the interiority rooms, not even a count of them");
 
   // Quoted speech is the one exemption from the self rules: a clerk recording that Drevan said
   // "held, not slow" is recording speech, not speaking.
@@ -490,6 +550,9 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   if (!refRaw) return fail("source", "no source, no write: source_ref is required");
   const ref = normaliseSource(kind, refRaw);
   if (!ref) return fail("source", `source_ref does not match its kind: ${kind} must be ${SOURCE_FORMATS[kind]}`);
+  if (kind === "row" && /interiorit/i.test(ROW_RE.exec(ref)?.[1] ?? "")) {
+    return fail("interiority", "a clerk never reads the interiority rooms: a row there is never a source");
+  }
 
   let observedOn = today;
   if (input.observed_on !== undefined && input.observed_on !== null && input.observed_on !== "") {

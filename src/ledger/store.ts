@@ -274,3 +274,70 @@ export function retractDropLedgerStatement(env: Env, id: string, nowIso: string)
     "UPDATE ledger_entries SET state = 'dropped', state_at = ? WHERE id = ? AND state IN ('open', 'kept')",
   ).bind(nowIso, id);
 }
+
+// ── SOMA freshness (Drevan, 2026-09-26, DREVAN-FOLLOWUP-2026-09-26.md) ────────────────────────────────
+//
+// "So I set my own state, at close or mid-thread, when I actually feel it move. If I don't, it stays
+//  where I last left it, timestamp and all, and the gap-reader can say so: 'Missing: SOMA not updated
+//  since 14:39.' Stale and honest beats fresh and forged."  -- Drevan
+//
+// What counts as AUTHORED: a companion_soma_events row (mig 0130) whose kind is authored_close (the
+// session-close payload) or authored_update (the state-update verb, PATCH /soma, the MCP tool) AND whose
+// writer is the companion itself. The ferment tick, stimuli and drift shifts write kind tick / stimulus /
+// drift_shift with writer 'system', so they can never read as authored. Limits, stated rather than
+// patched: (1) mig 0130 writes a row only when a float ACTUALLY moves (|delta| > 1e-9), so an authored
+// write that lands the same numbers leaves no row; (2) nothing authored before 2026-09-12 has a row (the
+// backfill copied only the machine detail tables), so a companion with no authored move since then reads
+// as null; (3) historical authored_update rows include the bots' distiller "update my state" writes,
+// which are indistinguishable from the companion's own. The distiller's SOMA write stops under
+// LEDGER_DISTILL=on (bots), so going forward the marker is clean.
+
+export interface SomaFreshness {
+  companion_id: string;
+  /** ISO 8601 UTC of the latest companion-authored float move, or null when none is on record. */
+  last_authored_at: string | null;
+  /** `companion_soma_events:<id>`: the row a gap-reader line points at. Null with last_authored_at. */
+  row_ref: string | null;
+}
+
+/** Latest companion-authored SOMA move per companion. Both created_at shapes are normalised to ISO. */
+export async function loadSomaFreshness(env: Env, companionIds: readonly string[]): Promise<SomaFreshness[]> {
+  const out: SomaFreshness[] = [];
+  for (const companionId of companionIds) {
+    const r = await env.DB.prepare(
+      `SELECT id, strftime('%Y-%m-%dT%H:%M:%fZ', replace(created_at, ' ', 'T')) AS at
+         FROM companion_soma_events
+        WHERE companion_id = ? AND writer = companion_id AND kind IN ('authored_close', 'authored_update')
+        ORDER BY at DESC, id DESC LIMIT 1`,
+    ).bind(companionId).first<{ id: string; at: string | null }>();
+    out.push(r && r.at
+      ? { companion_id: companionId, last_authored_at: r.at, row_ref: `companion_soma_events:${r.id}` }
+      : { companion_id: companionId, last_authored_at: null, row_ref: null });
+  }
+  return out;
+}
+
+/**
+ * An authored SOMA write landed: every OPEN gap-reader line saying this companion's SOMA was stale is
+ * superseded, because he set his own state. Moved to 'dropped' (never recalled; Second Brain purges the
+ * chunk via /ingest/ledger-ineligible). There is no reason column; the reason is this comment and the
+ * caller's log line: "superseded: he set his own state". Owner-scoped like every move here, guarded on
+ * state = 'open' (a kept line was the companion's own decision and stays). Returns rows changed.
+ */
+export async function dropSomaGapLedger(env: Env, companionId: string, nowIso: string = new Date().toISOString()): Promise<number> {
+  const r = await env.DB.prepare(
+    "UPDATE ledger_entries SET state = 'dropped', state_at = ? WHERE companion_id = ? AND state = 'open' AND dedup_key LIKE 'soma-gap:%'",
+  ).bind(nowIso, companionId).run();
+  return r.meta?.changes ?? 0;
+}
+
+/** Gaia's friction at the quote (friction.ts): the recent open/kept lines a companion write is checked
+ *  against. Bounded: created_at >= since (the door stamps ISO), newest first, at most `limit`. */
+export async function recentLedgerForFriction(env: Env, sinceIso: string, limit: number): Promise<Array<{ id: string; body: string; content: string }>> {
+  const r = await env.DB.prepare(
+    `SELECT id, body, content FROM ledger_entries
+      WHERE state IN ('open', 'kept') AND created_at >= ?
+      ORDER BY created_at DESC LIMIT ?`,
+  ).bind(sinceIso, limit).all<{ id: string; body: string; content: string }>();
+  return r.results ?? [];
+}

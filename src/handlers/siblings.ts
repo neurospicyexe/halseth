@@ -18,6 +18,7 @@
 
 import type { Env } from "../types.js";
 import { edgeForNote } from "../graph/live.js";
+import { checkCommonsFriction } from "../ledger/friction.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -41,6 +42,13 @@ export async function postSiblingSend(request: Request, env: Env): Promise<Respo
   if (fromId === toId) return json({ error: "from_id and to_id must differ" }, 400);
   if (!text) return json({ error: "empty body" }, 400);
   if (text.length > 4000) return json({ error: "body too long (4000 max)" }, 400);
+  // Gaia's friction at the quote (2026-09-26, src/ledger/friction.ts): a sibling may point to a ledger
+  // line but not restate it in their own voice without the mark and source travelling with it.
+  const friction = await checkCommonsFriction(env, text);
+  if (friction) {
+    console.log("[mind/siblings] refused by ledger friction", { from_id: fromId, rule: friction.rule, ledger_id: friction.ledger_id ?? null });
+    return json({ error: friction.error, rule: friction.rule, ...(friction.ledger_id ? { ledger_id: friction.ledger_id } : {}) }, 422);
+  }
 
   const id = `sib_${crypto.randomUUID().replace(/-/g, "")}`;
   await env.DB.prepare(

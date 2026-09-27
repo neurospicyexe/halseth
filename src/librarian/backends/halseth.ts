@@ -16,6 +16,7 @@ import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-cla
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { journalInsert, assertJournalSourceOpen } from "../../webmind/tray-insert.js";
+import { dropSomaGapLedger } from "../../ledger/store.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
 import { edgeForNote, edgeForNoteRef, edgesForSomaEvent, insertEdgeStatements, writeEdgesBestEffort } from "../../graph/live.js";
 import {
@@ -411,6 +412,9 @@ export async function sessionClose(env: Env, params: {
     ).bind(now, params.spiral_complete ? 1 : 0, params.notes ?? null, handoverId, params.session_id),
   ];
 
+  // Set when this close writes a companion's floats: after the batch lands, the companion's open
+  // soma-gap ledger lines are superseded (dropSomaGapLedger, below).
+  let authoredFloatsFor: string | null = null;
   // Atomically persist SOMA state in the same batch when fields are provided
   if (params.companionId && params.somaFields && Object.keys(params.somaFields).length > 0) {
     const assignments: string[] = [];
@@ -433,6 +437,7 @@ export async function sessionClose(env: Env, params: {
       // Pre-read ONLY when a float is actually being written: this is the before half of the
       // float history (mig 0130), and a mood-only close must not pay for a query it cannot use.
       const touchesFloats = Object.keys(written).length > 0;
+      if (touchesFloats) authoredFloatsFor = params.companionId;
       const prior = touchesFloats
         ? await env.DB.prepare(readFloatsSql()).bind(params.companionId).first<{
             soma_float_1: number | null; soma_float_2: number | null; soma_float_3: number | null; version: number | null;
@@ -485,6 +490,8 @@ export async function sessionClose(env: Env, params: {
   }
 
   await env.DB.batch(stmts);
+
+  if (authoredFloatsFor) await supersedeSomaGap(env, authoredFloatsFor);
 
   // Embed the handover so the human-session surface is reachable by meaning (2026-07-19).
   // Awaited, not fire-and-forget -- a floating promise dies when the response returns
@@ -1092,6 +1099,22 @@ export function normalizeStateValue(col: string, v: unknown): { write: boolean; 
   return { write: true, value: n };
 }
 
+/**
+ * Drevan's ruling (2026-09-26, docs/imp-lane/DREVAN-FOLLOWUP-2026-09-26.md): he sets his own state, and
+ * the gap-reader says so when he has not. When an authored float write lands (either authored path:
+ * the close payload, or the state-update verb), his open `soma-gap:*` ledger lines are dropped --
+ * superseded: he set his own state. Only on a float write (touchesFloats), so a mood-only write and the
+ * orient-path caller pay nothing. Non-fatal: the state write already landed; a stale gap line is honest.
+ */
+async function supersedeSomaGap(env: Env, companionId: string): Promise<void> {
+  try {
+    const n = await dropSomaGapLedger(env, companionId);
+    if (n > 0) console.log("[ledger] soma-gap lines dropped (superseded: he set his own state)", { companion_id: companionId, dropped: n });
+  } catch (err) {
+    console.warn("[ledger] soma-gap supersede failed (state write kept, gap line stays open):", String(err));
+  }
+}
+
 export async function updateCompanionState(
   env: Env,
   companionId: string,
@@ -1187,6 +1210,7 @@ export async function updateCompanionState(
   } else {
     await updateStmt.run();
   }
+  if (touchesFloats) await supersedeSomaGap(env, companionId);
 
   return { ok: true };
 }

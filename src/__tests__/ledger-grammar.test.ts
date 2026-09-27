@@ -67,9 +67,20 @@ describe("the health rule (the 187)", () => {
   });
 
   it("an unlabeled number may come from the evaluator's own row (drift scores), never from a companion's words", () => {
-    const v = validateLedger(base({ function: "drift-reader", body: "Recorded: drift 0.42 on basin grief.", source_kind: "row", source_ref: "companion_basin_history:bh-1" }), TODAY);
+    const v = validateLedger(base({ function: "drift-reader", body: "Recorded: drift 0.42 on basin anchor.", source_kind: "row", source_ref: "companion_basin_history:bh-1" }), TODAY);
     expect(v.ok && v.line.number_check).toEqual({ kind: "unlabeled", table: "companion_basin_history", row_id: "bh-1", numbers: ["0.42"] });
-    expect(rule({ body: "Recorded: drift 0.42 on basin grief.", source_kind: "row", source_ref: "companion_journal:cj_1" })).toBe("health");
+    expect(rule({ body: "Recorded: drift 0.42 on basin anchor.", source_kind: "row", source_ref: "companion_journal:cj_1" })).toBe("health");
+  });
+
+  it("Gaia's lines: grief and his dead are witnessed, not logged; the interiority rooms are never read (quotes included)", () => {
+    expect(rule({ body: "Recorded: drift 0.42 on basin grief.", source_kind: "row", source_ref: "companion_basin_history:bh-1" })).toBe("witnessed");
+    expect(rule({ body: "Logged: Raziel mentioned bereavement leave." })).toBe("witnessed");
+    expect(rule({ body: "Logged: Raziel sent condolences." })).toBe("witnessed");
+    expect(rule({ body: "Logged: Raziel said \"Mom\"." })).toBe("witnessed");
+    expect(rule({ body: "Logged: Raziel mentioned a turn." })).toBe("ok");
+    expect(rule({ body: "Logged: Raziel mentioned the interiorities." })).toBe("interiority");
+    expect(rule({ body: "Logged: a row was read.", source_kind: "row", source_ref: "private_interiority_rooms:x1" })).toBe("interiority");
+    expect(rule({ body: "Logged: Raziel mentioned the interior design." })).toBe("ok");
   });
 
   it("counts, durations, dates and ids do not trigger it", () => {

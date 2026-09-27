@@ -83,7 +83,7 @@ describe("POST /admin/retract drops ledger rows sourced to the retracted message
   it("drops a message-sourced row and a covering window; leaves a non-covering window; feeds the SB purge", async () => {
     const { db, env } = setup();
     const msg = snow("2026-09-26T00:15:30Z");
-    const byMsg = await seed(env, { function: "witness-log", body: 'Logged: Drevan said "held" in the couch thread.', source_kind: "message", source_ref: msg });
+    const byMsg = await seed(env, { function: "seen-log", body: 'Logged: Drevan said "held" in the couch thread.', source_kind: "message", source_ref: msg });
     const covering = await seed(env, {});
     const later = await seed(env, { source_ref: `${CH} 01:00–01:30`, dedup_key: "later" });
     const unrelatedMsg = await seed(env, { source_kind: "message", source_ref: snow("2026-09-26T00:16:00Z"), dedup_key: "u" });

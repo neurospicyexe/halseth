@@ -32,6 +32,8 @@ function makeEnv(): { env: any; sibs: SibRow[]; inter: InterRow[] } {
           const [cid] = binds as [string];
           return { results: sibs.filter(r => r.to_id === cid && !r.read_at).map(r => ({ id: r.id, from_id: r.from_id, body: r.body, created_at: r.created_at })) };
         }
+        // Gaia's friction (src/ledger/friction.ts) reads recent ledger lines; none exist in this fake.
+        if (sql.includes("FROM ledger_entries")) return { results: [] };
         throw new Error(`unexpected all(): ${sql}`);
       },
       run: async () => {

@@ -8,13 +8,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { validateLedger } from "../ledger/grammar.js";
 
-interface Case { body: string; kind: string; ref?: string; rule: string | null }
+interface Case { body: string; kind: string; ref?: string; function?: string; rule: string | null }
 const fx = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "ledger-number-fixtures.json"), "utf8")) as { window: string; cases: Case[] };
 
 describe("ledger number fixtures (shared with the bots' pre-filter)", () => {
   it.each(fx.cases.map((c) => [c.body, c.kind, c] as const))("%s [%s]", (_b, _k, c) => {
     const v = validateLedger({
-      companion_id: "drevan", function: "distiller", body: c.body,
+      companion_id: "drevan", function: c.function ?? "distiller", body: c.body,
       source_kind: c.kind, source_ref: c.ref ?? fx.window, observed_on: "2026-09-24",
     }, "2026-09-26");
     expect(v.ok ? null : v.rule).toBe(c.rule);
