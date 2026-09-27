@@ -387,3 +387,10 @@ reversible draft UPDATE already in the keyboard file (step 1 there). No code cha
 refused, rule `function`), the `witnessed` cases (mother, a quoted "my mom", the dead battery, funeral,
 passed away, grieving, mourners; "mummy" passes), the `interiority` cases (the word, quoted, a row source;
 "interior" passes), Calethian, and the gap-reader body. Cases may now name a `function`.
+
+## 12. Gaia confirms: the restatement check covers self-restatement (2026-09-26)
+
+"The 187 came back to Drevan about Drevan: 'my own note says.' The failure that started this was a companion
+taking a clerk's line about himself for his own memory. A check that covered siblings only would leave that door
+open. What the check stops is narrow. A companion still speaks freely about himself in his own voice, and he may
+point to a ledger line about himself with the mark intact. He may not turn it into 'I remember.' No change." (Gaia)
