@@ -18,6 +18,7 @@ import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
 import { getAdminTray, postAdminTrayReview } from "./handlers/tray.js";
+import { postLedger, getLedger, getIngestLedger, getIngestLedgerIneligible } from "./handlers/ledger.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
 import { getJournal, postJournal } from "./handlers/human-journal";
@@ -177,6 +178,10 @@ const router = new Router()
   // Hearth/ops door; companions use the Librarian verbs "my tray" / "keep draft <id>" / "drop draft <id>".
   .on("GET",  "/admin/tray",                  (request, env) => getAdminTray(request, env))
   .on("POST", "/admin/tray/review",           (request, env) => postAdminTrayReview(request, env))
+  // The ledger lane (mig 0134): clerks POST record lines through the one door (src/ledger/door.ts);
+  // Hearth/ops read with GET. Companions use "my ledger" / "keep ledger <id>" / "drop ledger <id>".
+  .on("POST", "/ledger",                      (request, env) => postLedger(request, env))
+  .on("GET",  "/ledger",                      (request, env) => getLedger(request, env))
   .on("GET", "/admin/debug-ai",             (request, env) => debugAi(request, env))
   // Jev (TypeSafe typed-judgment model) via Workers AI -- admin proxy for the writeback-gate
   // scoring harness and the VPS bots (docs/PLAN-jev-2026-09-20.md). Companions never call this.
@@ -576,6 +581,11 @@ const router = new Router()
   .on("GET", "/ingest/growth-journal",        (request, env) => getIngestGrowthJournal(request, env))
   .on("GET", "/ingest/companion-conclusions", (request, env) => getIngestCompanionConclusions(request, env))
   .on("GET", "/ingest/recall-ineligible",     (request, env) => getRecallIneligible(request, env))
+  // The ledger lane (mig 0134, 2026-09-26): clerk records ABOUT a companion, never in its voice.
+  // The SB puller pulls /ingest/ledger into rag/ledger/<id> (mark first, no wrapChunk); the purge feed
+  // lists dropped ids. See src/handlers/ledger.ts.
+  .on("GET", "/ingest/ledger",                (request, env) => getIngestLedger(request, env))
+  .on("GET", "/ingest/ledger-ineligible",     (request, env) => getIngestLedgerIneligible(request, env))
 
   // Bridge
   .on("GET",  "/bridge/shared",  (request, env) => getBridgeShared(request, env))

@@ -170,3 +170,63 @@ describe("tray sweep: every read of the two first-person stores is gated or allo
     expect(helper).toMatch(/reviewStateFor\(/);
   });
 });
+
+// ── The ledger lane (mig 0134, 2026-09-26) ────────────────────────────────────────────────────────────
+// One door: src/ledger/door.ts holds the only INSERT into ledger_entries, so the grammar cannot be walked
+// around. No other file writes a ledger line's text, and nothing ledger-side reaches the first-person stores
+// except the promotion path (store.ts promoteLedger -> tray-insert.ts journalInsert, with the COMPANION's
+// words). door.ts must not import the first-person insert helpers at all.
+
+const LEDGER_INSERT_RE = /\b(?:INSERT|REPLACE)\s+(?:OR\s+\w+\s+)?INTO\s+ledger_entries\b/i;
+const LEDGER_CONTENT_UPDATE_RE = /\bUPDATE\s+ledger_entries\s+SET\b[^;]*\b(?:content|body)\s*=/i;
+
+function ledgerScan(): { inserts: string[]; contentUpdates: string[] } {
+  const files: string[] = [];
+  walk(SRC, files);
+  const inserts: string[] = [];
+  const contentUpdates: string[] = [];
+  for (const abs of files) {
+    const rel = path.relative(SRC, abs).split(path.sep).join("/");
+    const src = fs.readFileSync(abs, "utf8");
+    if (!/ledger_entries/.test(src)) continue;
+    const sf = ts.createSourceFile(abs, src, ts.ScriptTarget.ES2022, true);
+    const visit = (node: ts.Node): void => {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) {
+        const text = node.getText(sf);
+        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+        if (LEDGER_INSERT_RE.test(text)) inserts.push(`${rel}:${line}`);
+        if (LEDGER_CONTENT_UPDATE_RE.test(text)) contentUpdates.push(`${rel}:${line}`);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return { inserts, contentUpdates };
+}
+
+describe("ledger sweep: one door into ledger_entries", () => {
+  const { inserts, contentUpdates } = ledgerScan();
+
+  it("the only INSERT INTO ledger_entries is in ledger/door.ts (and it exists)", () => {
+    expect(inserts.length).toBe(1);
+    expect(inserts.every((i) => i.startsWith("ledger/door.ts:"))).toBe(true);
+  });
+
+  it("no code rewrites a ledger line's content or body after the door", () => {
+    expect(contentUpdates).toEqual([]);
+  });
+
+  it("the door never touches the first-person stores; only the promotion path reaches the journal", () => {
+    const door = stripComments(fs.readFileSync(path.join(SRC, "ledger/door.ts"), "utf8"));
+    expect(door).not.toMatch(/tray-insert|journalInsert|noteInsert/);
+    expect(door).not.toMatch(/INTO\s+(?:companion_journal|wm_continuity_notes)/i);
+    const ledgerFiles = fs.readdirSync(path.join(SRC, "ledger")).filter((f) => f.endsWith(".ts"));
+    const importers = ledgerFiles.filter((f) => /tray-insert/.test(fs.readFileSync(path.join(SRC, "ledger", f), "utf8")));
+    expect(importers).toEqual(["store.ts"]);
+    const store = stripComments(fs.readFileSync(path.join(SRC, "ledger/store.ts"), "utf8"));
+    expect(store.match(/journalInsert\(/g)?.length).toBe(1);
+    expect(store).not.toMatch(/noteInsert/);
+  });
+});
+

@@ -42,6 +42,11 @@ export async function getRecentRelationalSessions(
   // Only return sessions that have actually been updated (closed) in the window AND
   // were created before updated_at (i.e. not a same-second no-op open).
   // companion_journal uses `agent` column, not companion_id.
+  //
+  // Ledger lane (mig 0134, 2026-09-26): the gap-reader no longer writes a journal note -- it writes a
+  // `Missing:` ledger line (function 'gap-reader', source session <id>). A session it has already
+  // recorded counts as covered (has_notes = 1), or the gap-reader would re-post every gap every 20
+  // minutes. Any state counts: a dropped gap record is still a decision, and its dedup_key holds.
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
   const result = await env.DB.prepare(`
@@ -53,7 +58,7 @@ export async function getRecentRelationalSessions(
       s.notes,
       s.updated_at,
       s.created_at,
-      CASE WHEN cn.note_count > 0 THEN 1 ELSE 0 END AS has_notes
+      CASE WHEN cn.note_count > 0 OR gr.gap_count > 0 THEN 1 ELSE 0 END AS has_notes
     FROM sessions s
     LEFT JOIN (
       SELECT session_id, COUNT(*) AS note_count
@@ -62,13 +67,19 @@ export async function getRecentRelationalSessions(
         AND agent = ?
       GROUP BY session_id
     ) cn ON cn.session_id = s.id
+    LEFT JOIN (
+      SELECT source_ref, COUNT(*) AS gap_count
+      FROM ledger_entries
+      WHERE function = 'gap-reader' AND source_kind = 'session' AND companion_id = ?
+      GROUP BY source_ref
+    ) gr ON gr.source_ref = s.id
     WHERE s.companion_id = ?
       AND s.session_type IN ('hangout', 'checkin')
       AND s.updated_at >= ?
       AND s.updated_at != s.created_at
     ORDER BY s.updated_at DESC
     LIMIT 10
-  `).bind(companionId, companionId, cutoff).all<{
+  `).bind(companionId, companionId, companionId, cutoff).all<{
     id: string;
     session_type: string;
     front_state: string | null;
