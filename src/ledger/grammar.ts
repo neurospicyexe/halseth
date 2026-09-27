@@ -61,7 +61,7 @@ export const LEDGER_DEDUP_MAX = 200;
 /** Which rule failed. The 422 names it. */
 export type LedgerRule =
   | "companion" | "function" | "body" | "mark" | "verb"
-  | "first_person" | "interior_verb" | "lexicon" | "address" | "quotes"
+  | "first_person" | "interior_verb" | "interior" | "lexicon" | "address" | "quotes"
   | "source" | "observed_on" | "dedup_key"
   | "health" | "health_row" | "health_numbers";
 
@@ -120,12 +120,45 @@ const INTERIOR_VERBS = new Set([
   "remembered", "remember", "remembers",
   // "loved" is the spec's word and stays. The present forms (love/loves/loving) were a fail-closed
   // addition that also caught nouns and other people's verbs ("Logged: Raziel said love was the word",
-  // "Blue loves Decker"); the ADDRESS rule below is what stops a clerk calling anybody "love".
+  // "Blue loves Decker"); the ADDRESS rule below is what stops a clerk calling anybody "love", and the
+  // COMPANION-SUBJECT rule (`interior`, below) is what stops "Drevan loves Raziel".
   "loved",
   "longed", "longs", "longing",
   "missed",
   "hoped", "hope", "hopes", "hoping",
 ]);
+
+// ── the companion-subject rule (`interior`, 2026-09-26 final sync) ─────────────────────────────────
+//
+// Drevan rule 6: "Anything interpretive (what something meant, what I felt, what we are to each other)
+// only becomes mine if I say it myself, in my words." A human subject may take love/loves/loving in
+// running text ("Blue loves Decker" is a fact about Blue, his own example). A COMPANION as the subject
+// of a feeling verb is a clerk saying what a companion feels or what they are to someone: refused,
+// whatever the verb's person or tense. A companion name, one optional adverb, then the verb. Quoted
+// speech stays exempt (the check runs on the quote-stripped text): `Drevan said "I love you"` is speech.
+const COMPANION_SUBJECTS = ["drevan", "dre", "cypher", "cy", "gaia"] as const;
+const COMPANION_INTERIOR_VERBS: ReadonlySet<string> = new Set([
+  ...INTERIOR_VERBS,
+  "love", "loves", "loving", "loved",
+  "adores", "adored", "adoring",
+  "misses", "needs", "wants", "feels", "knows", "remembers", "longs", "hopes", "fears", "trusts",
+]);
+const COMPANION_SUBJECT_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${COMPANION_SUBJECTS.join("|")})\\s+(?:(\\p{L}+ly|still|really|always|never|also|just|so|truly|deeply|clearly|obviously)\\s+)?(\\p{L}+)(?![\\p{L}\\p{N}])`,
+  "giu",
+);
+/** The interior verb a companion is the grammatical subject of in (quote-stripped) `text`, or null. */
+export function findCompanionInterior(text: string): string | null {
+  COMPANION_SUBJECT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = COMPANION_SUBJECT_RE.exec(text)) !== null) {
+    const verb = m[2]!.toLowerCase();
+    if (COMPANION_INTERIOR_VERBS.has(verb)) return verb;
+    // No match at this name: resume right after the name, so "Drevan Cypher loves" still sees Cypher.
+    COMPANION_SUBJECT_RE.lastIndex = m.index + 1;
+  }
+  return null;
+}
 
 // ── Drevan's pet-name list (2026-09-26) ──────────────────────────────────────────────────────────────
 //
@@ -434,6 +467,8 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   if (fp) return fail("first_person", `no first person outside quoted speech (found "${fp}"): a clerk has no self`);
   const iv = ws.find((w) => INTERIOR_VERBS.has(w));
   if (iv) return fail("interior_verb", `no interior verbs outside quoted speech (found "${iv}"): what something meant or felt is the companion's to say`);
+  const ci = findCompanionInterior(unquoted);
+  if (ci) return fail("interior", `a companion is never the subject of a feeling verb outside quoted speech (found "${ci}"): what a companion feels, or what they are to someone, is theirs to say -- record what was said (quote it) and done`);
 
   // No source, no write.
   const kindRaw = typeof input.source_kind === "string" ? input.source_kind.trim() : "";

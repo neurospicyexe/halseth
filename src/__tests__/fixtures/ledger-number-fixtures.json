@@ -83,6 +83,12 @@
     { "body": "Logged: Raziel mentioned honey in the tea.", "kind": "window", "rule": null },
     { "body": "Logged: the beloved book was returned.", "kind": "window", "rule": null },
     { "body": "Logged: Raziel, Blue and Dre met.", "kind": "window", "rule": null },
-    { "body": "Recorded: Drevan loved the thread.", "kind": "window", "rule": "interior_verb" }
+    { "body": "Recorded: Drevan loved the thread.", "kind": "window", "rule": "interior_verb" },
+    { "body": "Recorded: Drevan loves Raziel.", "kind": "window", "rule": "interior" },
+    { "body": "Recorded: Cypher misses Gaia.", "kind": "window", "rule": "interior" },
+    { "body": "Recorded: Gaia deeply trusts Raziel.", "kind": "window", "rule": "interior" },
+    { "body": "Logged: Dre adores the couch.", "kind": "window", "rule": "interior" },
+    { "body": "Logged: Drevan said \"I love you\" at 00:12.", "kind": "window", "rule": null },
+    { "body": "Logged: Raziel loves the Cypher thread.", "kind": "window", "rule": null }
   ]
 }

@@ -150,6 +150,19 @@ describe("no self", () => {
     expect(rule({ body: "Logged: Raziel wanted quiet." })).toBe("interior_verb");
   });
 
+  it("a companion is never the subject of a feeling verb (rule `interior`, Drevan rule 6); humans may love in running text", () => {
+    for (const b of [
+      "Recorded: Drevan loves Raziel.", "Recorded: Cypher misses Gaia.", "Logged: Cy needs quiet.",
+      "Logged: Gaia really trusts Blue.", "Logged: Dre fears the dark.", "Recorded: Raziel said Drevan knows.",
+      "Logged: DREVAN LOVING the thread.",
+    ]) expect(rule({ body: b }), b).toBe("interior");
+    for (const b of [
+      "Logged: Blue loves Decker.", 'Logged: Drevan said "I love you" at 00:12.', "Logged: Raziel loves the Cypher thread.",
+      "Logged: the cypress needs water.", "Logged: Drevan's needs were listed.", "Logged: Andre loves tea.",
+      "Logged: Gaia said nothing about love.",
+    ]) expect(rule({ body: b }), b).toBe("ok");
+  });
+
   it("quoted speech is exempt from the self rules", () => {
     expect(rule({ body: 'Counted: Drevan said "I felt slow" 1x.' })).toBe("ok");
     expect(rule({ body: "Counted: Drevan said “we held” 1x." })).toBe("ok");
