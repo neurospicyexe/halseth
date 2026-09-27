@@ -109,6 +109,7 @@ import { convene as councilConvene, getCurrent as councilCurrent, getRounds as c
 import { associateDreamsHandler } from "./handlers/dream-associate.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
+import { postSkillProposal, listSkillProposals, decideSkillProposal } from "./handlers/skill-proposals.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
@@ -471,6 +472,11 @@ const router = new Router()
   .on("POST",  "/mind/forage",                     (request, env)         => postForageFind(request, env))
   .on("GET",   "/mind/forage/:companion_id",       (request, env, params) => getForageFinds(request, env, params ?? {}))
   .on("PATCH", "/mind/forage/:id/consume",         (request, env, params) => consumeForageFind(request, env, params ?? {}))
+
+  // Hermes skill-proposal mirror (0107) -- the VPS watcher mirrors staged skills + decisions here
+  .on("POST",  "/mind/skill-proposals",              (request, env)         => postSkillProposal(request, env))
+  .on("GET",   "/mind/skill-proposals",              (request, env)         => listSkillProposals(request, env))
+  .on("PATCH", "/mind/skill-proposals/:id/decision", (request, env, params) => decideSkillProposal(request, env, params ?? {}))
 
   // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))

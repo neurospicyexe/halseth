@@ -282,6 +282,7 @@ import {
   execListRead, execEventList, execHouseRead, execPersonalityRead,
   execBiometricRead, execAuditRead, execSessionRead, execFossilCheck,
   execCompanionNotesRead, execPatternRecall, execSignalAuditRead, execJournalSearch,
+  execSkillProposalsRead,
 } from "./executors/reads.js";
 
 // ── Write executors ──────────────────────────────────────────────────────────
@@ -553,6 +554,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   halseth_journal_decline: execJournalDecline,
   halseth_forage_read: execForageRead,
   halseth_forage_consume: execForageConsume,
+  halseth_skill_proposals_read: execSkillProposalsRead,
   halseth_motifs_read: execMotifsRead,
   halseth_media_recent: execMediaRecent,
   halseth_club_status: execClubStatus,

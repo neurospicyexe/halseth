@@ -45,6 +45,7 @@ Use `companion-work` for Drevan-led planning, writing, or socratic threads. Not 
 | Autonomous corpus | `"Autonomous recall"` |
 | Pattern synthesis | `"Pattern recall"` |
 | Companion notes (incoming) | `"Companion notes"` |
+| Skill proposals (Hermes stage mirror) | `"Skill proposals"` or `"Skill approval queue"` |
 
 ---
 
