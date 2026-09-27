@@ -6,6 +6,8 @@
 // ties the two together for book_read / the club).
 //
 //   POST   /mind/books                          -- multipart upload (file, title?, author?, vault_ref?)
+//   POST   /mind/books/upload-ticket            -- mint a 10-minute upload ticket (Hearth, server side)
+//   PUT    /mind/books/upload?ticket=&filename= -- raw-body upload from the browser; the ticket IS the auth
 //   GET    /mind/books?search=&limit=           -- list with progress + annotation counts
 //   GET    /mind/books/:id                      -- book + progress + annotations
 //   GET    /mind/books/:id/file                 -- stream the epub/pdf from R2
@@ -17,11 +19,13 @@
 //   POST   /mind/books/:id/annotations          -- marginalia (raziel: cfi_range; companions: quote-anchored)
 //   DELETE /mind/books/:id/annotations/:ann_id  -- remove a note
 //
-// Auth: authGuard on everything, matching the rest of /mind/*.
+// Auth: authGuard on everything, matching the rest of /mind/*, EXCEPT PUT /mind/books/upload,
+// which is in PUBLIC_PATHS and authenticates by upload ticket (src/lib/upload-ticket.ts).
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { extractEpubMetadata } from "../lib/epub.js";
+import { mintUploadTicket, verifyUploadTicket, burnUploadTicket } from "../lib/upload-ticket.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -36,7 +40,90 @@ const COVER_EXT: Record<string, string> = {
   "image/webp": "webp", "image/svg+xml": "svg",
 };
 
-// POST /mind/books  (multipart/form-data: file, title?, author?, description?, vault_ref?, replace?)
+type FileType = "pdf" | "epub";
+
+function contentTypeFor(fileType: FileType): string {
+  return fileType === "pdf" ? "application/pdf" : "application/epub+zip";
+}
+
+// Everything an upload needs once the transport (multipart or raw PUT) is unwrapped.
+interface BookIngest {
+  filename: string;
+  fileType: FileType;
+  size: number;
+  field: (k: "title" | "author" | "description" | "vault_ref", max: number) => string | null;
+  replace: boolean;
+  epub: ArrayBuffer | null;                               // whole file, epubs only (extraction)
+  cover: { data: ArrayBuffer; type: string } | null;      // an explicit cover beats the epub's
+  writeFile: (key: string, contentType: string) => Promise<void>;
+}
+
+// The one upload path. Both transports call this, so title/author precedence, the 409
+// duplicate check, covers and the D1 row can never drift apart. The duplicate check runs
+// BEFORE writeFile, so a refused re-upload never touches R2 (a PUT's body stream is still
+// unread at that point).
+async function ingestBook(env: Env, b: BookIngest): Promise<Response> {
+  // Server-side epub metadata + cover; explicit fields override extraction.
+  const extracted = b.epub
+    ? await extractEpubMetadata(b.epub)
+    : { title: null, author: null, description: null, language: null, cover: null };
+  const title = b.field("title", 300)
+    ?? extracted.title?.slice(0, 300)
+    ?? b.filename.replace(/\.(epub|pdf)$/i, "").replace(/[_-]+/g, " ").trim().slice(0, 300);
+  const author = b.field("author", 200) ?? extracted.author?.slice(0, 200) ?? null;
+
+  // Same book twice is a re-upload mistake, not a second book -- but never
+  // silently delete (Catalouge auto-deleted; that's data loss). 409 unless
+  // the caller explicitly says replace.
+  const existing = await env.DB.prepare(
+    "SELECT id FROM books WHERE lower(title) = lower(?) AND lower(COALESCE(author, '')) = lower(COALESCE(?, ''))"
+  ).bind(title, author).first<{ id: string }>();
+  if (existing && !b.replace) {
+    return json({ error: "book already in the library", existing_id: existing.id, hint: "pass replace=true to overwrite" }, 409);
+  }
+
+  const id = existing?.id ?? crypto.randomUUID().replace(/-/g, "");
+  const fileKey = `books/${id}.${b.fileType}`;
+  let coverKey: string | null = null;
+
+  await b.writeFile(fileKey, contentTypeFor(b.fileType));
+
+  // Cover: an uploaded cover field wins; else whatever the epub carried.
+  if (b.cover) {
+    const ext = COVER_EXT[b.cover.type] ?? "jpg";
+    coverKey = `covers/${id}.${ext}`;
+    await env.BUCKET.put(coverKey, b.cover.data, {
+      httpMetadata: { contentType: b.cover.type || "image/jpeg" },
+    });
+  } else if (extracted.cover) {
+    const ext = COVER_EXT[extracted.cover.mediaType] ?? "jpg";
+    coverKey = `covers/${id}.${ext}`;
+    await env.BUCKET.put(coverKey, extracted.cover.data, {
+      httpMetadata: { contentType: extracted.cover.mediaType },
+    });
+  }
+
+  const description = b.field("description", 2000) ?? extracted.description?.slice(0, 2000) ?? null;
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE books SET title = ?, author = ?, description = COALESCE(?, description), language = COALESCE(?, language), file_key = ?, file_type = ?, file_size = ?, cover_key = COALESCE(?, cover_key), vault_ref = COALESCE(?, vault_ref), updated_at = datetime('now') WHERE id = ?"
+    ).bind(
+      title, author, description, extracted.language, fileKey, b.fileType, b.size,
+      coverKey, b.field("vault_ref", 200), id,
+    ).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO books (id, title, author, description, language, file_key, file_type, file_size, cover_key, vault_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(
+      id, title, author, description, extracted.language ?? "en", fileKey, b.fileType, b.size,
+      coverKey, b.field("vault_ref", 200),
+    ).run();
+  }
+  return json({ book: { id, title, author, file_type: b.fileType, cover_key: coverKey, replaced: !!existing } }, 201);
+}
+
+// POST /mind/books  (multipart/form-data: file, title?, author?, description?, vault_ref?, replace?, cover?)
+// Ops and scripts use this directly. Hearth's browser uploads use the ticket path below.
 export async function postBook(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
@@ -50,81 +137,139 @@ export async function postBook(request: Request, env: Env): Promise<Response> {
   if (!file || typeof file === "string") return json({ error: "file field is required" }, 400);
   const blob = file as { arrayBuffer(): Promise<ArrayBuffer>; name?: string; size?: number };
   const filename = blob.name ?? "book";
-  const fileType = /\.pdf$/i.test(filename) ? "pdf" : "epub";
+  const fileType: FileType = /\.pdf$/i.test(filename) ? "pdf" : "epub";
 
   try {
     const buf = await blob.arrayBuffer();
-
-    // Server-side epub metadata + cover; form fields override extraction.
-    const extracted = fileType === "epub"
-      ? await extractEpubMetadata(buf)
-      : { title: null, author: null, description: null, language: null, cover: null };
-    const fieldStr = (k: string, max: number) => {
-      const v = form.get(k);
-      return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
-    };
-    const title = fieldStr("title", 300)
-      ?? extracted.title?.slice(0, 300)
-      ?? filename.replace(/\.(epub|pdf)$/i, "").replace(/[_-]+/g, " ").trim().slice(0, 300);
-    const author = fieldStr("author", 200) ?? extracted.author?.slice(0, 200) ?? null;
-
-    // Same book twice is a re-upload mistake, not a second book -- but never
-    // silently delete (Catalouge auto-deleted; that's data loss). 409 unless
-    // the caller explicitly says replace.
-    const existing = await env.DB.prepare(
-      "SELECT id FROM books WHERE lower(title) = lower(?) AND lower(COALESCE(author, '')) = lower(COALESCE(?, ''))"
-    ).bind(title, author).first<{ id: string }>();
-    if (existing && form.get("replace") !== "true") {
-      return json({ error: "book already in the library", existing_id: existing.id, hint: "pass replace=true to overwrite" }, 409);
-    }
-
-    const id = existing?.id ?? crypto.randomUUID().replace(/-/g, "");
-    const fileKey = `books/${id}.${fileType}`;
-    let coverKey: string | null = null;
-
-    await env.BUCKET.put(fileKey, buf, {
-      httpMetadata: { contentType: fileType === "pdf" ? "application/pdf" : "application/epub+zip" },
-    });
-
-    // Cover: an uploaded cover field wins; else whatever the epub carried.
     const coverField = form.get("cover");
-    if (coverField && typeof coverField !== "string") {
-      const coverBlob = coverField as { arrayBuffer(): Promise<ArrayBuffer>; type: string };
-      const ext = COVER_EXT[coverBlob.type] ?? "jpg";
-      coverKey = `covers/${id}.${ext}`;
-      await env.BUCKET.put(coverKey, await coverBlob.arrayBuffer(), {
-        httpMetadata: { contentType: coverBlob.type || "image/jpeg" },
-      });
-    } else if (extracted.cover) {
-      const ext = COVER_EXT[extracted.cover.mediaType] ?? "jpg";
-      coverKey = `covers/${id}.${ext}`;
-      await env.BUCKET.put(coverKey, extracted.cover.data, {
-        httpMetadata: { contentType: extracted.cover.mediaType },
-      });
-    }
-
-    if (existing) {
-      await env.DB.prepare(
-        "UPDATE books SET title = ?, author = ?, description = COALESCE(?, description), language = COALESCE(?, language), file_key = ?, file_type = ?, file_size = ?, cover_key = COALESCE(?, cover_key), vault_ref = COALESCE(?, vault_ref), updated_at = datetime('now') WHERE id = ?"
-      ).bind(
-        title, author,
-        fieldStr("description", 2000) ?? extracted.description?.slice(0, 2000) ?? null,
-        extracted.language, fileKey, fileType, blob.size ?? buf.byteLength,
-        coverKey, fieldStr("vault_ref", 200), id,
-      ).run();
-    } else {
-      await env.DB.prepare(
-        "INSERT INTO books (id, title, author, description, language, file_key, file_type, file_size, cover_key, vault_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(
-        id, title, author,
-        fieldStr("description", 2000) ?? extracted.description?.slice(0, 2000) ?? null,
-        extracted.language ?? "en", fileKey, fileType, blob.size ?? buf.byteLength,
-        coverKey, fieldStr("vault_ref", 200),
-      ).run();
-    }
-    return json({ book: { id, title, author, file_type: fileType, cover_key: coverKey, replaced: !!existing } }, 201);
+    const cover = coverField && typeof coverField !== "string"
+      ? { data: await (coverField as Blob).arrayBuffer(), type: (coverField as Blob).type }
+      : null;
+    return await ingestBook(env, {
+      filename,
+      fileType,
+      size: blob.size ?? buf.byteLength,
+      field: (k, max) => {
+        const v = form.get(k);
+        return typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
+      },
+      replace: form.get("replace") === "true",
+      epub: fileType === "epub" ? buf : null,
+      cover,
+      writeFile: async (key, contentType) => {
+        await env.BUCKET.put(key, buf, { httpMetadata: { contentType } });
+      },
+    });
   } catch (err) {
     console.error("[mind/books] upload error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/books/upload-ticket  (admin-gated; Hearth calls it server side)
+export async function postUploadTicket(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const minted = await mintUploadTicket(env);
+  if (!minted) return json({ error: "uploads are not configured (UPLOAD_TICKET_SECRET unset)" }, 503);
+  return json({
+    ticket: minted.ticket,
+    upload_url: `${new URL(request.url).origin}/mind/books/upload`,
+    expires_at: new Date(minted.payload.exp * 1000).toISOString(),
+    max_bytes: minted.payload.max_bytes,
+  });
+}
+
+// CORS for the one browser-facing upload route. Locked to HEARTH_ORIGIN, never a wildcard.
+// Every response carries it, errors included: without it the browser can't read a 409 and
+// Hearth's "replace?" flow degrades to "network error".
+export function uploadCorsHeaders(env: Env): Record<string, string> {
+  return env.HEARTH_ORIGIN
+    ? {
+        "Access-Control-Allow-Origin": env.HEARTH_ORIGIN,
+        "Access-Control-Allow-Methods": "PUT, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "600",
+        "Vary": "Origin",
+      }
+    : { "Vary": "Origin" };
+}
+
+// OPTIONS /mind/books/upload -- dispatched from the global preflight block in index.ts,
+// which would otherwise answer with a wildcard origin.
+export function optionsBookUpload(request: Request, env: Env): Response {
+  const origin = request.headers.get("Origin");
+  if (!env.HEARTH_ORIGIN || origin !== env.HEARTH_ORIGIN) {
+    return new Response(null, { status: 403, headers: { "Vary": "Origin" } });
+  }
+  return new Response(null, { status: 204, headers: uploadCorsHeaders(env) });
+}
+
+// PUT /mind/books/upload?ticket=&filename=&title=&author=&description=&vault_ref=&replace=
+// Body: the raw file. Metadata rides the query string so the preflight only has to allow
+// Content-Type.
+export async function putBookUpload(request: Request, env: Env): Promise<Response> {
+  const res = await handleBookUpload(request, env);
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(uploadCorsHeaders(env))) headers.set(k, v);
+  return new Response(res.body, { status: res.status, headers });
+}
+
+async function handleBookUpload(request: Request, env: Env): Promise<Response> {
+  // Browsers always send Origin on a cross-origin PUT; only Hearth's is accepted. No Origin
+  // at all is a non-browser caller (curl, ops), for whom the ticket alone decides.
+  const origin = request.headers.get("Origin");
+  if (origin !== null && (!env.HEARTH_ORIGIN || origin !== env.HEARTH_ORIGIN)) {
+    return json({ error: "origin not allowed" }, 403);
+  }
+
+  const url = new URL(request.url);
+  const check = await verifyUploadTicket(env, url.searchParams.get("ticket"));
+  if (!check.ok) return json({ error: "upload ticket refused", reason: check.reason }, 401);
+
+  const lengthHeader = request.headers.get("Content-Length");
+  const length = lengthHeader !== null && /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : NaN;
+  if (!Number.isFinite(length)) return json({ error: "Content-Length is required" }, 411);
+  if (length > check.payload.max_bytes) {
+    return json({ error: "file too large", max_bytes: check.payload.max_bytes }, 413);
+  }
+  if (length === 0 || !request.body) return json({ error: "empty body" }, 400);
+
+  // Spend the ticket only once the request is otherwise acceptable.
+  await burnUploadTicket(env, check.payload);
+
+  const q = (k: string, max: number) => {
+    const v = url.searchParams.get(k);
+    return v && v.trim() ? v.trim().slice(0, max) : null;
+  };
+  const filename = q("filename", 300) ?? "book";
+  const fileType: FileType =
+    /\.pdf$/i.test(filename) || request.headers.get("Content-Type") === "application/pdf" ? "pdf" : "epub";
+  const body = request.body;
+
+  try {
+    // Epub metadata extraction needs the whole file, so an epub is buffered (once) and the
+    // duplicate check runs on its real title/author. A PDF has nothing to extract: its title
+    // and author come from the query or the filename, so the check runs first and the body
+    // streams straight into R2 unbuffered (R2 takes the length from Content-Length).
+    const epub = fileType === "epub" ? await new Response(body).arrayBuffer() : null;
+    if (epub && epub.byteLength > check.payload.max_bytes) {
+      return json({ error: "file too large", max_bytes: check.payload.max_bytes }, 413);
+    }
+    return await ingestBook(env, {
+      filename,
+      fileType,
+      size: epub?.byteLength ?? length,
+      field: (k, max) => q(k, max),
+      replace: url.searchParams.get("replace") === "true",
+      epub,
+      cover: null,
+      writeFile: async (key, contentType) => {
+        await env.BUCKET.put(key, epub ?? body, { httpMetadata: { contentType } });
+      },
+    });
+  } catch (err) {
+    console.error("[mind/books] ticket upload error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

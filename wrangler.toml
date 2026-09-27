@@ -41,6 +41,9 @@ BRIDGE_SECRET        = ""   # shared symmetric secret; same value in both deploy
 SECOND_BRAIN_WEBHOOK_URL = ""   # your Second Brain VPS URL (e.g. https://mcp.yourdomain.com)
 COMPANION_TOOLS_DEFAULT  = "false"  # 0077 take 14: tools_enabled gate fallback when no per-companion setting
 PUBLIC_BASE_URL          = ""   # this worker's public base URL, for building /mind/tools/image/:id links
+# The only browser origin allowed to PUT /mind/books/upload (library uploads, ticket-authed).
+# Exact origin, no trailing slash, never "*". Empty = every browser upload refused.
+HEARTH_ORIGIN            = ""
 
 # Secrets — set via `wrangler secret put <KEY>` for production.
 # For local dev, copy config/.dev.vars.example to .dev.vars and fill in values.
@@ -48,6 +51,7 @@ PUBLIC_BASE_URL          = ""   # this worker's public base URL, for building /m
 # MCP_AUTH_SECRET — protects POST /mcp (optional; endpoint is open if unset)
 # TAVILY_API_KEY  — 0077 take 14: companion web search provider
 # GEMINI_API_KEY  — 0077 take 14: companion image gen provider
+# UPLOAD_TICKET_SECRET — signs library upload tickets (src/lib/upload-ticket.ts); unset = uploads refused
 
 # ── Workers AI (embeddings for Vectorize) ────────────────────────────────────
 [ai]

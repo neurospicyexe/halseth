@@ -69,6 +69,11 @@ export interface Env {
   COMPANION_TOOLS_DEFAULT?: string;   // "true" | "false" -- gate fallback when no per-companion setting (wrangler.toml [vars])
   PUBLIC_BASE_URL?: string;           // this worker's public base URL, for building image-serve links
 
+  // Library upload tickets (2026-09-27, src/lib/upload-ticket.ts). The browser PUTs book files
+  // straight to Halseth so Vercel's ~4.5 MB function body cap never sees them.
+  UPLOAD_TICKET_SECRET?: string;      // HMAC key for tickets (wrangler secret). Unset = every upload refused.
+  HEARTH_ORIGIN?: string;             // the only browser origin allowed to PUT /mind/books/upload ([vars])
+
   // Personal anchor config for the Drevan-state synthesis job (private names/numbers/landmarks).
   // Defaults to none so the public default leaks nothing; set per deployment in wrangler.toml [vars].
   DREVAN_ANCHOR_KEYWORDS?: string;    // comma-separated anchor keywords (e.g. "lighthouse,harbor,riverside")

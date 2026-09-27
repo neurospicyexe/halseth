@@ -114,7 +114,7 @@ import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.j
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
 import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
-import { postBook, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
+import { postBook, postUploadTicket, putBookUpload, optionsBookUpload, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
 const router = new Router()
@@ -506,6 +506,10 @@ const router = new Router()
 
   // The Library (0099) -- epubs in R2, CFI progress, marginalia from anyone in the house
   .on("POST",   "/mind/books",                          (request, env)         => postBook(request, env))
+  // Ticketed browser upload (2026-09-27): registered before the :id routes. /mind/books/upload
+  // is in PUBLIC_PATHS -- the ticket is its auth; upload-ticket itself stays admin-gated.
+  .on("POST",   "/mind/books/upload-ticket",            (request, env)         => postUploadTicket(request, env))
+  .on("PUT",    "/mind/books/upload",                   (request, env)         => putBookUpload(request, env))
   .on("GET",    "/mind/books",                          (request, env)         => getBooks(request, env))
   .on("GET",    "/mind/books/:id",                      (request, env, params) => getBook(request, env, params ?? {}))
   .on("GET",    "/mind/books/:id/file",                 (request, env, params) => getBookFile(request, env, params ?? {}))
@@ -687,6 +691,10 @@ const PUBLIC_PATHS = new Set([
   "/bridge/shared",
   "/bridge/act",
   "/bridge/toggle",
+  // Library browser upload: authenticated by a short-lived HMAC upload ticket
+  // (src/lib/upload-ticket.ts), fail-closed without UPLOAD_TICKET_SECRET. Exact path only,
+  // so POST /mind/books/upload-ticket (the minting route) stays behind authGuard.
+  "/mind/books/upload",
 ]);
 
 function isPublicPath(pathname: string): boolean {
@@ -771,6 +779,9 @@ export default {
       // Global OPTIONS preflight -- return CORS headers for all endpoints so browser clients
       // don't get blocked. Auth is skipped for preflight; the actual request carries credentials.
       if (request.method === "OPTIONS") {
+        // The one route a browser calls cross-origin with no bearer token gets a preflight
+        // locked to HEARTH_ORIGIN instead of the wildcard below.
+        if (url.pathname === "/mind/books/upload") return optionsBookUpload(request, env);
         return new Response(null, {
           status: 204,
           headers: {
