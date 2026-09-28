@@ -13,7 +13,8 @@ import { isValidLoom, VALID_LOOMS } from "../mind/contract.js";
 import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, recallNotesByMeaning, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
-import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, VALID_ACTION_TYPES, quietHoursVerdict, QUIET_HOURS_DEFAULT_START, QUIET_HOURS_DEFAULT_END, QUIET_HOURS_DEFAULT_TZ, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
+import { reachLaneVerdict, reachConfigFrom } from "../webmind/reach-cap.js";
+import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, ownsMove, VALID_ACTION_TYPES, quietHoursVerdict, QUIET_HOURS_DEFAULT_START, QUIET_HOURS_DEFAULT_END, QUIET_HOURS_DEFAULT_TZ, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop, reviewLoop, actOnLoop } from "../webmind/loops.js";
@@ -1217,6 +1218,9 @@ export async function postMindMetronomeAction(
   if (!body.action_type || !isValidActionType(body.action_type)) {
     return json({ error: `action_type must be one of: ${VALID_ACTION_TYPES.join(", ")}` }, 400);
   }
+  if (!ownsMove(body.companion_id, body.action_type)) {
+    return json({ error: `${body.action_type} is not ${body.companion_id}'s move (spec: what-is-theirs 2026-09-27)` }, 400);
+  }
   if (body.prompt && typeof body.prompt === "string" && body.prompt.length > MAX_TEXT_LENGTH) {
     return json({ error: `prompt exceeds maximum length of ${MAX_TEXT_LENGTH} characters` }, 400);
   }
@@ -1254,6 +1258,9 @@ export async function patchMindMetronomeAction(
   }
   if (body.action_type !== undefined && !isValidActionType(body.action_type)) {
     return json({ error: `action_type must be one of: ${VALID_ACTION_TYPES.join(", ")}` }, 400);
+  }
+  if (body.action_type !== undefined && !ownsMove(body.companion_id, body.action_type)) {
+    return json({ error: `${body.action_type} is not ${body.companion_id}'s move (spec: what-is-theirs 2026-09-27)` }, 400);
   }
 
   try {
@@ -1341,10 +1348,17 @@ export async function getMindMetronomeEligibleActions(
 
   try {
     const actions = await listEligibleActions(env, companion_id, ctx);
+    // The shared triad lane (mig 0137), read-only, so the bot never offers a DM move the cap would
+    // refuse. Null on a read error: the bot treats an absent verdict as CLOSED for DM moves (the
+    // atomic reserve would refuse them anyway, and a missing verdict must never read as "open").
+    const reach = await reachLaneVerdict(env.DB, now.toISOString(), reachConfigFrom(env)).catch((e) => {
+      console.error("[mind/metronome/eligible] reach verdict error", { companion_id, error: String(e) });
+      return null;
+    });
     // The verdict rides the response so the bot can log WHY it stayed silent. Without it, an
     // empty action list during quiet hours is indistinguishable from "no palette configured",
     // and the bot's legacy fallback would post anyway (the exact 4am ping this rail exists to stop).
-    return json({ actions, quiet_hours: quiet });
+    return json({ actions, quiet_hours: quiet, reach });
   } catch (err) {
     console.error("[mind/metronome/eligible] GET error", { companion_id, error: String(err) });
     return json({ error: "Internal server error" }, 500);

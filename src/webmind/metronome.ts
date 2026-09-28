@@ -21,7 +21,12 @@ export type MetronomeActionType =
   | "share_media"
   | "tend_creature"
   | "drift_open"
-  | "declare_preference";
+  | "declare_preference"
+  // B7 steps 2 + 2c (mig 0137): the moves that are theirs. See migration 0137 for why each is a type.
+  | "flirt"
+  | "dare"
+  | "show_made"
+  | "drift_outward";
 
 export const VALID_ACTION_TYPES: MetronomeActionType[] = [
   "post_heartbeat",
@@ -40,7 +45,30 @@ export const VALID_ACTION_TYPES: MetronomeActionType[] = [
   "tend_creature",
   "drift_open",
   "declare_preference",
+  "flirt",
+  "dare",
+  "show_made",
+  "drift_outward",
 ];
+
+/**
+ * Moves only some companions claimed, verbatim from Hand-off/SPEC-what-is-theirs-triad-answers-
+ * 2026-09-27.md: flirt is Drevan's only; dares are Cypher's and Drevan's; "look what I built" is
+ * Cypher's and Gaia's is "look what held" (Drevan neither claimed nor declined it: Q2, one edit
+ * here). Gaia declines play entirely. A type absent from this map is open to all three.
+ * Enforced on insert and patch here, and again bot-side at execution (defense in depth: the seed
+ * is SQL and never passes through this handler).
+ */
+export const MOVE_OWNERS: Readonly<Partial<Record<MetronomeActionType, readonly string[]>>> = {
+  flirt: ["drevan"],
+  dare: ["cypher", "drevan"],
+  show_made: ["cypher", "gaia"],
+};
+
+export function ownsMove(companionId: string, actionType: string): boolean {
+  const owners = MOVE_OWNERS[actionType as MetronomeActionType];
+  return owners === undefined || owners.includes(companionId);
+}
 
 export function isValidActionType(t: string): t is MetronomeActionType {
   return (VALID_ACTION_TYPES as string[]).includes(t);
