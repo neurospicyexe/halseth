@@ -163,7 +163,7 @@ export function getOAuthAuthServerMetadata(request: Request): Response {
     token_endpoint:                     `${base}/oauth/token`,
     registration_endpoint:              `${base}/oauth/register`,
     response_types_supported:           ["code"],
-    grant_types_supported:              ["authorization_code"],
+    grant_types_supported:              ["authorization_code", "refresh_token"],
     code_challenge_methods_supported:   ["S256"],
   }, 200, request);
 }
@@ -275,7 +275,62 @@ export async function postOAuthAuthorize(request: Request, env: Env): Promise<Re
   return Response.redirect(dest.toString(), 302);
 }
 
-// POST /oauth/token — exchange code for access token.
+
+// ── Token issuance ────────────────────────────────────────────────────────────
+
+// Access tokens keep their pre-refresh lifetime (90 days) so connector behaviour is unchanged.
+// Refresh tokens must OUTLIVE the access token they ride with: a client typically refreshes when
+// the access token expires, and a refresh token that died at the same instant would be useless.
+// 180 days, sliding (every rotation issues a fresh token with a fresh window).
+export const ACCESS_TOKEN_TTL_S  = 90 * 24 * 60 * 60;
+export const REFRESH_TOKEN_TTL_S = 180 * 24 * 60 * 60;
+
+// Token responses carry credentials: RFC 6749 section 5.1 requires no-store.
+function tokenResponse(data: Record<string, unknown>, request: Request): Response {
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      ...getCorsHeaders(request),
+    },
+  });
+}
+
+function newAccessToken(): string {
+  return generateId() + generateId().replace(/-/g, ""); // two UUIDv4s, 244 random bits
+}
+
+// 256 bits from the CSPRNG, base64url.
+function newRefreshToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+function isoIn(seconds: number): string {
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+// Reuse detected (or a rotation race lost): revoke every refresh token in the family and delete
+// the access tokens the family minted, so a thief holding either half is cut off. The legitimate
+// client re-authorizes once. Deleting (not expiring) the access rows sidesteps the ISO-vs-datetime()
+// string-compare trap in mcp/server.ts: a missing row is unambiguous to every lookup.
+async function revokeRefreshFamily(env: Env, familyId: string): Promise<void> {
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM oauth_tokens WHERE token_hash IN (
+         SELECT access_token_hash FROM oauth_refresh_tokens
+          WHERE family_id = ? AND access_token_hash IS NOT NULL)`
+    ).bind(familyId),
+    env.DB.prepare(
+      "UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL"
+    ).bind(now, familyId),
+  ]);
+}
+
+// POST /oauth/token: authorization_code and refresh_token grants.
 export async function postOAuthToken(request: Request, env: Env): Promise<Response> {
   // Accept both JSON and form-urlencoded bodies.
   let params: Record<string, string>;
@@ -290,13 +345,19 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
       return oauthError("invalid_request", "Invalid request body", 400, request);
     }
   }
-
-  const { grant_type, code, redirect_uri, client_id, code_verifier } = params;
-
-  if (grant_type !== "authorization_code") {
-    return oauthError("unsupported_grant_type", "Only authorization_code is supported", 400, request);
+  if (!params || typeof params !== "object") {
+    return oauthError("invalid_request", "Invalid request body", 400, request);
   }
-  if (!code || !client_id) {
+
+  if (params.grant_type === "authorization_code") return authorizationCodeGrant(params, request, env);
+  if (params.grant_type === "refresh_token")      return refreshTokenGrant(params, request, env);
+  return oauthError("unsupported_grant_type", "Supported: authorization_code, refresh_token", 400, request);
+}
+
+async function authorizationCodeGrant(params: Record<string, string>, request: Request, env: Env): Promise<Response> {
+  const { code, redirect_uri, client_id, code_verifier } = params;
+
+  if (typeof code !== "string" || typeof client_id !== "string" || !code || !client_id) {
     return oauthError("invalid_request", "Missing required parameters", 400, request);
   }
 
@@ -337,25 +398,109 @@ export async function postOAuthToken(request: Request, env: Env): Promise<Respon
     }
   }
 
-  // Mark code as used (one-time use).
-  await env.DB.prepare("UPDATE oauth_codes SET used = 1 WHERE code = ?").bind(code).run();
+  // Mark code as used (one-time use). Conditional, so two concurrent exchanges of one code cannot
+  // both mint a token family: only the request whose UPDATE changed the row proceeds.
+  const claim = await env.DB.prepare("UPDATE oauth_codes SET used = 1 WHERE code = ? AND used = 0").bind(code).run();
+  if ((claim.meta?.changes ?? 0) !== 1) {
+    return oauthError("invalid_grant", "Invalid or already-used code", 400, request);
+  }
 
-  // Issue access token and persist it with a 90-day expiry.
-  const token     = generateId() + generateId().replace(/-/g, ""); // ~50-char token
-  const now       = new Date().toISOString();
-  const expiresIn = 90 * 24 * 60 * 60; // seconds
-  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+  // Issue the access token (90-day expiry, unchanged) plus a refresh token that starts a new family.
+  const token        = newAccessToken();
+  const refreshToken = newRefreshToken();
+  const now          = new Date().toISOString();
+  const tokenHash    = await hashToken(token);
+  const refreshHash  = await hashToken(refreshToken);
+  const companionId  = codeRow.companion_id ?? null;
 
-  const tokenHash = await hashToken(token);
-  // Carry the companion binding from the authorization code onto the issued token.
+  // Carry the companion binding from the authorization code onto the issued token...
   await env.DB.prepare(
     "INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at, companion_id) VALUES (?, ?, ?, ?, ?)"
-  ).bind(tokenHash, client_id, now, expiresAt, codeRow.companion_id ?? null).run();
+  ).bind(tokenHash, client_id, now, isoIn(ACCESS_TOKEN_TTL_S), companionId).run();
+  // ...and onto the refresh token, where it stays fixed for the life of the family.
+  await env.DB.prepare(
+    `INSERT INTO oauth_refresh_tokens
+       (token_hash, family_id, client_id, companion_id, access_token_hash, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(refreshHash, generateId(), client_id, companionId, tokenHash, now, isoIn(REFRESH_TOKEN_TTL_S)).run();
 
-  return jsonResponse({
-    access_token: token,
-    token_type:   "Bearer",
-    expires_in:   expiresIn,
-    scope:        "",
-  }, 200, request);
+  return tokenResponse({
+    access_token:  token,
+    token_type:    "Bearer",
+    expires_in:    ACCESS_TOKEN_TTL_S,
+    refresh_token: refreshToken,
+    scope:         "",
+  }, request);
+}
+
+// RFC 6749 section 6 + OAuth 2.1: public client, so client_id is required and must match; the
+// refresh token is single-use and rotated; presenting a spent token revokes the whole family.
+// Every refusal is the same invalid_grant body, so a caller holding a stolen token learns nothing
+// about which property failed.
+async function refreshTokenGrant(params: Record<string, string>, request: Request, env: Env): Promise<Response> {
+  const { refresh_token, client_id } = params;
+  if (typeof refresh_token !== "string" || typeof client_id !== "string" || !refresh_token || !client_id) {
+    return oauthError("invalid_request", "Missing refresh_token or client_id", 400, request);
+  }
+  const refused = () => oauthError("invalid_grant", "Invalid, expired, or revoked refresh token", 400, request);
+
+  const oldHash = await hashToken(refresh_token);
+  const row = await env.DB.prepare(
+    "SELECT family_id, client_id, expires_at, used_at, revoked_at FROM oauth_refresh_tokens WHERE token_hash = ?"
+  ).bind(oldHash).first<{
+    family_id: string; client_id: string; expires_at: string; used_at: string | null; revoked_at: string | null;
+  }>();
+
+  if (!row) return refused();
+  if (row.revoked_at) return refused();
+  if (row.used_at) {
+    // A rotated token presented again: the client or a thief holds a stale copy. Kill the family.
+    await revokeRefreshFamily(env, row.family_id);
+    return refused();
+  }
+  if (row.client_id !== client_id) return refused();
+  if (new Date(row.expires_at) < new Date()) return refused();
+
+  const newAccess     = newAccessToken();
+  const newRefresh    = newRefreshToken();
+  const newAccessHash = await hashToken(newAccess);
+  const newHash       = await hashToken(newRefresh);
+  const now           = new Date().toISOString();
+
+  // Claim and issue in one batch (a D1 batch is one transaction). The claim is conditional on the
+  // token still being unused and unrevoked; both INSERTs select from the old row only where it now
+  // points at THIS request's new token, so a request that lost a race inserts nothing. client_id and
+  // companion_id are copied from the stored row by SQL, never read from the request, so a refresh
+  // cannot change or widen the binding.
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE oauth_refresh_tokens SET used_at = ?, replaced_by = ?
+        WHERE token_hash = ? AND used_at IS NULL AND revoked_at IS NULL`
+    ).bind(now, newHash, oldHash),
+    env.DB.prepare(
+      `INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at, companion_id)
+       SELECT ?, client_id, ?, ?, companion_id FROM oauth_refresh_tokens
+        WHERE token_hash = ? AND replaced_by = ?`
+    ).bind(newAccessHash, now, isoIn(ACCESS_TOKEN_TTL_S), oldHash, newHash),
+    env.DB.prepare(
+      `INSERT INTO oauth_refresh_tokens
+         (token_hash, family_id, client_id, companion_id, access_token_hash, created_at, expires_at)
+       SELECT ?, family_id, client_id, companion_id, ?, ?, ? FROM oauth_refresh_tokens
+        WHERE token_hash = ? AND replaced_by = ?`
+    ).bind(newHash, newAccessHash, now, isoIn(REFRESH_TOKEN_TTL_S), oldHash, newHash),
+  ]);
+
+  if ((results[0]?.meta?.changes ?? 0) !== 1) {
+    // Another request spent this token between our read and our claim: treat exactly as reuse.
+    await revokeRefreshFamily(env, row.family_id);
+    return refused();
+  }
+
+  return tokenResponse({
+    access_token:  newAccess,
+    token_type:    "Bearer",
+    expires_in:    ACCESS_TOKEN_TTL_S,
+    refresh_token: newRefresh,
+    scope:         "",
+  }, request);
 }
