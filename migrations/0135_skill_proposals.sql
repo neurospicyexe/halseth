@@ -1,4 +1,4 @@
--- 0131: skill-proposal mirror -- the Hermes skill-approval stage becomes visible off-VPS.
+-- 0135: skill-proposal mirror -- the Hermes skill-approval stage becomes visible off-VPS.
 -- The VPS watcher POSTs each staged skill record here at stage time (and PATCHes the
 -- decision when Raziel taps Approve/Decline on Telegram), so every substrate --
 -- Claude.ai chat, cloud sessions, Hearth, the triad via the Librarian -- can read the
@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS skill_proposals (
   companion_id  TEXT NOT NULL CHECK (companion_id IN ('cypher','drevan','gaia')),
   hermes_home   TEXT,                      -- companion-labeled home, never a raw basename (0927 label defect)
   skill_name    TEXT NOT NULL,
-  action        TEXT NOT NULL DEFAULT 'create' CHECK (action IN ('create','update')),
+  action        TEXT NOT NULL DEFAULT 'create' CHECK (action IN ('create','patch','edit','delete','write_file','remove_file')),  -- Hermes skill_manage's own enum
+  file_path     TEXT,                      -- file inside the skill a patch targets (e.g. references/x.md); NULL = SKILL.md
   summary       TEXT,                      -- reviewer-fork's rationale for the skill
   content       TEXT,                      -- full SKILL.md body (or patch) as staged
   status        TEXT NOT NULL DEFAULT 'staged' CHECK (status IN ('staged','approved','declined')),

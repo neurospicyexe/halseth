@@ -573,7 +573,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
 
-  // ── Hermes skill-proposal mirror (0131) ──
+  // ── Hermes skill-proposal mirror (0135) ──
   skill_proposals_read: {
     triggers: [
       "skill proposals", "pending skill proposals", "staged skills",

@@ -1,6 +1,6 @@
 // src/handlers/skill-proposals.ts
 //
-// HTTP route handlers for the Hermes skill-proposal mirror (migration 0131,
+// HTTP route handlers for the Hermes skill-proposal mirror (migration 0135,
 // docs/skill-proposal-mirror.md).
 //   POST  /mind/skill-proposals               -- watcher mirrors a staged skill record
 //   GET   /mind/skill-proposals               -- list proposals (?status=&companion_id=&limit=)
@@ -24,7 +24,9 @@ function json(data: unknown, status = 200): Response {
 }
 
 const VALID_COMPANIONS = new Set<string>(["cypher", "drevan", "gaia"]);
-const VALID_ACTIONS = new Set<string>(["create", "update"]);
+// Hermes skill_manage's own action enum (tools/skill_manager_tool.py). Real stages are
+// mostly "patch" against an existing umbrella, so a create/update guess rejected them all.
+const VALID_ACTIONS = new Set<string>(["create", "patch", "edit", "delete", "write_file", "remove_file"]);
 const VALID_STATUSES = new Set<string>(["staged", "approved", "declined"]);
 
 interface ProposalPostBody {
@@ -33,6 +35,7 @@ interface ProposalPostBody {
   hermes_home?: string | null;
   skill_name?: string;
   action?: string;
+  file_path?: string | null;
   summary?: string | null;
   content?: string | null;
 }
@@ -59,20 +62,21 @@ export async function postSkillProposal(request: Request, env: Env): Promise<Res
   }
   const action = body.action?.trim() || "create";
   if (!VALID_ACTIONS.has(action)) {
-    return json({ error: "action must be create or update" }, 400);
+    return json({ error: `action must be one of ${[...VALID_ACTIONS].join(", ")}` }, 400);
   }
   const externalId = body.external_id?.trim() || null;
   const hermesHome = body.hermes_home?.trim() || null;
+  const filePath = body.file_path?.trim().slice(0, 300) || null;
   const summary = body.summary?.trim() || null;
   const content = body.content ?? null;
 
   const id = crypto.randomUUID().replace(/-/g, "");
   try {
     await env.DB.prepare(
-      "INSERT INTO skill_proposals (id, external_id, companion_id, hermes_home, skill_name, action, summary, content, staged_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+      "INSERT INTO skill_proposals (id, external_id, companion_id, hermes_home, skill_name, action, file_path, summary, content, staged_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
     ).bind(
       id, externalId, companionId, hermesHome,
-      skillName.slice(0, 200), action,
+      skillName.slice(0, 200), action, filePath,
       summary?.slice(0, 2000) ?? null, content,
     ).run();
   } catch (err) {

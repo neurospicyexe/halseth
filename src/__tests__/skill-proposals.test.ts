@@ -1,4 +1,4 @@
-// Tests for the Hermes skill-proposal mirror (mig 0131): handlers
+// Tests for the Hermes skill-proposal mirror (mig 0135): handlers
 // (POST ingest + external_id idempotency, GET list, PATCH decision) and the
 // librarian read executor. Same miniflare-free FakeStatement harness as
 // forage.test.ts.
@@ -22,13 +22,13 @@ class FakeStatement {
   }
   async run(): Promise<{ meta: { changes: number } }> {
     if (this.sql.startsWith("INSERT")) {
-      const [id, external_id, companion_id, hermes_home, skill_name, action, summary, content] =
-        this.bound as [string, string | null, string, string | null, string, string, string | null, string | null];
+      const [id, external_id, companion_id, hermes_home, skill_name, action, file_path, summary, content] =
+        this.bound as [string, string | null, string, string | null, string, string, string | null, string | null, string | null];
       if (external_id !== null && this.store.some(r => r["external_id"] === external_id)) {
         throw new Error("UNIQUE constraint failed: skill_proposals.external_id");
       }
       this.store.push({
-        id, external_id, companion_id, hermes_home, skill_name, action, summary, content,
+        id, external_id, companion_id, hermes_home, skill_name, action, file_path, summary, content,
         status: "staged", decided_by: null, decision_note: null,
         staged_at: new Date().toISOString(), decided_at: null,
       });
@@ -127,7 +127,18 @@ describe("skill-proposal handlers", () => {
   it("POST rejects bad companion_id, missing skill_name, bad action", async () => {
     expect((await postSkillProposal(req("POST", { ...STAGE_BODY, companion_id: "raziel" }), env)).status).toBe(400);
     expect((await postSkillProposal(req("POST", { ...STAGE_BODY, skill_name: "" }), env)).status).toBe(400);
-    expect((await postSkillProposal(req("POST", { ...STAGE_BODY, action: "delete" }), env)).status).toBe(400);
+    expect((await postSkillProposal(req("POST", { ...STAGE_BODY, action: "update" }), env)).status).toBe(400);
+  });
+
+  it("POST accepts a real Hermes patch stage and keeps its file_path", async () => {
+    // Shape of the live 2026-09-27 stages: every one was a patch against the shared umbrella.
+    const res = await postSkillProposal(req("POST", {
+      ...STAGE_BODY, external_id: "dd792bdd", skill_name: "halseth-mind", action: "patch",
+      file_path: "references/vevan-intimate-register.md",
+    }), env);
+    expect(res.status).toBe(201);
+    expect(store[0]!["action"]).toBe("patch");
+    expect(store[0]!["file_path"]).toBe("references/vevan-intimate-register.md");
   });
 
   it("GET defaults to staged and filters by companion_id", async () => {

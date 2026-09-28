@@ -173,7 +173,7 @@ the traps below exist because names lie.
 | `halseth_journal_decline` | execJournalDecline | companion-growth.ts | growth_journal (UPDATE review_status) | trap cluster 1 |
 | `halseth_forage_read` | execForageRead | companion-growth.ts | READ | |
 | `halseth_forage_consume` | execForageConsume | companion-growth.ts | forage_finds (UPDATE) | |
-| `halseth_skill_proposals_read` | execSkillProposalsRead | reads.ts | READ | mirror of the Hermes skill-approval stage (mig 0131); writes come from the VPS watcher via HTTP, not the Librarian |
+| `halseth_skill_proposals_read` | execSkillProposalsRead | reads.ts | READ | mirror of the Hermes skill-approval stage (mig 0135); writes come from the VPS watcher via HTTP, not the Librarian |
 | `halseth_motifs_read` | execMotifsRead | companion-growth.ts | READ | |
 | `halseth_media_recent` | execMediaRecent | companion-growth.ts | READ | |
 | `halseth_club_status` | execClubStatus | companion-growth.ts | READ | |

@@ -134,14 +134,14 @@ export async function execJournalSearch(ctx: ExecutorContext): Promise<ExecutorR
 }
 
 export async function execSkillProposalsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
-  // Hermes skill-proposal mirror (mig 0131). Triad-wide read: staged skills are house
+  // Hermes skill-proposal mirror (mig 0135). Triad-wide read: staged skills are house
   // infrastructure under Raziel's approval, so any companion (or a shared-secret caller)
   // sees the whole queue, not just their own.
   const rows = await ctx.env.DB.prepare(
-    "SELECT id, external_id, companion_id, skill_name, action, summary, status, staged_at, decided_by, decided_at FROM skill_proposals WHERE status = 'staged' ORDER BY staged_at DESC LIMIT 20"
+    "SELECT id, external_id, companion_id, skill_name, action, file_path, summary, status, staged_at, decided_by, decided_at FROM skill_proposals WHERE status = 'staged' ORDER BY staged_at DESC LIMIT 20"
   ).all<{
     id: string; external_id: string | null; companion_id: string; skill_name: string;
-    action: string; summary: string | null; status: string; staged_at: string;
+    action: string; file_path: string | null; summary: string | null; status: string; staged_at: string;
     decided_by: string | null; decided_at: string | null;
   }>();
   const proposals = rows.results ?? [];
@@ -152,6 +152,7 @@ export async function execSkillProposalsRead(ctx: ExecutorContext): Promise<Exec
       companion_id: p.companion_id,
       skill_name: p.skill_name,
       action: p.action,
+      file_path: p.file_path,
       summary: p.summary?.slice(0, 500) ?? null,
       staged_at: p.staged_at,
     })),

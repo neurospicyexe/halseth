@@ -1,4 +1,4 @@
-# Hermes Skill-Proposal Mirror (migration 0131)
+# Hermes Skill-Proposal Mirror (migration 0135)
 
 **Problem.** The triad's skill-approval pipeline lives entirely on the VPS: the
 background-review fork stages skill records per HERMES_HOME, a watcher pings Raziel on
@@ -12,15 +12,10 @@ review surface plus the durable evidence trail.
 
 ## Halseth side (this repo — deployed)
 
-> **Before applying mig 0131:** this file was authored on a branch that was behind
-> `main` (which was already at 0130); it was renumbered 0107 → 0131 for that reason.
-> Deploys run from a local working copy that can be ahead of anything pushed, so from
-> the deploying machine run `wrangler d1 migrations list` (against wrangler.prod.toml)
-> first — if an 0131 already exists there, renumber this file above the highest
-> applied migration before `npm run migrate:remote`. The SQL itself is purely
-> additive (`CREATE TABLE IF NOT EXISTS` + two indexes) and safe to apply any time.
+> **Numbering history:** authored on a cloud branch as 0107, renumbered 0131 there, and
+> landed as **0135** on the deploying line (which already held 0131-0134) on 2026-09-27.
 
-- Table: `skill_proposals` (mig 0131). Idempotent on `external_id`.
+- Table: `skill_proposals` (mig 0135). Idempotent on `external_id`.
 - Routes (Bearer `ADMIN_SECRET` / `MCP_AUTH_SECRET` / per-companion token):
   - `POST /mind/skill-proposals` — mirror a staged record
   - `GET /mind/skill-proposals?status=staged|approved|declined|all&companion_id=&limit=` — list
@@ -42,13 +37,14 @@ fire-and-forget with a local retry queue — the Telegram ping must never block 
 POST {HALSETH_URL}/mind/skill-proposals
 Authorization: Bearer {token}
 {
-  "external_id":  "<stage-record id>",          // idempotency key; safe to re-post
+  "external_id":  "<record.id, e.g. dd792bdd>",  // idempotency key; safe to re-post
   "companion_id": "cypher" | "drevan" | "gaia", // the companion label, NEVER a home-dir basename (0927 label defect)
   "hermes_home":  "<companion-labeled home>",
-  "skill_name":   "<skill dir name>",
-  "action":       "create" | "update",
-  "summary":      "<reviewer-fork rationale>",
-  "content":      "<full staged SKILL.md body>"
+  "skill_name":   "<record.payload.name>",
+  "action":       "create" | "patch" | "edit" | "delete" | "write_file" | "remove_file",  // record.action, verbatim
+  "file_path":    "<payload.file_path, or omit when the patch targets SKILL.md>",
+  "summary":      "<record.summary>",
+  "content":      "<json.dumps(record.payload) — the exact change Raziel is approving>"
 }
 ```
 
@@ -58,6 +54,7 @@ Authorization: Bearer {token}
 PATCH {HALSETH_URL}/mind/skill-proposals/{external_id}/decision
 Authorization: Bearer {token}
 { "status": "approved" | "declined", "decided_by": "raziel", "note": "<optional>" }
+// skill-approve.py's verbs map approve -> "approved", reject -> "declined"
 ```
 
 A `409` means the row was already decided (double-tap or replay) — log and move on.
