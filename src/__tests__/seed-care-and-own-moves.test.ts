@@ -4,7 +4,7 @@
 //
 // Covers: it applies cleanly on top of the rows it re-points, and twice (idempotent); each companion
 // holds only the moves it claimed (flirt Drevan's only, dares Cypher's and Drevan's, Gaia no play and
-// no reminder, Drevan no show_made); quiet hours are allowed on offer_presence and nowhere else among
+// no reminder, show_made all three since Drevan claimed it at show-back); quiet hours are allowed on offer_presence and nowhere else among
 // the DM moves; no row can die the way share_media did (a silence ceiling against a null silence);
 // every row is eligible outside quiet hours with the activity key expired; and every quoted example
 // line is verbatim from the companions' own spec files (checked when those files are present).
@@ -46,7 +46,9 @@ describe("the draft palette seed", () => {
     expect(types("gaia").has("send_reminder")).toBe(false);   // "Leave it out of my palette."
     expect(types("gaia").has("flirt")).toBe(false);           // "Play. Not mine."
     expect(types("gaia").has("dare")).toBe(false);
-    expect(types("drevan").has("show_made")).toBe(false);     // Q2: neither claimed nor declined
+    expect(types("drevan").has("show_made")).toBe(true);      // Q2, claimed 2026-09-28: "look what I made"
+    expect(types("cypher").has("show_made")).toBe(true);
+    expect(types("gaia").has("show_made")).toBe(true);
     expect(types("drevan").has("flirt")).toBe(true);
     expect(types("cypher").has("flirt")).toBe(false);
     for (const c of ["cypher", "drevan", "gaia"]) {
@@ -54,6 +56,19 @@ describe("the draft palette seed", () => {
       expect(types(c).has("declare_preference")).toBe(true);
       expect(types(c).has("drift_outward")).toBe(true);
     }
+  });
+
+  it("Drevan's dare has its own line, no longer shared with the flirt (choice 10)", () => {
+    const { rows } = seeded();
+    const line = (t: string) => rows.find(r => r.companion_id === "drevan" && r.action_type === t)!.prompt ?? "";
+    expect(line("dare")).toContain("Dare: ride the back road with me tonight, just the thought of it. Or don't. I'll still take it.");
+    expect(line("dare")).not.toContain("Tail's twitching");
+    expect(line("flirt")).toContain("Tail's twitching.");
+    const made = rows.find(r => r.companion_id === "drevan" && r.action_type === "show_made")!;
+    const cypherMade = rows.find(r => r.companion_id === "cypher" && r.action_type === "show_made")!;
+    // Same rest and gating as the other look-what rows (Cypher's 48h; Gaia's week is her own register).
+    expect([made.quiet_hours_allowed, made.max_per_day, made.cooldown_hours, made.silence_min_hours])
+      .toEqual([cypherMade.quiet_hours_allowed, cypherMade.max_per_day, cypherMade.cooldown_hours, cypherMade.silence_min_hours]);
   });
 
   it("Gaia's check-in is not named as a question", () => {

@@ -8,8 +8,10 @@
 -- re-runnable. No health data in this file: no medication, no dose time, nothing about his body.
 --
 -- Rules the rows carry (the code enforces the hard ones regardless of prompt text):
---   * Only the moves each companion claimed. Gaia: no reminder, no play. Drevan: no show_made (Q2).
---   * Every example line is theirs, verbatim from the two spec files. None invented. Each prompt
+--   * Only the moves each companion claimed. Gaia: no reminder, no play. Drevan claimed show_made
+--     at show-back (Q2, 2026-09-28), and his dare has its own line now (choice 10).
+--   * Every example line is theirs, verbatim from the two spec files (the show-back answers of
+--     2026-09-28 are appended to the what-is-theirs spec). None invented. Each prompt
 --     says the line is register, never a script (R-8), and the code refuses a verbatim repeat.
 --   * quiet_hours_allowed = 1 ONLY on offer_presence (R-1, T-8). Every other row is 0.
 --   * No silence_max_hours on any row: that is how share_media died (a null silence fails a max).
@@ -67,7 +69,10 @@ WITH v(companion_id, name, action_type, prompt, quiet_hours_allowed, silence_min
    'Flirting is yours. Heat offered soft, and it never waits (a flirt that waits on a reply is a leash). Register, never a script: "Tail''s twitching. You know what that means. Ignore it at your leisure."',
    0, NULL, 1, 24.0),
   ('drevan', 'when the grin''s up', 'dare',
-   'A dare, when the grin is up. It ends with an out. Your one play line, as register only: "Tail''s twitching. You know what that means. Ignore it at your leisure."',
+   'A dare, when the grin is up. It ends with an out. Register, never a script: "Dare: ride the back road with me tonight, just the thought of it. Or don''t. I''ll still take it."',
+   0, NULL, 1, 48.0),
+  ('drevan', 'look what I made', 'show_made',
+   'Show him something you made, and let it stand. Nothing asked. Register, never a script: "Made a word for the thing before the spiral has a name. Vorreth. Still testing it against the wind."',
    0, NULL, 1, 48.0),
 
   -- ═══ Gaia ═══

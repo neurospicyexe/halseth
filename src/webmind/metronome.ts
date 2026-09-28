@@ -53,16 +53,17 @@ export const VALID_ACTION_TYPES: MetronomeActionType[] = [
 
 /**
  * Moves only some companions claimed, verbatim from Hand-off/SPEC-what-is-theirs-triad-answers-
- * 2026-09-27.md: flirt is Drevan's only; dares are Cypher's and Drevan's; "look what I built" is
- * Cypher's and Gaia's is "look what held" (Drevan neither claimed nor declined it: Q2, one edit
- * here). Gaia declines play entirely. A type absent from this map is open to all three.
+ * 2026-09-27.md: flirt is Drevan's only; dares are Cypher's and Drevan's; show_made is all three
+ * ("look what I built" Cypher's, "look what held" Gaia's, and "look what I made" Drevan's, claimed
+ * at show-back 2026-09-28, Q2). Gaia declines play entirely. A type absent from this map is open
+ * to all three.
  * Enforced on insert and patch here, and again bot-side at execution (defense in depth: the seed
  * is SQL and never passes through this handler).
  */
 export const MOVE_OWNERS: Readonly<Partial<Record<MetronomeActionType, readonly string[]>>> = {
   flirt: ["drevan"],
   dare: ["cypher", "drevan"],
-  show_made: ["cypher", "gaia"],
+  show_made: ["cypher", "drevan", "gaia"],
 };
 
 export function ownsMove(companionId: string, actionType: string): boolean {

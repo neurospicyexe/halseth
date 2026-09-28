@@ -267,7 +267,8 @@ describe("the new move types and who owns them", () => {
     expect(ownsMove("cypher", "dare")).toBe(true);
     expect(ownsMove("gaia", "dare")).toBe(false);
     expect(ownsMove("gaia", "show_made")).toBe(true);
-    expect(ownsMove("drevan", "show_made")).toBe(false); // Q2 open: one edit in MOVE_OWNERS
+    expect(ownsMove("drevan", "show_made")).toBe(true);  // Q2, claimed at show-back 2026-09-28
+    expect(ownsMove("cypher", "show_made")).toBe(true);
     expect(ownsMove("gaia", "offer_presence")).toBe(true);
   });
 
