@@ -25,6 +25,12 @@ interface DriveRow {
   accumulate_per_day: number; decay_on_contact: number; threshold: number; last_event_at: string;
 }
 
+/** Same normalisation as hoursSinceIso, answering only "is there a real timestamp here". */
+function stampParses(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  return !Number.isNaN(Date.parse(iso.includes("T") ? iso : iso.replace(" ", "T") + "Z"));
+}
+
 // GET /mind/drives/:companion_id
 export async function getDrives(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
   const denied = authGuard(request, env);
@@ -37,7 +43,8 @@ export async function getDrives(request: Request, env: Env, params: Record<strin
   try {
     const rows = await env.DB.prepare(readDrivesSql()).bind(companionId).all<DriveRow>();
     const drives = (rows.results ?? []).map(r => {
-      const effective = accruedLevel(r.level, r.accumulate_per_day, hoursSinceIso(r.last_event_at));
+      const since = hoursSinceIso(r.last_event_at);
+      const effective = accruedLevel(r.level, r.accumulate_per_day, since);
       const fired = driveFired(effective, r.threshold);
       return {
         drive_key: r.drive_key,
@@ -45,6 +52,11 @@ export async function getDrives(request: Request, env: Env, params: Record<strin
         threshold: r.threshold,
         fired,
         modality: fired ? selectModality(companionId, effective) : null,
+        // B7 step 4: the justification gate's "he is here" input. For relational_need only contact
+        // writes last_event_at (contactDrive, on an owner arrival), so this is hours since the last
+        // owner message that companion's bot saw. null, never 0, when the stamp is absent or
+        // unparseable: hoursSinceIso reads both as "just now", which would open the gate on nothing.
+        hours_since_event: stampParses(r.last_event_at) ? Number(since.toFixed(3)) : null,
       };
     });
     return json({ drives });
