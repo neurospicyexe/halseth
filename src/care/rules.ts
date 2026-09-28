@@ -20,7 +20,7 @@ export const LOW_SPOONS_MAX = 2;
 /** A biometrics reading older than this cannot fire low_spoons -- a stale "2 spoons" from three
  *  days ago is history, not a state, and firing on it forever is how care becomes nagging. */
 export const BIOMETRICS_FRESH_HOURS = 24;
-/** Daily meds + grace: a meds routine last logged longer ago than this reads as missed. */
+/** Daily meds + grace: a meds last confirmed (Hearth routine or DM) longer ago than this reads as missed. */
 export const MEDS_MISSED_HOURS = 30;
 /** A meds_taken=1 biometrics reading within this window suppresses meds_missed -- he took them,
  *  he just didn't log the routine row. The cross-check the plan names. */
@@ -63,7 +63,8 @@ export interface CareSignals {
   meds_taken: number | null;
   /** Hours since that row's recorded_at. null = no biometrics row exists at all. */
   biometrics_age_hours: number | null;
-  /** Hours since the newest routines row whose name matches meds. null = no meds routine ever logged. */
+  /** Hours since meds were last confirmed: the newest meds routines row OR a daily med_reminder DM
+   *  "taken" (care/tick.ts), whichever is fresher. null = never confirmed either way. */
   meds_logged_age_hours: number | null;
   /** Hours since the newest owner activity across ALL surfaces. null = no signal found anywhere. */
   owner_silence_hours: number | null;
@@ -135,7 +136,7 @@ export function evaluateCareRules(s: CareSignals): CareFiring[] {
   ) {
     firings.push({
       rule: "meds_missed",
-      detail: `meds routine last logged ${Math.round(s.meds_logged_age_hours)}h ago (threshold ${MEDS_MISSED_HOURS}h)` +
+      detail: `meds last confirmed (Hearth routine or DM) ${Math.round(s.meds_logged_age_hours)}h ago (threshold ${MEDS_MISSED_HOURS}h)` +
         (s.meds_taken === 0 && s.biometrics_age_hours !== null && s.biometrics_age_hours <= BIOMETRICS_FRESH_HOURS
           ? "; latest biometrics also says not taken"
           : ""),
@@ -246,7 +247,7 @@ export function evaluateEscalationRules(s: EscalationSignals): EscalationFiring[
   ) {
     firings.push({
       rule: "esc_meds",
-      detail: `meds routine last logged ${Math.round(s.meds_logged_age_hours)}h ago (escalation threshold ${ESC_MEDS_HOURS}h)`,
+      detail: `meds last confirmed (Hearth routine or DM) ${Math.round(s.meds_logged_age_hours)}h ago (escalation threshold ${ESC_MEDS_HOURS}h)`,
     });
   }
 

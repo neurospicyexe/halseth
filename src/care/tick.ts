@@ -39,6 +39,13 @@ function ageHoursOrNull(iso: string | null | undefined, nowMs: number): number |
   return iso ? hoursSinceIso(iso, nowMs) : null;
 }
 
+/** The fresher of two ages; null only when both are null ("never confirmed" stays absent). */
+export function newestAge(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
+}
+
 export async function runCareTick(
   env: Env,
   nowMs = Date.now(),
@@ -68,7 +75,7 @@ export async function runCareTick(
   }
 
   // ── Gather signals (reads only) ──────────────────────────────────────────────
-  const [bio, meds, ownerLast, firedRows, pendingRows] = await Promise.all([
+  const [bio, meds, medsDm, ownerLast, firedRows, pendingRows] = await Promise.all([
     // Latest reading by recorded_at, matching orient's ordering (webmind/orient.ts) so the
     // register tier and the rule table never disagree about which row is "latest".
     env.DB.prepare(
@@ -77,6 +84,17 @@ export async function runCareTick(
     env.DB.prepare(
       `SELECT MAX(logged_at) AS at FROM routines WHERE lower(routine_name) LIKE '%med%'`,
     ).first<{ at: string | null }>(),
+    // A "taken" answered to a med_reminder DM (mig 0136) is the same fact as checking the meds
+    // routine off on Hearth (Raziel, 2026-09-28: "it should accept both"). Only DAILY slots count
+    // (weekday_mask 127): a weekly dose confirmed on a Wednesday must not stand in for three days
+    // of daily meds and hide an esc_meds gap from Blue. med_answers holds only affirmatives (R-10),
+    // so this can only make meds_missed / esc_meds fire LESS, never report "not taken" (P-2).
+    // A failed read (table absent on an older DB) falls back to the routine alone, which is the
+    // pre-0136 behaviour, instead of taking the whole care tick down.
+    env.DB.prepare(
+      `SELECT MAX(a.answered_at) AS at FROM med_answers a
+       JOIN med_schedule s ON s.slot_key = a.slot_key WHERE s.weekday_mask = 127`,
+    ).first<{ at: string | null }>().catch(() => null),
     // Owner activity across every surface D1 can see -- the shared read (care/owner-activity.ts),
     // one lane one filter with the C6 quiet-owner detector. The denominator is stated in the
     // detail line the rule table builds -- a silence claim must name what it checked.
@@ -103,7 +121,7 @@ export async function runCareTick(
     mood: bio?.mood ?? null,
     meds_taken: bio?.meds_taken ?? null,
     biometrics_age_hours: ageHoursOrNull(bio?.recorded_at, nowMs),
-    meds_logged_age_hours: ageHoursOrNull(meds?.at, nowMs),
+    meds_logged_age_hours: newestAge(ageHoursOrNull(meds?.at, nowMs), ageHoursOrNull(medsDm?.at, nowMs)),
     owner_silence_hours: ageHoursOrNull(ownerLast?.at, nowMs),
     owner_last_source: ownerLast?.source ?? null,
     last_fired_hours: lastFired,
