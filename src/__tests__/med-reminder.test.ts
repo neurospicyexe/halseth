@@ -227,6 +227,15 @@ describe("recordAnswer: the only thing ever recorded", () => {
     expect(r).toMatchObject({ slot_key: "night", local_date: "2026-09-28", answered_local: "21:51" });
   });
 
+  it("a fast yes that lands before the delivery mark still counts (bounded on claimed_at)", async () => {
+    const { DB } = setup();
+    const c = { slot_key: "night", local_date: "2026-09-28", kind: "first" as const, companion: "drevan" };
+    expect(await claimDose(DB, { ...c, nowIso: NIGHT_CDT })).toBe(true);
+    expect(await markDelivered(DB, { ...c, nowIso: new Date(Date.parse(NIGHT_CDT) + 3_000).toISOString(), path: "generated" })).toBe(true);
+    const r = await recordAnswer(DB, "drevan", new Date(Date.parse(NIGHT_CDT) + 1_000).toISOString());
+    expect(r?.slot_key).toBe("night");
+  });
+
   it("an answer to a companion who did not remind him records nothing", async () => {
     const { DB } = setup();
     await deliver(DB, "night", "2026-09-28", "first", "drevan", NIGHT_CDT);

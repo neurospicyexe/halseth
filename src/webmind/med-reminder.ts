@@ -284,7 +284,8 @@ export interface RecordedAnswer {
  * write that describes him, and nothing else is ever recorded; no answer means no row.
  *
  * Which dose it answers: among doses THIS companion reminded him about (a delivered claim of either
- * kind), still unanswered, reminded at or before his message, and whose next occurrence has not yet
+ * kind), still unanswered, CLAIMED at or before his message (not delivered: delivered_at is stamped
+ * after the send returns and its retries, so a fast "yes" can carry an earlier timestamp than it), and whose next occurrence has not yet
  * come, the one MOST RECENTLY reminded. That is the reminder he is looking at when he types "yes";
  * an older still-open dose is less likely to be what the word is about, and guessing wrong is
  * cheaper in that direction (the older dose simply stays "no answer", which P-2 renders honestly).
@@ -296,7 +297,7 @@ export async function recordAnswer(db: D1Database, companion: string, answeredAt
     `SELECT c.slot_key, c.local_date, MAX(c.delivered_at) AS reminded_at,
             s.local_time, s.tz, s.weekday_mask, s.active_from
        FROM med_claims c JOIN med_schedule s ON s.slot_key = c.slot_key
-      WHERE c.companion_id = ? AND c.delivered_at IS NOT NULL AND c.delivered_at <= ?
+      WHERE c.companion_id = ? AND c.delivered_at IS NOT NULL AND c.claimed_at <= ?
         AND NOT EXISTS (SELECT 1 FROM med_answers a WHERE a.slot_key = c.slot_key AND a.local_date = c.local_date)
       GROUP BY c.slot_key, c.local_date
       ORDER BY reminded_at DESC`,
