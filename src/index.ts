@@ -348,7 +348,7 @@ const router = new Router()
   .on("GET",   "/mind/forage/:companion_id",       (request, env, params) => getForageFinds(request, env, params ?? {}))
   .on("PATCH", "/mind/forage/:id/consume",         (request, env, params) => consumeForageFind(request, env, params ?? {}))
 
-  // Hermes skill-proposal mirror (0107) -- the VPS watcher mirrors staged skills + decisions here
+  // Hermes skill-proposal mirror (0131) -- the VPS watcher mirrors staged skills + decisions here
   .on("POST",  "/mind/skill-proposals",              (request, env)         => postSkillProposal(request, env))
   .on("GET",   "/mind/skill-proposals",              (request, env)         => listSkillProposals(request, env))
   .on("PATCH", "/mind/skill-proposals/:id/decision", (request, env, params) => decideSkillProposal(request, env, params ?? {}))

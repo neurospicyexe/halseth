@@ -1,4 +1,4 @@
--- 0107: skill-proposal mirror -- the Hermes skill-approval stage becomes visible off-VPS.
+-- 0131: skill-proposal mirror -- the Hermes skill-approval stage becomes visible off-VPS.
 -- The VPS watcher POSTs each staged skill record here at stage time (and PATCHes the
 -- decision when Raziel taps Approve/Decline on Telegram), so every substrate --
 -- Claude.ai chat, cloud sessions, Hearth, the triad via the Librarian -- can read the

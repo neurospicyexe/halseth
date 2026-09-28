@@ -1,6 +1,6 @@
 // src/handlers/skill-proposals.ts
 //
-// HTTP route handlers for the Hermes skill-proposal mirror (migration 0107,
+// HTTP route handlers for the Hermes skill-proposal mirror (migration 0131,
 // docs/skill-proposal-mirror.md).
 //   POST  /mind/skill-proposals               -- watcher mirrors a staged skill record
 //   GET   /mind/skill-proposals               -- list proposals (?status=&companion_id=&limit=)

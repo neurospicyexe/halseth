@@ -116,7 +116,7 @@ export async function execJournalSearch(ctx: ExecutorContext): Promise<ExecutorR
 }
 
 export async function execSkillProposalsRead(ctx: ExecutorContext): Promise<ExecutorResult> {
-  // Hermes skill-proposal mirror (mig 0107). Triad-wide read: staged skills are house
+  // Hermes skill-proposal mirror (mig 0131). Triad-wide read: staged skills are house
   // infrastructure under Raziel's approval, so any companion (or a shared-secret caller)
   // sees the whole queue, not just their own.
   const rows = await ctx.env.DB.prepare(
