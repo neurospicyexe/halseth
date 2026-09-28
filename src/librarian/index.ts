@@ -12,6 +12,7 @@ import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
 import { safeEqual } from "../lib/auth.js";
+import { surfaceForAuth } from "./surface.js";
 import { createLogger } from "../lib/log.js";
 
 const COMPANION_SECRET_ENV_KEYS: Record<string, keyof Env> = {
@@ -124,7 +125,8 @@ export async function handleLibrarian(request: Request, env: Env): Promise<Respo
     // substituting a shared placeholder would recreate the cross-surface collision it exists to
     // stop. Length cap because this value is a dedup key, not free text.
     surface: typeof b.surface === "string" && b.surface.trim()
-      ? b.surface.trim().slice(0, 200)
+      // This door takes static secrets only, so a claude-ai claim is never Claude.ai (surface.ts).
+      ? surfaceForAuth(b.surface.trim().slice(0, 200), "static")
       : undefined,
   };
 

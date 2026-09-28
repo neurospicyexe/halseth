@@ -18,6 +18,7 @@ import { Env } from "../types.js";
 import { LibrarianRouter, LibrarianRequest } from "./router.js";
 import { COMPANION_IDS } from "./patterns.js";
 import { hashToken } from "../lib/auth.js";
+import { surfaceForAuth, type LibrarianAuthKind } from "./surface.js";
 
 /**
  * If a token is bound to a companion (migration 0085), it may ONLY act as that companion.
@@ -32,7 +33,7 @@ export function boundCompanionViolation(boundCompanion: string | null, claimed: 
   return null;
 }
 
-function buildServer(env: Env, boundCompanion: string | null = null): McpServer {
+function buildServer(env: Env, boundCompanion: string | null = null, authKind: LibrarianAuthKind = "static"): McpServer {
   const server = new McpServer({
     name: "halseth-librarian",
     version: "1.0.0",
@@ -68,7 +69,7 @@ function buildServer(env: Env, boundCompanion: string | null = null): McpServer 
         context:      args.context,
         session_type: args.session_type ?? "work",
         ...(typeof args.surface === "string" && args.surface.trim()
-          ? { surface: args.surface.trim().slice(0, 200) }
+          ? { surface: surfaceForAuth(args.surface.trim().slice(0, 200), authKind) }
           : {}),
       };
 
@@ -97,6 +98,8 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
   const token = auth.slice(7);
   // Unbound by default: static admin/MCP secrets and bots are never companion-restricted.
   let boundCompanion: string | null = null;
+  // Only an OAuth token is Claude.ai (surface.ts); every static secret is a bot, Hermes or a hook.
+  let authKind: LibrarianAuthKind = "static";
   const validSecrets = [env.MCP_AUTH_SECRET, env.ADMIN_SECRET].filter(Boolean);
   // Static per-companion secrets bind the connection to one companion (parity with /librarian).
   // Without this, a bot configured with CYPHER_MCP_SECRET would 401, and the only working token
@@ -124,6 +127,7 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
       return new Response("Unauthorized", { status: 401, headers: { "WWW-Authenticate": wwwAuth } });
     }
     boundCompanion = row.companion_id ?? null;
+    authKind = "oauth";
   }
 
   // GET probe from mcp-remote -- return 405 so it falls back to Streamable HTTP
@@ -134,7 +138,7 @@ export async function handleLibrarianMcp(request: Request, env: Env): Promise<Re
     });
   }
 
-  const server = buildServer(env, boundCompanion);
+  const server = buildServer(env, boundCompanion, authKind);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 
   const { req, res } = toReqRes(request);
