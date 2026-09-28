@@ -110,6 +110,7 @@ import { associateDreamsHandler } from "./handlers/dream-associate.js";
 import { getHomePresence, getHomeEvents, postHomeTick, patchHomePresence } from "./handlers/home.js";
 import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/forage.js";
 import { postSkillProposal, listSkillProposals, decideSkillProposal } from "./handlers/skill-proposals.js";
+import { getMedDue, postMedClaim, postMedDelivered, postMedRelease, postMedAnswer, getMedToday } from "./handlers/med-reminder.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
@@ -477,6 +478,13 @@ const router = new Router()
   .on("POST",  "/mind/skill-proposals",              (request, env)         => postSkillProposal(request, env))
   .on("GET",   "/mind/skill-proposals",              (request, env)         => listSkillProposals(request, env))
   .on("PATCH", "/mind/skill-proposals/:id/decision", (request, env, params) => decideSkillProposal(request, env, params ?? {}))
+  // med_reminder (0136) -- its own scheduler, outside the metronome and every other rail (spec R-9)
+  .on("GET",   "/mind/med/due/:companion_id", (request, env, params) => getMedDue(request, env, params ?? {}))
+  .on("POST",  "/mind/med/claim",             (request, env)         => postMedClaim(request, env))
+  .on("POST",  "/mind/med/delivered",         (request, env)         => postMedDelivered(request, env))
+  .on("POST",  "/mind/med/release",           (request, env)         => postMedRelease(request, env))
+  .on("POST",  "/mind/med/answer",            (request, env)         => postMedAnswer(request, env))
+  .on("GET",   "/mind/med/today",             (request, env)         => getMedToday(request, env))
 
   // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))

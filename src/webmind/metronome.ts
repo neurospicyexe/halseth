@@ -166,6 +166,46 @@ export function localHourIn(nowIso: string, tz: string): number | null {
   }
 }
 
+/** Local wall-clock parts of an instant in `tz`. `weekday` is 0=Sunday .. 6=Saturday. */
+export interface LocalParts {
+  /** 'YYYY-MM-DD' in the zone (the local calendar date, not the UTC one). */
+  date: string;
+  hour: number;
+  minute: number;
+  weekday: number;
+}
+
+const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+/**
+ * localHourIn's sibling (med_reminder, 2026-09-27): the full local date, hour, minute and weekday
+ * in `tz`, from ONE Intl.DateTimeFormat call with the IANA zone, so DST is the zone's own rule and
+ * never a fixed offset. Same `hourCycle: "h23"` reason as localHourIn: midnight must be 00, not 24.
+ * Returns null when anything cannot be determined; callers fail closed on null.
+ */
+export function localPartsIn(nowIso: string, tz: string): LocalParts | null {
+  try {
+    const d = new Date(nowIso);
+    if (isNaN(d.getTime())) return null;
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "numeric", minute: "2-digit", weekday: "short", hourCycle: "h23",
+    }).formatToParts(d);
+    const get = (t: string) => parts.find(p => p.type === t)?.value;
+    const y = get("year"), mo = get("month"), da = get("day"), wd = get("weekday");
+    const hour = parseInt(get("hour") ?? "", 10);
+    const minute = parseInt(get("minute") ?? "", 10);
+    if (!y || !mo || !da || !wd) return null;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+    if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+    const weekday = WEEKDAY_INDEX[wd];
+    if (weekday === undefined) return null;
+    return { date: `${y}-${mo}-${da}`, hour, minute, weekday };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Is `nowIso` inside the [startHour, endHour) local window in `tz`? The window WRAPS midnight
  * (22 to 06 means 22:00-23:59 plus 00:00-05:59); end is exclusive, so 06:00 is already morning.
