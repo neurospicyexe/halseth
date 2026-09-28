@@ -10,7 +10,7 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { runWebSearch, runImageGen } from "../../tools/service.js";
 import { createProvider } from "../../tools/live-providers.js";
 import { accruedLevel, driveFired, selectModality, hoursSinceIso, readDrivesSql } from "../../webmind/drives.js";
-import { isValidAction, listCreaturesSql } from "../../webmind/creatures.js";
+import { isValidAction, listCreaturesSql, parseTendRequest, type CreatureAction } from "../../webmind/creatures.js";
 import { performTend } from "../../webmind/creature-interact.js";
 import { insertQuestionSql } from "../../webmind/council.js";
 
@@ -94,17 +94,30 @@ export async function execCreaturesRead(ctx: ExecutorContext): Promise<ExecutorR
   return { response_key: "summary", creatures, meta: { operation: "creatures_read", count: creatures.length } };
 }
 
+const PAST_TENSE: Record<CreatureAction, string> = {
+  feed: "fed", play: "played with", talk: "talked to", give: "gave something to",
+};
+
 // take 10 -- a companion interacts with a creature (feed|play|talk|give). Atomic SQL
 // trust bump + append-only log, exactly the handler path. Name lookup is exact-first
 // then LIKE (name_lookup_exact_first doctrine) so a write never lands on the wrong row.
 export async function execCreatureInteract(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "creature_interact_failed", reason: "companion_id required (the actor)" };
   const parsed = parseContext<{ creature?: string; creature_name?: string; action?: string; note?: string }>(ctx.req.context);
-  const name = (parsed?.creature ?? parsed?.creature_name ?? "").trim();
-  const action = (parsed?.action ?? "").trim().toLowerCase();
-  if (!name) return { error: "creature_interact_failed", reason: "creature name required (context {creature, action})" };
+  let name = (parsed?.creature ?? parsed?.creature_name ?? "").trim();
+  let action = (parsed?.action ?? "").trim().toLowerCase();
+  let note = parsed?.note?.trim().slice(0, 500) ?? null;
+  // Plain language ("give Sol a shiny word") carries no context payload; read it from the
+  // request text. Explicit context always wins over the parse.
+  if (!name || !action) {
+    const names = (await ctx.env.DB.prepare("SELECT name FROM creatures").all<{ name: string }>()).results?.map(r => r.name) ?? [];
+    const fromText = parseTendRequest(ctx.req.request, names);
+    name ||= fromText.name ?? "";
+    action ||= fromText.action ?? "";
+    note ??= fromText.note;
+  }
+  if (!name) return { error: "creature_interact_failed", reason: "creature name required (name the creature, e.g. \"feed Sol\")" };
   if (!isValidAction(action)) return { error: "creature_interact_failed", reason: "action must be one of feed, play, talk, give" };
-  const note = parsed?.note?.trim().slice(0, 500) ?? null;
 
   type Row = { id: string; name: string; kind: string; trust: number };
   const creature = (await ctx.env.DB.prepare("SELECT id, name, kind, trust FROM creatures WHERE name = ? COLLATE NOCASE").bind(name).first<Row>())
@@ -120,7 +133,7 @@ export async function execCreatureInteract(ctx: ExecutorContext): Promise<Execut
     : "";
   return {
     response_key: "witness",
-    witness: `you ${action === "give" ? "gave something to" : action} ${creature.name}.${milestoneLine}`,
+    witness: `you ${PAST_TENSE[action]} ${creature.name}.${milestoneLine}`,
     interacted: true,
     milestones_fired: outcome.milestones_fired,
     meta: { operation: "creature_interact", creature: creature.name, action, trust: outcome.trust },

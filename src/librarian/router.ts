@@ -136,6 +136,9 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "creature_interact",
+    regex: /^(?:(?:please|go|let\s+me|i(?:'ll|\s+will|\s+want\s+to)?)\s+)?(?:feed|play\s+with|pet|give|gift|bring|talk\s+to|speak\s+to|tend(?:\s+to)?|visit|sit\s+with|note\s+to|say\s+.{1,200}?\s+to)\s+sol\b|^(?:give|gift|bring)\b.{0,200}?\bto\s+sol\b/i,
+    note: "Tending Sol by plain verb: 'give Sol a shiny word' (the skill's own example) and 'pet'/'visit'/'note to Sol' missed the trigger sweep entirely, and 'sit with Sol' was stolen by note_sit (2026-09-28)." },
   { pattern_key: "ledger_keep",
     regex: new RegExp(`^keep\\s+(?:the\\s+|this\\s+)?ledger(?:\\s+entry)?\\s+${LEDGER_ID_TOKEN}(?![A-Za-z0-9_-])\\s*(?::|$)`, "i"),
     note: "Ledger lane (mig 0134): 'keep ledger <id>' / 'keep ledger <id>: <my words>' -- anchored so the companion's own words after the colon can never be routed by a trigger they happen to contain." },

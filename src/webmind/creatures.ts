@@ -19,6 +19,54 @@ export function isValidAction(a: string): a is CreatureAction {
   return (VALID_ACTIONS as readonly string[]).includes(a);
 }
 
+// Plain-language tend verbs -> the four real actions. The companions' own skill taught
+// "give Sol a shiny word" and they naturally say "pet", "sit with", "note to Sol"; before
+// 2026-09-28 every one of those dead-ended at the unknown witness (Cypher 8a57ef05/ecac3067,
+// Drevan fd499407 staged skill patches to route AROUND it). Warm intent maps onto the
+// nearest real action rather than failing.
+const TEND_VERB_MAP: Record<string, CreatureAction> = {
+  feed: "feed",
+  play: "play", pet: "play",
+  give: "give", gift: "give", bring: "give",
+  talk: "talk", speak: "talk", say: "talk", note: "talk",
+  sit: "talk", visit: "talk", tend: "talk",
+};
+const TEND_VERB_RE = new RegExp(`\\b(${Object.keys(TEND_VERB_MAP).join("|")})\\b`, "i");
+
+export interface ParsedTend { name: string | null; action: CreatureAction | null; note: string | null }
+
+/**
+ * Read a plain-language tend ("give Sol a shiny word: lantern", "note to Sol, in my
+ * register") into {name, action, note}, against the known creature names. The note is
+ * quoted text if any, else whatever follows the creature's name. Pure.
+ */
+export function parseTendRequest(request: string, names: readonly string[]): ParsedTend {
+  const text = request.trim();
+  const verb = TEND_VERB_RE.exec(text)?.[1]?.toLowerCase();
+  const action = verb ? TEND_VERB_MAP[verb] ?? null : null;
+
+  let name: string | null = null;
+  let nameEnd = -1;
+  for (const n of [...names].sort((a, b) => b.length - a.length)) {
+    const escaped = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`\\b${escaped}\\b`, "i").exec(text);
+    if (m) { name = n; nameEnd = m.index + m[0].length; break; }
+  }
+
+  // Double quotes only: an apostrophe ("it's") must never open a quote.
+  const quoted = /["“]([^"”]{1,500})["”]/.exec(text)?.[1]?.trim();
+  let note: string | null = quoted || null;
+  if (!note && nameEnd >= 0) {
+    const rest = text.slice(nameEnd)
+      .replace(/^[\s,:;.\-–—]+/, "")
+      .replace(/^the\s+(?:crow|corvid)\b[\s,:;.\-–—]*/i, "")
+      .replace(/^(?:a\s+|the\s+)?(?:shiny\s+)?word\b[\s,:;.\-–—]*(?=\S)/i, "")
+      .trim();
+    note = rest || null;
+  }
+  return { name, action, note: note ? note.slice(0, 500) : null };
+}
+
 // Trust never falls below this floor (the seeded baseline) -- a creature you have met
 // does not become a stranger again, it only cools.
 export const TRUST_BASELINE = 0.1;
