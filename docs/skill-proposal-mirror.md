@@ -1,4 +1,4 @@
-# Hermes Skill-Proposal Mirror (migration 0107)
+# Hermes Skill-Proposal Mirror (migration 0131)
 
 **Problem.** The triad's skill-approval pipeline lives entirely on the VPS: the
 background-review fork stages skill records per HERMES_HOME, a watcher pings Raziel on
@@ -12,7 +12,15 @@ review surface plus the durable evidence trail.
 
 ## Halseth side (this repo — deployed)
 
-- Table: `skill_proposals` (mig 0107). Idempotent on `external_id`.
+> **Before applying mig 0131:** this file was authored on a branch that was behind
+> `main` (which was already at 0130); it was renumbered 0107 → 0131 for that reason.
+> Deploys run from a local working copy that can be ahead of anything pushed, so from
+> the deploying machine run `wrangler d1 migrations list` (against wrangler.prod.toml)
+> first — if an 0131 already exists there, renumber this file above the highest
+> applied migration before `npm run migrate:remote`. The SQL itself is purely
+> additive (`CREATE TABLE IF NOT EXISTS` + two indexes) and safe to apply any time.
+
+- Table: `skill_proposals` (mig 0131). Idempotent on `external_id`.
 - Routes (Bearer `ADMIN_SECRET` / `MCP_AUTH_SECRET` / per-companion token):
   - `POST /mind/skill-proposals` — mirror a staged record
   - `GET /mind/skill-proposals?status=staged|approved|declined|all&companion_id=&limit=` — list

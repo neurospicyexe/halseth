@@ -1,4 +1,4 @@
-// Tests for the Hermes skill-proposal mirror (mig 0107): handlers
+// Tests for the Hermes skill-proposal mirror (mig 0131): handlers
 // (POST ingest + external_id idempotency, GET list, PATCH decision) and the
 // librarian read executor. Same miniflare-free FakeStatement harness as
 // forage.test.ts.
