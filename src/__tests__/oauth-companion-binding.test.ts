@@ -29,6 +29,11 @@ function makeOauthDB() {
   const tokens: Array<{ token_hash: string; companion_id: string | null }> = [];
   const db = {
     codes, tokens,
+    async batch(stmts: Array<{ run: () => Promise<unknown> }>) {
+      const out: unknown[] = [];
+      for (const st of stmts) out.push(await st.run());
+      return out;
+    },
     prepare(sql: string) {
       let args: unknown[] = [];
       const stmt = {
@@ -51,10 +56,16 @@ function makeOauthDB() {
               code_challenge_method: a[4]!, expires_at: a[6]!, used: 0, companion_id: (a[7] as string | null) ?? null,
             });
           } else if (sql.includes("UPDATE oauth_codes SET used")) {
-            const r = codes.get(args[0] as string); if (r) r.used = 1;
+            const r = codes.get(args[0] as string);
+            if (!r || r.used) return { success: true, meta: { changes: 0 } };
+            r.used = 1;
           } else if (sql.includes("INSERT INTO oauth_tokens")) {
+            // INSERT ... SELECT ... FROM oauth_codes WHERE code = ? AND client_id = ? AND used = 0:
+            // binds are (token_hash, created_at, expires_at, code, client_id); companion comes from the code row.
             const a = args as string[];
-            tokens.push({ token_hash: a[0]!, companion_id: (a[4] as string | null) ?? null });
+            const r = codes.get(a[3]!);
+            if (!r || r.used || r.client_id !== a[4]) return { success: true, meta: { changes: 0 } };
+            tokens.push({ token_hash: a[0]!, companion_id: r.companion_id ?? null });
           }
           return { success: true, meta: { changes: 1 } };
         },

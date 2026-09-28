@@ -8,7 +8,8 @@
 
 import { describe, it, expect } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
-import { getOAuthAuthServerMetadata, postOAuthAuthorize, postOAuthToken } from "../handlers/oauth";
+import { getOAuthAuthServerMetadata, postOAuthAuthorize, postOAuthToken, REFRESH_REUSE_GRACE_S } from "../handlers/oauth";
+import { isAuthorized } from "../mcp/server.js";
 import { hashToken } from "../lib/auth.js";
 
 const ADMIN = "admin-passphrase";
@@ -60,6 +61,11 @@ async function refresh(env: any, refresh_token: string, client_id = "c1", extra:
 
 async function accessRow(db: any, token: string) {
   return db.prepare("SELECT * FROM oauth_tokens WHERE token_hash = ?").get(await hashToken(token)) as any;
+}
+// Push a spent token's used_at back past the reuse grace window (reuse is only theft after it).
+async function agePastGrace(db: any, token: string) {
+  db.prepare("UPDATE oauth_refresh_tokens SET used_at = ? WHERE token_hash = ?")
+    .run(new Date(Date.now() - (REFRESH_REUSE_GRACE_S + 5) * 1000).toISOString(), await hashToken(token));
 }
 async function refreshRow(db: any, token: string) {
   return db.prepare("SELECT * FROM oauth_refresh_tokens WHERE token_hash = ?").get(await hashToken(token)) as any;
@@ -116,6 +122,49 @@ describe("authorization_code grant issues a refresh token", () => {
   });
 });
 
+describe("authorization_code grant is atomic", () => {
+  it("a failing insert rolls the exchange back: the code stays unspent and a retry works", async () => {
+    const { db, env } = setup();
+    const code = await authorize(env, db);
+    // A transactional batch (as D1's is) that fails on the access-token INSERT.
+    const realBatch = env.DB.batch.bind(env.DB);
+    env.DB.batch = async (stmts: any[]) => {
+      db.exec("BEGIN");
+      try {
+        for (const st of stmts) {
+          if (String(st.__sql).includes("INSERT INTO oauth_tokens")) throw new Error("transient D1 error");
+          await st.run();
+        }
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+      return [];
+    };
+    await expect(
+      postOAuthToken(tokenReq({ grant_type: "authorization_code", code, client_id: "c1" }), env),
+    ).rejects.toThrow(/transient/);
+    expect((db.prepare("SELECT used FROM oauth_codes WHERE code = ?").get(code) as any).used).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_refresh_tokens").get() as any).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_tokens").get() as any).n).toBe(0);
+
+    env.DB.batch = realBatch;
+    const retry = await postOAuthToken(tokenReq({ grant_type: "authorization_code", code, client_id: "c1" }), env);
+    expect(retry.status).toBe(200);
+    expect((db.prepare("SELECT used FROM oauth_codes WHERE code = ?").get(code) as any).used).toBe(1);
+  });
+
+  it("a code presented by the wrong client mints nothing and stays unspent", async () => {
+    const { db, env } = setup();
+    const code = await authorize(env, db);
+    const res = await postOAuthToken(tokenReq({ grant_type: "authorization_code", code, client_id: "c2" }), env);
+    expect(((await res.json()) as any).error).toBe("invalid_grant");
+    expect((db.prepare("SELECT used FROM oauth_codes WHERE code = ?").get(code) as any).used).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_tokens").get() as any).n).toBe(0);
+  });
+});
+
 describe("refresh_token grant", () => {
   it("issues a new access token and a NEW refresh token; the old one is marked used", async () => {
     const { db, env } = setup();
@@ -159,7 +208,8 @@ describe("refresh_token grant", () => {
     const b = (await refresh(env, a.refresh_token)).body;
     const c = (await refresh(env, b.refresh_token)).body;
 
-    // Replay A (already used).
+    // Replay A (already used, past the grace window).
+    await agePastGrace(db, a.refresh_token);
     const replay = await refresh(env, a.refresh_token);
     expect(replay.status).toBe(400);
     expect(replay.body.error).toBe("invalid_grant");
@@ -183,32 +233,73 @@ describe("refresh_token grant", () => {
     const a = await codeGrant(env, db);
     const other = await codeGrant(env, db);
     await refresh(env, a.refresh_token);
-    await refresh(env, a.refresh_token); // reuse -> revoke a's family
+    await agePastGrace(db, a.refresh_token);
+    await refresh(env, a.refresh_token); // reuse past grace -> revoke a's family
+    expect((await refreshRow(db, a.refresh_token)).revoked_at).not.toBeNull();
     expect(await accessRow(db, other.access_token)).toBeTruthy();
     expect((await refresh(env, other.refresh_token)).status).toBe(200);
   });
 
-  it("a lost rotation race is treated as reuse (claim is conditional)", async () => {
-    const { db, env } = setup();
-    const a = await codeGrant(env, db);
-    // Simulate a concurrent request that spent the token after our read but before our claim:
-    // mark it used underneath without going through the handler.
+  // Simulate a concurrent request that spent the token after our read but before our claim, by
+  // marking it used underneath the handler just before its batch runs. usedAgoS = how long ago the
+  // other request "won".
+  function spendUnderneath(env: any, db: any, token: string, usedAgoS: number) {
     const realBatch = env.DB.batch.bind(env.DB);
     let fired = false;
     env.DB.batch = async (stmts: any[]) => {
       if (!fired) {
         fired = true;
         db.prepare("UPDATE oauth_refresh_tokens SET used_at = ?, replaced_by = 'someone-else' WHERE token_hash = ?")
-          .run(new Date().toISOString(), await hashToken(a.refresh_token));
+          .run(new Date(Date.now() - usedAgoS * 1000).toISOString(), await hashToken(token));
       }
       return realBatch(stmts);
     };
+  }
+
+  it("a lost rotation race inside the grace window is refused WITHOUT revoking (claim is conditional)", async () => {
+    const { db, env } = setup();
+    const a = await codeGrant(env, db);
+    spendUnderneath(env, db, a.refresh_token, 0);
     const r = await refresh(env, a.refresh_token);
     expect(r.status).toBe(400);
     expect(r.body.error).toBe("invalid_grant");
-    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_refresh_tokens").get() as any).n).toBe(1); // nothing minted
-    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_tokens").get() as any).n).toBe(0);         // family access revoked
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_refresh_tokens").get() as any).n).toBe(1); // the loser minted nothing
+    expect((await refreshRow(db, a.refresh_token)).revoked_at).toBeNull();
+    expect(await accessRow(db, a.access_token)).toBeTruthy();
+  });
+
+  it("a lost rotation race whose winner is older than the grace window revokes the family", async () => {
+    const { db, env } = setup();
+    const a = await codeGrant(env, db);
+    spendUnderneath(env, db, a.refresh_token, REFRESH_REUSE_GRACE_S + 5);
+    const r = await refresh(env, a.refresh_token);
+    expect(r.body.error).toBe("invalid_grant");
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_refresh_tokens").get() as any).n).toBe(1);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_tokens").get() as any).n).toBe(0);
     expect((await refreshRow(db, a.refresh_token)).revoked_at).not.toBeNull();
+  });
+
+  it("reuse INSIDE the grace window is refused but does not revoke: the winner's tokens stay valid", async () => {
+    const { db, env } = setup();
+    const a = await codeGrant(env, db);
+    const b = (await refresh(env, a.refresh_token)).body;       // the real client's refresh wins
+    const retry = await refresh(env, a.refresh_token);          // its retry / twin request, immediately
+    expect(retry.status).toBe(400);
+    expect(retry.body.error).toBe("invalid_grant");
+    expect(retry.body).toEqual((await refresh(env, "unknown")).body); // same body as any refusal
+    expect((db.prepare("SELECT COUNT(*) AS n FROM oauth_refresh_tokens WHERE revoked_at IS NOT NULL").get() as any).n).toBe(0);
+    expect(await accessRow(db, b.access_token)).toBeTruthy();
+    expect((await refresh(env, b.refresh_token)).status).toBe(200); // the winner's refresh token still works
+  });
+
+  it("reuse AFTER the grace window revokes the family, the winner's tokens included", async () => {
+    const { db, env } = setup();
+    const a = await codeGrant(env, db);
+    const b = (await refresh(env, a.refresh_token)).body;
+    await agePastGrace(db, a.refresh_token);
+    expect((await refresh(env, a.refresh_token)).body.error).toBe("invalid_grant");
+    expect(await accessRow(db, b.access_token)).toBeUndefined();
+    expect((await refresh(env, b.refresh_token)).body.error).toBe("invalid_grant");
   });
 
   it("wrong client_id is refused and does NOT consume the token", async () => {
@@ -307,10 +398,39 @@ describe("existing access tokens are untouched", () => {
     // Normal refresh traffic, including a family revoke, must not touch it.
     const t0 = await codeGrant(env, db);
     await refresh(env, t0.refresh_token);
+    await agePastGrace(db, t0.refresh_token);
     await refresh(env, t0.refresh_token);
+    expect((await refreshRow(db, t0.refresh_token)).revoked_at).not.toBeNull();
     const row = db.prepare("SELECT * FROM oauth_tokens WHERE token_hash = ?").get(legacyHash) as any;
     expect(row.expires_at).toBe(exp);
     // And it cannot be spent as a refresh token.
     expect((await refresh(env, "legacy-access-token")).body.error).toBe("invalid_grant");
+  });
+});
+
+describe("mcp/server isAuthorized expiry (was a string compare against datetime('now'))", () => {
+  const req = (tok: string) => new Request("https://h.example/mcp", { method: "POST", headers: { Authorization: `Bearer ${tok}` } });
+
+  it("an ISO token that expired earlier TODAY is rejected", async () => {
+    const { db, env } = setup();
+    // One second ago reads as "later today" to the old compare ('T' sorts after ' '), unless the
+    // run straddles UTC midnight, where it was rejected anyway.
+    db.prepare("INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at) VALUES (?, 'c1', ?, ?)")
+      .run(await hashToken("expired-today"), new Date().toISOString(), new Date(Date.now() - 1000).toISOString());
+    expect(await isAuthorized(req("expired-today"), env)).toBe(false);
+  });
+
+  it("an unexpired token is accepted; an unknown one is rejected", async () => {
+    const { db, env } = setup();
+    const t = await codeGrant(env, db);
+    expect(await isAuthorized(req(t.access_token), env)).toBe(true);
+    expect(await isAuthorized(req("nope"), env)).toBe(false);
+  });
+
+  it("an unparseable expires_at fails closed", async () => {
+    const { db, env } = setup();
+    db.prepare("INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at) VALUES (?, 'c1', ?, 'garbage')")
+      .run(await hashToken("garbage-exp"), new Date().toISOString());
+    expect(await isAuthorized(req("garbage-exp"), env)).toBe(false);
   });
 });

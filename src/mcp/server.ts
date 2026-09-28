@@ -27,11 +27,15 @@ export async function isAuthorized(request: Request, env: Env): Promise<boolean>
   if (safeEqual(token, env.MCP_AUTH_SECRET)) return true;
 
   // OAuth-issued token — claude.ai web / Claude iOS. Reject expired tokens.
+  // Compared in JS, not against datetime('now'): expires_at is ISO ("...T...Z") and datetime('now')
+  // is "YYYY-MM-DD HH:MM:SS", so a string compare kept an expired token valid until the end of its
+  // expiry day ('T' sorts after ' '). An unparseable expires_at is NaN and fails closed.
   const tokenHash = await hashToken(token);
   const row = await env.DB.prepare(
-    "SELECT token_hash FROM oauth_tokens WHERE token_hash = ? AND expires_at > datetime('now')"
-  ).bind(tokenHash).first();
-  return row !== null;
+    "SELECT expires_at FROM oauth_tokens WHERE token_hash = ?"
+  ).bind(tokenHash).first<{ expires_at: string }>();
+  if (!row) return false;
+  return Date.parse(row.expires_at) > Date.now();
 }
 
 export async function handleMcp(request: Request, env: Env): Promise<Response> {

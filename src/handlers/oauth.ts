@@ -308,6 +308,17 @@ function newRefreshToken(): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
+// A spent refresh token presented again within this many seconds of its rotation is refused
+// WITHOUT revoking the family: a connector that refreshes twice at once, or retries a refresh,
+// must not log itself out. Past the window, reuse is treated as theft and the family dies.
+export const REFRESH_REUSE_GRACE_S = 30;
+
+function withinReuseGrace(usedAtIso: string): boolean {
+  const usedAt = Date.parse(usedAtIso);
+  if (Number.isNaN(usedAt)) return false; // unparseable: no grace, fail toward revocation
+  return Date.now() - usedAt < REFRESH_REUSE_GRACE_S * 1000;
+}
+
 function isoIn(seconds: number): string {
   return new Date(Date.now() + seconds * 1000).toISOString();
 }
@@ -398,31 +409,36 @@ async function authorizationCodeGrant(params: Record<string, string>, request: R
     }
   }
 
-  // Mark code as used (one-time use). Conditional, so two concurrent exchanges of one code cannot
-  // both mint a token family: only the request whose UPDATE changed the row proceeds.
-  const claim = await env.DB.prepare("UPDATE oauth_codes SET used = 1 WHERE code = ? AND used = 0").bind(code).run();
-  if ((claim.meta?.changes ?? 0) !== 1) {
-    return oauthError("invalid_grant", "Invalid or already-used code", 400, request);
-  }
-
   // Issue the access token (90-day expiry, unchanged) plus a refresh token that starts a new family.
   const token        = newAccessToken();
   const refreshToken = newRefreshToken();
   const now          = new Date().toISOString();
   const tokenHash    = await hashToken(token);
   const refreshHash  = await hashToken(refreshToken);
-  const companionId  = codeRow.companion_id ?? null;
 
-  // Carry the companion binding from the authorization code onto the issued token...
-  await env.DB.prepare(
-    "INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at, companion_id) VALUES (?, ?, ?, ?, ?)"
-  ).bind(tokenHash, client_id, now, isoIn(ACCESS_TOKEN_TTL_S), companionId).run();
-  // ...and onto the refresh token, where it stays fixed for the life of the family.
-  await env.DB.prepare(
-    `INSERT INTO oauth_refresh_tokens
-       (token_hash, family_id, client_id, companion_id, access_token_hash, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(refreshHash, generateId(), client_id, companionId, tokenHash, now, isoIn(REFRESH_TOKEN_TTL_S)).run();
+  // Claim the code and issue both tokens in ONE batch (a D1 batch is one transaction), so a
+  // transient failure rolls the whole exchange back and a retry with the same code still works.
+  // The INSERTs run first and select from the code row only while it is still unused; the claim
+  // runs last under the same condition. Batches are serialized, so exactly one exchange of a code
+  // sees used = 0: a second one inserts nothing and its claim changes no row. The companion
+  // binding is copied from the code row by SQL onto both tokens (fixed for the life of the family).
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO oauth_tokens (token_hash, client_id, created_at, expires_at, companion_id)
+       SELECT ?, client_id, ?, ?, companion_id FROM oauth_codes
+        WHERE code = ? AND client_id = ? AND used = 0`
+    ).bind(tokenHash, now, isoIn(ACCESS_TOKEN_TTL_S), code, client_id),
+    env.DB.prepare(
+      `INSERT INTO oauth_refresh_tokens
+         (token_hash, family_id, client_id, companion_id, access_token_hash, created_at, expires_at)
+       SELECT ?, ?, client_id, companion_id, ?, ?, ? FROM oauth_codes
+        WHERE code = ? AND client_id = ? AND used = 0`
+    ).bind(refreshHash, generateId(), tokenHash, now, isoIn(REFRESH_TOKEN_TTL_S), code, client_id),
+    env.DB.prepare("UPDATE oauth_codes SET used = 1 WHERE code = ? AND client_id = ? AND used = 0").bind(code, client_id),
+  ]);
+  if ((results[2]?.meta?.changes ?? 0) !== 1) {
+    return oauthError("invalid_grant", "Invalid or already-used code", 400, request);
+  }
 
   return tokenResponse({
     access_token:  token,
@@ -454,8 +470,10 @@ async function refreshTokenGrant(params: Record<string, string>, request: Reques
   if (!row) return refused();
   if (row.revoked_at) return refused();
   if (row.used_at) {
-    // A rotated token presented again: the client or a thief holds a stale copy. Kill the family.
-    await revokeRefreshFamily(env, row.family_id);
+    // A rotated token presented again: the client or a thief holds a stale copy. Inside the grace
+    // window this is most likely the real client retrying or racing itself, so refuse without
+    // revoking (the winner's tokens stay valid). Outside it, kill the family.
+    if (!withinReuseGrace(row.used_at)) await revokeRefreshFamily(env, row.family_id);
     return refused();
   }
   if (row.client_id !== client_id) return refused();
@@ -491,8 +509,12 @@ async function refreshTokenGrant(params: Record<string, string>, request: Reques
   ]);
 
   if ((results[0]?.meta?.changes ?? 0) !== 1) {
-    // Another request spent this token between our read and our claim: treat exactly as reuse.
-    await revokeRefreshFamily(env, row.family_id);
+    // Another request spent this token between our read and our claim: treat exactly as reuse,
+    // grace window included (a lost race is almost always the real client racing itself).
+    const spent = await env.DB.prepare(
+      "SELECT used_at FROM oauth_refresh_tokens WHERE token_hash = ?"
+    ).bind(oldHash).first<{ used_at: string | null }>();
+    if (!spent?.used_at || !withinReuseGrace(spent.used_at)) await revokeRefreshFamily(env, row.family_id);
     return refused();
   }
 
