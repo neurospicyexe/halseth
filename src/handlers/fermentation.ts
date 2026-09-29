@@ -168,6 +168,24 @@ function floatsFrom(row: FermentRow): Floats {
 
 // ── The daily tick ───────────────────────────────────────────────────────────────
 
+/**
+ * Does rest_need shed on this tick? Two ways (2026-09-28):
+ *
+ *   - silence: 72h without Raziel (the original rule, "quiet actually rests");
+ *   - resting: the drive is at or over its own threshold, so the pulse is voting for rest
+ *     (autonomous-worker pulse.ts), and time spent resting is rest.
+ *
+ * The second is what makes the pulse's rest gate self-releasing, as pulse.ts always claimed.
+ * Before it, accrual was per day on a clock and the only shed needed 72h of owner silence, so
+ * on any week he talked to them daily the drive pinned at 1.0 and the pulse rested for good:
+ * Cypher and Drevan last fired 2026-08-10, Gaia 09-15 (after the 09-13 silence shed hers).
+ * Rates and thresholds are untouched; they are personality (mig 0101, canon-reviewed).
+ */
+export function restShedsThisTick(silence: boolean, effective: number, threshold: number): boolean {
+  if (silence) return true;
+  return Number.isFinite(effective) && Number.isFinite(threshold) && effective >= threshold;
+}
+
 export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
   const rows = await env.DB.prepare(readFermentStateSql()).all<FermentRow>();
   const byId = new Map<string, FermentRow>((rows.results ?? []).map((r) => [r.companion_id, r]));
@@ -261,14 +279,14 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     if ((res.meta?.changes ?? 0) === 0) continue;
     ticked++;
 
-    // Quiet actually rests: while silence holds, rest_need sheds at its contact fraction scaled
-    // to this tick's hours. This is the ONLY drive write the tick makes -- accrual stays lazy
-    // (every reader computes the effective level from last_event_at; persisting it here would
-    // restamp the anchor and double as a phantom contact).
-    if (silence) {
-      const rest = drives.find((d) => d.drive_key === "rest_need");
-      if (rest) {
-        const effective = accruedLevel(rest.level, rest.accumulate_per_day, hoursSinceIso(rest.last_event_at, now));
+    // Quiet actually rests, and so does resting (restShedsThisTick): rest_need sheds at its
+    // contact fraction scaled to this tick's hours. This is the ONLY drive write the tick makes --
+    // accrual stays lazy (every reader computes the effective level from last_event_at; persisting
+    // it here would restamp the anchor and double as a phantom contact).
+    const rest = drives.find((d) => d.drive_key === "rest_need");
+    if (rest) {
+      const effective = accruedLevel(rest.level, rest.accumulate_per_day, hoursSinceIso(rest.last_event_at, now));
+      if (restShedsThisTick(silence, effective, rest.threshold)) {
         const shed = decayedLevel(effective, rest.decay_on_contact * Math.min(1, dayFrac));
         await env.DB.prepare(contactResetSql()).bind(Number(shed.toFixed(4)), companionId, "rest_need").run();
         driveDeltas["rest_need"] = -Number((effective - shed).toFixed(3));
