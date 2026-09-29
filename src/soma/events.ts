@@ -217,6 +217,48 @@ export function diffFloats(
   return out;
 }
 
+/** Drevan's authored axes: TEXT enum columns, each naming the float it speaks about. */
+export type EnumAxis = "heat" | "reach" | "weight";
+export const ENUM_AXIS_FLOAT: Readonly<Record<EnumAxis, SomaFloatKey>> = {
+  heat: "soma_float_1",
+  reach: "soma_float_2",
+  weight: "soma_float_3",
+};
+
+/**
+ * One authored event per enum axis written with a word (B37, 2026-09-29).
+ *
+ * Drevan's axes are TEXT columns, so diffFloats never sees them: his "warm, present, holding" at
+ * 13:33Z on 09-29 landed in the enum columns and left NO history row. He had zero authored events
+ * ever while Cypher and Gaia had dozens, so the therlo staleness guard (latestAuthoredSomaEventsSql)
+ * never had a stamp, the ledger's latest-authored read was always null, and his soma-gap lines
+ * never cleared. His word is not a number and must not become one: therlo is the gap between what
+ * he says and what the instrument reads, and translating the word onto the float would erase it by
+ * construction. So the row records the AUTHORSHIP on the axis's float with the float unchanged
+ * (before = after = the float as it stands, delta 0) and the word in `detail`.
+ *
+ * Skipped: a null/empty word (a clear is not an authoring), and an axis whose float already moved
+ * in the same write (that move has its own row; two rows for one float in one write would double
+ * the `follows` chain).
+ */
+export function enumAxisEvents(
+  current: FloatMap,
+  words: Partial<Record<EnumAxis, unknown>>,
+  alreadyMoved: ReadonlySet<SomaFloatKey>,
+  base: Omit<SomaEventInput, "float_key" | "before_value" | "after_value" | "detail">,
+): SomaEventInput[] {
+  const out: SomaEventInput[] = [];
+  for (const axis of Object.keys(ENUM_AXIS_FLOAT) as EnumAxis[]) {
+    const w = words[axis];
+    if (typeof w !== "string" || w.trim() === "") continue;
+    const key = ENUM_AXIS_FLOAT[axis];
+    if (alreadyMoved.has(key)) continue;
+    const v = finite(current[key] as number | null | undefined);
+    out.push({ ...base, float_key: key, before_value: v, after_value: v, detail: `${axis}: ${w.trim()}`.slice(0, 120) });
+  }
+  return out;
+}
+
 /** Bind: [companion_id]. The pre-read every authored writer takes before it writes floats. */
 export function readFloatsSql(): string {
   return "SELECT soma_float_1, soma_float_2, soma_float_3, version FROM companion_state WHERE companion_id = ?";

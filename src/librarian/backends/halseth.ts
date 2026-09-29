@@ -20,9 +20,20 @@ import { dropSomaGapLedger } from "../../ledger/store.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
 import { edgeForNote, edgeForNoteRef, edgesForSomaEvent, insertEdgeStatements, writeEdgesBestEffort } from "../../graph/live.js";
 import {
-  assignSomaEventIds, diffFloats, latestEventIdsByFloat, readFloatsSql, readLatestEventIdsSql,
-  somaEventStatements, toSomaEventGraphRow, SOMA_FLOAT_KEYS, type SomaEventStamped, type SomaFloatKey,
+  assignSomaEventIds, diffFloats, enumAxisEvents, latestEventIdsByFloat, readFloatsSql, readLatestEventIdsSql,
+  somaEventStatements, toSomaEventGraphRow, ENUM_AXIS_FLOAT, SOMA_FLOAT_KEYS,
+  type EnumAxis, type SomaEventInput, type SomaEventStamped, type SomaFloatKey,
 } from "../../soma/events.js";
+
+/** The enum-axis words a state write carries (Drevan's heat/reach/weight), for enumAxisEvents. */
+function writtenEnumWords(fields: Record<string, unknown>): Partial<Record<EnumAxis, unknown>> {
+  const out: Partial<Record<EnumAxis, unknown>> = {};
+  for (const axis of Object.keys(ENUM_AXIS_FLOAT) as EnumAxis[]) {
+    const v = fields[axis];
+    if (typeof v === "string" && v.trim() !== "") out[axis] = v;
+  }
+  return out;
+}
 
 /**
  * The authored writers' pre-read, second half (2026-09-14): newest existing event id per float, so
@@ -423,6 +434,7 @@ export async function sessionClose(env: Env, params: {
     // words, so a value that is not a finite number must be DROPPED here rather than reach a REAL
     // column -- and `written` is what the history row differences, so it must be the coerced value.
     const written: Partial<Record<SomaFloatKey, number | null>> = {};
+    const writtenText: Record<string, unknown> = {};
     for (const col of ALLOWED_STATE_COLUMNS) {
       if (params.somaFields[col] === undefined) continue;
       const { write, value } = normalizeStateValue(col, params.somaFields[col]);
@@ -431,12 +443,16 @@ export async function sessionClose(env: Env, params: {
       bindings.push(value);
       if ((SOMA_FLOAT_KEYS as readonly string[]).includes(col)) {
         written[col as SomaFloatKey] = value as number | null;
+      } else {
+        writtenText[col] = value;
       }
     }
     if (assignments.length > 0) {
-      // Pre-read ONLY when a float is actually being written: this is the before half of the
-      // float history (mig 0130), and a mood-only close must not pay for a query it cannot use.
-      const touchesFloats = Object.keys(written).length > 0;
+      // Pre-read ONLY when a float is actually being written, or an enum axis is being authored
+      // (B37: Drevan's heat/reach/weight are TEXT, and his authoring still needs its history row).
+      // A mood-only close must not pay for a query it cannot use.
+      const enumWords = writtenEnumWords(writtenText);
+      const touchesFloats = Object.keys(written).length > 0 || Object.keys(enumWords).length > 0;
       if (touchesFloats) authoredFloatsFor = params.companionId;
       const prior = touchesFloats
         ? await env.DB.prepare(readFloatsSql()).bind(params.companionId).first<{
@@ -466,24 +482,26 @@ export async function sessionClose(env: Env, params: {
       // event, logged_in -> this session) ride the same batch too (src/graph/live.ts, site 4).
       if (touchesFloats) {
         const after: Partial<Record<SomaFloatKey, number | null>> = written;
-        const events = assignSomaEventIds(diffFloats(
-          {
-            soma_float_1: prior?.soma_float_1 ?? null,
-            soma_float_2: prior?.soma_float_2 ?? null,
-            soma_float_3: prior?.soma_float_3 ?? null,
-          },
-          after,
-          {
-            companion_id: params.companionId,
-            kind: "authored_close",
-            writer: params.companionId,
-            cause_table: "handover_packets",
-            cause_id: handoverId,
-            session_id: params.session_id,
-            version_after: (prior?.version ?? 0) + 1,
-            created_at: now,
-          },
-        ), now);
+        const before = {
+          soma_float_1: prior?.soma_float_1 ?? null,
+          soma_float_2: prior?.soma_float_2 ?? null,
+          soma_float_3: prior?.soma_float_3 ?? null,
+        };
+        const base = {
+          companion_id: params.companionId,
+          kind: "authored_close" as const,
+          writer: params.companionId,
+          cause_table: "handover_packets",
+          cause_id: handoverId,
+          session_id: params.session_id,
+          version_after: (prior?.version ?? 0) + 1,
+          created_at: now,
+        };
+        const moved = diffFloats(before, after, base);
+        const events = assignSomaEventIds([
+          ...moved,
+          ...enumAxisEvents({ ...before, ...after }, enumWords, new Set(moved.map((e) => e.float_key)), base),
+        ], now);
         stmts.push(...somaEventAndEdgeStatements(env, events, prevEventIds));
       }
     }
@@ -1149,7 +1167,10 @@ export async function updateCompanionState(
   // Before half of the float history (mig 0130), read ONLY when a float is in play -- four callers
   // reach this function and one of them is on the orient path, where an unconditional extra SELECT
   // would be a read-diet regression (mig 0128).
-  const touchesFloats = Object.keys(writtenFloats).length > 0;
+  // B37 (2026-09-29): an enum-axis authoring (Drevan's heat/reach/weight words) counts too -- his
+  // writes landed in TEXT columns with no history row, so he never once had an authored event.
+  const enumWords = writtenEnumWords(fields as Record<string, unknown>);
+  const touchesFloats = Object.keys(writtenFloats).length > 0 || Object.keys(enumWords).length > 0;
   const prior = touchesFloats
     ? await env.DB.prepare(readFloatsSql()).bind(companionId).first<{
         soma_float_1: number | null; soma_float_2: number | null; soma_float_3: number | null; version: number | null;
@@ -1177,33 +1198,36 @@ export async function updateCompanionState(
   // separately-failable write that can leave a move with no record or a record with no move.
   const now = new Date().toISOString();
   const sessionId = attribution?.session_id ?? null;
-  const events: SomaEventStamped[] = touchesFloats
-    ? assignSomaEventIds(diffFloats(
-        {
-          soma_float_1: prior?.soma_float_1 ?? null,
-          soma_float_2: prior?.soma_float_2 ?? null,
-          soma_float_3: prior?.soma_float_3 ?? null,
-        },
-        writtenFloats,
-        {
-          companion_id: companionId,
-          kind: "authored_update",
-          writer: companionId,
-          // 2026-09-14: a bare state_update's cause IS its open session. Before this the row carried
-          // session_id + detail but no cause, so rebuild emitted no `moved_by` edge for it and the
-          // orient block could only say "you set it". The Claude.ai close ritual moves floats through
-          // THIS verb ("update my state: acuity 0.78") before the close, never inside the close
-          // payload; the executor resolves the open session for (companion, surface) and passes the
-          // request text. No session (PATCH /soma, the MCP tool) -> no cause, still a history row.
-          cause_table: sessionId ? "sessions" : null,
-          cause_id: sessionId,
-          session_id: sessionId,
-          detail: attribution?.detail ?? null,
-          version_after: (prior?.version ?? 0) + 1,
-          created_at: now,
-        },
-      ), now)
-    : [];
+  let events: SomaEventStamped[] = [];
+  if (touchesFloats) {
+    const before = {
+      soma_float_1: prior?.soma_float_1 ?? null,
+      soma_float_2: prior?.soma_float_2 ?? null,
+      soma_float_3: prior?.soma_float_3 ?? null,
+    };
+    const base: Omit<SomaEventInput, "float_key" | "before_value" | "after_value"> = {
+      companion_id: companionId,
+      kind: "authored_update",
+      writer: companionId,
+      // 2026-09-14: a bare state_update's cause IS its open session. Before this the row carried
+      // session_id + detail but no cause, so rebuild emitted no `moved_by` edge for it and the
+      // orient block could only say "you set it". The Claude.ai close ritual moves floats through
+      // THIS verb ("update my state: acuity 0.78") before the close, never inside the close
+      // payload; the executor resolves the open session for (companion, surface) and passes the
+      // request text. No session (PATCH /soma, the MCP tool) -> no cause, still a history row.
+      cause_table: sessionId ? "sessions" : null,
+      cause_id: sessionId,
+      session_id: sessionId,
+      detail: attribution?.detail ?? null,
+      version_after: (prior?.version ?? 0) + 1,
+      created_at: now,
+    };
+    const moved = diffFloats(before, writtenFloats, base);
+    events = assignSomaEventIds([
+      ...moved,
+      ...enumAxisEvents({ ...before, ...writtenFloats }, enumWords, new Set(moved.map((e) => e.float_key)), base),
+    ], now);
+  }
 
   if (events.length > 0) {
     await env.DB.batch([updateStmt, ...somaEventAndEdgeStatements(env, events, prevEventIds)]);

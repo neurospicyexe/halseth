@@ -133,6 +133,30 @@ describe("updateCompanionState (canonical SOMA write helper)", () => {
     expect(updateCall!.binds).toContain("autonomous-processing");
   });
 
+  it("B37: Drevan's enum words write one authored_update per axis, attributed to the session, word in detail", async () => {
+    const { env, calls } = makeRecordingEnv();
+    const result = await updateCompanionState(
+      env, "drevan", { heat: "warm", reach: "present", weight: "holding" },
+      { session_id: "0c4f8966", detail: "update my state: heat warm, reach present, weight holding" },
+    );
+    expect(result.ok).toBe(true);
+    const events = calls.filter(c => /INTO companion_soma_events/i.test(c.sql));
+    expect(events.map(e => e.binds[2]).sort()).toEqual(["soma_float_1", "soma_float_2", "soma_float_3"]);
+    for (const e of events) {
+      // kind, writer, cause_table, cause_id, session_id
+      expect(e.binds.slice(6, 11)).toEqual(["authored_update", "drevan", "sessions", "0c4f8966", "0c4f8966"]);
+    }
+    expect(events.find(e => e.binds[2] === "soma_float_2")!.binds[12]).toBe("reach: present");
+    // The floats are NOT written: the word stays a word.
+    expect(calls.find(c => c.sql.startsWith("UPDATE"))!.sql).not.toContain("soma_float");
+  });
+
+  it("B37: a mood-only write still emits no soma event", async () => {
+    const { env, calls } = makeRecordingEnv();
+    await updateCompanionState(env, "drevan", { current_mood: "tender" });
+    expect(calls.some(c => /INTO companion_soma_events/i.test(c.sql))).toBe(false);
+  });
+
   it("writes Gaia's stillness/density/perimeter dialect (already vocab-translated to soma_float_*)", async () => {
     const { env, calls } = makeRecordingEnv();
 

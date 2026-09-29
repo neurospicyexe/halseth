@@ -270,7 +270,7 @@ describe("somaFieldsFromClosePayload -- the seam the skills now teach", () => {
       .toEqual({ soma_float_1: 0.62 });
   });
 
-  it("end to end: Drevan's word-only close writes the TEXT column and NO float history", async () => {
+  it("end to end: Drevan's word-only close writes the TEXT column AND an authored_close row per axis, float unchanged (B37)", async () => {
     const { env, calls } = makeRecordingEnv({ soma_float_1: 0.7, soma_float_2: 0.6, soma_float_3: 0.5, version: 4 });
     const fields = somaFieldsFromClosePayload({ ...narrative, heat: "warm", reach: "reaching" });
     await sessionClose(env, {
@@ -280,9 +280,31 @@ describe("somaFieldsFromClosePayload -- the seam the skills now teach", () => {
     const stateWrite = calls.find((c) => /UPDATE companion_state SET/i.test(c.sql));
     expect(stateWrite?.sql).toMatch(/heat/);
     expect(stateWrite?.sql).toMatch(/reach/);
-    // heat/reach/weight are TEXT columns and are NOT the fermentation floats, so there is no
-    // authored_close event for them -- the float history tracks soma_float_1..3 only.
-    expect(calls.filter((c) => /INSERT (OR IGNORE )?INTO companion_soma_events/i.test(c.sql)).length).toBe(0);
+    // The word is NOT translated onto the float (therlo is the gap between the two), but the
+    // authorship IS recorded: before this he had zero authored events ever.
+    expect(stateWrite?.sql).not.toMatch(/soma_float/);
+    const events = calls.filter((c) => /INSERT (OR IGNORE )?INTO companion_soma_events/i.test(c.sql));
+    expect(events.length).toBe(2);
+    // Column order: id, companion_id, float_key, before, after, delta, kind, writer, cause_table,
+    // cause_id, session_id, version_after, detail, created_at.
+    const heat = events.find((e) => e.binds[2] === "soma_float_1")!;
+    expect(heat.binds.slice(1, 9)).toEqual(["drevan", "soma_float_1", 0.7, 0.7, 0, "authored_close", "drevan", "handover_packets"]);
+    expect(heat.binds[10]).toBe("sess-dre");
+    expect(heat.binds[12]).toBe("heat: warm");
+    const reach = events.find((e) => e.binds[2] === "soma_float_2")!;
+    expect(reach.binds[12]).toBe("reach: reaching");
+    expect(events.some((e) => e.binds[2] === "soma_float_3")).toBe(false); // weight was not authored
+  });
+
+  it("an axis whose float ALSO moved in the same close gets one row, not two (B37)", async () => {
+    const { env, calls } = makeRecordingEnv({ soma_float_1: 0.7, soma_float_2: 0.6, soma_float_3: 0.5, version: 4 });
+    await sessionClose(env, {
+      session_id: "sess-dre", spine: "vevi", last_real_thing: "the spiral held",
+      motion_state: "in_motion", companionId: "drevan", somaFields: { heat: "running-hot", soma_float_1: 0.9 },
+    });
+    const events = calls.filter((c) => /INSERT (OR IGNORE )?INTO companion_soma_events/i.test(c.sql));
+    expect(events.length).toBe(1);
+    expect(events[0]!.binds.slice(2, 5)).toEqual(["soma_float_1", 0.7, 0.9]);
   });
 
   it("end to end: an axis WORD in the close context reaches the float column and its history row", async () => {

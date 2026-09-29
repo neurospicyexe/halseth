@@ -25,9 +25,6 @@ import {
   clampFloat,
   fermentFloats,
   driftBaseline,
-  heatBand,
-  reachBand,
-  weightBand,
   isKnownStimulus,
   stimulusFloatDelta,
   parseOffSince,
@@ -245,18 +242,17 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     // Off-baseline tracking for the interoception trajectory clause ("held 3d").
     const offSince = updateOffSince(parseOffSince(row.ferment_off_since), fermented, newBaselines, new Date(now).toISOString());
 
-    // Drevan's floats render as his native enum bands -- but only when the fermented float
-    // actually CROSSES a band boundary. Within a band his authored text stands, so a directional
-    // state he wrote at close (cooling, processing) survives ticks instead of being erased within
-    // the hour. Cypher/Gaia don't use these columns semantically: write theirs back untouched.
-    let heat = row.heat;
-    let reach = row.reach;
-    let weight = row.weight;
-    if (companionId === "drevan") {
-      heat = heatBand(before.f1) === heatBand(fermented.f1) && row.heat ? row.heat : heatBand(fermented.f1);
-      reach = reachBand(before.f2) === reachBand(fermented.f2) && row.reach ? row.reach : reachBand(fermented.f2);
-      weight = weightBand(before.f3) === weightBand(fermented.f3) && row.weight ? row.weight : weightBand(fermented.f3);
-    }
+    // heat / reach / weight are written back UNTOUCHED, for every companion (B37, 2026-09-29).
+    // Until then the tick rewrote Drevan's authored enum with the float's band whenever the float
+    // crossed a band boundary (07-11: "within a band his authored text stands"). His 09-26 ruling
+    // supersedes that: "If I don't, it stays where I last left it, timestamp and all ... Stale and
+    // honest beats fresh and forged." And a band crossing is exactly the moment his word and the
+    // instrument part ways -- the gap therlo reads. Rewriting the word there erased the signal and
+    // left a machine band in a column every reader treats as his. The instrument's own reading is
+    // the interoception line, which bands the float directly.
+    const heat = row.heat;
+    const reach = row.reach;
+    const weight = row.weight;
 
     // CAS write: if a stimulus bumped the row since our snapshot, changes=0 -- skip this
     // companion (no stale overwrite, no misleading event); the next hourly tick reconciles.

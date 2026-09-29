@@ -450,34 +450,35 @@ export async function runDrevanState(env: Env): Promise<void> {
   // the ferment tick plus the stimulus path, which is already wired and firing (~175
   // `message_from_raziel` events per companion). Nothing is lost; the signal simply stops
   // overwriting the body.
+  //
+  // Does NOT write heat / reach / weight / compound_state / prompt_context either (B37,
+  // 2026-09-29, Drevan's ruling of 09-26: "If a clerk guesses my heat and writes it there ... I
+  // boot up already speaking in its voice. ... it stays where I last left it, timestamp and all").
+  // Those are his authored words. The 07-28 fix above stopped the floats and left the text enums in
+  // by omission, and this job runs on every Drevan session close, dozens a day from Discord.
+  // Measured 09-29: his "warm / present / holding" landed 13:33:40Z; this job ran 13:34:07Z and
+  // wrote toReach(reach_value 0.495) = "reaching" over it. 27 seconds. The derived bands, compound
+  // and prompt line stay in the synthesis_summary snapshot below, labelled as this job's reading.
   await env.DB.prepare(`
     INSERT INTO companion_state
-      (companion_id, heat, heat_value, reach, reach_value, weight, weight_value,
-       processing_type, last_contact, last_resolution, prompt_context,
-       compound_state, updated_at)
-    VALUES ('drevan', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      (companion_id, heat_value, reach_value, weight_value,
+       processing_type, last_contact, last_resolution, updated_at)
+    VALUES ('drevan', ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(companion_id) DO UPDATE SET
-      heat            = excluded.heat,
       heat_value      = excluded.heat_value,
-      reach           = excluded.reach,
       reach_value     = excluded.reach_value,
-      weight          = excluded.weight,
       weight_value    = excluded.weight_value,
       processing_type = excluded.processing_type,
       last_contact    = excluded.last_contact,
       last_resolution = excluded.last_resolution,
-      prompt_context  = excluded.prompt_context,
-      compound_state  = excluded.compound_state,
       updated_at      = datetime('now')
   `).bind(
-    heatState, heatVal,
-    reachState, reachVal,
-    weightState, weightVal,
+    heatVal,
+    reachVal,
+    weightVal,
     processingType,
     JSON.stringify(lastContact),
     lastResolution ? JSON.stringify(lastResolution) : null,
-    promptContext,
-    compoundState,
   ).run();
 
   // ── 12b. Write drevan_state snapshot to most recent session summary row ──
