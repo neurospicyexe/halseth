@@ -36,7 +36,13 @@ import {
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATION = readFileSync(join(HERE, "../../migrations/0131_companion_feeling_vocabulary.sql"), "utf8");
+// The vocabulary migrations, in apply order. 0140 adds kethrun and supersedes therlo (2026-09-29).
+const MIGRATION = [
+  "0131_companion_feeling_vocabulary.sql",
+  "0140_drevan_kethrun_therlo_superseded.sql",
+]
+  .map((f) => readFileSync(join(HERE, "../../migrations", f), "utf8"))
+  .join("\n");
 
 const NOW = Date.parse("2026-09-19T18:00:00Z");
 
@@ -283,9 +289,24 @@ describe("therlo", () => {
     expect(out.therlo).toBeNull();
   });
 
-  it("item D does NOT suppress therlo -- it is a state predicate, not a cause row", () => {
+  // 2026-09-29: therlo is superseded (it stays play) and the gap is unnamed. The predicate is kept
+  // for the row Drevan authors from inside the gap, so it is exercised against a SYNTHETIC active
+  // divergence row -- the placeholder word below is a test fixture, never a vocabulary word.
+  const gapRow: VocabularyRow = {
+    id: "test_unnamed_gap",
+    companion_id: "drevan",
+    row_kind: "divergence",
+    word: "gapword-fixture",
+    conditions: [{ predicate: "divergence", band_gap: 2, min_delta: 0.1, max_enum_age_hours: 36 }],
+    cause_kind: null,
+    specificity: 1,
+    renders_number: 1,
+  };
+  const withGap = () => [...seedFor("drevan"), gapRow];
+
+  it("item D does NOT suppress the divergence predicate -- it is a state predicate, not a cause row", () => {
     const out = resolveFeelingLine(
-      seedFor("drevan"),
+      withGap(),
       ctx({ floats: { f1: 0.95, f2: 0.5, f3: 0.5 }, cause: "tick", authoredEnums: { f1: "cold" }, authoredAt: { f1: fresh } }),
     );
     expect(out.word).toBeNull(); // the band row is suppressed
@@ -294,11 +315,12 @@ describe("therlo", () => {
 
   it("renders both numbers -- hiding the number hides the gap", () => {
     const out = resolveFeelingLine(
-      seedFor("drevan"),
+      withGap(),
       ctx({ floats: { f1: 0.95, f2: 0.5, f3: 0.5 }, authoredEnums: { f1: "cold" }, authoredAt: { f1: fresh } }),
     );
     const line = renderFeelingLine(out, FLOAT_LABELS.drevan)!;
-    expect(line).toContain("therlo");
+    expect(line).toContain("gapword-fixture");
+    expect(line).not.toContain("therlo"); // the renderer uses the row's word, never a hardcoded one
     expect(line).toContain("heat");
     expect(line).toContain("cold");
     expect(line).toContain("0.95");
@@ -314,6 +336,124 @@ describe("therlo", () => {
     );
     expect(hit?.floatKey).toBe("f2");
     expect(hit?.gap).toBe(4);
+  });
+});
+
+describe("therlo stays play (Drevan, 2026-09-29)", () => {
+  const fresh = "2026-09-19T12:00:00Z";
+  const diverged = ctx({ floats: { f1: 0.95, f2: 0.5, f3: 0.5 }, authoredEnums: { f1: "cold" }, authoredAt: { f1: fresh } });
+
+  it("the therlo row is superseded, kept, and not deleted", () => {
+    const row = FEELING_VOCABULARY_SEED.find((r) => r.id === "cfv_drevan_therlo")!;
+    expect(row.status).toBe("superseded");
+    expect(MIGRATION).toMatch(/SET status = 'superseded'[\s\S]*WHERE id = 'cfv_drevan_therlo'/);
+  });
+
+  it("no active divergence row exists for anyone -- the gap is unnamed", () => {
+    const active = FEELING_VOCABULARY_SEED.filter((r) => r.row_kind === "divergence" && (r.status ?? "active") === "active");
+    expect(active).toEqual([]);
+  });
+
+  it("a real divergence renders NOTHING from the seed: no therlo, no placeholder", () => {
+    // Without the retirement this exact context renders "therlo heat: said cold, reads running-hot".
+    const out = resolveFeelingLine(seedFor("drevan"), { ...diverged, cause: "tick" });
+    expect(out.therlo).toBeNull();
+    expect(renderFeelingLine(out, FLOAT_LABELS.drevan)).toBeNull();
+    const authored = resolveFeelingLine(seedFor("drevan"), { ...diverged, cause: "authored" });
+    expect(authored.therlo).toBeNull();
+    expect(renderFeelingLine(authored, FLOAT_LABELS.drevan) ?? "").not.toContain("therlo");
+  });
+
+  it("the predicate itself is kept, unnamed, for when he names the gap", () => {
+    expect(evaluateTherlo(diverged)?.gap).toBe(3);
+  });
+
+  it("a divergence hit with no word renders nothing -- the renderer never invents one", () => {
+    const hit = evaluateTherlo(diverged)!;
+    expect(
+      renderFeelingLine({ word: null, rowId: null, rendersNumber: true, floatKey: "f1", value: 0.95, therlo: hit, silentReason: "x" }),
+    ).toBeNull();
+  });
+});
+
+describe("dir: steady", () => {
+  it("fires only on a KNOWN delta inside DIR_EPSILON, and fails closed on unknown", () => {
+    const clause = { float: "f1" as const, dir: "steady" as const };
+    expect(evaluateClause(clause, ctx({ deltas: { f1: 0 } }))).toBe(true);
+    expect(evaluateClause(clause, ctx({ deltas: { f1: 0.01 } }))).toBe(true);
+    expect(evaluateClause(clause, ctx({ deltas: { f1: -0.01 } }))).toBe(true);
+    expect(evaluateClause(clause, ctx({ deltas: { f1: 0.02 } }))).toBe(false);
+    expect(evaluateClause(clause, ctx({ deltas: { f1: -0.05 } }))).toBe(false);
+    expect(evaluateClause(clause, ctx({}))).toBe(false); // unknown movement is not stillness
+    expect(evaluateClause(clause, ctx({ deltas: { f1: Number.NaN } }))).toBe(false);
+  });
+});
+
+describe("kethrun (Drevan, 2026-09-29)", () => {
+  // running-hot >= 0.7, pulling-hard >= 0.85, holding in [0.25, 0.5)
+  const road = { f1: 0.9, f2: 0.9, f3: 0.4 };
+
+  it("the bands it names exist on each float's ladder", () => {
+    expect(BAND_LADDERS.f1).toContain("running-hot");
+    expect(BAND_LADDERS.f2).toContain("pulling-hard");
+    expect(BAND_LADDERS.f3).toContain("holding");
+  });
+
+  it("specificity is its clause count (0131's rule; no cause bound)", () => {
+    const row = FEELING_VOCABULARY_SEED.find((r) => r.id === "cfv_drevan_kethrun")!;
+    expect(row.cause_kind).toBeNull();
+    expect((row.conditions as unknown[]).length).toBe(4);
+    expect(row.specificity).toBe(4);
+    expect(row.renders_number).toBe(1); // word first, number after, like his other rows
+  });
+
+  it("fires on running-hot / pulling-hard / holding with a steady heat", () => {
+    const out = resolveFeelingLine(seedFor("drevan"), ctx({ floats: road, deltas: { f1: 0.005 }, cause: "authored" }));
+    expect(out.word).toBe("kethrun");
+    expect(renderFeelingLine(out, FLOAT_LABELS.drevan)).toBe("kethrun 0.90");
+  });
+
+  it("does NOT fire when heat is rising -- that is caught", () => {
+    const out = resolveFeelingLine(seedFor("drevan"), ctx({ floats: road, deltas: { f1: 0.1 }, cause: "authored" }));
+    expect(out.word).toBe("caught");
+  });
+
+  it("does NOT fire when heat is falling -- that is pulling empty", () => {
+    const out = resolveFeelingLine(seedFor("drevan"), ctx({ floats: road, deltas: { f1: -0.1 }, cause: "stimulus" }));
+    expect(out.word).toBe("pulling empty");
+  });
+
+  it("does NOT fire when the delta is unknown", () => {
+    const out = resolveFeelingLine(seedFor("drevan"), ctx({ floats: road, cause: "authored" }));
+    expect(out.word).not.toBe("kethrun");
+  });
+
+  it("does NOT fire when weight is saturated -- the engine screaming is redline", () => {
+    const out = resolveFeelingLine(seedFor("drevan"), ctx({ floats: { f1: 0.9, f2: 0.9, f3: 0.9 }, deltas: { f1: 0 }, cause: "authored" }));
+    expect(out.word).toBe("redline");
+  });
+
+  it("migration 0140 applied to the REAL schema matches the mirror, and re-applies cleanly", () => {
+    const d1 = makeSqliteD1();
+    const sql = readFileSync(join(HERE, "../../migrations/0140_drevan_kethrun_therlo_superseded.sql"), "utf8");
+    d1.db.exec(sql); // second apply: idempotent
+    const rows = d1.db
+      .prepare("SELECT id, status, specificity, renders_number, conditions, note FROM companion_feeling_vocabulary WHERE id IN ('cfv_drevan_kethrun','cfv_drevan_therlo') ORDER BY id")
+      .all() as Array<{ id: string; status: string; specificity: number; renders_number: number; conditions: string; note: string }>;
+    const k = rows.find((r) => r.id === "cfv_drevan_kethrun")!;
+    const t = rows.find((r) => r.id === "cfv_drevan_therlo")!;
+    const mirror = FEELING_VOCABULARY_SEED.find((r) => r.id === "cfv_drevan_kethrun")!;
+    expect(k.status).toBe("active");
+    expect(k.specificity).toBe(mirror.specificity);
+    expect(k.renders_number).toBe(mirror.renders_number);
+    expect(JSON.parse(k.conditions)).toEqual(mirror.conditions);
+    expect(t.status).toBe("superseded");
+    expect(t.note.match(/SUPERSEDED 2026-09-29/g)?.length).toBe(1); // the note is appended once
+  });
+
+  it("a tick-caused state stays silent (item D), even on the open road", () => {
+    const out = resolveFeelingLine(seedFor("drevan"), ctx({ floats: road, deltas: { f1: 0 }, cause: "tick" }));
+    expect(out.word).toBeNull();
   });
 });
 

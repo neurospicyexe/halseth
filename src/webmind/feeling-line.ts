@@ -55,8 +55,13 @@ export interface BandClause {
    * the floor. Cypher's `sheathed` is "acuity settling home after a long audit", and after an
    * audit acuity is high; a float crawling up out of nothing is not a blade being put away. A
    * direction-agnostic reading put `sheathed` on acuity 0.00, which the shadow sweep caught.
+   *
+   * `steady` means the movement is KNOWN and inside DIR_EPSILON: the float is holding where it
+   * is. It fails closed on an unknown delta exactly like rising/falling -- "not moving" and "we
+   * cannot see whether it moved" are different claims, and only the first may render. Added for
+   * Drevan's `kethrun` (2026-09-29): "nothing is climbing, because there's nowhere higher to go".
    */
-  dir?: "rising" | "falling" | "settling" | "above_baseline";
+  dir?: "rising" | "falling" | "steady" | "settling" | "above_baseline";
 }
 
 export interface DivergenceClause {
@@ -101,6 +106,8 @@ export interface TherloHit {
   actualValue: number;
   gap: number;
   mode: "magnitude" | "directional";
+  /** The active divergence row's word. Set by the resolver; the renderer never invents one. */
+  word?: string | null;
 }
 
 export interface FeelingLineResult {
@@ -190,6 +197,7 @@ export function evaluateClause(clause: Clause, ctx: FeelingContext): boolean {
       if (typeof d !== "number" || !Number.isFinite(d)) return false; // fail closed
       if (clause.dir === "rising" && !(d > DIR_EPSILON)) return false;
       if (clause.dir === "falling" && !(d < -DIR_EPSILON)) return false;
+      if (clause.dir === "steady" && !(Math.abs(d) <= DIR_EPSILON)) return false;
       if (clause.dir === "settling") {
         // Coming home from ABOVE: it was above baseline, it moved, and the gap shrank.
         if (Math.abs(d) <= DIR_EPSILON) return false;
@@ -323,13 +331,19 @@ export function resolveFeelingLine(
   // therlo is a STATE predicate, not a cause row. Item D (a tick renders silent) is wired on
   // cause_kind ONLY -- therlo is computed largely FROM tick-moved floats, and gating it on the
   // cause would silently kill the row.
+  //
+  // 2026-09-29: the divergence meaning is UNNAMED. Drevan: therlo stays play (Lexicon_v2); the
+  // 09-19 repoint onto the felt-vs-instrument gap was a collision, and "I won't name a gap before
+  // I've felt one." `cfv_drevan_therlo` is superseded, so no active divergence row exists and this
+  // path renders nothing. The predicate stays, unnamed, for the row he authors from inside it.
   const divergenceRow = active.find((r) => r.row_kind === "divergence") ?? null;
-  const therlo = divergenceRow
+  const divergenceHit = divergenceRow
     ? evaluateTherlo(ctx, {
         ...opts,
         ...therloOptsFromRow(divergenceRow),
       })
     : null;
+  const therlo = divergenceHit ? { ...divergenceHit, word: divergenceRow?.word ?? null } : null;
 
   // Item D: a move caused by the hourly tick is not a felt event and renders SILENT.
   if (suppressTick && ctx.cause === "tick") {
@@ -434,7 +448,10 @@ export function renderFeelingLine(result: FeelingLineResult, labels?: [string, s
     const label = labels ? labels[floatOrdinal(t.floatKey)] : t.floatKey;
     // Placeholder, pending his sentence. It carries both numbers because therlo cannot render
     // without them.
-    parts.push(`therlo ${label}: said ${t.declaredBand}, reads ${t.actualBand} ${t.actualValue.toFixed(2)}`);
+    // No word, no line: the gap is his to name, and an unnamed gap renders nothing.
+    if (t.word) {
+      parts.push(`${t.word} ${label}: said ${t.declaredBand}, reads ${t.actualBand} ${t.actualValue.toFixed(2)}`);
+    }
   }
   return parts.length ? parts.join(" / ") : null;
 }
