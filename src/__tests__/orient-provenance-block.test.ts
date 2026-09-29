@@ -70,6 +70,15 @@ describe("provenanceBlock -- phrasing per kind", () => {
       .toContain("acuity 0.78 (was 0.62) — you set it 2026-09-11");
   });
 
+  it("B39: an enum-axis authoring (float unchanged) renders the value alone and quotes his word", () => {
+    const out = provenanceBlock([entry({
+      label: "heat", writer: "drevan", kind: "authored_update", before_value: 0.85, after_value: 0.85, delta: 0,
+      cause_table: null, cause_id: null, cause_label: null, detail: "heat: warm",
+    })]);
+    expect(out).toContain('heat 0.85 — you set it 2026-09-11: "heat: warm"');
+    expect(out).not.toContain("(was");
+  });
+
   it("tick says it settled toward home, and names silence when the detail says so", () => {
     expect(provenanceBlock([entry({ kind: "tick" })])).toContain("settled toward home (tick)");
     expect(provenanceBlock([entry({ kind: "tick", detail: "silence" })])).toContain("settled toward home (tick, silence)");

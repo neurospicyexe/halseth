@@ -810,6 +810,9 @@ function provenanceValue(e: SomaProvenanceRow): string {
   if (e.after_value === null || !Number.isFinite(e.after_value)) return e.label;
   const now = e.after_value.toFixed(2);
   if (e.before_value === null || !Number.isFinite(e.before_value)) return `${e.label} ${now}`;
+  // B39 (2026-09-29): an enum-axis authoring (Drevan's word) records the float unchanged, so
+  // "(was 0.85)" beside "0.85" would read as a glitch. The word itself is quoted by the cause.
+  if (Math.abs(e.after_value - e.before_value) <= 1e-9) return `${e.label} ${now}`;
   return `${e.label} ${now} (was ${e.before_value.toFixed(2)})`;
 }
 
