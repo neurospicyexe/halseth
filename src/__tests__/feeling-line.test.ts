@@ -551,6 +551,20 @@ describe("loader", () => {
     }
   });
 
+  it("reads baselines from the real soma_float_N_baseline columns (was soma_baseline_N: every baseline read 0.5)", () => {
+    const ctx = buildFeelingContext(
+      "cypher",
+      {
+        soma_float_1: 0.78, soma_float_2: 0.85, soma_float_3: 0.61,
+        soma_float_1_baseline: 0.746, soma_float_2_baseline: 0.62, soma_float_3_baseline: 0.4,
+      } as never,
+      [],
+      [],
+      NOW,
+    );
+    expect(ctx.baselines).toEqual({ f1: 0.746, f2: 0.62, f3: 0.4 });
+  });
+
   it("the three reads depend on the companion id ALONE, so they can ride the boot Promise.all", () => {
     for (const sql of [activeVocabularySql(), latestSomaEventsSql(), latestAuthoredSomaEventsSql()]) {
       expect(sql).toContain("?1");

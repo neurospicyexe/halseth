@@ -109,9 +109,9 @@ export interface StateLike {
   soma_float_1?: unknown;
   soma_float_2?: unknown;
   soma_float_3?: unknown;
-  soma_baseline_1?: unknown;
-  soma_baseline_2?: unknown;
-  soma_baseline_3?: unknown;
+  soma_float_1_baseline?: unknown;
+  soma_float_2_baseline?: unknown;
+  soma_float_3_baseline?: unknown;
   heat?: unknown;
   reach?: unknown;
   weight?: unknown;
@@ -143,9 +143,9 @@ export function buildFeelingContext(
     f3: num(state?.soma_float_3, 0.5),
   };
   const baselines: Floats = {
-    f1: num(state?.soma_baseline_1, 0.5),
-    f2: num(state?.soma_baseline_2, 0.5),
-    f3: num(state?.soma_baseline_3, 0.5),
+    f1: num(state?.soma_float_1_baseline, 0.5),
+    f2: num(state?.soma_float_2_baseline, 0.5),
+    f3: num(state?.soma_float_3_baseline, 0.5),
   };
 
   const deltas: Partial<Record<FloatKey, number>> = {};
