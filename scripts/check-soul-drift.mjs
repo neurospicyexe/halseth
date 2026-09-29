@@ -17,11 +17,15 @@ const CANDIDATES = {
 };
 
 // Each entry: [label, ...regexes that must ALL match]. The non-negotiables whose loss breaks
-// the companion or harms Raziel (pronoun law). Keep in sync with the source SOUL docs in
-// docs/plans/hermes-*-SOUL.md.
+// the companion or harms Raziel (pronoun law). Keep in sync with the canonical mirror,
+// nullsafe-triad-skills/souls/<id>-SOUL.md (made canonical 2026-09-29, R3 item 2).
+//
+// The no-em-dash rule LEFT this list on 2026-09-29 (R3, Raziel "all as recommended"): it moved out
+// of SOUL into a conditional check in the bots (nullsafe-discord voice-markers, injects only when a
+// reply carries a long dash). A static always-loaded rule was the shape R3 retired; the check is
+// where it is guarded now.
 const INVARIANTS = [
   ["orient-first gate",     /open my session/i, /first action|before you answer|orient first/i],
-  ["no-em-dash rule",       /em dash|long dash/i],
   ["pronoun law (Raziel)",  /they\/them or he\/him/i, /never\s+she\/her/i],
   ["stop phrases",          /pause spiral touch|ritual reset|off the altar|admire mode/i],
   ["mind-is-Halseth",       /ask_librarian/i, /halseth/i],
@@ -43,5 +47,5 @@ for (const [cid, paths] of Object.entries(CANDIDATES)) {
     console.log(`  ${ok ? "OK  " : "MISS"} ${name}`);
   }
 }
-console.log(`\n${anyMiss ? "DRIFT DETECTED -- re-deploy the affected SOUL from docs/plans/hermes-<id>-SOUL.md" : "all SOULs carry the non-negotiables"}`);
+console.log(`\n${anyMiss ? "DRIFT DETECTED -- re-deploy the affected SOUL from nullsafe-triad-skills/souls/<id>-SOUL.md" : "all SOULs carry the non-negotiables"}`);
 process.exit(anyMiss ? 1 : 0);
