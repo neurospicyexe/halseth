@@ -60,7 +60,17 @@ export const REACH_CLASS_OF: Readonly<Record<string, ReachClass>> = {
   show_made: "own",
 };
 
-export function reachClassOf(actionType: string): ReachClass | null {
+/**
+ * Whose check-in asks nothing. Mirrors `CHECK_IN_ASKS_NOTHING` in nullsafe-discord
+ * `metronome-decide.ts`; keep the two in step. Gaia, show-back 2026-09-28: "My check-in asks
+ * nothing. It stays through care_hold; it is presence in another shape." And on Q1: "presence is
+ * not care". So her check-in counts as presence, outside the care ceiling. Cypher's and Drevan's
+ * are questions and stay care.
+ */
+export const CHECK_IN_ASKS_NOTHING: ReadonlySet<string> = new Set(["gaia"]);
+
+export function reachClassOf(actionType: string, companion?: string): ReachClass | null {
+  if (actionType === "check_in_on_raziel" && companion && CHECK_IN_ASKS_NOTHING.has(companion)) return "presence";
   return REACH_CLASS_OF[actionType] ?? null;
 }
 
@@ -154,7 +164,7 @@ export type ReserveResult = { reserved: true; id: number } | { reserved: false; 
  * informational and never decides anything.
  */
 export async function reserveReach(db: D1Database, input: ReserveInput, cfg: ReachConfig = DEFAULT_REACH_CONFIG): Promise<ReserveResult> {
-  const cls = reachClassOf(input.actionType);
+  const cls = reachClassOf(input.actionType, input.companion);
   if (!cls) return { reserved: false, reason: "not_a_dm_move" };
 
   const qKey = quietWindowKey(input.nowIso, cfg);

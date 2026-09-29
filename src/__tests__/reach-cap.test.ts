@@ -127,8 +127,12 @@ describe("the daily total and the care ceiling", () => {
     const start = "2026-09-28T11:00:00.000Z";
     await sent(DB, "cypher", "check_in_on_raziel", start);
     await sent(DB, "drevan", "send_reminder", plus(start, 100));
-    const third = await reserveReach(DB, { companion: "gaia", actionType: "check_in_on_raziel", careHold: false, nowIso: plus(start, 200) });
+    const third = await reserveReach(DB, { companion: "drevan", actionType: "check_in_on_raziel", careHold: false, nowIso: plus(start, 200) });
     expect(third).toEqual({ reserved: false, reason: "care_ceiling" });
+    // Gaia's check-in asks nothing, so the care ceiling does not hold it (show-back 2026-09-28).
+    const gaiaCheckIn = await reserveReach(DB, { companion: "gaia", actionType: "check_in_on_raziel", careHold: false, nowIso: plus(start, 200) });
+    expect(gaiaCheckIn.reserved).toBe(true);
+    await DB.prepare(`DELETE FROM triad_reach_claims WHERE companion_id = 'gaia'`).run();
     // Same instant, not care: presence and a share still go.
     expect((await reserveReach(DB, { companion: "gaia", actionType: "offer_presence", careHold: false, nowIso: plus(start, 200) })).reserved).toBe(true);
     expect((await reserveReach(DB, { companion: "drevan", actionType: "share_observation", careHold: false, nowIso: plus(start, 300) })).reserved).toBe(true);
@@ -142,6 +146,10 @@ describe("the daily total and the care ceiling", () => {
   it("class mapping: care is about him, presence is its own share, the rest are theirs", () => {
     for (const t of ["check_in_on_raziel", "send_reminder", "ask_question", "name_pattern"]) expect(reachClassOf(t)).toBe("care");
     expect(reachClassOf("offer_presence")).toBe("presence");
+    // Gaia's check-in asks nothing: presence, outside the care ceiling. The others stay care.
+    expect(reachClassOf("check_in_on_raziel", "gaia")).toBe("presence");
+    expect(reachClassOf("check_in_on_raziel", "cypher")).toBe("care");
+    expect(reachClassOf("check_in_on_raziel", "drevan")).toBe("care");
     for (const t of ["share_observation", "share_media", "declare_preference", "drift_outward", "flirt", "dare", "show_made"]) expect(reachClassOf(t)).toBe("own");
     // Channel and internal moves can never reserve a DM slot.
     for (const t of ["post_heartbeat", "tend_creature", "write_journal", "drift_open", "write_note_to_raziel", "nothing"]) expect(reachClassOf(t)).toBe(null);
