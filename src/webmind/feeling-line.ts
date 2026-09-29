@@ -358,6 +358,9 @@ export function resolveFeelingLine(
     return (b.row.cause_kind ? 1 : 0) - (a.row.cause_kind ? 1 : 0);
   });
 
+  // TODO(tie): a remaining tie is still resolved by input order (known live case: Cypher `legible`
+  // vs `whetted`, specificity 2, two clauses each; `legible` sorts first). Unreported for now --
+  // surface it in the shadow log before `live`, rather than changing who wins here.
   const top = candidates[0];
   if (!top) return silent("no row matched", therlo, divergenceRow);
   const winner = top.row;

@@ -60,23 +60,39 @@ const FLOAT_KEYS: Record<string, FloatKey> = {
 };
 
 /**
- * The most recent event per float. Two timestamp shapes coexist in `companion_soma_events`
- * (space-form backfill, ISO live), so ordering normalises before it compares -- naive string
- * ordering picks the wrong row.
+ * One event per float: the most recent NON-TICK event (authored / stimulus / autonomous), and only
+ * when a float has never had one, its most recent tick.
+ *
+ * WHY NOT SIMPLY THE NEWEST. The hourly ferment tick writes an event on every float every hour, so
+ * "newest per float" was a tick on nearly every boot and item D (a tick is not a felt event) made
+ * the line permanently silent. The tick is still never NAMED: a float whose only history is ticks
+ * returns its tick row, the cause resolves to `tick`, and the line stays silent exactly as before.
+ * The tick kinds here are the ones causeFromEvent maps to `tick` -- keep the two in step.
+ *
+ * One statement, still bound only on ?1, so the boot does the same three reads it did before.
+ * Two timestamp shapes coexist in `companion_soma_events` (space-form backfill, ISO live), so
+ * ordering normalises before it compares -- naive string ordering picks the wrong row. `id` breaks
+ * an exact-stamp tie deterministically.
  */
+export const TICK_KINDS = ["tick", "drift_shift"] as const;
+
 export function latestSomaEventsSql(): string {
+  const ticks = TICK_KINDS.map((k) => `'${k}'`).join(",");
   return `
-    SELECT e.float_key, e.delta, e.kind, e.detail,
-           replace(e.created_at,' ','T') AS created_at
-      FROM companion_soma_events e
-      JOIN (
-        SELECT float_key, MAX(replace(created_at,' ','T')) AS mx
-          FROM companion_soma_events
-         WHERE companion_id = ?1
-         GROUP BY float_key
-      ) m ON m.float_key = e.float_key
-         AND replace(e.created_at,' ','T') = m.mx
-     WHERE e.companion_id = ?1`;
+    SELECT float_key, delta, kind, detail, created_at
+      FROM (
+        SELECT e.float_key, e.delta, e.kind, e.detail,
+               replace(e.created_at,' ','T') AS created_at,
+               ROW_NUMBER() OVER (
+                 PARTITION BY e.float_key
+                 ORDER BY CASE WHEN e.kind IN (${ticks}) THEN 1 ELSE 0 END,
+                          replace(e.created_at,' ','T') DESC,
+                          e.id DESC
+               ) AS rn
+          FROM companion_soma_events e
+         WHERE e.companion_id = ?1
+      )
+     WHERE rn = 1`;
 }
 
 /** Most recent AUTHORED event per float -- the therlo staleness guard's `authored_at`. */
@@ -148,18 +164,36 @@ export function buildFeelingContext(
     f3: num(state?.soma_float_3_baseline, 0.5),
   };
 
+  // DIRECTION COMES FROM THE CAUSAL EVENT. Each float's delta is the move of the same event that
+  // supplies the cause (latestSomaEventsSql prefers the newest non-tick), not the hourly decay
+  // since. The word names a felt move, so `rising`/`falling` must describe THAT move; pairing a
+  // stimulus cause with a tick's drift would name one event and describe another. Known
+  // approximation: `settling` reconstructs `before` as current value minus that delta, and ticks
+  // since the event have moved the current value, so it reads the felt move against where the
+  // float sits now.
   const deltas: Partial<Record<FloatKey, number>> = {};
   let newestAt = "";
   let cause: CauseKind | null = null;
+  let newestTickAt = "";
+  let tickCause: CauseKind | null = null;
   for (const e of events) {
     const key = FLOAT_KEYS[e.float_key];
     if (!key) continue;
     if (typeof e.delta === "number" && Number.isFinite(e.delta)) deltas[key] = e.delta;
-    if (e.created_at > newestAt) {
+    const c = causeFromEvent(e.kind, e.detail);
+    // Across floats, too, a felt event outranks a newer tick on another float. Only when every
+    // float's row is a tick does the cause resolve to `tick` -- which renders silent (item D).
+    if (c === "tick") {
+      if (e.created_at > newestTickAt) {
+        newestTickAt = e.created_at;
+        tickCause = c;
+      }
+    } else if (e.created_at > newestAt) {
       newestAt = e.created_at;
-      cause = causeFromEvent(e.kind, e.detail);
+      cause = c;
     }
   }
+  if (!newestAt) cause = tickCause;
 
   const authoredEnums: Partial<Record<FloatKey, string>> = {};
   if (companionId === "drevan") {

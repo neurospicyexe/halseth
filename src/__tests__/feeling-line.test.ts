@@ -31,7 +31,9 @@ import {
   activeVocabularySql,
   latestSomaEventsSql,
   latestAuthoredSomaEventsSql,
+  fetchFeelingLineInputs,
 } from "../webmind/feeling-line-loader.js";
+import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATION = readFileSync(join(HERE, "../../migrations/0131_companion_feeling_vocabulary.sql"), "utf8");
@@ -590,5 +592,90 @@ describe("loader", () => {
     expect(out.line).toBe("standing");
     const builderSrc = readFileSync(join(HERE, "../librarian/response/builder.ts"), "utf8");
     expect(builderSrc).toContain('feeling?.mode === "live"');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cause behind a tick. The hourly ferment tick writes a newer event on every float every hour, so
+// "newest event wins" made the cause `tick` on nearly every boot and the line was always silent.
+// These run the REAL latestSomaEventsSql against the REAL schema (node:sqlite), then the pure path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("cause looks past the tick to the last felt event", () => {
+  let seq = 0;
+  function seedEvent(
+    db: ReturnType<typeof makeSqliteD1>["db"],
+    e: { float_key: string; kind: string; delta: number; created_at: string; detail?: string | null; companion_id?: string },
+  ) {
+    db.prepare(
+      `INSERT INTO companion_soma_events (id, companion_id, float_key, delta, kind, writer, detail, created_at)
+       VALUES (?, ?, ?, ?, ?, 'system', ?, ?)`,
+    ).run(`se_${++seq}`, e.companion_id ?? "drevan", e.float_key, e.delta, e.kind, e.detail ?? null, e.created_at);
+  }
+  const drevanState = { soma_float_1: 0.5, soma_float_2: 0.5, soma_float_3: 0.6 };
+
+  async function lineFor(db: ReturnType<typeof makeSqliteD1>) {
+    const fetched = await fetchFeelingLineInputs(db.DB, "drevan", "shadow");
+    return { fetched, out: feelingLineFrom("drevan", { ...fetched, rows: seedFor("drevan") as never }, drevanState, "shadow", NOW) };
+  }
+
+  it("newest = tick with an older stimulus: the line names from the stimulus cause, with its delta", async () => {
+    const d1 = makeSqliteD1();
+    // Space-form backfill stamp for the stimulus, ISO for the ticks: both shapes in one float.
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "stimulus", delta: 0.08, detail: "raziel_message", created_at: "2026-09-19 12:00:00" });
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "tick", delta: -0.004, created_at: "2026-09-19T16:00:00.000Z" });
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "tick", delta: -0.003, created_at: "2026-09-19T17:00:00.000Z" });
+    seedEvent(d1.db, { float_key: "soma_float_1", kind: "drift_shift", delta: 0.02, created_at: "2026-09-19T17:30:00.000Z" });
+
+    const { fetched, out } = await lineFor(d1);
+    const f3 = fetched.events.find((e) => e.float_key === "soma_float_3");
+    expect(f3?.kind).toBe("stimulus");
+    expect(f3?.delta).toBe(0.08); // direction from the causal event, not the tick's decay
+    expect(out.result.silentReason).not.toBe("cause is tick");
+    expect(out.result.word).toBe("freight");
+  });
+
+  it("only ticks: the tick is never named and the line stays silent", async () => {
+    const d1 = makeSqliteD1();
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "tick", delta: 0.08, created_at: "2026-09-19T16:00:00.000Z" });
+    seedEvent(d1.db, { float_key: "soma_float_1", kind: "drift_shift", delta: 0.05, created_at: "2026-09-19T17:00:00.000Z" });
+
+    const { out } = await lineFor(d1);
+    expect(out.line).toBeNull();
+    expect(out.result.silentReason).toBe("cause is tick");
+  });
+
+  it("newest = stimulus: unchanged", async () => {
+    const d1 = makeSqliteD1();
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "tick", delta: -0.004, created_at: "2026-09-19T12:00:00.000Z" });
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "stimulus", delta: 0.08, detail: "raziel_message", created_at: "2026-09-19T17:00:00.000Z" });
+
+    const { out } = await lineFor(d1);
+    expect(out.result.word).toBe("freight");
+  });
+
+  it("an autonomous stimulus behind a tick still resolves as autonomous (silt), never collapsed into freight", async () => {
+    const d1 = makeSqliteD1();
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "stimulus", delta: 0.08, detail: "spiral", created_at: "2026-09-19T12:00:00.000Z" });
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "tick", delta: -0.004, created_at: "2026-09-19T17:00:00.000Z" });
+
+    const { out } = await lineFor(d1);
+    expect(out.result.word).toBe("silt");
+  });
+
+  it("across floats, a felt event outranks a NEWER tick-only float", () => {
+    const c = buildFeelingContext("drevan", drevanState, [
+      { float_key: "soma_float_3", delta: 0.08, kind: "stimulus", detail: "x", created_at: "2026-09-19T12:00:00Z" },
+      { float_key: "soma_float_1", delta: 0.01, kind: "tick", detail: null, created_at: "2026-09-19T17:00:00Z" },
+    ], [], NOW);
+    expect(c.cause).toBe("stimulus");
+    expect(c.deltas).toEqual({ f3: 0.08, f1: 0.01 });
+  });
+
+  it("scopes to one companion", async () => {
+    const d1 = makeSqliteD1();
+    seedEvent(d1.db, { float_key: "soma_float_3", kind: "stimulus", delta: 0.08, created_at: "2026-09-19T12:00:00Z", companion_id: "gaia" });
+    const { fetched } = await lineFor(d1);
+    expect(fetched.events).toEqual([]);
   });
 });
