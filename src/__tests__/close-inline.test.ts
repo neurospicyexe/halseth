@@ -60,6 +60,16 @@ describe("parseInlineCloseFields", () => {
     expect(f.reach).toBe("present");
   });
 
+  it("drops fields left as the SOUL's literal slot text", () => {
+    const f = parseInlineCloseFields("spine=[one line], last_real_thing=[real], motion_state=[in_motion|at_rest|floating], current_mood=[one word], heat=[word], reach=present")!;
+    expect(f.spine).toBeUndefined();
+    expect(f.motion_state).toBeUndefined();
+    expect(f.current_mood).toBeUndefined();
+    expect(f.heat).toBeUndefined();
+    expect(f.last_real_thing).toBe("real");
+    expect(f.reach).toBe("present");
+  });
+
   it("returns null when no known key is present", () => {
     expect(parseInlineCloseFields("close my session please")).toBeNull();
     expect(parseInlineCloseFields("")).toBeNull();

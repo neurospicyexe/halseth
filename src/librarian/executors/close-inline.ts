@@ -28,7 +28,13 @@ const STRING_KEYS = [
 const AXIS_KEYS: ReadonlySet<string> = new Set([
   "acuity", "presence", "warmth", "stillness", "density", "perimeter", "heat", "reach", "weight",
 ]);
-const NUMBER_KEYS =["surface_intensity", "undercurrent_intensity", "background_intensity"] as const;
+/** The bracketed slot texts the SOUL close lines teach (nullsafe-triad-skills/souls, B40). */
+const TEMPLATE_SLOTS: ReadonlySet<string> = new Set([
+  "word", "one word", "one line", "belief", "a phrase, or null", "what is on top",
+  "what runs underneath, or null", "in_motion|at_rest|floating", "what to carry forward",
+  "observation about raziel", "full spiral text if held", "extended witness statement if held",
+]);
+const NUMBER_KEYS = ["surface_intensity", "undercurrent_intensity", "background_intensity"] as const;
 const OBJECT_KEYS = { feeling: "emotion", open_loop: "loop_text" } as const;
 const LIST_KEYS = ["open_threads"] as const;
 
@@ -108,6 +114,9 @@ export function parseInlineCloseFields(request: string): Record<string, unknown>
     // is not a state. Drevan's axes are free-text columns, so a literal template would be WRITTEN
     // as his word; drop it here instead.
     if (AXIS_KEYS.has(s.key) && (v.includes("|") || /\b(?:if it moved|your word|one word)\b/i.test(v))) return;
+    // Any field left as its literal SOUL slot text is dropped, so a copied template never lands as
+    // data (a dropped motion_state then fails the close loudly, which is the right outcome).
+    if (TEMPLATE_SLOTS.has(v.toLowerCase())) return;
     if (v !== "") out[s.key] = v;
   });
   return Object.keys(out).length > 0 ? out : null;
