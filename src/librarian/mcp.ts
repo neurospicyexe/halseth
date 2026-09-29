@@ -68,6 +68,7 @@ function buildServer(env: Env, boundCompanion: string | null = null, authKind: L
         request:      args.request,
         context:      args.context,
         session_type: args.session_type ?? "work",
+        via:          authKind === "oauth" ? "mcp-oauth" : "mcp-static",
         ...(typeof args.surface === "string" && args.surface.trim()
           ? { surface: surfaceForAuth(args.surface.trim().slice(0, 200), authKind) }
           : {}),

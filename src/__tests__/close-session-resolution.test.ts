@@ -41,7 +41,7 @@ describe("close: the fallback cannot leave the caller's loom", () => {
   it("constrains the default fallback by the caller's surface", async () => {
     const s = await exec();
     const stmt = s.slice(s.indexOf("SURFACE-SCOPED FALLBACK"), s.indexOf(").first<{ id: string }>();"));
-    expect(stmt).toMatch(/const callerSurface = ctx\.req\.surface \?\? null;/);
+    expect(stmt).toMatch(/const callerSurface = closeFallbackSurface\(ctx\.req\);/); // B40: Hermes pinned to its Discord lane
     // The surface clause sits in the fallback branch only, guarded so a surfaceless caller is unchanged.
     expect(stmt).toMatch(/AND \(\? IS NULL OR surface = \?\)/);
     expect(stmt).toMatch(/callerSurface, callerSurface/);

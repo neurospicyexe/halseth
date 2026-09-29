@@ -11,6 +11,10 @@ export interface LibrarianRequest {
    *  Claude.ai thread, a Claude Code session and a Discord channel no longer collapse onto
    *  whichever opened first. Omitted => dedup skipped (fresh session, never a takeover). */
   surface?: string;
+  /** Which door the call came through (B40, 2026-09-29). `mcp-static` is a static-secret MCP
+   *  caller, which in practice is the companions' own Hermes agents (Claude.ai is always OAuth,
+   *  the bots and hooks POST /librarian). Set by the transport, never by the caller. */
+  via?: "mcp-static" | "mcp-oauth";
 }
 
 export interface ExecutorContext {

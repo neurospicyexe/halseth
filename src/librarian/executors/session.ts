@@ -25,6 +25,7 @@ import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from 
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { markAnswersDelivered } from "../../webmind/questions.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
+import { parseInlineCloseFields } from "./close-inline.js";
 // Step 1 of the execSessionOrient cutover: the ~25 ready_prompt blocks now render in one place, as pure
 // functions. Namespaced as `B.` so every call site reads as "this is rendering, not fetching" -- the split
 // that makes step 2 (repointing the inputs at MindState) verifiable on its own.
@@ -681,8 +682,18 @@ export function somaFieldsFromClosePayload(payload: Record<string, unknown>): Co
   return out;
 }
 
+/**
+ * The surface a close's FALLBACK may resolve inside (B40, 2026-09-29). A static-secret MCP caller
+ * is a companion's own Hermes agent, and its claimed surface is not trustworthy for this, so its
+ * fallback is pinned to its Discord lane. Everyone else: their stated surface, or none.
+ */
+export function closeFallbackSurface(req: { via?: string; surface?: string; companion_id: string }): string | null {
+  if (req.via === "mcp-static") return "discord:" + req.companion_id;
+  return req.surface ?? null;
+}
+
 export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{
+  type ClosePayload = {
     session_id?: string; spine: string; last_real_thing: string;
     /**
      * `unattended` restricts session auto-resolution to rows with no `surface` -- the ones opened by
@@ -724,7 +735,14 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     // Long-form vault write: rich reflections, session narratives, thoughts worth keeping.
     // Written to second brain as a document -- all clients (bots, Claude.ai, future looms) can find it at orient.
     long_thought?: string;
-  }>(ctx.req.context);
+  };
+  // B40 (2026-09-29): the close also reads fields written INLINE in the request ("Close the Halseth
+  // session for drevan: spine=..., heat=warm, ..."), which is how the Hermes SOULs teach it. It read
+  // only a JSON context before, so every inline close failed on required fields. The JSON context
+  // wins key by key; inline only fills what the context did not carry.
+  const pCtx = parseContext<ClosePayload>(ctx.req.context);
+  const pInline = parseInlineCloseFields(ctx.req.request ?? "") as Partial<ClosePayload> | null;
+  const p: ClosePayload | null = pCtx || pInline ? ({ ...(pInline ?? {}), ...(pCtx ?? {}) } as ClosePayload) : null;
   // Auto-resolve session_id: if not supplied in context, look up the most recent
   // open session for this companion (handover_id IS NULL = not yet closed).
   // Auto-resolve session_id in a single query: try exact match first (order 0),
@@ -771,7 +789,12 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // when it states none we cannot narrow and the old behaviour stands. A RESOLVED id is never
   // touched -- a caller naming a session knows which one it means, across looms.
   const unattended = p?.session_scope === "unattended";
-  const callerSurface = ctx.req.surface ?? null;
+  // B40 (2026-09-29): a companion's own Hermes agent (static-secret MCP) closing without naming a
+  // session closes its DISCORD lane, never "the newest open session on any loom". Its surface is not
+  // trustworthy for this: measured 09-22..29 the agents sent none, or invented ones ("hermes-session",
+  // "heartbeat-cron", a literal "claude-ai:<thread>"), and with none the fallback could take a live
+  // Claude.ai or Claude Code session. A named id is still honoured, as for every caller.
+  const callerSurface = closeFallbackSurface(ctx.req);
   const sessionRow = await ctx.env.DB.prepare(
     unattended
       ? `SELECT id FROM sessions
