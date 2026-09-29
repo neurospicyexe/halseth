@@ -10,7 +10,7 @@
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
 import { interoceptionLine, parseOffSince, maxDaysOffBaseline, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
-import type { WmOrientResponse, WmJournalEntry, WmConclusion } from "../../webmind/types.js";
+import type { WmOrientResponse, WmJournalEntry, WmConclusion, WmResurfacedConclusion } from "../../webmind/types.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 
 /**
@@ -193,6 +193,11 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
       parts.push(`  • [concluded @ ${c.created_at.slice(0, 10)}] «${snippet}»`);
     }
   }
+
+  // 7a. One older conclusion on rotation (R9, contract 0.18.0). Labelled as rotation so it is never read
+  // as current salience; the pool size is the denominator.
+  const resurfacedLine = renderResurfacedConclusion(wm.resurfaced_conclusion ?? null);
+  if (resurfacedLine) parts.push(resurfacedLine);
 
   // 7b. Flagged beliefs -- conclusions marked for review (contradiction_flagged)
   if (wm.flagged_beliefs && wm.flagged_beliefs.length > 0) {
@@ -651,4 +656,17 @@ export function buildResponse(
     summary: truncate(rawContent ?? "", "summary"),
     response_key: "summary",
   };
+}
+
+/**
+ * The resurfacing slot (R9). Honest label first: this conclusion is here because the rotation reached it,
+ * not because anything made it salient -- and it carries the date it was concluded plus the rotation's
+ * size, so "older" and "one of how many" are both stated rather than implied. Empty pool -> "".
+ */
+export function renderResurfacedConclusion(c: WmResurfacedConclusion | null): string {
+  if (!c || !c.conclusion_text) return "";
+  const text = c.conclusion_text.length > 280 ? c.conclusion_text.slice(0, 280) + "…" : c.conclusion_text;
+  const pool = c.pool_size > 0 ? ` -- 1 of ${c.pool_size} cold conclusions in rotation` : "";
+  return `[An older conclusion, resurfacing${pool}. Shown because it is its turn, not because it is current.]\n` +
+    `  • [concluded @ ${(c.created_at ?? "").slice(0, 10)}] «${text}»`;
 }

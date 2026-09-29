@@ -17,7 +17,7 @@ import type { SomaProvenanceEntry } from "../soma/events.js";
 import type {
   WmAgentId, WmIdentityAnchor, WmLimbicState, WmSessionHandoff, WmMindThread,
   WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState,
-  WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion,
+  WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmResurfacedConclusion,
   WmBiometricSnapshot, WmHouseState, WmFeeling, WmOpenLoop, WmSittingNote,
   WmArchiveDigest, WmRecentSpiralTurn, HomeEvent, WmActiveConversation, WmClosedConversation, WmCaptureNote,
 } from "../webmind/types.js";
@@ -39,6 +39,12 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.18.0 -- cold-conclusion rotation (R9, 2026-09-28): `beliefs.resurfaced` -- ONE live conclusion from
+ *  the cold pool (stored heat <= 1.1, not in the hot set, not flagged, trimmed text >= 25 chars), picked
+ *  by a UTC-day-seeded offset so the pool cycles and every loom shows the same row that day. Carries
+ *  `pool_size` (the denominator). Orient does NOT warm it: surfacing on rotation is not evidence of use.
+ *  null = empty pool or the read failed. On the Discord bot wire as `resurfaced_conclusion`; the bot
+ *  renderer (nullsafe-discord) is the second-repo half. MINOR: additive only. */
 /** 0.17.0 -- the ledger lane (2026-09-26, mig 0134, docs/imp-lane/SPEC-ledger-lane.md): `ledger.open`,
  *  up to 5 OPEN clerk records ABOUT this companion (ledger_entries), each `content` verbatim with the
  *  server-stamped mark `〔ledger · <function> · <date>〕` first and its `Source:` tail last. A separate
@@ -112,7 +118,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.17.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.18.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -230,6 +236,9 @@ export interface MindState {
      *  start disagreeing about what someone believes. */
     conclusions: WmConclusion[];
     flagged: WmConclusion[];
+    /** 0.18.0 (R9). One cold conclusion on rotation -- NOT current salience, and never warmed by being
+     *  shown. Renderers must label it as resurfacing, with its date. null = nothing in the pool. */
+    resurfaced: WmResurfacedConclusion | null;
     /** Wave 6. Supersessions the gate PROPOSED; only the belief's owner may accept one. In the contract
      *  rather than on the Discord wire alone -- a proposal one surface can see and the others cannot is a
      *  proposal the companion cannot act on from where they happen to be. */

@@ -284,5 +284,21 @@ export function botWireFromMindState(
     //                       a separate open decision of Raziel's, not a side effect of this addition.
     soma_floats: ms.felt.soma_floats,
     soma_provenance: ms.felt.soma_provenance,
+
+    // R9 cold-conclusion rotation (2026-09-28, contract 0.18.0): 48th key. ONE older conclusion on a
+    // UTC-day rotation, never warmed by being shown. Kept OUT of active_conclusions on purpose: the bot
+    // renderer slices that list to 5, and merging would let rotation pass as current salience. Needs its
+    // own nullsafe-discord render (label "[An older conclusion, resurfacing]" + concluded date + pool
+    // size) -- until that ships the key is on the wire and unrendered, same two-repo split as 0.11.0.
+    resurfaced_conclusion: ms.beliefs.resurfaced
+      ? {
+          conclusion_text: text(ms.beliefs.resurfaced.conclusion_text, 280),
+          belief_type: ms.beliefs.resurfaced.belief_type,
+          subject: ms.beliefs.resurfaced.subject ?? null,
+          concluded_at: ms.beliefs.resurfaced.created_at,
+          age: relativeTime(ms.beliefs.resurfaced.created_at),
+          pool_size: ms.beliefs.resurfaced.pool_size,
+        }
+      : null,
   };
 }

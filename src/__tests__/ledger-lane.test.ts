@@ -20,6 +20,7 @@ import { matchFastPath } from "../librarian/router.js";
 import { ledgerBlock, LEDGER_BLOCK_HEADER } from "../librarian/response/orient-blocks.js";
 import { LEDGER_MARK_PREFIX } from "../ledger/grammar.js";
 import { loadMindState } from "../mind/loader.js";
+import { cmpVersion } from "../mind/changelog.js";
 import { mindOrient } from "../webmind/orient.js";
 import { postCompanionJournal } from "../handlers/companion_journal.js";
 import { journalInsert, RetiredJournalSourceError } from "../webmind/tray-insert.js";
@@ -283,7 +284,7 @@ describe("orient: its own block, mark first on every ledger line", () => {
     for (let i = 0; i < 7; i++) await writeLedger(env, line({ body: `Counted: ${i + 1} notes.` }));
     await writeLedger(env, line({ companion_id: "cypher" }));
     const ms = await loadMindState(env, "drevan", "claude" as any);
-    expect(ms.contract_version).toBe("0.17.0");
+    expect(cmpVersion(ms.contract_version, "0.17.0")).toBeGreaterThanOrEqual(0); // ledger landed in 0.17.0
     expect(ms.meta.degraded).toEqual([]);
     expect(ms.ledger.open).toHaveLength(5);
     const block = ledgerBlock(ms.ledger.open);

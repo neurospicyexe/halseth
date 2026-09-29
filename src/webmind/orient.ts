@@ -8,7 +8,7 @@
 //   4. Recent high-salience continuity notes (3-pool: core/novelty/edge)
 
 import { Env } from "../types.js";
-import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation, WmClosedConversation, WmCaptureNote } from "./types.js";
+import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmResurfacedConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation, WmClosedConversation, WmCaptureNote } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
@@ -83,6 +83,75 @@ function rerankConclusions<T extends ConclusionCandidate>(
   return [...rows]
     .sort((a, b) => graphScore(b, degrees) - graphScore(a, degrees))
     .slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Cold-conclusion rotation (R9, Raziel 2026-09-28).
+//
+// The freeze: every conclusion read path ranks by heat, and only orient warms. A conclusion that never
+// made the top 6 was never shown, so it never warmed, so it never made the top 6. Measured on prod
+// 2026-09-28: 122 of 144 live conclusions at stored heat 1.0 with last_access_at NULL -- including
+// Drevan's reads about Raziel's burnout. Heat ranking cannot rescue them; nothing else reads them.
+//
+// So orient carries ONE extra slot: a cold conclusion picked on a deterministic rotation. Rules:
+//   - POOL: this companion's live rows (not superseded, not archived, not contradiction-flagged --
+//     flagged rows have their own pass) whose STORED heat is at or near the default
+//     (<= RESURFACE_COLD_HEAT_MAX; SURFACE_BUMP is 0.02, so that is "surfaced at most ~5 times"), that
+//     are not in this boot's hot set, and that are not junk.
+//   - JUNK: length(trim(conclusion_text)) < RESURFACE_MIN_CHARS. Verified on prod: the only cold rows
+//     under 25 chars are "s" and "the above" -- a fragment and a dangling reference, neither of which
+//     means anything alone. Excluded from rotation only; no row is modified or deleted.
+//   - ROTATION: pure read, no bookkeeping column. Pool ordered by (created_at, id); the pick is row
+//     `dayIndex % pool_size`, dayIndex = UTC days since epoch. A column like `rotated_at` would need a
+//     write, and the MindState loader (the bots' path, ~20x the Claude.ai rate) runs orient readOnly --
+//     the bots would have seen the same row forever. Day-seeded, every loom shows the SAME resurfacing
+//     row on a given day (one mind), and the whole pool cycles in pool_size days. A row leaving the pool
+//     (warmed, superseded) shifts later indices by one; worst case one row is skipped for one cycle.
+//   - NOT WARMED. The slot is returned as its own field, never merged into active_conclusions, so the
+//     warm below (active + flagged only) cannot touch it. Warming on display would make every rotation
+//     self-promote, and "it came back because it was used" would stop meaning anything.
+// Rides the same Promise.all as the flagged-beliefs read: no added sequential round trip.
+// ---------------------------------------------------------------------------
+
+/** Stored heat at or below this counts as cold (default 1.0; five SURFACE_BUMPs = 1.10). */
+export const RESURFACE_COLD_HEAT_MAX = 1.1;
+/** Trimmed text shorter than this is junk for rotation purposes ("s", "the above"). */
+export const RESURFACE_MIN_CHARS = 25;
+
+export function resurfaceDayIndex(now: Date): number {
+  return Math.floor(now.getTime() / 86_400_000);
+}
+
+export async function readResurfacedConclusion(
+  env: Env,
+  agentId: WmAgentId,
+  hotIds: string[],
+  now: Date,
+): Promise<WmResurfacedConclusion | null> {
+  const notIn = hotIds.length ? `AND id NOT IN (${hotIds.map(() => "?").join(",")})` : "";
+  try {
+    const row = await env.DB.prepare(
+      `WITH resurface_pool AS (
+         SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
+                created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged,
+                ROW_NUMBER() OVER (ORDER BY created_at, id) - 1 AS pool_rn,
+                COUNT(*) OVER () AS pool_size
+         FROM companion_conclusions
+         WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0
+           AND contradiction_flagged = 0
+           AND heat <= ${RESURFACE_COLD_HEAT_MAX}
+           AND length(trim(conclusion_text)) >= ${RESURFACE_MIN_CHARS}
+           ${notIn}
+       )
+       SELECT * FROM resurface_pool WHERE pool_rn = (? % pool_size) LIMIT 1`
+    ).bind(agentId, ...hotIds, resurfaceDayIndex(now)).first<WmResurfacedConclusion & { pool_rn?: number }>();
+    if (!row) return null;
+    const { pool_rn: _rn, ...rest } = row;
+    return { ...rest, pool_size: Number(rest.pool_size) || 0 };
+  } catch (err) {
+    console.warn("[orient] resurfaced-conclusion read failed (non-fatal, slot omitted):", err);
+    return null;
+  }
 }
 
 /** "While you were away" block. Null-safe: orient must never break on home error.
@@ -491,14 +560,18 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
 
   // Flagged beliefs: separate pass for contradiction-flagged active conclusions
   const FLAGGED_LIMIT = 10;
-  const flaggedResult = await env.DB.prepare(
+  const [flaggedResult, resurfaced_conclusion] = await Promise.all([env.DB.prepare(
     `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
             created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged,
             ${effectiveHeatSql()} AS effective_heat
      FROM companion_conclusions
      WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 AND contradiction_flagged = 1
      ORDER BY ${effectiveHeatSql()} DESC LIMIT ?`
-  ).bind(agentId, FLAGGED_LIMIT * CONCLUSION_OVER_FETCH).all<WmConclusion & { effective_heat: number }>();
+  ).bind(agentId, FLAGGED_LIMIT * CONCLUSION_OVER_FETCH).all<WmConclusion & { effective_heat: number }>(),
+    // R9 cold rotation -- see the block comment at readResurfacedConclusion. Hot set = what this boot
+    // already surfaced; flagged rows are excluded by predicate, so it need not wait on this pass.
+    readResurfacedConclusion(env, agentId, [...seenIds], _now),
+  ]);
 
   const flaggedDegrees = await readerDegreesForConclusions(env, agentId, flaggedResult.results ?? []);
   const flagged_beliefs: WmConclusion[] = rerankConclusions(flaggedResult.results ?? [], flaggedDegrees, FLAGGED_LIMIT)
@@ -506,6 +579,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
 
   // Warm surfaced conclusions (mig 0105, thinking-quality fix 5): access is what keeps
   // a belief hot. Non-fatal -- orient never breaks on a heat bookkeeping failure.
+  // resurfaced_conclusion is deliberately ABSENT from this list (R9): rotation is not evidence.
   // readOnly skips it: earned-salience warming is a consume-on-read side effect, and
   // the MindState loader's pure-read covenant forbids those (docs/mindstate-contract.md).
   const conclusionWarmIds = Array.from(new Set([
@@ -583,6 +657,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     raziel_witness_entries: razielWitnessEntries.results ?? [],
     active_conclusions,
     flagged_beliefs,
+    resurfaced_conclusion,
     recent_feelings: recentFeelings.results ?? [],
     open_loops: (openLoopsRes.results ?? []),
     open_questions: (openQuestionsRes.results ?? []).map(q => ({ ...q, voiced: q.voiced === 1 })),

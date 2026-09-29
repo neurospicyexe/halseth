@@ -44,7 +44,7 @@ interface MindState {
   felt: { soma_floats, soma_arc, limbic, ferment_line, drives, biometrics_latest };
   continuity: { handoffs, threads, notes_3pool, spiral_turn, session_narrative };
   carried: { dreams_unexamined, open_loops, tensions_annotated, sits, feelings_recent };
-  beliefs: { conclusions_distributed, flagged, worldview };
+  beliefs: { conclusions_distributed, flagged, worldview, resurfaced };  // resurfaced: 0.18.0, one cold conclusion on day-seeded rotation, never warmed (R9)
   relational: { snapshot, deltas_recent, witness_raziel, triad_incoming, triad_outgoing, letters };
   growth: { journal_recent, patterns, markers, reflection, seeds, clearing_count, drifts_open, basin_flags };
   world: { house, home_events, club, commons, shelf, collection, forage, listens, motifs, sol, imps_active };

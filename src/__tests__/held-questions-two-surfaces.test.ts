@@ -30,7 +30,7 @@ function stateWith(questions: Array<{ id: string; question: string; voiced: bool
     felt: { limbic: null, soma_floats: [], drives: [], ferment_events: [], ferment_at: null, soma_provenance: [], soma_arc: [], biometrics_latest: null, house: null },
     continuity: { latest_handoff: null, recent_handoffs: [], open_thread_count: 0, top_threads: [], surfaced_notes: [], recent_notes: [], archived_digests: [], spiral_turn: null, session_narrative: null, conversations: [], closed_conversations: [], recent_captures: [] },
     carried: { dreams_unexamined: [], open_loops: [], tensions: [], sits: [], feelings_recent: [] },
-    beliefs: { conclusions: [], flagged: [], supersede_candidates: [] },
+    beliefs: { conclusions: [], flagged: [], resurfaced: null, supersede_candidates: [] },
     relational: { snapshot: [], deltas_recent: [], witness_raziel: [], triad_incoming: [], triad_outgoing: [], letters: [], journal_recent: [], siblings: [], recent_witness: [] },
     growth: { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [], projects: [], budget: null },
     oversight: { pressure_flags: [], growth_confirmed: [], guardian_cards: [], tripwires: [], questions, answered_questions: [], growth_unconfirmed: [] },

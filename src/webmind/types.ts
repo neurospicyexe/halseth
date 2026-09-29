@@ -272,6 +272,13 @@ export interface WmConclusion {
   contradiction_flagged: number; // integer boolean (0|1)
 }
 
+/** One cold conclusion resurfaced on rotation at orient (R9, 2026-09-28). NOT current salience:
+ *  it is shown because it is its turn, and orient deliberately does NOT warm it. `pool_size` is the
+ *  denominator -- how many cold, never-surfaced-enough conclusions this companion has in rotation. */
+export interface WmResurfacedConclusion extends WmConclusion {
+  pool_size: number;
+}
+
 // ── Limbic State (swarm-level synthesis output) ────────────────────────────
 
 export interface WmLimbicState {
@@ -335,6 +342,7 @@ export interface WmOrientResponse {
   raziel_witness_entries: WmRelationalState[];  // recent witness observations about Raziel (not ROW_NUMBER collapsed)
   active_conclusions: WmConclusion[];           // companion's active (non-superseded) beliefs, type-distributed
   flagged_beliefs: WmConclusion[];              // active conclusions with contradiction_flagged = 1
+  resurfaced_conclusion?: WmResurfacedConclusion | null; // ONE cold conclusion on rotation (R9); never warmed by orient
   recent_feelings?: WmFeeling[];                // feelings logged via feeling_log -- were write-only to orient before 2026-07-26
   open_loops: WmOrientOpenLoop[];               // open loops (things carried from sessions, not yet resolved)
   open_questions: WmOrientOpenQuestion[];       // open questions (queries awaiting synthesis/investigation)

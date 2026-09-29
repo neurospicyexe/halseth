@@ -232,6 +232,7 @@ export async function loadMindState(
     beliefs: {
       conclusions: orient?.active_conclusions ?? [],
       flagged: orient?.flagged_beliefs ?? [],
+      resurfaced: orient?.resurfaced_conclusion ?? null,
       ...beliefExtras,
     },
 
