@@ -151,7 +151,7 @@ describe("B3: a batch that cannot be right changes nothing", () => {
     const r: any = await execTrayReview(ctx(env, "cypher", "review drafts", {
       decisions: [{ id: B, decision: "drop" }, { id: A, decision: "keep" }, { id: A, decision: "drop" }],
     }));
-    expect(r.error).toBeDefined();
+    expect(r.error).toBe("tray_review_failed");
     expect(state(db, A)).toBe("draft");
     expect(state(db, B)).toBe("draft");
   });

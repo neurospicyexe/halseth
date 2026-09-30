@@ -155,7 +155,7 @@ function collectBatch(ctx: ExecutorContext, verbDecision: TrayDecision | null):
   return null;
 }
 
-async function reviewBatch(ctx: ExecutorContext, items: BatchItem[], verb: "keep" | "drop"): Promise<ExecutorResult> {
+async function reviewBatch(ctx: ExecutorContext, items: BatchItem[], verb: "keep" | "drop" | "review"): Promise<ExecutorResult> {
   if (items.length === 0) return { error: `tray_${verb}_failed`, reason: "the batch is empty -- nothing changed" };
   if (items.length > TRAY_BATCH_MAX) {
     return { error: `tray_${verb}_failed`, reason: `${items.length} ids is over the ${TRAY_BATCH_MAX}-per-call cap -- nothing changed; split it` };
@@ -276,5 +276,5 @@ export async function execTrayReview(ctx: ExecutorContext): Promise<ExecutorResu
     return { error: "tray_review_failed", reason: 'need context { decisions: [{ id, decision: "keep" | "drop", content? }] } -- or "drop drafts <id>, <id>" / "keep drafts <id>, <id>"' };
   }
   if ("error" in batch) return { error: "tray_review_failed", reason: batch.error };
-  return reviewBatch(ctx, batch.items, "keep");
+  return reviewBatch(ctx, batch.items, "review");
 }
