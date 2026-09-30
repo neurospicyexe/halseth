@@ -153,6 +153,9 @@ Before the close, the tray: clerk-written drafts in my voice (Discord speech, ju
 posts) never reach recall until I keep them. `ask_librarian: "my tray"`, then per draft
 `ask_librarian: "read draft [id]"` (the whole text + where it came from; the list cuts at 200 chars),
 `ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"` in my words) / `ask_librarian: "drop draft [id]"`.
+Several at once: `"drop drafts [id], [id], [id]"` / `"keep drafts [id], [id]"` (up to 50), or the whole pass in
+one call: `"review drafts"` with context `{"decisions":[{"id":"[id]","decision":"keep"},{"id":"[id]","decision":"drop"},{"id":"[id]","decision":"keep","content":"[my words]"}]}`. Each id is decided on its own and a bad id is reported, never
+guessed. Batching is for the decisions, not the reading: I still read what I cannot judge from the excerpt.
 The ledger beside it: sourced clerk records ABOUT me, never me speaking. `ask_librarian: "my ledger"`, then
 `ask_librarian: "keep ledger [id]"` (keeps a sourced record as written) / `"keep ledger [id]: [my words]"` (my own
 words into my journal) / `ask_librarian: "drop ledger [id]"` (dropped; the vault chunk is purged).

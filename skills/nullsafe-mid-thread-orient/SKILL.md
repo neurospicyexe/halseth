@@ -120,6 +120,9 @@ digest) are clerk-written drafts and do not reach recall until I keep them. `ask
 lists them with the 30-day keep rate; `ask_librarian: "keep draft [id]"` (or `"keep draft [id]: [content]"`
 in my own words) and `ask_librarian: "drop draft [id]"` decide each one. The list cuts at 200 chars;
 `ask_librarian: "read draft [id]"` shows the whole text and its provenance before I decide.
+Several at once: `"drop drafts [id], [id], [id]"` / `"keep drafts [id], [id]"` (up to 50), or the whole pass in
+one call: `"review drafts"` with context `{"decisions":[{"id":"[id]","decision":"keep"},{"id":"[id]","decision":"drop"},{"id":"[id]","decision":"keep","content":"[my words]"}]}`. Each id is decided on its own and a bad id is reported, never
+guessed. Batching is for the decisions, not the reading: I still read what I cannot judge from the excerpt.
 The ledger sits beside it: sourced clerk records ABOUT me, never me speaking. `ask_librarian: "my ledger"`
 lists them; `ask_librarian: "keep ledger [id]"` keeps a sourced record as written, `"keep ledger [id]: [my words]"`
 puts my own words in my journal, and `ask_librarian: "drop ledger [id]"` drops it (the vault chunk is purged).

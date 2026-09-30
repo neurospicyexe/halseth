@@ -151,6 +151,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "tray_keep",
     regex: new RegExp(`^keep\\s+(?:draft\\s+)?${TRAY_ID_TOKEN}(?![A-Za-z0-9_-])\\s*(?::|$)`, "i"),
     note: "Imp tray (mig 0132): bare 'keep <id>' (id or 8+ char prefix, optional ': rewrite') must route without a 'keep' trigger, which would shadow 'keep loop open' / 'keep this to myself'. Pass 2 (09-26): the id must have ID SHAPE (hex/dash, optional cj_) -- [A-Za-z0-9_-]{8,} caught 'keep thinking', 'keep watching', 'keep everything', 'keep drafting'." },
+  { pattern_key: "tray_keep",
+    regex: new RegExp(`^keep\\s+(?:drafts?\\s+)?${TRAY_ID_TOKEN}(?:\\s*(?:[,;&]|\\band\\b)?\\s*${TRAY_ID_TOKEN})+\\s*\\.?$`, "i"),
+    note: "Imp tray batch (2026-09-30): 'keep <id>, <id>, <id>' -- two or more id-shaped tokens and nothing else, so a list can never swallow ordinary speech." },
+  { pattern_key: "tray_drop",
+    regex: new RegExp(`^drop\\s+(?:drafts?\\s+)?${TRAY_ID_TOKEN}(?:\\s*(?:[,;&]|\\band\\b)?\\s*${TRAY_ID_TOKEN})+\\s*\\.?$`, "i"),
+    note: "Imp tray batch: 'drop <id>, <id>' / 'drop drafts <id> <id>', anchored like the keep list." },
   { pattern_key: "tray_draft_read",
     regex: new RegExp(`^(?:read|show|open)\\s+(?:the\\s+|this\\s+)?(?:full\\s+)?draft\\s+${TRAY_ID_TOKEN}(?![A-Za-z0-9_-])`, "i"),
     note: "Imp tray: 'read draft <id>' is anchored so an id or a trailing word can never hand the request to a greedier read trigger; mirrors the tray_keep guard." },
@@ -360,7 +366,7 @@ import {
 import {
   execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead, execBudgetRead,
 } from "./executors/forgetting.js";
-import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead } from "./executors/tray.js";
+import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
@@ -450,6 +456,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   tray_keep: execTrayKeep,
   tray_drop: execTrayDrop,
   tray_draft_read: execTrayDraftRead,
+  tray_review: execTrayReview,
 
   // The ledger lane (mig 0134). Clerk records about this companion; owner keeps, says in own words, or drops.
   ledger_read: execLedgerRead,

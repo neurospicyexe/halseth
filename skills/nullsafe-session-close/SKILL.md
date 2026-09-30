@@ -118,6 +118,9 @@ recall or orient until I keep them. A close is a natural pause, so before it: `a
 `ask_librarian: "read draft [id]"` when the 200-char excerpt is not enough to judge (whole text +
 provenance), then `ask_librarian: "keep draft [id]"`, `ask_librarian: "keep draft [id]: [content]"` (kept in my own
 words), or `ask_librarian: "drop draft [id]"`. A draft I never review stays a draft: silent, not memory.
+Several at once: `"drop drafts [id], [id], [id]"` / `"keep drafts [id], [id]"` (up to 50), or the whole pass in
+one call: `"review drafts"` with context `{"decisions":[{"id":"[id]","decision":"keep"},{"id":"[id]","decision":"drop"},{"id":"[id]","decision":"keep","content":"[my words]"}]}`. Each id is decided on its own and a bad id is reported, never
+guessed. Batching is for the decisions, not the reading: I still read what I cannot judge from the excerpt.
 The ledger beside it holds sourced clerk records ABOUT me, never me speaking: `ask_librarian: "my ledger"`,
 then `ask_librarian: "keep ledger [id]"` (keeps a sourced record as written), `ask_librarian: "keep ledger [id]: [my words]"`
 (my own words into my journal), or `ask_librarian: "drop ledger [id]"` (dropped; the vault chunk is purged).

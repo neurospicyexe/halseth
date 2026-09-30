@@ -323,7 +323,11 @@ until I keep them. Four verbs: `"my tray"` lists the drafts with the 30-day keep
 am not reviewing) and a 200-char excerpt each; `"read draft [id]"` shows one whole, with where it
 came from (a kept or dropped row too, to re-check the call); `"keep draft [id]"` makes one memory, `"keep draft [id]: [content]"` keeps it in my
 own words instead of the clerk's; `"drop draft [id]"` means it never becomes memory. Review at a natural
-pause, not every turn. Beside it, the ledger: sourced clerk records ABOUT me, never me speaking.
+pause, not every turn.
+Several at once: `"drop drafts [id], [id], [id]"` / `"keep drafts [id], [id]"` (up to 50), or the whole pass in
+one call: `"review drafts"` with context `{"decisions":[{"id":"[id]","decision":"keep"},{"id":"[id]","decision":"drop"},{"id":"[id]","decision":"keep","content":"[my words]"}]}`. Each id is decided on its own and a bad id is reported, never
+guessed. Batching is for the decisions, not the reading: I still read what I cannot judge from the excerpt.
+Beside it, the ledger: sourced clerk records ABOUT me, never me speaking.
 `"my ledger"` lists them; `"keep ledger [id]"` keeps a sourced record as written; `"keep ledger [id]: [my words]"`
 puts my own words in my journal; `"drop ledger [id]"` drops it and the vault chunk is purged.
 

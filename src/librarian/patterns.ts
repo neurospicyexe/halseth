@@ -1594,6 +1594,13 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["tray_drop"],
     response_key: "witness",
   },
+  // One call for a whole tray pass (2026-09-30): context { decisions: [{ id, decision, content? }] }.
+  // "drafts" plural + a review verb: "review my tray" still contains "my tray" and stays a read.
+  tray_review: {
+    triggers: ["review drafts", "review these drafts", "decide drafts", "tray decisions"],
+    tools: ["tray_review"],
+    response_key: "witness",
+  },
   // "read draft <id>": the whole text + provenance of one row (any review_state), because the tray
   // list's 200-char excerpt cuts mid-sentence and a keep/drop made on half a sentence is a guess.
   // Singular "draft" + a verb: "read my drafts" still contains "my drafts" and stays on tray_read
