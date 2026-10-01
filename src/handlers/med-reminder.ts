@@ -6,6 +6,9 @@
 //   POST /mind/med/delivered                      the DM went out {..., path}
 //   POST /mind/med/release                        the send failed; hand the claim back
 //   POST /mind/med/answer                         he answered {companion_id, answered_at, answers?}
+//   POST /mind/med/answers                        the same handler (0141). New bots post here, so a
+//                                                 pre-0141 Halseth answers 404 instead of recording
+//                                                 a stated miss as an unnamed "taken".
 //   GET  /mind/med/today                ?now=ISO  today's state (and last night's before noon)
 //
 // Auth: authGuard, as every /mind/* route. A per-companion token may only act as itself.

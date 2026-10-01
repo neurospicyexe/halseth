@@ -485,6 +485,7 @@ const router = new Router()
   .on("POST",  "/mind/med/delivered",         (request, env)         => postMedDelivered(request, env))
   .on("POST",  "/mind/med/release",           (request, env)         => postMedRelease(request, env))
   .on("POST",  "/mind/med/answer",            (request, env)         => postMedAnswer(request, env))
+  .on("POST",  "/mind/med/answers",           (request, env)         => postMedAnswer(request, env))  // 0141: same handler; a route an older Halseth does not have, so a new bot's stated miss can never be recorded as a taken by it
   .on("GET",   "/mind/med/today",             (request, env)         => getMedToday(request, env))
   // Shared triad reach cap (0137): one proactive-DM budget across all three (spec R-2, R-3, T-7)
   .on("POST",  "/mind/reach/reserve",          (request, env)         => postReachReserve(request, env))
