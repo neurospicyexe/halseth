@@ -14,7 +14,7 @@ import { DEEPSEEK_DEFAULT_MODEL, contentBudget, vendorFailover, logFellBack } fr
 import { FAST_PATH_PATTERNS, PatternEntry, CompanionId } from "./patterns.js";
 import { TRAY_ID_TOKEN } from "../webmind/review-state.js";
 import { LEDGER_ID_TOKEN } from "../ledger/store.js";
-import { getCurrentFront, type PluralResult } from "./backends/plural.js";
+import { readFront } from "../front/source.js";
 import type { ExecutorContext, ExecutorFn } from "./executors/types.js";
 import { triggerMatches } from "./lib/trigger.js";
 import { isRetrievalPattern, repeatKey, checkAndCount, breakerResponse } from "./repeat-breaker.js";
@@ -893,31 +893,15 @@ export class LibrarianRouter {
     }
   }
 
+  // Front state comes from src/front/source.ts and nowhere else (B43, 2026-09-30). The KV
+  // "plural:current_front" write-through cache went with the SimplyPlural binding: a cache of a
+  // retired source can only serve a stale name as if it were current.
   private async getFrontState(_companionId: CompanionId): Promise<{ frontState: string | null; pluralAvailable: boolean }> {
-    const KV_KEY = "plural:current_front";
     try {
-      const result: PluralResult = await getCurrentFront(this.env);
-      if (result.status === "ok" || result.status === "no_front") {
-        // Write-through: keep KV warm so a future service-binding failure degrades gracefully.
-        const name = result.status === "ok" ? result.front.name : null;
-        void this.env.LIBRARIAN_KV.put(KV_KEY, JSON.stringify({ name, updated_at: new Date().toISOString() }), { expirationTtl: 600 })
-          .catch(e => console.warn("[getFrontState] KV cache write failed:", String(e)));
-        return { frontState: name, pluralAvailable: true };
-      }
-      // status === "unavailable" -- fall through to cache
-    } catch {
-      // Service binding threw -- fall through to cache
-    }
-    // Plural service unreachable -- serve last known front from KV cache
-    try {
-      const cached = await this.env.LIBRARIAN_KV.get(KV_KEY);
-      if (cached) {
-        const data = JSON.parse(cached) as { name: string | null };
-        console.warn("[getFrontState] plural unavailable; serving from KV cache");
-        return { frontState: data.name, pluralAvailable: false };
-      }
-    } catch {
-      // KV also failed
+      const result = await readFront(this.env);
+      if (result.status === "ok") return { frontState: result.name, pluralAvailable: true };
+    } catch (e) {
+      console.warn(`[getFrontState] front source threw: ${e instanceof Error ? e.message : String(e)}`);
     }
     return { frontState: null, pluralAvailable: false };
   }

@@ -50,7 +50,9 @@ After security fixes or schema changes specifically, run the full test suite imm
   wording here sent an audit chasing a trap that does not exist). Its only consumer is
   `createCompanion` (`handlers/companions.ts:33`), where it gates how many rows may exist in the
   dead `companions` table. `system_members` is empty and nothing reads it for front state --
-  fronting data lives in `plural_store` (mig 0049a), fed by nullsafe-plural-v2.
+  fronting data lives in `plural_store` (mig 0049a). nullsafe-plural-v2 (SimplyPlural) was retired
+  2026-09-30 (STATUS B43): the binding is gone and front state comes from `src/front/source.ts`, the ONE
+  seam, which answers "unknown" until the new plural app's API is wired there.
 - `COORDINATION_ENABLED` -- enables tasks/events/lists/routines shared zone
 
 **Bridge:** When `BRIDGE_URL` and `BRIDGE_SECRET` are set, `/bridge/*` endpoints share tasks, events, and list items between two Halseth deployments. The secret is symmetric -- same value on both sides.

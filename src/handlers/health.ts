@@ -209,7 +209,7 @@ export async function getHealth(request: Request, env: Env): Promise<Response> {
   // otherwise surfaces as a feature quietly returning null forever.
   const bindings: Array<[string, unknown]> = [
     ["DB", env.DB], ["VECTORIZE", env.VECTORIZE], ["AI", env.AI],
-    ["BUCKET", env.BUCKET], ["PLURAL", env.PLURAL],
+    ["BUCKET", env.BUCKET],
   ];
   const missing = bindings.filter(([, v]) => !v).map(([k]) => k);
   checks.push({

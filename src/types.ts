@@ -6,7 +6,6 @@ export interface Env {
   VECTORIZE: VectorizeIndex;
 
   // Librarian bindings
-  PLURAL: Fetcher;              // Service Binding to nullsafe-plural-v2 Worker
   LIBRARIAN_KV: KVNamespace;    // KV namespace for tool registry + pattern matching
   SECOND_BRAIN_TOKEN?: string;       // OAuth token for the Second Brain MCP endpoint (set via wrangler secret)
   SECOND_BRAIN_MCP_URL?: string;     // Second Brain MCP endpoint (e.g. https://your-second-brain.example.com/mcp); /mcp appended if absent

@@ -1,5 +1,5 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
-import { getCurrentFront, getMember, updateMemberDescription, searchMembers, getFrontHistory, logFrontChange, addMemberNote } from "../backends/plural.js";
+import { readFront, readFrontHistory } from "../../front/source.js";
 import { extractMemberName, extractDescriptionUpdate } from "../extract.js";
 import {
   listSystemMembers, recallAlter, findMemberByName,
@@ -11,19 +11,31 @@ import { triggerMatches } from "../lib/trigger.js";
 import { lookupMember, renderLookup } from "../../roster/pk-roster.js";
 import { extractLookupName } from "./roster.js";
 
+// Front reads go through src/front/source.ts (B43, 2026-09-30). "Unknown" is never rendered as
+// "no one is fronting": the retired SimplyPlural binding did exactly that, and a companion took it
+// as a fact about the system.
 export async function execPluralGetCurrentFront(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const result = await getCurrentFront(ctx.env);
+  const result = await readFront(ctx.env);
   const text = result.status === "ok"
-    ? `${result.front.name} is fronting.`
-    : result.status === "no_front"
-    ? "No one is currently fronting."
-    : "Front state unavailable.";
+    ? `${result.name} is fronting.`
+    : `Front state unknown (${result.reason}). Read who is fronting from Raziel; do not assume no one is.`;
   return buildResponse(ctx.req.companion_id, ctx.entry.response_key as ResponseKey, { session_id: "" }, text);
 }
 
+/** The three SimplyPlural WRITE verbs keep their routes so the phrase cannot fall to the classifier
+ *  and land on some other write; they answer that nothing was written, and why. */
+function retiredWrite(what: string): ExecutorResult {
+  return {
+    response_key: "witness",
+    witness: `nothing written: ${what} went to SimplyPlural, which was retired 2026-09-30 (the new plural app has no API yet). ` +
+      `For a note about a system member, use "log alter note" (Halseth's own store).`,
+    ack: false,
+  };
+}
+
 /**
- * REPOINTED 2026-08-13 to the live roster (mig 0117), with nullsafe-plural-v2 kept only as a
- * fallback.
+ * REPOINTED 2026-08-13 to the live roster (mig 0117). The nullsafe-plural-v2 static fallback was
+ * removed with the SimplyPlural binding on 2026-09-30 (B43); the roster is the only source.
  *
  * Why: plural-v2 serves member lookups from a BAKED-IN `src/members.json` -- 512 entries carrying
  * `name` and `pk` only, **no pronouns**. The live PluralKit roster is 538 members with 463 pronouns.
@@ -31,9 +43,8 @@ export async function execPluralGetCurrentFront(ctx: ExecutorContext): Promise<E
  * report anyone's pronouns. (It also declared its return type as `{name, pk, description}` while the
  * worker returns `{member_id, name}`, so two of three fields were always undefined.)
  *
- * Leaving the old path as the fallback rather than deleting it: if the roster cache is cold, a stale
- * hit still beats nothing -- but it is second, and the roster's own `unavailable` status is preserved
- * when both miss, so "could not look" never renders as "no such member".
+ * The roster's own `unavailable` status is returned as-is, so "could not look" never renders as
+ * "no such member".
  */
 export async function execPluralGetMember(ctx: ExecutorContext): Promise<ExecutorResult> {
   const trigger = ctx.entry.triggers.find(t => triggerMatches(ctx.req.request, t));
@@ -44,23 +55,6 @@ export async function execPluralGetMember(ctx: ExecutorContext): Promise<Executo
   }
 
   const lookup = await lookupMember(ctx.env, name);
-  if (lookup.status === "found" || lookup.status === "ambiguous" || lookup.status === "candidates") {
-    return {
-      data: { ...lookup, summary: renderLookup(lookup) },
-      meta: { operation: "plural_get_member", source: "pk_roster", status: lookup.status },
-    };
-  }
-
-  // Roster says absent or unreachable -- try the legacy static list before answering, then report
-  // the ROSTER's status if it also misses, because that status carries the not_found/unavailable
-  // distinction the legacy path cannot express.
-  const member = await getMember(ctx.env, name);
-  if (member) {
-    return {
-      data: member,
-      meta: { operation: "plural_get_member", source: "plural-v2-static", warning: "stale snapshot; no pronouns recorded in this source" },
-    };
-  }
   return {
     data: { ...lookup, summary: renderLookup(lookup) },
     meta: { operation: "plural_get_member", source: "pk_roster", status: lookup.status },
@@ -72,11 +66,7 @@ export async function execPluralUpdateMemberDescription(ctx: ExecutorContext): P
   if (!parsed) {
     return { response_key: "witness", witness: "couldn't parse that; try 'update Ash\\'s description to [text]'" };
   }
-  const updateResult = await updateMemberDescription(ctx.env, parsed.member, parsed.description);
-  if (!updateResult.success) {
-    return { response_key: "witness", witness: updateResult.error ?? "update failed" };
-  }
-  return { ack: true, id: updateResult.member_id, name: updateResult.name };
+  return retiredWrite(`the description update for ${parsed.member}`);
 }
 
 /**
@@ -92,16 +82,6 @@ export async function execPluralSearchMembers(ctx: ExecutorContext): Promise<Exe
     return { response_key: "witness", witness: "couldn't read a name to search for; try 'find member Magpie'" };
   }
   const lookup = await lookupMember(ctx.env, name);
-  if (lookup.status === "not_found") {
-    // Legacy static list as a last look before reporting absence.
-    const legacy = await searchMembers(ctx.env, name);
-    if (legacy.length) {
-      return {
-        data: legacy,
-        meta: { operation: "plural_search_members", source: "plural-v2-static", warning: "stale snapshot; no pronouns recorded in this source" },
-      };
-    }
-  }
   return {
     data: { ...lookup, summary: renderLookup(lookup) },
     meta: { operation: "plural_search_members", source: "pk_roster", status: lookup.status },
@@ -109,25 +89,20 @@ export async function execPluralSearchMembers(ctx: ExecutorContext): Promise<Exe
 }
 
 export async function execPluralGetFrontHistory(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const history = await getFrontHistory(ctx.env);
-  // raw: true -- full history array
-  return { data: history, meta: { operation: "plural_get_front_history" } };
+  const history = await readFrontHistory(ctx.env);
+  if (history.status === "unknown") {
+    // Never an empty array: [] reads as "no one has fronted".
+    return { response_key: "witness", witness: `front history unknown (${history.reason})`, ack: false, status: "unknown" };
+  }
+  return { data: history.events, meta: { operation: "plural_get_front_history" } };
 }
 
 export async function execPluralLogFrontChange(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ member_id: string; status: "fronting" | "co-con" | "unknown"; custom_status?: string }>(ctx.req.context);
-  if (!p?.member_id || !p?.status) return { response_key: "witness", witness: "log_front_change requires { member_id, status } in context" };
-  const r = await logFrontChange(ctx.env, p);
-  if (!r.success) return { response_key: "witness", witness: r.error ?? "log_front_change failed" };
-  return { ack: true, front_id: r.front_id ?? null, name: r.name, result: r.result };
+  return retiredWrite("the front change");
 }
 
 export async function execPluralAddMemberNote(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ member_id: string; note: string; title?: string; color?: string }>(ctx.req.context);
-  if (!p?.member_id || !p?.note) return { response_key: "witness", witness: "add_member_note requires { member_id, note } in context" };
-  const r = await addMemberNote(ctx.env, p);
-  if (!r.success) return { response_key: "witness", witness: r.error ?? "add_member_note failed" };
-  return { ack: true, id: r.id ?? null, member_id: r.member_id, name: r.name };
+  return retiredWrite("the member note");
 }
 
 // ── Halseth-native plural store executors (D1) ──

@@ -77,10 +77,8 @@ binding    = "LIBRARIAN_KV"
 id         = "a9a3b20ea0224c3997bfb4d32bbbc276"
 preview_id = "e3f0d2a9e27b415781d0384d59885546"
 
-# ── Service Binding: nullsafe-plural-v2 ────────────────────────────────────────
-[[services]]
-binding = "PLURAL"
-service = "nullsafe-plural-v2"
+# (The nullsafe-plural-v2 Service Binding was removed 2026-09-30, STATUS B43: SimplyPlural retired.
+# Front state now comes from src/front/source.ts.)
 
 # Secrets (set via `wrangler secret put SECOND_BRAIN_TOKEN`):
 # SECOND_BRAIN_TOKEN — OAuth token for your Second Brain MCP endpoint (e.g. https://your-second-brain.example.com/mcp)
