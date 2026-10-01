@@ -39,6 +39,17 @@ function ageHoursOrNull(iso: string | null | undefined, nowMs: number): number |
   return iso ? hoursSinceIso(iso, nowMs) : null;
 }
 
+/** The newest DM "taken" for a DAILY slot. outcome = 'taken' is load-bearing: a stated miss
+ *  (mig 0141) must never count as confirmation, or a "forgot the morning one" would hide an
+ *  esc_meds gap from Blue. Exported so a real-schema test runs this exact text. */
+export const MED_DM_TAKEN_SQL =
+  `SELECT MAX(a.answered_at) AS at FROM med_answers a
+   JOIN med_schedule s ON s.slot_key = a.slot_key WHERE s.weekday_mask = 127 AND a.outcome = 'taken'`;
+/** The same read on a DB before 0141 (no outcome column, so every row is a taken). */
+export const MED_DM_TAKEN_SQL_PRE_0141 =
+  `SELECT MAX(a.answered_at) AS at FROM med_answers a
+   JOIN med_schedule s ON s.slot_key = a.slot_key WHERE s.weekday_mask = 127`;
+
 /** The fresher of two ages; null only when both are null ("never confirmed" stays absent). */
 export function newestAge(a: number | null, b: number | null): number | null {
   if (a === null) return b;
@@ -87,14 +98,17 @@ export async function runCareTick(
     // A "taken" answered to a med_reminder DM (mig 0136) is the same fact as checking the meds
     // routine off on Hearth (Raziel, 2026-09-28: "it should accept both"). Only DAILY slots count
     // (weekday_mask 127): a weekly dose confirmed on a Wednesday must not stand in for three days
-    // of daily meds and hide an esc_meds gap from Blue. med_answers holds only affirmatives (R-10),
-    // so this can only make meds_missed / esc_meds fire LESS, never report "not taken" (P-2).
-    // A failed read (table absent on an older DB) falls back to the routine alone, which is the
-    // pre-0136 behaviour, instead of taking the whole care tick down.
-    env.DB.prepare(
-      `SELECT MAX(a.answered_at) AS at FROM med_answers a
-       JOIN med_schedule s ON s.slot_key = a.slot_key WHERE s.weekday_mask = 127`,
-    ).first<{ at: string | null }>().catch(() => null),
+    // of daily meds and hide an esc_meds gap from Blue. Since mig 0141 med_answers also holds a
+    // STATED miss ("I missed the morning one"); only outcome = 'taken' is confirmation, so a stated
+    // miss behaves here EXACTLY as no answer does (ruling 2026-10-01: escalation semantics are
+    // unchanged). This can still only make meds_missed / esc_meds fire LESS, never report
+    // "not taken" (P-2).
+    // A failed read falls back in two steps: without the outcome filter (a DB before 0141 has no
+    // column, and so no stated-miss rows: every row there IS a taken), then to the routine alone
+    // (no table: the pre-0136 behaviour), instead of taking the whole care tick down.
+    env.DB.prepare(MED_DM_TAKEN_SQL).first<{ at: string | null }>()
+      .catch(() => env.DB.prepare(MED_DM_TAKEN_SQL_PRE_0141).first<{ at: string | null }>())
+      .catch(() => null),
     // Owner activity across every surface D1 can see -- the shared read (care/owner-activity.ts),
     // one lane one filter with the C6 quiet-owner detector. The denominator is stated in the
     // detail line the rule table builds -- a silence claim must name what it checked.

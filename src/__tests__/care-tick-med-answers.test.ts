@@ -8,7 +8,7 @@ import { runCareTick, newestAge } from "../care/tick.js";
 const NOW = Date.parse("2026-09-28T15:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
 
-function makeEnv(opts: { routineAt: string | null; dmAnswerAt: string | null | "throws" }) {
+function makeEnv(opts: { routineAt: string | null; dmAnswerAt: string | null | "throws" | "pre-0141" }) {
   const counters = { care: 0, esc: 0, medSql: "" };
   const firstFor = async (sql: string) => {
     if (sql.includes("FROM biometric_snapshots")) return null;
@@ -16,6 +16,11 @@ function makeEnv(opts: { routineAt: string | null; dmAnswerAt: string | null | "
     if (sql.includes("FROM med_answers")) {
       counters.medSql = sql;
       if (opts.dmAnswerAt === "throws") throw new Error("D1_ERROR: no such table: med_answers");
+      // A DB before 0141: the outcome filter fails, the unfiltered read (every row a taken) works.
+      if (opts.dmAnswerAt === "pre-0141") {
+        if (sql.includes("outcome")) throw new Error("D1_ERROR: no such column: a.outcome");
+        return { at: hoursAgo(2) };
+      }
       return { at: opts.dmAnswerAt };
     }
     return null;
@@ -72,6 +77,20 @@ describe("care tick: a DM 'taken' confirms meds", () => {
     await runCareTick(env, NOW, { force: true });
     expect(counters.medSql).toMatch(/JOIN med_schedule/);
     expect(counters.medSql).toMatch(/weekday_mask = 127/);
+  });
+
+  it("only a 'taken' row confirms: the query filters outcome = 'taken' (mig 0141, a stated miss reads as no answer)", async () => {
+    const { env, counters } = makeEnv({ routineAt: null, dmAnswerAt: null });
+    await runCareTick(env, NOW, { force: true });
+    expect(counters.medSql).toMatch(/a\.outcome = 'taken'/);
+  });
+
+  it("on a DB before 0141 the unfiltered read is used (no column means no stated-miss rows)", async () => {
+    const { env, counters } = makeEnv({ routineAt: hoursAgo(100), dmAnswerAt: "pre-0141" });
+    await runCareTick(env, NOW, { force: true });
+    expect(counters.medSql).not.toMatch(/outcome/);
+    expect(counters.care).toBe(0);
+    expect(counters.esc).toBe(0);
   });
 
   it("a failed med_answers read falls back to the routine and the tick still runs", async () => {

@@ -2,6 +2,9 @@
 // rules R-9 (outside every other rail, one follow-up then stop), R-10 (only an answer is ever
 // recorded), P-2 (no answer is never "not taken").
 //
+// Amended 2026-10-01 (mig 0141, Raziel's ruling): an answer may name its dose ("morning", "both"),
+// and a miss is recorded only when he says it ("I missed the morning one"); silence records nothing.
+//
 // This is its OWN scheduler, deliberately not a metronome palette action. It never goes through
 // runHeartbeat, the justification gate, quiet hours or isEligible. B7 step 1 found that a filter
 // which empties a list inverted into a 4am fallback post; a must-fire reminder must not ride
@@ -140,10 +143,13 @@ async function claimsFor(db: D1Database, slotKey: string, localDate: string): Pr
   return r.results ?? [];
 }
 
-async function answerFor(db: D1Database, slotKey: string, localDate: string): Promise<{ answered_at: string; companion_id: string } | null> {
+export type MedOutcome = "taken" | "missed";
+
+/** His answer for a dose, if he gave one. ANY row (taken or a stated miss) means "he answered". */
+async function answerFor(db: D1Database, slotKey: string, localDate: string): Promise<{ answered_at: string; companion_id: string; outcome: MedOutcome } | null> {
   return db.prepare(
-    `SELECT answered_at, companion_id FROM med_answers WHERE slot_key = ? AND local_date = ?`,
-  ).bind(slotKey, localDate).first<{ answered_at: string; companion_id: string }>();
+    `SELECT answered_at, companion_id, outcome FROM med_answers WHERE slot_key = ? AND local_date = ?`,
+  ).bind(slotKey, localDate).first<{ answered_at: string; companion_id: string; outcome: MedOutcome }>();
 }
 
 /** A claim blocks a new one unless it was never delivered and has gone stale. */
@@ -168,6 +174,10 @@ function claimBlocks(c: ClaimRow | undefined, nowMs: number): boolean {
  * the UNIQUE claim makes a third message impossible.
  *
  * A companion named on neither side of a row gets nothing for it (that is how Gaia is excluded).
+ *
+ * "Answered" is ANY med_answers row, taken OR a stated miss (mig 0141, ruling 2026-10-01): if he
+ * told them he missed it, he answered, and a follow-up would nag him about something he already
+ * said. claimDose's NOT EXISTS guard is the same any-row test, so the race is closed the same way.
  */
 export async function resolveDue(db: D1Database, companion: string, nowIso: string): Promise<DueDose[]> {
   const nowMs = Date.parse(nowIso);
@@ -277,53 +287,171 @@ export interface RecordedAnswer {
   local_date: string;
   answered_at: string;
   answered_local: string | null;
+  outcome: MedOutcome;
 }
 
 /**
- * Record an affirmative answer he gave to `companion` at `answeredAtIso`. R-10: this is the only
- * write that describes him, and nothing else is ever recorded; no answer means no row.
- *
- * Which dose it answers: among doses THIS companion reminded him about (a delivered claim of either
- * kind), still unanswered, CLAIMED at or before his message (not delivered: delivered_at is stamped
- * after the send returns and its retries, so a fast "yes" can carry an earlier timestamp than it), and whose next occurrence has not yet
- * come, the one MOST RECENTLY reminded. That is the reminder he is looking at when he types "yes";
- * an older still-open dose is less likely to be what the word is about, and guessing wrong is
- * cheaper in that direction (the older dose simply stays "no answer", which P-2 renders honestly).
+ * One statement in his message (mig 0141, ruling 2026-10-01): which dose, and what he said about it.
+ *   slot_key  a schedule slot key ("morning"), "*" for every open reminded dose ("both", "all of
+ *             them"), or null for the one he is looking at (today's behaviour, unchanged).
+ *   outcome   "taken", or "missed" ONLY because he said so. Silence never reaches this function.
  */
-export async function recordAnswer(db: D1Database, companion: string, answeredAtIso: string): Promise<RecordedAnswer | null> {
-  const atMs = Date.parse(answeredAtIso);
-  if (!Number.isFinite(atMs)) return null;
-  const candidates = (await db.prepare(
+export interface MedAnswerEntry { slot_key: string | null; outcome: MedOutcome }
+
+export interface MedAnswerResult {
+  slot_key: string | null;
+  outcome: MedOutcome;
+  recorded: RecordedAnswer[];
+  /** Why nothing was recorded for this entry, when nothing was. */
+  skipped?: "unknown_slot" | "conflict" | "no_open_dose";
+}
+
+interface Candidate {
+  slot_key: string; local_date: string; reminded_at: string;
+  local_time: string; tz: string; weekday_mask: number; active_from: string | null;
+  /** NULL = no answer yet; 'missed' = he said he missed it (a later "taken" may replace it). */
+  prior: MedOutcome | null;
+}
+
+/**
+ * Doses THIS companion reminded him about (a delivered claim of either kind), CLAIMED at or before
+ * his message (not delivered: delivered_at is stamped after the send returns and its retries, so a
+ * fast "yes" can carry an earlier timestamp than it), whose next occurrence has not yet come, and
+ * that are still open: no answer, or a stated miss. MOST RECENTLY reminded first.
+ */
+async function openCandidates(db: D1Database, companion: string, answeredAtIso: string): Promise<Candidate[]> {
+  const rows = (await db.prepare(
     `SELECT c.slot_key, c.local_date, MAX(c.delivered_at) AS reminded_at,
-            s.local_time, s.tz, s.weekday_mask, s.active_from
+            s.local_time, s.tz, s.weekday_mask, s.active_from, a.outcome AS prior
        FROM med_claims c JOIN med_schedule s ON s.slot_key = c.slot_key
+       LEFT JOIN med_answers a ON a.slot_key = c.slot_key AND a.local_date = c.local_date
       WHERE c.companion_id = ? AND c.delivered_at IS NOT NULL AND c.claimed_at <= ?
-        AND NOT EXISTS (SELECT 1 FROM med_answers a WHERE a.slot_key = c.slot_key AND a.local_date = c.local_date)
+        AND (a.slot_key IS NULL OR a.outcome = 'missed')
       GROUP BY c.slot_key, c.local_date
       ORDER BY reminded_at DESC`,
-  ).bind(companion, answeredAtIso).all<{
-    slot_key: string; local_date: string; reminded_at: string;
-    local_time: string; tz: string; weekday_mask: number; active_from: string | null;
-  }>()).results ?? [];
-
-  for (const cand of candidates) {
+  ).bind(companion, answeredAtIso).all<Candidate>()).results ?? [];
+  return rows.filter(cand => {
     // Before the next occurrence of the same slot: an answer after the next dose's time belongs to
     // the next dose (or to nothing), never to this one.
     const next = nextOccurrenceDate(cand, cand.local_date);
     const at = localPartsIn(answeredAtIso, cand.tz);
     const slotMin = slotMinutes(cand.local_time);
-    if (!at || slotMin === null) continue;
-    if (next !== null) {
-      const atMin = at.hour * 60 + at.minute;
-      if (at.date > next || (at.date === next && atMin >= slotMin)) continue;
-    }
-    const ins = await db.prepare(
-      `INSERT OR IGNORE INTO med_answers (slot_key, local_date, answered_at, companion_id) VALUES (?, ?, ?, ?)`,
-    ).bind(cand.slot_key, cand.local_date, answeredAtIso, companion).run();
-    if ((ins.meta?.changes ?? 0) !== 1) continue;
-    return { slot_key: cand.slot_key, local_date: cand.local_date, answered_at: answeredAtIso, answered_local: localHHMM(answeredAtIso, cand.tz) };
+    if (!at || slotMin === null) return false;
+    if (next === null) return true;
+    const atMin = at.hour * 60 + at.minute;
+    return !(at.date > next || (at.date === next && atMin >= slotMin));
+  });
+}
+
+/** A stated miss may only land on an unanswered dose. "Taken" may also replace a stated miss: he
+ *  said "forgot", then took it and said so; the newer statement is the true one. A recorded
+ *  "taken" is never turned into a miss (the first affirmative stands, as before 0141). */
+function eligible(c: Candidate, outcome: MedOutcome): boolean {
+  return c.prior === null || (outcome === "taken" && c.prior === "missed");
+}
+
+async function writeAnswer(db: D1Database, c: Candidate, outcome: MedOutcome, companion: string, answeredAtIso: string): Promise<RecordedAnswer | null> {
+  const r = c.prior === null
+    ? await db.prepare(
+        `INSERT OR IGNORE INTO med_answers (slot_key, local_date, answered_at, companion_id, outcome) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(c.slot_key, c.local_date, answeredAtIso, companion, outcome).run()
+    : await db.prepare(
+        `UPDATE med_answers SET outcome = 'taken', answered_at = ?3, companion_id = ?4
+          WHERE slot_key = ?1 AND local_date = ?2 AND outcome = 'missed'`,
+      ).bind(c.slot_key, c.local_date, answeredAtIso, companion).run();
+  if ((r.meta?.changes ?? 0) !== 1) return null;
+  return { slot_key: c.slot_key, local_date: c.local_date, answered_at: answeredAtIso, answered_local: localHHMM(answeredAtIso, c.tz), outcome };
+}
+
+/**
+ * Record what he told `companion` at `answeredAtIso`, one entry per statement. R-10 as amended by
+ * the 2026-10-01 ruling: this is the only write that describes him; it records "taken", or a miss
+ * ONLY when he said so. Silence never calls this, so an unanswered dose still has no row.
+ *
+ * Which dose an entry answers (always among openCandidates, so only a dose this companion reminded
+ * him about, within its window):
+ *   named slot  the most recently reminded open dose OF THAT SLOT.
+ *   "*"         every open dose ("took both").
+ *   null        the most recently reminded open dose: the reminder he is looking at when he types
+ *               "yes". An older still-open dose is less likely to be what the word is about, and
+ *               guessing wrong is cheaper in that direction (it simply stays "no answer", which
+ *               P-2 renders honestly).
+ * Named entries are placed first, then "*", then null, so an unnamed word never takes a dose a
+ * named one in the same message was about. Contradictions (one slot both taken and missed, a "*"
+ * beside an entry with the other outcome, two unnamed entries that disagree) record nothing for the
+ * entries involved: a false record is worse than none.
+ */
+export async function recordAnswers(
+  db: D1Database, companion: string, answeredAtIso: string, entries: MedAnswerEntry[],
+): Promise<MedAnswerResult[]> {
+  const results: MedAnswerResult[] = entries.map(e => ({ slot_key: e.slot_key, outcome: e.outcome, recorded: [] }));
+  if (!Number.isFinite(Date.parse(answeredAtIso)) || entries.length === 0) {
+    for (const r of results) r.skipped = "no_open_dose";
+    return results;
   }
-  return null;
+
+  const named = entries.filter(e => e.slot_key !== null && e.slot_key !== "*");
+  const known = named.length
+    ? new Set(((await db.prepare(`SELECT slot_key FROM med_schedule`).all<{ slot_key: string }>()).results ?? []).map(r => r.slot_key))
+    : new Set<string>();
+
+  const outcomesOf = (pred: (e: MedAnswerEntry) => boolean) => new Set(entries.filter(pred).map(e => e.outcome));
+  const starOutcomes = outcomesOf(e => e.slot_key === "*");
+  const nullOutcomes = outcomesOf(e => e.slot_key === null);
+  const namedOutcomes = new Map<string, Set<MedOutcome>>();
+  for (const e of named) {
+    if (!known.has(e.slot_key!)) continue;
+    const s = namedOutcomes.get(e.slot_key!) ?? new Set<MedOutcome>();
+    s.add(e.outcome);
+    namedOutcomes.set(e.slot_key!, s);
+  }
+  const allNamedOutcomes = new Set([...namedOutcomes.values()].flatMap(s => [...s]));
+
+  results.forEach((r, i) => {
+    const e = entries[i]!;
+    if (e.slot_key === null) {
+      if (nullOutcomes.size > 1) r.skipped = "conflict";
+    } else if (e.slot_key === "*") {
+      if (starOutcomes.size > 1 || [...allNamedOutcomes].some(o => o !== e.outcome)) r.skipped = "conflict";
+    } else if (!known.has(e.slot_key)) {
+      r.skipped = "unknown_slot";
+    } else if ((namedOutcomes.get(e.slot_key)?.size ?? 0) > 1 || [...starOutcomes].some(o => o !== e.outcome)) {
+      r.skipped = "conflict";
+    }
+  });
+
+  const candidates = await openCandidates(db, companion, answeredAtIso);
+  const used = new Set<string>();
+  const key = (c: Candidate) => `${c.slot_key}|${c.local_date}`;
+  const take = async (r: MedAnswerResult, pool: Candidate[], all: boolean) => {
+    for (const c of pool) {
+      if (used.has(key(c)) || !eligible(c, r.outcome)) continue;
+      const rec = await writeAnswer(db, c, r.outcome, companion, answeredAtIso);
+      if (!rec) continue;
+      used.add(key(c));
+      r.recorded.push(rec);
+      if (!all) return;
+    }
+  };
+
+  const order = (r: MedAnswerResult) => (r.slot_key === null ? 2 : r.slot_key === "*" ? 1 : 0);
+  for (const r of [...results].sort((a, b) => order(a) - order(b))) {
+    if (r.skipped) continue;
+    if (r.slot_key === null) await take(r, candidates, false);
+    else if (r.slot_key === "*") await take(r, candidates, true);
+    else await take(r, candidates.filter(c => c.slot_key === r.slot_key), false);
+    if (r.recorded.length === 0) r.skipped = "no_open_dose";
+  }
+  return results;
+}
+
+/**
+ * Record a plain affirmative ("yes", a check mark): one unnamed "taken". This is the pre-0141
+ * behaviour exactly, kept for the reaction path and for a bot build that sends no `answers`.
+ */
+export async function recordAnswer(db: D1Database, companion: string, answeredAtIso: string): Promise<RecordedAnswer | null> {
+  const [r] = await recordAnswers(db, companion, answeredAtIso, [{ slot_key: null, outcome: "taken" }]);
+  return r?.recorded[0] ?? null;
 }
 
 export interface MedStateEntry {
@@ -332,7 +460,15 @@ export interface MedStateEntry {
   local_time: string;
   local_date: string;
   day: "today" | "yesterday";
-  /** Local HH:MM he told a companion he took it, or null. NULL MEANS "NO ANSWER", NEVER "NOT TAKEN". */
+  /** What he told a companion about this dose: "taken", "missed" (ONLY because he said so), or null.
+   *  NULL MEANS "NO ANSWER", NEVER "NOT TAKEN". */
+  outcome: MedOutcome | null;
+  /** Local HH:MM he told a companion (either outcome), and whom. */
+  told_local: string | null;
+  told_to: string | null;
+  /** Local HH:MM he told a companion he TOOK it, or null. Taken-only on purpose: a bot build from
+   *  before 0141 renders any non-null answered_local as "he told you he took it", so a stated miss
+   *  must never appear here. For it, null reads "no answer", which is honest if incomplete. */
   answered_local: string | null;
   answered_to: string | null;
 }
@@ -340,7 +476,8 @@ export interface MedStateEntry {
 /**
  * Every dose due so far today (slot time reached, scheduled today), with his answer if he gave
  * one. Before local noon, yesterday's afternoon/evening doses too. Reminded or not does not
- * matter: this is the dose's state, and the only state a dose has is "he told you" or "no answer".
+ * matter: this is the dose's state, and a dose has three: "he told you he took it", "he told you
+ * he missed it", or "no answer". No count, streak or rate is derived here or anywhere (R-5).
  */
 export async function medState(db: D1Database, nowIso: string): Promise<MedStateEntry[]> {
   const out: MedStateEntry[] = [];
@@ -357,10 +494,15 @@ export async function medState(db: D1Database, nowIso: string): Promise<MedState
     for (const { date, day } of days) {
       if (!scheduledOn(row, date)) continue;
       const a = await answerFor(db, row.slot_key, date);
+      const told = a ? localHHMM(a.answered_at, row.tz) : null;
+      const taken = a?.outcome === "taken";
       out.push({
         slot_key: row.slot_key, label: row.label, local_time: row.local_time, local_date: date, day,
-        answered_local: a ? localHHMM(a.answered_at, row.tz) : null,
-        answered_to: a?.companion_id ?? null,
+        outcome: a?.outcome ?? null,
+        told_local: told,
+        told_to: a?.companion_id ?? null,
+        answered_local: taken ? told : null,
+        answered_to: taken ? a!.companion_id : null,
       });
     }
   }

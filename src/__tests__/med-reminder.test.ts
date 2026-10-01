@@ -14,10 +14,11 @@ import { describe, it, expect } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import { localPartsIn } from "../webmind/metronome.js";
 import {
-  resolveDue, claimDose, markDelivered, releaseClaim, recordAnswer, medState,
+  resolveDue, claimDose, markDelivered, releaseClaim, recordAnswer, recordAnswers, medState,
   addDays, weekdayOf, nextOccurrenceDate, MED_CLAIM_STALE_SECONDS,
 } from "../webmind/med-reminder.js";
 import { getMedDue, postMedClaim, postMedAnswer, getMedToday } from "../handlers/med-reminder.js";
+import { MED_DM_TAKEN_SQL } from "../care/tick.js";
 
 const TZ = "America/Chicago";
 
@@ -323,8 +324,214 @@ describe("routes", () => {
     const ans = await postMedAnswer(req("https://h/mind/med/answer", { method: "POST", token: "s", body: JSON.stringify({ companion_id: "drevan", answered_at: NIGHT_CDT, content: "yes" }) }), env);
     expect(ans.status).toBe(200);
     const cols = (db.prepare("PRAGMA table_info(med_answers)").all() as Array<{ name: string }>).map(c => c.name);
-    expect(cols.sort()).toEqual(["answered_at", "companion_id", "created_at", "local_date", "slot_key"]);
+    // CHANGED 2026-10-01 (mig 0141): `outcome` joins the list (taken | missed, the stated-miss
+    // ruling). The point of this assertion is unchanged: still no free-text column, so what he
+    // said can never be stored, only what it meant.
+    expect(cols.sort()).toEqual(["answered_at", "companion_id", "created_at", "local_date", "outcome", "slot_key"]);
     const today = await getMedToday(req(`https://h/mind/med/today?now=${NIGHT_CDT}`, { token: "s" }), env);
     expect(((await today.json()) as { doses: unknown[] }).doses.length).toBeGreaterThan(0);
+  });
+});
+
+// ── 0141: named doses and stated misses (Raziel's ruling 2026-10-01) ─────────────────────────────
+// A miss is recorded only when he says it; silence records nothing. Named answers record THAT dose.
+
+describe("recordAnswers: named doses, both, stated misses", () => {
+  const MON = "2026-09-28";
+  const MORNING = "2026-09-28T12:10:00.000Z"; // Mon 07:10 CDT
+  const rows = (db: any) => db.prepare("SELECT slot_key, local_date, outcome, companion_id FROM med_answers ORDER BY slot_key").all();
+
+  async function bothOpen(DB: any) {
+    await deliver(DB, "morning", MON, "first", "drevan", MORNING);
+    await deliver(DB, "night", MON, "first", "drevan", NIGHT_CDT);
+  }
+
+  it("a named slot records THAT dose, not the most recently reminded one", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    const [r] = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: "morning", outcome: "taken" }]);
+    expect(r!.recorded.map(x => [x.slot_key, x.outcome])).toEqual([["morning", "taken"]]);
+    expect(rows(db)).toEqual([{ slot_key: "morning", local_date: MON, outcome: "taken", companion_id: "drevan" }]);
+  });
+
+  it("'*' (both / all of them) records every open reminded dose", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    const [r] = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: "*", outcome: "taken" }]);
+    expect(r!.recorded.map(x => x.slot_key).sort()).toEqual(["morning", "night"]);
+    expect(rows(db).map((x: any) => x.outcome)).toEqual(["taken", "taken"]);
+  });
+
+  it("a mixed answer records each dose with its own outcome", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [
+      { slot_key: "night", outcome: "taken" }, { slot_key: "morning", outcome: "missed" },
+    ]);
+    expect(rows(db).map((x: any) => [x.slot_key, x.outcome])).toEqual([["morning", "missed"], ["night", "taken"]]);
+  });
+
+  it("an unnamed miss lands on the most recently reminded open dose, like an unnamed yes", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    const [r] = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: null, outcome: "missed" }]);
+    expect(r!.recorded[0]).toMatchObject({ slot_key: "night", outcome: "missed", answered_local: "21:45" });
+    expect(rows(db)).toHaveLength(1);
+  });
+
+  it("a named slot still honours the window: past the next occurrence it records nothing", async () => {
+    const { db, DB } = setup();
+    await deliver(DB, "morning", MON, "first", "drevan", MORNING);
+    const [r] = await recordAnswers(DB, "drevan", plus(MORNING, 24 * 60 + 1), [{ slot_key: "morning", outcome: "missed" }]);
+    expect(r).toMatchObject({ recorded: [], skipped: "no_open_dose" });
+    expect(rows(db)).toEqual([]);
+  });
+
+  it("a named slot he was not reminded about by this companion records nothing", async () => {
+    const { db, DB } = setup();
+    await deliver(DB, "night", MON, "first", "drevan", NIGHT_CDT);
+    const [r] = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: "morning", outcome: "taken" }]);
+    expect(r!.skipped).toBe("no_open_dose");
+    expect((await recordAnswers(DB, "cypher", plus(NIGHT_CDT, 5), [{ slot_key: "night", outcome: "missed" }]))[0]!.skipped).toBe("no_open_dose");
+    expect(rows(db)).toEqual([]);
+  });
+
+  it("an unknown slot key is skipped, and does not stop a good entry beside it", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    const res = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [
+      { slot_key: "lunch", outcome: "taken" }, { slot_key: "night", outcome: "taken" },
+    ]);
+    expect(res.map(r => r.skipped ?? "ok")).toEqual(["unknown_slot", "ok"]);
+    expect(rows(db).map((x: any) => x.slot_key)).toEqual(["night"]);
+  });
+
+  it("contradictions record nothing for the entries involved (a false record is worse than none)", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    const res = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [
+      { slot_key: "night", outcome: "taken" }, { slot_key: "night", outcome: "missed" }, { slot_key: "morning", outcome: "taken" },
+    ]);
+    expect(res.map(r => r.skipped ?? "ok")).toEqual(["conflict", "conflict", "ok"]);
+    expect(rows(db).map((x: any) => x.slot_key)).toEqual(["morning"]);
+    const star = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 6), [{ slot_key: "*", outcome: "taken" }, { slot_key: "night", outcome: "missed" }]);
+    expect(star.map(r => r.skipped)).toEqual(["conflict", "conflict"]);
+    const unnamed = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 7), [{ slot_key: null, outcome: "taken" }, { slot_key: null, outcome: "missed" }]);
+    expect(unnamed.map(r => r.skipped)).toEqual(["conflict", "conflict"]);
+    expect(rows(db).map((x: any) => x.slot_key)).toEqual(["morning"]);
+  });
+
+  it("a named entry is placed before an unnamed one, so the unnamed word never steals it", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: null, outcome: "taken" }, { slot_key: "night", outcome: "missed" }]);
+    expect(rows(db).map((x: any) => [x.slot_key, x.outcome])).toEqual([["morning", "taken"], ["night", "missed"]]);
+  });
+
+  it("a later 'taken' replaces a stated miss (he said forgot, then took it); a taken is never turned into a miss", async () => {
+    const { db, DB } = setup();
+    await deliver(DB, "night", MON, "first", "drevan", NIGHT_CDT);
+    await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: null, outcome: "missed" }]);
+    expect(await recordAnswer(DB, "drevan", plus(NIGHT_CDT, 20))).toMatchObject({ slot_key: "night", outcome: "taken", answered_local: "22:00" });
+    expect(rows(db)).toEqual([{ slot_key: "night", local_date: MON, outcome: "taken", companion_id: "drevan" }]);
+    const [again] = await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 25), [{ slot_key: "night", outcome: "missed" }]);
+    expect(again!.skipped).toBe("no_open_dose");
+    expect(rows(db)[0].outcome).toBe("taken");
+  });
+
+  it("silence records nothing: no answer, no row, for either outcome", async () => {
+    const { db, DB } = setup();
+    await bothOpen(DB);
+    await resolveDue(DB, "drevan", plus(NIGHT_CDT, 60));
+    await medState(DB, plus(NIGHT_CDT, 60));
+    expect(rows(db)).toEqual([]);
+  });
+
+  it("the CHECK refuses any outcome but taken / missed", () => {
+    const { db } = setup();
+    expect(() => db.exec(`INSERT INTO med_answers (slot_key, local_date, answered_at, companion_id, outcome) VALUES ('night','2026-09-28','x','drevan','late')`)).toThrow();
+  });
+});
+
+describe("a stated miss is an answer: the follow-up does not nag after it", () => {
+  it("deliver first, he says he missed it, +30 finds nothing due and the claim is refused", async () => {
+    const { DB } = setup();
+    await deliver(DB, "night", "2026-09-28", "first", "drevan", NIGHT_CDT);
+    await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 10), [{ slot_key: "night", outcome: "missed" }]);
+    expect(await resolveDue(DB, "drevan", plus(NIGHT_CDT, 30))).toEqual([]);
+    expect(await resolveDue(DB, "cypher", plus(NIGHT_CDT, 35))).toEqual([]);
+    expect(await claimDose(DB, { slot_key: "night", local_date: "2026-09-28", kind: "followup", companion: "drevan", nowIso: plus(NIGHT_CDT, 30) })).toBe(false);
+  });
+});
+
+describe("medState carries the outcome, and answered_local stays taken-only", () => {
+  it("taken, stated miss and no answer are three distinct states", async () => {
+    const { DB } = setup();
+    await deliver(DB, "morning", "2026-09-28", "first", "drevan", "2026-09-28T12:10:00.000Z");
+    await deliver(DB, "night", "2026-09-28", "first", "drevan", NIGHT_CDT);
+    let s = await medState(DB, plus(NIGHT_CDT, 3));
+    expect(s.map(e => [e.slot_key, e.outcome, e.told_local, e.answered_local])).toEqual([["morning", null, null, null], ["night", null, null, null]]);
+    await recordAnswers(DB, "drevan", plus(NIGHT_CDT, 5), [{ slot_key: "morning", outcome: "missed" }, { slot_key: "night", outcome: "taken" }]);
+    s = await medState(DB, plus(NIGHT_CDT, 6));
+    expect(s.find(e => e.slot_key === "morning")).toMatchObject({ outcome: "missed", told_local: "21:45", told_to: "drevan", answered_local: null, answered_to: null });
+    expect(s.find(e => e.slot_key === "night")).toMatchObject({ outcome: "taken", told_local: "21:45", answered_local: "21:45", answered_to: "drevan" });
+  });
+});
+
+describe("care rules: only a 'taken' row confirms meds (a stated miss reads exactly like no answer)", () => {
+  it("MED_DM_TAKEN_SQL against the real schema ignores a missed row and sees a taken one", () => {
+    const { db } = setup();
+    db.exec(`INSERT INTO med_answers (slot_key, local_date, answered_at, companion_id, outcome) VALUES ('morning','2026-09-28','2026-09-28T12:20:00.000Z','drevan','missed')`);
+    expect((db.prepare(MED_DM_TAKEN_SQL).get() as { at: string | null }).at).toBe(null);
+    db.exec(`INSERT INTO med_answers (slot_key, local_date, answered_at, companion_id) VALUES ('night','2026-09-27','2026-09-28T02:45:00.000Z','drevan')`);
+    expect((db.prepare(MED_DM_TAKEN_SQL).get() as { at: string | null }).at).toBe("2026-09-28T02:45:00.000Z");
+  });
+});
+
+describe("POST /mind/med/answer with answers[]", () => {
+  const req = (body: unknown) => new Request("https://h/mind/med/answer", {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer s" }, body: JSON.stringify(body),
+  });
+
+  it("without answers the response shape is the pre-0141 one (an older bot build keeps working)", async () => {
+    const { env, DB } = setup();
+    await deliver(DB, "night", "2026-09-28", "first", "drevan", NIGHT_CDT);
+    const res = await postMedAnswer(req({ companion_id: "drevan", answered_at: plus(NIGHT_CDT, 4) }), env);
+    const j = await res.json() as Record<string, unknown>;
+    expect(Object.keys(j)).toEqual(["recorded"]);
+    expect(j.recorded).toMatchObject({ slot_key: "night", local_date: "2026-09-28" });
+  });
+
+  it("records each valid entry, reports invalid and unknown ones as skipped", async () => {
+    const { env, DB, db } = setup();
+    await deliver(DB, "morning", "2026-09-28", "first", "drevan", "2026-09-28T12:10:00.000Z");
+    await deliver(DB, "night", "2026-09-28", "first", "drevan", NIGHT_CDT);
+    const res = await postMedAnswer(req({ companion_id: "drevan", answered_at: plus(NIGHT_CDT, 4), answers: [
+      { slot_key: "night", outcome: "taken" },
+      { slot_key: "morning", outcome: "missed" },
+      { slot_key: "lunch", outcome: "taken" },
+      { slot_key: "night", outcome: "maybe" },
+      { slot_key: "DROP TABLE", outcome: "taken" },
+    ] }), env);
+    expect(res.status).toBe(200);
+    const j = await res.json() as { results: Array<{ recorded: unknown[]; skipped?: string }> };
+    expect(j.results.map(r => r.skipped ?? "ok")).toEqual(["ok", "ok", "unknown_slot", "invalid", "invalid"]);
+    expect(db.prepare("SELECT slot_key, outcome FROM med_answers ORDER BY slot_key").all()).toEqual([
+      { slot_key: "morning", outcome: "missed" }, { slot_key: "night", outcome: "taken" },
+    ]);
+  });
+
+  it("refuses a non-array answers and an oversized one", async () => {
+    const { env } = setup();
+    expect((await postMedAnswer(req({ companion_id: "drevan", answers: "yes" }), env)).status).toBe(400);
+    expect((await postMedAnswer(req({ companion_id: "drevan", answers: Array(7).fill({ outcome: "taken" }) }), env)).status).toBe(400);
+  });
+
+  it("an empty answers array records nothing", async () => {
+    const { env, DB, db } = setup();
+    await deliver(DB, "night", "2026-09-28", "first", "drevan", NIGHT_CDT);
+    const res = await postMedAnswer(req({ companion_id: "drevan", answered_at: plus(NIGHT_CDT, 4), answers: [] }), env);
+    expect(((await res.json()) as { results: unknown[] }).results).toEqual([]);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM med_answers").get() as { n: number }).n).toBe(0);
   });
 });

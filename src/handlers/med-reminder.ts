@@ -5,7 +5,7 @@
 //   POST /mind/med/claim                          atomic claim {slot_key, local_date, kind, companion_id}
 //   POST /mind/med/delivered                      the DM went out {..., path}
 //   POST /mind/med/release                        the send failed; hand the claim back
-//   POST /mind/med/answer                         he said yes {companion_id, answered_at}
+//   POST /mind/med/answer                         he answered {companion_id, answered_at, answers?}
 //   GET  /mind/med/today                ?now=ISO  today's state (and last night's before noon)
 //
 // Auth: authGuard, as every /mind/* route. A per-companion token may only act as itself.
@@ -16,8 +16,8 @@
 import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import {
-  resolveDue, claimDose, markDelivered, releaseClaim, recordAnswer, medState, MED_COMPANIONS,
-  type MedKind,
+  resolveDue, claimDose, markDelivered, releaseClaim, recordAnswer, recordAnswers, medState, MED_COMPANIONS,
+  type MedKind, type MedAnswerEntry,
 } from "../webmind/med-reminder.js";
 
 function json(data: unknown, status = 200): Response {
@@ -132,11 +132,35 @@ export async function postMedRelease(request: Request, env: Env): Promise<Respon
 }
 
 // POST /mind/med/answer
-// Body: { companion_id, answered_at } -- no message content, ever (the table has no column for it).
+// Body: { companion_id, answered_at, answers? } -- no message content, ever (the table has no column
+// for it).
+//   answers absent   one unnamed "taken" (pre-0141 behaviour, byte-for-byte the same response
+//                    `{ recorded: {...} | null }`, so an older bot build keeps working).
+//   answers present  [{ slot_key?: string | "*" | null, outcome: "taken" | "missed" }], at most
+//                    MAX_ANSWER_ENTRIES. Response `{ results: [{ slot_key, outcome, recorded: [...],
+//                    skipped? }] }`. An entry with an unknown slot key or a malformed shape is
+//                    ignored (reported as skipped, logged by slot key only), never a 400 for the
+//                    whole message: one bad entry must not drop a good one beside it.
+const MAX_ANSWER_ENTRIES = 6;
+const SLOT_KEY_RE = /^[a-z0-9_-]{1,40}$/;
+
+type ParsedEntry = { ok: true; entry: MedAnswerEntry } | { ok: false; slot: string };
+
+function parseEntry(raw: unknown): ParsedEntry {
+  if (!raw || typeof raw !== "object") return { ok: false, slot: "invalid" };
+  const e = raw as { slot_key?: unknown; outcome?: unknown };
+  const outcome = e.outcome;
+  const slot = e.slot_key === undefined || e.slot_key === null ? null : e.slot_key;
+  const slotForLog = typeof slot === "string" && (slot === "*" || SLOT_KEY_RE.test(slot)) ? slot : slot === null ? "unnamed" : "invalid";
+  if (outcome !== "taken" && outcome !== "missed") return { ok: false, slot: slotForLog };
+  if (slot !== null && (typeof slot !== "string" || (slot !== "*" && !SLOT_KEY_RE.test(slot)))) return { ok: false, slot: slotForLog };
+  return { ok: true, entry: { slot_key: slot as string | null, outcome } };
+}
+
 export async function postMedAnswer(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
-  let body: { companion_id?: string; answered_at?: string };
+  let body: { companion_id?: string; answered_at?: string; answers?: unknown };
   try { body = await request.json() as typeof body; } catch { return json({ error: "invalid JSON body" }, 400); }
   const companion = (body.companion_id ?? "").trim();
   if (!MED_COMPANIONS.has(companion)) return json({ error: "companion_id must be one of cypher, drevan, gaia" }, 400);
@@ -147,10 +171,36 @@ export async function postMedAnswer(request: Request, env: Env): Promise<Respons
   if (!Number.isFinite(t)) return json({ error: "answered_at must be an ISO timestamp" }, 400);
   // Never in the future (a skewed client clock must not open tomorrow's dose).
   const answeredAt = new Date(Math.min(t, nowMs)).toISOString();
+
+  if (body.answers === undefined) {
+    try {
+      const recorded = await recordAnswer(env.DB, companion, answeredAt);
+      console.log("[mind/med/answer]", { companion, recorded: recorded ? recorded.slot_key : null });
+      return json({ recorded });
+    } catch (err) {
+      console.error("[mind/med/answer] error", { companion, error: String(err) });
+      return json({ error: "Internal server error" }, 500);
+    }
+  }
+
+  if (!Array.isArray(body.answers)) return json({ error: "answers must be an array" }, 400);
+  if (body.answers.length > MAX_ANSWER_ENTRIES) return json({ error: `answers takes at most ${MAX_ANSWER_ENTRIES} entries` }, 400);
+  const parsed = body.answers.map(parseEntry);
+  const entries = parsed.flatMap(p => (p.ok ? [p.entry] : []));
   try {
-    const recorded = await recordAnswer(env.DB, companion, answeredAt);
-    console.log("[mind/med/answer]", { companion, recorded: recorded ? recorded.slot_key : null });
-    return json({ recorded });
+    const recorded = await recordAnswers(env.DB, companion, answeredAt, entries);
+    let i = 0;
+    const results = parsed.map(p => p.ok
+      ? recorded[i++]!
+      : { slot_key: null, outcome: null, recorded: [], skipped: "invalid" as const });
+    for (const p of parsed) if (!p.ok) console.log("[mind/med/answer] ignored entry", { companion, slot: p.slot });
+    for (const r of recorded) if (r.skipped === "unknown_slot") console.log("[mind/med/answer] ignored entry: unknown slot", { companion, slot: r.slot_key });
+    console.log("[mind/med/answer]", {
+      companion,
+      recorded: recorded.flatMap(r => r.recorded.map(x => `${x.slot_key}:${x.outcome}`)),
+      skipped: recorded.filter(r => r.skipped).map(r => `${r.slot_key ?? "unnamed"}:${r.skipped}`),
+    });
+    return json({ results });
   } catch (err) {
     console.error("[mind/med/answer] error", { companion, error: String(err) });
     return json({ error: "Internal server error" }, 500);
