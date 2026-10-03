@@ -115,6 +115,7 @@ import { postReachReserve, postReachDelivered, postReachRelease, getReachToday }
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
+import { postWatchalong, patchWatchalong, getWatchalongActive } from "./handlers/watchalong.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
 import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { postBook, postUploadTicket, putBookUpload, optionsBookUpload, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
@@ -509,6 +510,11 @@ const router = new Router()
   .on("POST",  "/mind/watch",                       (request, env)         => postWatchShelf(request, env))
   .on("POST",  "/mind/watch/progress",              (request, env)         => postWatchProgress(request, env))
   .on("PATCH", "/mind/watch/:id",                   (request, env, params) => patchWatchShelf(request, env, (params ?? {})["id"] ?? ""))
+
+  // Watchalong (0142) -- the triad follows a film's caption track, cut at a server-side playhead.
+  .on("POST",  "/mind/watchalong",                  (request, env)         => postWatchalong(request, env))
+  .on("GET",   "/mind/watchalong/active",           (request, env)         => getWatchalongActive(request, env))
+  .on("PATCH", "/mind/watchalong/:id",              (request, env, params) => patchWatchalong(request, env, (params ?? {})["id"] ?? ""))
 
   // Shared-experience layer (Ears) -- music heard together, migration 0071
   .on("POST",  "/mind/media",                      (request, env)         => postMediaExperience(request, env))
