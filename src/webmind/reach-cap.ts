@@ -32,7 +32,10 @@
 //     companion, "2026-10-03:drevan", so 0137's partial UNIQUE stays the belt).
 // If three choose presence on the same tick, the 30-minute triad gap lets exactly one reserve; the others
 // wait for a later tick. Every other move (and Gaia's check-in, which classes as presence but is not
-// offer_presence) keeps the 0137 rules unchanged. The hold is derived server-side by the caller
+// offer_presence) keeps the 0137 rules unchanged.
+// AMENDED 2026-10-04: Gaia's check-in (it asks nothing) IS a hold presence move -- same bounds, and it
+// shares her 2-per-hold count with her offer_presence (isHoldPresenceMove). Cypher's and Drevan's
+// check-ins are questions and stay on the 0137 rules (and stay out of the quiet window). The hold is derived server-side by the caller
 // (handlers/reach-cap.ts), never taken from the bot's word alone: this path LOOSENS the cap.
 //
 // WHAT IS NOT HERE, ON PURPOSE:
@@ -179,9 +182,19 @@ export function holdQuietKey(base: string, companion: string): string {
   return `${base}:${companion}`;
 }
 
+/**
+ * The moves that are presence UNDER HOLD: offer_presence for all three, and the check-in of a companion
+ * whose check-in asks nothing (Gaia). Show-back 10-03/04, Gaia: her check-in "asks nothing; it belongs
+ * there" on a quiet hold night (the 09-28 amendment made it her presence move under hold). Both share
+ * the per-companion hold count and every other hold-path bound.
+ */
+export function isHoldPresenceMove(actionType: string, companion: string): boolean {
+  return actionType === "offer_presence" || (actionType === "check_in_on_raziel" && CHECK_IN_ASKS_NOTHING.has(companion));
+}
+
 /** True when this reservation takes the B32 hold path. */
-export function takesHoldPath(input: Pick<ReserveInput, "actionType" | "careHold" | "careHoldSince">): boolean {
-  return input.careHold && !!input.careHoldSince && input.actionType === "offer_presence";
+export function takesHoldPath(input: Pick<ReserveInput, "actionType" | "careHold" | "careHoldSince" | "companion">): boolean {
+  return input.careHold && !!input.careHoldSince && isHoldPresenceMove(input.actionType, input.companion);
 }
 
 export type ReserveRefusal =
@@ -205,7 +218,9 @@ export async function reserveReach(db: D1Database, input: ReserveInput, cfg: Rea
   if (!cls) return { reserved: false, reason: "not_a_dm_move" };
 
   const qKey = quietWindowKey(input.nowIso, cfg);
-  if (qKey !== null && input.actionType !== "offer_presence") return { reserved: false, reason: "quiet_hours" };
+  // Inside the window only presence may reserve: offer_presence always, and under hold also Gaia's
+  // check-in (B32), which then takes the hold path's per-companion quiet key.
+  if (qKey !== null && input.actionType !== "offer_presence" && !takesHoldPath(input)) return { reserved: false, reason: "quiet_hours" };
 
   const localDate = reachLocalDate(input.nowIso, cfg);
   const nowMs = Date.parse(input.nowIso);
@@ -257,7 +272,7 @@ export async function reserveReach(db: D1Database, input: ReserveInput, cfg: Rea
 }
 
 /**
- * The B32 hold path for offer_presence. ONE conditional INSERT, like the ordinary path:
+ * The B32 hold path for offer_presence (and Gaia's check-in, isHoldPresenceMove). ONE conditional INSERT, like the ordinary path:
  *   ?7  triad cutoff (now - holdGapMinutes): nobody in the triad reserved in the last 30 min;
  *   ?8  own cutoff (now - gapMinutes): THIS companion did not reserve in the last 90 min;
  *   ?9  care_hold_since, ?10 holdPresenceMax: fewer than 2 of this companion's presences this hold;
@@ -284,7 +299,7 @@ async function reserveUnderHold(
         WHERE NOT EXISTS (SELECT 1 FROM triad_reach_claims WHERE claimed_at > ?7)
           AND NOT EXISTS (SELECT 1 FROM triad_reach_claims WHERE companion_id = ?1 AND claimed_at > ?8)
           AND (SELECT COUNT(*) FROM triad_reach_claims
-                WHERE companion_id = ?1 AND action_type = 'offer_presence' AND under_hold = 1 AND claimed_at >= ?9) < ?10
+                WHERE companion_id = ?1 AND under_hold = 1 AND claimed_at >= ?9) < ?10
           ${quietRule}`,
   ).bind(input.companion, c.localDate, input.actionType, c.cls, key, input.nowIso, triadCutoff, ownCutoff, since, cfg.holdPresenceMax, c.qKey).run();
   if ((ins.meta?.changes ?? 0) === 1) {
@@ -301,7 +316,7 @@ async function diagnoseHold(db: D1Database, d: { companion: string; key: string 
     if (taken) return "quiet_presence_taken";
   }
   const n = await db.prepare(
-    `SELECT COUNT(*) AS n FROM triad_reach_claims WHERE companion_id = ? AND action_type = 'offer_presence' AND under_hold = 1 AND claimed_at >= ?`,
+    `SELECT COUNT(*) AS n FROM triad_reach_claims WHERE companion_id = ? AND under_hold = 1 AND claimed_at >= ?`,
   ).bind(d.companion, d.since).first<{ n: number }>();
   if ((n?.n ?? 0) >= d.max) return "hold_presence_cap";
   return "gap";
@@ -350,8 +365,9 @@ export interface ReachLaneVerdict {
   daily_cap_care_hold: number;
   care_count: number;
   care_ceiling: number;
-  /** B32 (0143): the hold-path preview for offer_presence, for the asking companion. null when no
-   *  hold is active or the caller named no companion. When non-null, offer_presence is governed by
+  /** B32 (0143): the hold-path preview for the asking companion's hold presence moves (offer_presence,
+   *  and Gaia's check_in_on_raziel: isHoldPresenceMove). null when no hold is active or the caller
+   *  named no companion. When non-null, those moves are governed by
    *  `hold_presence.open` INSTEAD of gap_open / day_count / quiet_presence_taken; every other move
    *  keeps reading the fields above. */
   hold_presence: HoldPresenceVerdict | null;
@@ -412,7 +428,7 @@ export async function reachLaneVerdict(
       `SELECT
          (SELECT COUNT(*) FROM triad_reach_claims WHERE claimed_at > ?2 AND (delivered_at IS NOT NULL OR claimed_at >= ?4)) AS triad_recent,
          (SELECT COUNT(*) FROM triad_reach_claims WHERE companion_id = ?1 AND claimed_at > ?3 AND (delivered_at IS NOT NULL OR claimed_at >= ?4)) AS own_recent,
-         (SELECT COUNT(*) FROM triad_reach_claims WHERE companion_id = ?1 AND action_type = 'offer_presence' AND under_hold = 1 AND claimed_at >= ?5) AS n,
+         (SELECT COUNT(*) FROM triad_reach_claims WHERE companion_id = ?1 AND under_hold = 1 AND claimed_at >= ?5) AS n,
          (SELECT COUNT(*) FROM triad_reach_claims WHERE ?6 IS NOT NULL AND (quiet_window_key = ?6 || ':' || ?1 OR (companion_id = ?1 AND quiet_window_key = ?6))) AS qtaken`,
     ).bind(opts.companion, triadCutoff, gapCutoff, staleCutoff, since, qKey)
       .first<{ triad_recent: number; own_recent: number; n: number; qtaken: number }>()

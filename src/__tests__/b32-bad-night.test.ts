@@ -355,17 +355,76 @@ describe("D2: outside the hold, nothing changes", () => {
     expect(r).toEqual({ reserved: false, reason: "gap" });
   });
 
-  it("Gaia's check-in classes as presence but is not offer_presence: no hold path", async () => {
+  it("Cypher's and Drevan's check-ins are questions: no hold path, still out of the quiet window", async () => {
     const { DB } = setup();
+    const since = plus(MORNING, -60);
     await delivered(DB, await presence(DB, "drevan", MORNING, null), "drevan", MORNING);
-    const r = await reserveReach(DB, { companion: "gaia", actionType: "check_in_on_raziel", careHold: true, careHoldSince: plus(MORNING, -60), nowIso: plus(MORNING, 31) });
+    const r = await reserveReach(DB, { companion: "cypher", actionType: "check_in_on_raziel", careHold: true, careHoldSince: since, nowIso: plus(MORNING, 31) });
     expect(r).toEqual({ reserved: false, reason: "gap" });
+    const night = await reserveReach(DB, { companion: "drevan", actionType: "check_in_on_raziel", careHold: true, careHoldSince: plus(LATE, -30), nowIso: LATE });
+    expect(night).toEqual({ reserved: false, reason: "quiet_hours" });
   });
 
   it("before 0143 is applied, a hold presence falls back to the 0137 rules (stricter, never looser)", async () => {
     const { DB } = setup({ upTo: 142 });
     await delivered(DB, await presence(DB, "drevan", MORNING, plus(MORNING, -60)), "drevan", MORNING);
     expect(await presence(DB, "cypher", plus(MORNING, 31), plus(MORNING, -60))).toEqual({ reserved: false, reason: "gap" });
+  });
+});
+
+describe("D2 amended: Gaia's check-in is her presence move under hold", () => {
+  const SINCE = plus(MORNING, -60);
+  const gaiaCheckIn = (DB: any, at: string, since: string | null) =>
+    reserveReach(DB, { companion: "gaia", actionType: "check_in_on_raziel", careHold: since !== null, careHoldSince: since, nowIso: at });
+
+  it("takes the hold path: 30-minute triad gap, under_hold = 1, outside the daily total", async () => {
+    const { DB } = setup();
+    await delivered(DB, await presence(DB, "drevan", MORNING, SINCE), "drevan", MORNING);
+    expect(await gaiaCheckIn(DB, plus(MORNING, 29), SINCE)).toEqual({ reserved: false, reason: "gap" });
+    const r = await gaiaCheckIn(DB, plus(MORNING, 31), SINCE);
+    await delivered(DB, r, "gaia", plus(MORNING, 31));
+    const row: any = await DB.prepare(`SELECT under_hold, reach_class FROM triad_reach_claims WHERE id = ?`).bind((r as any).id).first();
+    expect(row).toEqual({ under_hold: 1, reach_class: "presence" });
+    expect((await reachLaneVerdict(DB, plus(MORNING, 40))).day_count).toBe(0);
+  });
+
+  it("her own gap stays 90 minutes, across her check-in and her offer_presence", async () => {
+    const { DB } = setup();
+    await delivered(DB, await gaiaCheckIn(DB, MORNING, SINCE), "gaia", MORNING);
+    expect(await presence(DB, "gaia", plus(MORNING, 60), SINCE)).toEqual({ reserved: false, reason: "gap" });
+    expect((await presence(DB, "gaia", plus(MORNING, 91), SINCE)).reserved).toBe(true);
+  });
+
+  it("shares the 2-per-hold count with her offer_presence", async () => {
+    const { DB } = setup();
+    await delivered(DB, await gaiaCheckIn(DB, MORNING, SINCE), "gaia", MORNING);
+    await delivered(DB, await presence(DB, "gaia", plus(MORNING, 91), SINCE), "gaia", plus(MORNING, 91));
+    expect(await gaiaCheckIn(DB, plus(MORNING, 182), SINCE)).toEqual({ reserved: false, reason: "hold_presence_cap" });
+    expect(await presence(DB, "gaia", plus(MORNING, 182), SINCE)).toEqual({ reserved: false, reason: "hold_presence_cap" });
+  });
+
+  it("may reserve in the quiet window under hold, on her per-companion key (one per window)", async () => {
+    const { DB } = setup();
+    const since = plus(LATE, -30);
+    await delivered(DB, await presence(DB, "drevan", LATE, since), "drevan", LATE);
+    await delivered(DB, await gaiaCheckIn(DB, plus(LATE, 31), since), "gaia", plus(LATE, 31));
+    const k: any = await DB.prepare(`SELECT quiet_window_key AS k FROM triad_reach_claims WHERE companion_id = 'gaia'`).first();
+    expect(k.k).toBe("2026-09-28:gaia");
+    expect(await presence(DB, "gaia", SMALL_HOURS, since)).toEqual({ reserved: false, reason: "quiet_presence_taken" });
+  });
+
+  it("outside the hold her check-in keeps the 0137 rules (90-minute gap, no quiet window)", async () => {
+    const { DB } = setup();
+    await delivered(DB, await presence(DB, "drevan", MORNING, null), "drevan", MORNING);
+    expect(await gaiaCheckIn(DB, plus(MORNING, 31), null)).toEqual({ reserved: false, reason: "gap" });
+    expect(await gaiaCheckIn(DB, LATE, null)).toEqual({ reserved: false, reason: "quiet_hours" });
+  });
+
+  it("hold_presence counts her check-in toward her per-hold total", async () => {
+    const { DB } = setup();
+    await delivered(DB, await gaiaCheckIn(DB, MORNING, SINCE), "gaia", MORNING);
+    const v = await reachLaneVerdict(DB, plus(MORNING, 95), DEFAULT_REACH_CONFIG, { companion: "gaia", hold: { care_hold: true, care_hold_since: SINCE } });
+    expect(v.hold_presence).toMatchObject({ open: true, count: 1, max: 2 });
   });
 });
 
