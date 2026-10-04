@@ -14,6 +14,7 @@ import { writeHandoff } from "../webmind/handoffs.js";
 import { upsertThread, sweepThreads } from "../webmind/threads.js";
 import { addNote, getEligibleNotesForCompression, archiveNotes, readRecentNotes, recallNotes, recallNotesByMeaning, demoteNotes, type CompressibleNote } from "../webmind/notes.js";
 import { reachLaneVerdict, reachConfigFrom } from "../webmind/reach-cap.js";
+import { readCareHold } from "../care/hold.js";
 import { listActions, listEligibleActions, addAction, patchAction, deleteAction, recordActionFired, isValidActionType, ownsMove, VALID_ACTION_TYPES, quietHoursVerdict, QUIET_HOURS_DEFAULT_START, QUIET_HOURS_DEFAULT_END, QUIET_HOURS_DEFAULT_TZ, type MetronomeActionInput, type MetronomeActionPatch, type EligibilityContext } from "../webmind/metronome.js";
 import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
@@ -1351,7 +1352,9 @@ export async function getMindMetronomeEligibleActions(
     // The shared triad lane (mig 0137), read-only, so the bot never offers a DM move the cap would
     // refuse. Null on a read error: the bot treats an absent verdict as CLOSED for DM moves (the
     // atomic reserve would refuse them anyway, and a missing verdict must never read as "open").
-    const reach = await reachLaneVerdict(env.DB, now.toISOString(), reachConfigFrom(env)).catch((e) => {
+    // B32: the hold-path preview for offer_presence is per companion and needs the server's hold.
+    const hold = await readCareHold(env.DB, now.getTime()).catch(() => null);
+    const reach = await reachLaneVerdict(env.DB, now.toISOString(), reachConfigFrom(env), { companion: companion_id, hold }).catch((e) => {
       console.error("[mind/metronome/eligible] reach verdict error", { companion_id, error: String(e) });
       return null;
     });

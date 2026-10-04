@@ -139,6 +139,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "creature_interact",
     regex: /^(?:(?:please|go|let\s+me|i(?:'ll|\s+will|\s+want\s+to)?)\s+)?(?:feed|play\s+with|pet|give|gift|bring|talk\s+to|speak\s+to|tend(?:\s+to)?|visit|sit\s+with|note\s+to|say\s+.{1,200}?\s+to)\s+sol\b|^(?:give|gift|bring)\b.{0,200}?\bto\s+sol\b/i,
     note: "Tending Sol by plain verb: 'give Sol a shiny word' (the skill's own example) and 'pet'/'visit'/'note to Sol' missed the trigger sweep entirely, and 'sit with Sol' was stolen by note_sit (2026-09-28)." },
+  { pattern_key: "care_hold_start",
+    regex: /^(?:please\s+)?(?:(?:start|set|turn\s+on)\s+(?:the\s+)?care\s+hold|care\s+hold\s+(?:start|on)|hold\s+on\s+for\s+raziel)\b/i,
+    note: "B32 (mig 0143): the companion sets care_hold on Raziel's plain word. Anchored so 'hold loop' and other earlier 'hold' triggers can never shadow it." },
+  { pattern_key: "care_hold_clear",
+    regex: /^(?:please\s+)?(?:(?:clear|end|lift|turn\s+off)\s+(?:the\s+)?care\s+hold|care\s+hold\s+(?:clear|off|end))\b/i,
+    note: "B32: his 'good now' relayed by the companion clears care_hold; anchored like care_hold_start." },
   { pattern_key: "ledger_keep",
     regex: new RegExp(`^keep\\s+(?:the\\s+|this\\s+)?ledger(?:\\s+entry)?\\s+${LEDGER_ID_TOKEN}(?![A-Za-z0-9_-])\\s*(?::|$)`, "i"),
     note: "Ledger lane (mig 0134): 'keep ledger <id>' / 'keep ledger <id>: <my words>' -- anchored so the companion's own words after the colon can never be routed by a trigger they happen to contain." },
@@ -368,6 +374,7 @@ import {
 } from "./executors/forgetting.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
+import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -462,6 +469,10 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   ledger_read: execLedgerRead,
   ledger_keep: execLedgerKeep,
   ledger_drop: execLedgerDrop,
+
+  // B32 bad-night presence (mig 0143): the companion sets / clears care_hold on his word.
+  care_hold_start: execCareHoldStart,
+  care_hold_clear: execCareHoldClear,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,

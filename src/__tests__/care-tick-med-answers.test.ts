@@ -1,5 +1,5 @@
 // A med_reminder DM "taken" counts as confirming meds, the same as the Hearth routine check-off
-// (Raziel, 2026-09-28: "it should accept both"). Both meds_missed (tier 2, care_hold) and
+// (Raziel, 2026-09-28: "it should accept both"). Both meds_missed (tier 2; no longer a care_hold rule since B32/0143) and
 // esc_meds (tier 3, DMs Blue) read one signal, meds_logged_age_hours, so the fix lives there.
 
 import { describe, it, expect } from "vitest";

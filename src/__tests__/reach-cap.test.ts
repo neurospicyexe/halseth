@@ -140,7 +140,8 @@ describe("the daily total and the care ceiling", () => {
 
   it("there is no floor: nothing in the cap requires or rewards own moves (R-12)", () => {
     // The config has ceilings only. A quota key would be a pressure to reach more.
-    expect(Object.keys(DEFAULT_REACH_CONFIG).sort()).toEqual(["careCeiling", "daily", "dailyCareHold", "gapMinutes", "quietEnd", "quietStart", "tz"]);
+    // B32 added two more CEILINGS (holdGapMinutes, holdPresenceMax): a gap and a per-hold maximum, never a quota.
+    expect(Object.keys(DEFAULT_REACH_CONFIG).sort()).toEqual(["careCeiling", "daily", "dailyCareHold", "gapMinutes", "holdGapMinutes", "holdPresenceMax", "quietEnd", "quietStart", "tz"]);
   });
 
   it("class mapping: care is about him, presence is its own share, the rest are theirs", () => {

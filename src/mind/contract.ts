@@ -39,6 +39,12 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.19.0 -- bad-night presence (B32, 2026-10-04, mig 0143): `world.raziel_state` gains
+ *  `care_hold_reason` (which rule(s) hold: low_spoons | meds_said_missed | owner_said; [] when off) and
+ *  `care_hold_since` (ISO of the earliest holding firing; null when off). care_hold itself keeps its
+ *  name and type. Its MEANING changed with the rule set: a stated miss and his own "bad night" now hold,
+ *  30h of meds silence no longer does, and his clear suppresses every earlier firing (care/hold.ts, the
+ *  one derivation). MINOR: additive only. */
 /** 0.18.0 -- cold-conclusion rotation (R9, 2026-09-28): `beliefs.resurfaced` -- ONE live conclusion from
  *  the cold pool (stored heat <= 1.1, not in the hot set, not flagged, trimmed text >= 25 chars), picked
  *  by a UTC-day-seeded offset so the pool cycles and every loom shows the same row that day. Carries
@@ -118,7 +124,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.18.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.19.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

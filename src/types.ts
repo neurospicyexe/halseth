@@ -41,6 +41,8 @@ export interface Env {
   TRIAD_REACH_DAILY?:           string;  // proactive DMs per America/Chicago day, whole triad
   TRIAD_REACH_DAILY_CARE_HOLD?: string;  // the daily limit while the reserving companion is under care_hold
   TRIAD_CARE_CEILING?:          string;  // care lines per day, whole triad (T-7)
+  TRIAD_REACH_HOLD_GAP_MINUTES?:  string;  // B32: triad gap for an offer_presence under care_hold (default 30)
+  TRIAD_REACH_HOLD_PRESENCE_MAX?: string;  // B32: offer_presence per companion per hold (default 2)
   // Raziel's PluralKit system id. NOT a secret -- the member list is public and unauthenticated,
   // which is why the roster lookup (mig 0117) could ship while FRONTING stays blocked on the
   // SimplyPlural replacement's API. Unset => roster lookups answer "unavailable", never "not found".

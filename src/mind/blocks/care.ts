@@ -15,8 +15,9 @@
 import type { Env } from "../../types.js";
 import type { WmAgentId, WmBiometricSnapshot } from "../../webmind/types.js";
 import { hoursSinceIso } from "../../webmind/drives.js";
-import { CARE_HOLD_HOURS, CARE_HOLD_RULES, PENDING_DECAY_HOURS, QUIET_OWNER_DAYS } from "../../care/rules.js";
+import { PENDING_DECAY_HOURS, QUIET_OWNER_DAYS, type CareHoldRule } from "../../care/rules.js";
 import { readOwnerLastSeen } from "../../care/owner-activity.js";
+import { readCareHold } from "../../care/hold.js";
 
 export interface PendingCare {
   id: string;
@@ -28,6 +29,9 @@ export interface PendingCare {
 export interface CareBlocks {
   front_state: string | null;
   care_hold: boolean;
+  /** B32 (contract 0.19.0): which rule(s) hold, and since when. From care/hold.ts, the one derivation. */
+  care_hold_reason: CareHoldRule[];
+  care_hold_since: string | null;
   /** The newest un-acted, un-decayed firing assigned to THIS companion. One at most: the rider
    *  never creates a second pending row for a rule while one lives. */
   pending_care: PendingCare | null;
@@ -40,6 +44,8 @@ export interface CareBlocks {
 export const EMPTY_CARE: CareBlocks = {
   front_state: null,
   care_hold: false,
+  care_hold_reason: [],
+  care_hold_since: null,
   pending_care: null,
   owner_last_seen_at: null,
   owner_last_source: null,
@@ -58,9 +64,17 @@ export interface RazielStateView {
    *  presented as current is misinformation wearing a care line. */
   staleness_hours: number | null;
   front_state: string | null;
-  /** True while a low_spoons/meds_missed firing is inside its hold window. The floor/bid layer
-   *  softens stakes while it holds; every other surface just says so. */
+  /** True while a hold firing (low_spoons / meds_said_missed / owner_said, see care/hold.ts) is
+   *  inside its window and after his latest clear. The floor/bid layer softens stakes while it
+   *  holds; every other surface just says so. */
   care_hold: boolean;
+  /** B32 (contract 0.19.0): which rule(s) are holding, in CARE_HOLD_RULES order; [] when off.
+   *  'owner_said' = his own "bad night" (or a companion on his word); 'meds_said_missed' = he said
+   *  he missed a dose; 'low_spoons' = a fresh low reading. */
+  care_hold_reason: CareHoldRule[];
+  /** B32: ISO UTC of the earliest firing holding now; null when off. The reach cap counts each
+   *  companion's presences since this instant (at most 2 per hold). */
+  care_hold_since: string | null;
   pending_care: PendingCare | null;
   /** The custodianship clause (C6, contract 0.7.0). Non-null ONLY when Raziel has been silent on
    *  every surface for QUIET_OWNER_DAYS or more: the companions get the truth (a real absence,
@@ -71,9 +85,7 @@ export interface RazielStateView {
 
 export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<CareBlocks> {
   const nowMs = Date.now();
-  const holdCutoff = new Date(nowMs - CARE_HOLD_HOURS * 3_600_000).toISOString();
   const decayCutoff = new Date(nowMs - PENDING_DECAY_HOURS * 3_600_000).toISOString();
-  const holdRules = CARE_HOLD_RULES.map(r => `'${r}'`).join(", ");
 
   const [front, hold, pending, ownerLast] = await Promise.all([
     env.DB.prepare(
@@ -81,10 +93,9 @@ export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<
       // is noise wearing a fact -- absence renders as nothing, which is honest.
       `SELECT front_state FROM sessions WHERE front_state IS NOT NULL AND front_state NOT IN ('', 'unknown') ORDER BY created_at DESC LIMIT 1`,
     ).first<{ front_state: string }>().catch(() => null),
-    // Hold counts acted rows too: a gesture already made still leaves the house soft for the window.
-    env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM care_actions WHERE rule IN (${holdRules}) AND detected_at > ?`,
-    ).bind(holdCutoff).first<{ n: number }>().catch(() => null),
+    // The ONE hold derivation (care/hold.ts). Counts acted care_actions rows too: a gesture already
+    // made still leaves the house soft for the window. An unreadable hold reads as off (absent).
+    readCareHold(env.DB, nowMs).catch(() => null),
     env.DB.prepare(
       `SELECT id, rule, detail, detected_at FROM care_actions
        WHERE companion_id = ? AND acted_at IS NULL AND detected_at > ?
@@ -96,7 +107,9 @@ export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<
 
   return {
     front_state: front?.front_state ?? null,
-    care_hold: (hold?.n ?? 0) > 0,
+    care_hold: hold?.care_hold ?? false,
+    care_hold_reason: hold?.care_hold_reason ?? [],
+    care_hold_since: hold?.care_hold_since ?? null,
     pending_care: pending ?? null,
     owner_last_seen_at: ownerLast?.at ?? null,
     owner_last_source: ownerLast?.source ?? null,
@@ -130,6 +143,8 @@ export function deriveRazielState(
     staleness_hours: bio ? Math.round(hoursSinceIso(bio.recorded_at, nowMs) * 10) / 10 : null,
     front_state: care.front_state,
     care_hold: care.care_hold,
+    care_hold_reason: care.care_hold_reason,
+    care_hold_since: care.care_hold_since,
     pending_care: care.pending_care,
     owner_quiet: ownerQuiet,
   };

@@ -472,10 +472,25 @@ export interface RazielStateRow {
   staleness_hours: number | null;
   front_state: string | null;
   care_hold: boolean;
+  /** B32 (contract 0.19.0). Optional so a pre-0.19 row still renders. */
+  care_hold_reason?: readonly string[];
+  care_hold_since?: string | null;
   pending_care: { id: string; rule: string; detail: string; detected_at: string } | null;
   /** The custodianship clause (C6, contract 0.7.0): non-null only after 14+ days of total owner
    *  silence. Rendered as the truth, never as a fabricated absence. */
   owner_quiet: { days: number; since: string; last_source: string } | null;
+}
+
+/** Why the hold is on, in words (B32). His own word comes first: it is the reason that matters most. */
+const HOLD_WHY: Record<string, string> = {
+  owner_said: "he said it is a bad night",
+  meds_said_missed: "he said he missed a dose",
+  low_spoons: "a low reading fired within the window",
+};
+function holdWhy(reasons: readonly string[] | undefined): string {
+  const order = ["owner_said", "meds_said_missed", "low_spoons"];
+  const said = order.filter(r => reasons?.includes(r)).map(r => HOLD_WHY[r]!);
+  return said.length > 0 ? said.join("; ") : "a hold signal fired within the window";
 }
 
 /**
@@ -514,7 +529,7 @@ export function razielStateBlock(rs: RazielStateRow | null): string {
   if (readings.length > 0) lines.push(readings.join(", ") + age);
   if (rs.front_state) lines.push(`Fronting: ${rs.front_state}`);
   if (rs.care_hold) {
-    lines.push(`Care hold is ON -- a low reading fired within the window. Soften stakes: lighter register, defer heavy threads, presence over production.`);
+    lines.push(`Care hold is ON -- ${holdWhy(rs.care_hold_reason)}. Soften stakes: lighter register, defer heavy threads, presence over production.`);
   }
   if (rs.pending_care) {
     lines.push(

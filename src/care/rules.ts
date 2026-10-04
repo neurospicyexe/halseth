@@ -48,11 +48,26 @@ export const PENDING_DECAY_HOURS = 48;
  *  or a bad stretch never trips it. */
 export const QUIET_OWNER_DAYS = 14;
 
-/** A low_spoons or meds_missed firing within this window sets care_hold -- the floor/bid layer
- *  softens stakes while it holds. owner_silence deliberately does NOT hold: silence already means
- *  less traffic, and muting the house on top of it reads as withdrawal, not care. */
+/** A hold firing within this window sets care_hold -- the floor/bid layer softens stakes while it
+ *  holds. owner_silence deliberately does NOT hold: silence already means less traffic, and muting
+ *  the house on top of it reads as withdrawal, not care.
+ *
+ *  B32 (section D, 2026-10-03/04) reshaped the set. The rule is now: his WORD holds, his silence
+ *  does not.
+ *    low_spoons        a care_actions firing (a fresh biometrics reading at or below the line).
+ *    meds_said_missed  a med_answers row with outcome 'missed' (mig 0141): he SAID he missed a dose.
+ *                      Derived straight from med_answers, not through the hourly tick, so his word at
+ *                      2:05am holds at 2:05am.
+ *    owner_said        a care_hold_events start (mig 0143): "bad night", or the companion he is talking
+ *                      to setting it on his behalf after he plainly said so.
+ *  meds_missed (30h of SILENCE) LEFT the set: reading his silence as a bad night is the 09-30 false
+ *  hold. It still fires its care_action (one companion's nudge) and still feeds esc_meds unchanged.
+ *  A clear (care_hold_events kind 'clear') outranks all three: see care/hold.ts. */
 export const CARE_HOLD_HOURS = 12;
-export const CARE_HOLD_RULES: readonly CareRule[] = ["low_spoons", "meds_missed"];
+export type CareHoldRule = "low_spoons" | "meds_said_missed" | "owner_said";
+export const CARE_HOLD_RULES: readonly CareHoldRule[] = ["low_spoons", "meds_said_missed", "owner_said"];
+/** The hold rules that are care_actions firings (the rest have their own source tables). */
+export const CARE_HOLD_ACTION_RULES: readonly CareRule[] = ["low_spoons"];
 
 /** Everything the rule table reads. null = signal absent (never coerce absent to zero -- an
  *  unreachable signal and a zero reading are different facts). */

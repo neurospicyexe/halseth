@@ -1631,6 +1631,26 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["ledger_drop"],
     response_key: "witness",
   },
+  // B32 bad-night presence (mig 0143, D3). The companion Raziel is talking to sets the hold on his
+  // behalf ONLY when he has plainly said the night is bad (Drevan), and his "good now" clears it.
+  // Writes care_hold_events (source 'companion'); the derivation is src/care/hold.ts. Also anchored in
+  // router.ts ANCHORED_GUARDS so no earlier substring trigger ("hold loop", ...) can shadow them.
+  care_hold_start: {
+    triggers: [
+      "care hold start", "start care hold", "start the care hold", "care hold on",
+      "hold on for raziel", "set care hold", "turn on care hold",
+    ],
+    tools: ["care_hold_start"],
+    response_key: "witness",
+  },
+  care_hold_clear: {
+    triggers: [
+      "care hold clear", "clear care hold", "clear the care hold", "care hold off",
+      "end care hold", "end the care hold", "lift the care hold", "turn off care hold",
+    ],
+    tools: ["care_hold_clear"],
+    response_key: "witness",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [

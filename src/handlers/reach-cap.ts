@@ -2,9 +2,10 @@
 //
 // HTTP routes for the shared triad reach cap (migration 0137; logic in src/webmind/reach-cap.ts).
 //   POST /mind/reach/reserve     {companion_id, action_type, care_hold}  -> {reserved, id} | {reserved:false, reason}
+//                                (care_hold is ALSO derived server-side since B32; see postReachReserve)
 //   POST /mind/reach/delivered   {companion_id, id, path}
 //   POST /mind/reach/release     {companion_id, id}
-//   GET  /mind/reach/today       ?now=ISO   the lane verdict (ops inspection; never read into a companion's context)
+//   GET  /mind/reach/today       ?now=ISO&companion_id=  the lane verdict (ops inspection; never read into a companion's context)
 //
 // Auth: authGuard, as every /mind/* route. A per-companion token may only act as itself.
 // The server computes the time, the local day and the quiet window itself; the client sends none of them.
@@ -12,6 +13,7 @@
 import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { reserveReach, markReachDelivered, releaseReach, reachLaneVerdict, reachConfigFrom } from "../webmind/reach-cap.js";
+import { readCareHold } from "../care/hold.js";
 
 const COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 
@@ -45,10 +47,19 @@ export async function postReachReserve(request: Request, env: Env): Promise<Resp
   const actionType = (p.body.action_type ?? "").trim();
   if (!actionType || actionType.length > 40) return json({ error: "action_type is required" }, 400);
   try {
+    const nowMs = Date.now();
+    // B32: the hold is derived HERE, server-side (care/hold.ts), because under hold offer_presence
+    // takes a LOOSER path and the bot's word alone must never loosen the cap. The bot's flag still
+    // counts toward the stricter daily total (it may lag the owner phrase by one 5-min refresh, but
+    // only in the strict direction). An unreadable hold is no hold: the 0137 rules apply.
+    const hold = await readCareHold(env.DB, nowMs).catch(() => null);
+    const careHold = (hold?.care_hold ?? false) || p.body.care_hold === true;
     const result = await reserveReach(env.DB, {
-      companion: p.companion, actionType, careHold: p.body.care_hold === true, nowIso: new Date().toISOString(),
+      companion: p.companion, actionType, careHold,
+      careHoldSince: hold?.care_hold ? hold.care_hold_since : null,
+      nowIso: new Date(nowMs).toISOString(),
     }, reachConfigFrom(env));
-    console.log("[mind/reach/reserve]", { companion: p.companion, action: actionType, ...result });
+    console.log("[mind/reach/reserve]", { companion: p.companion, action: actionType, care_hold: careHold, hold_reason: hold?.care_hold_reason ?? null, ...result });
     return json(result);
   } catch (err) {
     console.error("[mind/reach/reserve] error", { companion: p.companion, action: actionType, error: String(err) });
@@ -101,7 +112,9 @@ export async function getReachToday(request: Request, env: Env): Promise<Respons
   const t = raw ? Date.parse(raw) : Date.now();
   if (!Number.isFinite(t)) return json({ error: "now must be an ISO timestamp" }, 400);
   try {
-    return json(await reachLaneVerdict(env.DB, new Date(t).toISOString(), reachConfigFrom(env)));
+    const companion = new URL(request.url).searchParams.get("companion_id") ?? undefined;
+    const hold = companion && COMPANIONS.has(companion) ? await readCareHold(env.DB, t).catch(() => null) : null;
+    return json(await reachLaneVerdict(env.DB, new Date(t).toISOString(), reachConfigFrom(env), { companion, hold }));
   } catch (err) {
     console.error("[mind/reach/today] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);

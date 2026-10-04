@@ -112,6 +112,7 @@ import { postForageFind, getForageFinds, consumeForageFind } from "./handlers/fo
 import { postSkillProposal, listSkillProposals, decideSkillProposal } from "./handlers/skill-proposals.js";
 import { getMedDue, postMedClaim, postMedDelivered, postMedRelease, postMedAnswer, getMedToday } from "./handlers/med-reminder.js";
 import { postReachReserve, postReachDelivered, postReachRelease, getReachToday } from "./handlers/reach-cap.js";
+import { postCareHold, getCareHold } from "./handlers/care-hold.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
@@ -493,6 +494,9 @@ const router = new Router()
   .on("POST",  "/mind/reach/delivered",        (request, env)         => postReachDelivered(request, env))
   .on("POST",  "/mind/reach/release",          (request, env)         => postReachRelease(request, env))
   .on("GET",   "/mind/reach/today",            (request, env)         => getReachToday(request, env))
+  // B32 bad-night presence (0143): his word starts and clears care_hold (src/care/hold.ts)
+  .on("POST",  "/mind/care/hold",              (request, env)         => postCareHold(request, env))
+  .on("GET",   "/mind/care/hold",              (request, env)         => getCareHold(request, env))
 
   // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))
