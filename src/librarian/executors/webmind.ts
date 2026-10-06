@@ -225,7 +225,9 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
     spine?: string; last_real_thing?: string; motion_state?: string;
     open_threads?: string | string[];
     thread_id?: string;
-    next_steps?: string; open_loops?: string;
+    // The bots send these as string[] (librarian.ts writeHandoff); an array bound straight into D1
+    // threw D1_TYPE_ERROR and the whole handoff was lost (~3/day since 2026-10-01). Joined below.
+    next_steps?: string | string[]; open_loops?: string | string[];
     state_hint?: string; facet?: string; actor?: string;
     // Provenance, forwarded to wm_session_handoffs.source. `consolidation` marks a machine summary of
     // an idle window so a reader can prefer a real session close over it. It was accepted by the table
@@ -260,15 +262,17 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
   for (const [field, val] of [["title", title], ["summary", summary]] as [string, string][]) {
     if (val.length > 8000) return { error: "wm_handoff_write_failed", reason: `${field} exceeds maximum length of 8000 characters` };
   }
-  for (const field of ["next_steps", "open_loops", "state_hint"] as const) {
-    const val = p?.[field];
+  const asText = (v: string | string[] | undefined): string | undefined =>
+    v === undefined ? undefined : Array.isArray(v) ? v.map(String).join("\n") : String(v);
+  const nextSteps = asText(p?.next_steps);
+  for (const [field, val] of [["next_steps", nextSteps], ["open_loops", asText(p?.open_loops)], ["state_hint", p?.state_hint]] as const) {
     if (typeof val === "string" && val.length > 8000) {
       return { error: "wm_handoff_write_failed", reason: `${field} exceeds maximum length of 8000 characters` };
     }
   }
 
   // open_threads (array or string) maps to open_loops
-  let openLoops = p?.open_loops;
+  let openLoops = asText(p?.open_loops);
   if (!openLoops && p?.open_threads !== undefined) {
     openLoops = Array.isArray(p.open_threads) ? (p.open_threads as string[]).join("\n") : String(p.open_threads);
   }
@@ -280,7 +284,7 @@ export async function execWmHandoffWrite(ctx: ExecutorContext): Promise<Executor
     title,
     summary,
     ...(p?.thread_id !== undefined && { thread_id: p.thread_id }),
-    ...(p?.next_steps !== undefined && { next_steps: p.next_steps }),
+    ...(nextSteps !== undefined && { next_steps: nextSteps }),
     ...(openLoops !== undefined && { open_loops: openLoops }),
     ...(stateHint !== undefined && { state_hint: stateHint }),
     ...(p?.facet !== undefined && { facet: p.facet }),

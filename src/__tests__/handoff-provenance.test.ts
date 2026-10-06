@@ -53,3 +53,24 @@ describe("execWmHandoffWrite forwards source", () => {
     expect(calls[1]).toBe("consolidation");
   });
 });
+
+// 2026-10-06: the bots send next_steps/open_loops as string[]; bound straight into D1 the array threw
+// D1_TYPE_ERROR ("Type 'object' not supported") and the whole handoff was lost, ~3/day since 10-01.
+describe("execWmHandoffWrite stores list fields as text", () => {
+  it("joins array next_steps and open_loops with newlines", async () => {
+    vi.mocked(wmWriteHandoff).mockClear();
+    const r = await execWmHandoffWrite(ctx({ title: "t", summary: "s", next_steps: ["feed the animals", "then bed"], open_loops: ["a", "b"] }) as never);
+    expect(r).toMatchObject({ ack: true });
+    const input = vi.mocked(wmWriteHandoff).mock.calls[0]![1] as { next_steps?: unknown; open_loops?: unknown };
+    expect(input.next_steps).toBe("feed the animals\nthen bed");
+    expect(input.open_loops).toBe("a\nb");
+  });
+
+  it("leaves string fields as they are and omits absent ones", async () => {
+    vi.mocked(wmWriteHandoff).mockClear();
+    await execWmHandoffWrite(ctx({ title: "t", summary: "s", next_steps: "one thing" }) as never);
+    const input = vi.mocked(wmWriteHandoff).mock.calls[0]![1] as unknown as Record<string, unknown>;
+    expect(input.next_steps).toBe("one thing");
+    expect(input).not.toHaveProperty("open_loops");
+  });
+});
