@@ -10,6 +10,7 @@ import { generateId } from "../db/queries.js";
 import { COMPANION_ID_SET } from "../companions.js";
 import { isReviewState, KEPT_SQL } from "../webmind/review-state.js";
 import { completeTask } from "../lib/task-completion.js";
+import { normalizeWitnessType } from "../lib/witness-type.js";
 import type {
   HandoverPacket,
   CypherAudit,
@@ -233,7 +234,11 @@ export async function getGaiaWitness(request: Request, env: Env): Promise<Respon
     SELECT * FROM gaia_witness ORDER BY created_at DESC LIMIT ?
   `).bind(limit).all<GaiaWitness>();
 
-  return new Response(JSON.stringify(result.results ?? []), {
+  // (2026-10-06) stored rows keep the Discord channel id the old bot client wrote as witness_type
+  // (it is the only record of the channel); the feed shows those as "observation".
+  const rows = (result.results ?? []).map(r => ({ ...r, witness_type: normalizeWitnessType(r.witness_type) }));
+
+  return new Response(JSON.stringify(rows), {
     headers: { "Content-Type": "application/json" },
   });
 }

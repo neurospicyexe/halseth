@@ -5,6 +5,7 @@ import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { effectiveHeatSql } from "../../webmind/heat.js";
 import { COMPANION_IDS } from "../../companions.js";
+import { normalizeWitnessType } from "../../lib/witness-type.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { COMPANION_SPEECH_JOURNAL_SOURCES } from "../../webmind/review-state.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
@@ -372,13 +373,16 @@ export async function execWitnessLog(ctx: ExecutorContext): Promise<ExecutorResu
     session_id?: string;
     witness_type?: string; content?: string;
     entry?: string;        // Brain alias for content
-    channel?: string;      // Brain alias for witness_type
+    channel?: string;      // legacy alias for witness_type; a snowflake here is a channel id, not a type
     seal_phrase?: string;
   }>(ctx.req.context);
   if (!p) return { response_key: "witness", witness: "witness_log requires context" };
 
   const content = (p.content ?? p.entry)?.trim();
-  const witness_type = (p.witness_type ?? p.channel ?? "observation").trim();
+  // (2026-10-06) the bot client sent { entry, channel: <Discord channel id> } and this alias stored the
+  // snowflake as witness_type (3,489 of 3,499 prod rows). A snowflake-shaped value, from either key,
+  // falls back to "observation" so a stale bot build cannot keep writing them.
+  const witness_type = normalizeWitnessType(p.witness_type ?? p.channel);
   if (!content) return { response_key: "witness", witness: "witness_log requires { content } (or { entry }) in context" };
 
   let session_id = p.session_id;

@@ -17,6 +17,7 @@
 import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { COMPANION_IDS } from "../../companions.js";
+import { normalizeWitnessType } from "../../lib/witness-type.js";
 
 /** A sibling's last declared lane. Read from `companion_state` (written at session close), so it is
  *  a standing position rather than live presence -- do not render it as "right now". */
@@ -76,7 +77,8 @@ export async function loadRelationalBlocks(env: Env, companionId: WmAgentId): Pr
       })),
       recent_witness: (witness?.results ?? []).map(w => ({
         content: (w.content ?? "").slice(0, 300),
-        witness_type: w.witness_type,
+        // (2026-10-06) most stored rows carry a Discord channel id here; read it as "observation".
+        witness_type: normalizeWitnessType(w.witness_type),
         created_at: w.created_at,
       })),
     };
