@@ -23,6 +23,7 @@ import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
 import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
 import { KEPT_SQL } from "./review-state.js";
+import { resolveRoomsForChannels, roomLabelFromTags, journalRoomLabel, channelTagOf, channelIdOf } from "../mind/room-label.js";
 
 // ---------------------------------------------------------------------------
 // Graph-memory Phase 1.5 (docs/private/graph-memory-spec-2026-08-28.md): relational salience
@@ -456,6 +457,22 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       recentNotes.push(n);
     }
   }
+
+  // WHERE each surfaced note / journal row was said (2026-10-05): "(#movie-night, Nullsafe Halseth)".
+  // The triad lives in two servers and a channel id named neither. Journal rows carry their own `room:`
+  // tag; notes (thread_key = channel id) and older journal rows resolve through the newest journal row
+  // that recorded that channel's room. Pure D1 (loader rule), never throws, unrecorded = bare.
+  const journalRows = recentJournal.results ?? [];
+  const roomChannels = [
+    ...recentNotes.map(n => channelIdOf(n.thread_key)),
+    ...journalRows.filter(j => !roomLabelFromTags(j.tags)).map(j => channelTagOf(j.tags)),
+  ];
+  const channelRooms = await resolveRoomsForChannels(env, roomChannels);
+  for (const n of recentNotes) {
+    const ch = channelIdOf(n.thread_key);
+    n.room = ch ? channelRooms.get(ch) ?? null : null;
+  }
+  for (const j of journalRows) j.room = journalRoomLabel(j.tags, channelRooms);
 
   // Warm surfaced notes (0074), at SURFACE_BUMP rather than the full recall bump
   // (2026-07-26). Displaying a note is weak evidence that it matters; the companion

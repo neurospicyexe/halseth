@@ -6,6 +6,7 @@ import {
 } from "../backends/second-brain.js";
 import { truncateRaw, RAW_DATA_CHARS } from "../response/budget.js";
 import { recallNotesByMeaning } from "../../webmind/notes.js";
+import { resolveRoomsForChannels, journalRoomLabel, roomLabelFromTags, channelTagOf, channelIdOf } from "../../mind/room-label.js";
 
 // Validate vault paths: allow alphanumeric, slash, hyphen, underscore, dot, space.
 // Block path traversal (.. segments) and absolute paths.
@@ -139,6 +140,18 @@ export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<Exec
   if (notes.length === 0) {
     return { response_key: "witness", witness: `No continuity notes or handovers surfaced for "${query.slice(0, 60)}".` };
   }
+  // WHERE each note was said (2026-10-05): "(#movie-night, Nullsafe Halseth)" from the bots' `room:`
+  // journal tags, keyed by the note's channel thread_key. Pure D1, never throws, null when unrecorded.
+  // Notes key the room by their channel thread_key; journal rows carry their own `room:` tag, and older
+  // ones only `channel:<id>`, which resolves through the same channel -> room map.
+  const channelOf = (n: typeof notes[number]) => n.kind === "journal" ? channelTagOf(n.tags) : n.kind === "note" ? channelIdOf(n.thread_key) : null;
+  // Only rows with no room of their own cost a lookup.
+  const rooms = await resolveRoomsForChannels(ctx.env, notes.filter(n => !(n.kind === "journal" && roomLabelFromTags(n.tags))).map(channelOf));
+  const roomOf = (n: typeof notes[number]): string | null => {
+    if (n.kind === "journal") return journalRoomLabel(n.tags, rooms);
+    const ch = channelOf(n);
+    return ch ? rooms.get(ch) ?? null : null;
+  };
   return {
     data: notes.map(n => ({
       note_id: n.note_id,
@@ -146,6 +159,7 @@ export async function execNotesRecallMeaning(ctx: ExecutorContext): Promise<Exec
       created_at: n.created_at,
       salience: n.salience,
       thread_key: n.thread_key,
+      room: roomOf(n),
       kind: n.kind,
       source: n.source,
     })),

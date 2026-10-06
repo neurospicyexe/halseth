@@ -92,6 +92,9 @@ export interface WmContinuityNote {
   /** Set by the salience prune; a read that ignores it will surface archived notes. */
   archived?: number;
   edited_at?: string | null;
+  /** `(#movie-night, Nullsafe Halseth)` -- derived at read time by orient from the bots' `room:` journal
+   *  tags (mind/room-label.ts, 2026-10-05). Not a column; absent/null when no room was recorded. */
+  room?: string | null;
 }
 
 // ── Relational State ─────────────────────────────────────────────────────────
@@ -418,6 +421,8 @@ export interface WmJournalEntry {
   tags: string | null;  // JSON array string
   session_id: string | null;
   created_at: string;
+  /** Read-time room label (mind/room-label.ts, 2026-10-05); not a column. */
+  room?: string | null;
 }
 
 // Relational deltas -- relationship moments logged by companions (relational_deltas table)

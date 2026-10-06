@@ -1,6 +1,7 @@
 import { ExecutorContext, ExecutorResult } from "./types.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import { KEPT_SQL, KEPT_LIVE_SQL } from "../../webmind/review-state.js";
+import { roomLabelFromTags } from "../../mind/room-label.js";
 import {
   feelingsRead, journalRead, woundRead, deltaRead,
   dreamsRead, dreamSeedRead, eqRead, routineRead, listRead, eventList,
@@ -29,7 +30,8 @@ export async function execJournalRead(ctx: ExecutorContext): Promise<ExecutorRes
       ).bind(ctx.req.companion_id).all<Record<string, unknown> & { created_at: string | null }>(),
     ]);
     const rows = [
-      ...(own.results ?? []).map((r) => ({ ...r, journal: "companion_journal" })),
+      // `room` (2026-10-05): "(#movie-night, Nullsafe Halseth)" from the row's own `room:` tag, null otherwise.
+      ...(own.results ?? []).map((r) => ({ ...r, room: roomLabelFromTags(r["tags"]), journal: "companion_journal" })),
       ...(growth.results ?? []).map((r) => ({ ...r, journal: "growth_journal" })),
     ].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
     return { data: rows, meta: { operation: "halseth_journal_read", companion_id: ctx.req.companion_id } };

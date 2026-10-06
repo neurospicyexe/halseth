@@ -29,6 +29,7 @@ interface Allow { file: string; match: string; reason: string }
 
 // file is relative to src/, forward slashes; match is a substring of the literal's source text.
 const ALLOW: Allow[] = [
+  { file: "mind/room-label.ts", match: "SELECT tags FROM companion_journal", reason: "channel -> room lookup reads TAGS only, never content: a draft speech row still records which room a channel id names (2026-10-05)" },
   // ── Idempotency / write gates: a draft must still dedupe, or it is re-written every run ──
   { file: "webmind/notes.ts", match: "SELECT note_id, content, created_at FROM wm_continuity_notes\n       WHERE agent_id = ? AND archived = 0 AND thread_key = ?", reason: "addNote's 10-minute thread write gate: drafts must dedupe too, or a pulse floods the thread" },
   { file: "librarian/executors/writes.ts", match: "WHERE agent_id = ? AND note_type = 'soma_arc' AND archived = 0", reason: "soma_arc 15-minute inflection gate (soma_arc is companion-authored, born kept)" },

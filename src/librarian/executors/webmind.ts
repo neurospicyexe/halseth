@@ -3,6 +3,7 @@ import { wmOrient, wmGround, wmUpsertThread, wmAddNote, wmWriteHandoff, wmWriteD
 import type { WmAgentId, WmThreadUpsertInput, WmNoteInput, WmHandoffInput } from "../../webmind/types.js";
 import { listConversations, landConversation, getActiveConversation } from "../../webmind/conversations.js";
 import { resolveNoteProvenance, attributionNote } from "../../mind/note-provenance.js";
+import { resolveNoteRooms } from "../../mind/room-label.js";
 import { KEPT_SQL } from "../../webmind/review-state.js";
 
 export async function execWmOrient(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -457,12 +458,12 @@ export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<Exe
   }
   bindings.push(limit);
   const rows = await ctx.env.DB.prepare(
-    `SELECT note_id, note_type, content, salience, source, created_at
+    `SELECT note_id, note_type, content, salience, source, created_at, thread_key
      FROM wm_continuity_notes
      WHERE ${conditions.join(" AND ")}
      ORDER BY CASE salience WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, created_at DESC
      LIMIT ?`
-  ).bind(...bindings).all<{ note_id: string; content: string; source: string }>();
+  ).bind(...bindings).all<{ note_id: string; content: string; source: string; thread_key: string | null }>();
 
   // Conversational provenance (2026-07-31, the first derivable edge). Wired HERE as well as in bot
   // orient because of what the live check showed: bot orient's three slots go to the highest-salience
@@ -474,9 +475,15 @@ export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<Exe
   // surface its data never reaches is an unwired edge. Check which rows actually arrive, not which rows
   // could.
   const notes = rows.results ?? [];
-  const prov = await resolveNoteProvenance(ctx.env, notes.map(n => n.note_id));
+  // `room` (2026-10-05): "(#movie-night, Nullsafe Halseth)" -- WHERE it was said, from the bots' `room:`
+  // journal tags (mind/room-label.ts). Null when no room was ever recorded for that channel; never guessed.
+  const [prov, rooms] = await Promise.all([
+    resolveNoteProvenance(ctx.env, notes.map(n => n.note_id)),
+    resolveNoteRooms(ctx.env, notes),
+  ]);
   const data = notes.map(n => ({
     ...n,
+    room: rooms.get(n.note_id) ?? null,
     // `from_conversation` is additive: existing consumers keep reading `content` untouched, and this
     // edge can only ever add context to a row that was already being returned.
     from_conversation: (() => {
@@ -502,6 +509,7 @@ export async function execContinuityNotesRead(ctx: ExecutorContext): Promise<Exe
     meta: {
       operation: "continuity_notes_read",
       with_conversation: data.filter(d => d.from_conversation).length,
+      with_room: data.filter(d => d.room).length,
       // How many carry an actual misattribution warning -- the number worth watching, since a note from
       // a conversation Raziel was never in is the one most likely to be recalled as his words.
       with_attribution_warning: data.filter(d => d.from_conversation?.who).length,

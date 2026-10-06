@@ -5,6 +5,7 @@ import { activeFactsTailBudget } from "../../lib/open-facts-gate.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../../mcp/embed.js";
 import { noveltyCheck, SUPERSEDE_CANDIDATE_WINDOW_DAYS } from "../../webmind/novelty.js";
 import { resolveNoteProvenance, annotateNote } from "../../mind/note-provenance.js";
+import { resolveNoteRooms, withRoom } from "../../mind/room-label.js";
 import { enqueueBasinDriftCheck, enqueueSomaticSnapshot } from "../../synthesis/index.js";
 import {
   sessionLoad, sessionOrient, sessionGround, sessionClose,
@@ -1192,10 +1193,10 @@ export async function execBotOrient(
     .slice(0, 2);
   const seenIds = new Set(coreNotes.map(n => n.note_id));
   const noveltyNote = await ctx.env.DB.prepare(
-    `SELECT note_id, content FROM wm_continuity_notes
+    `SELECT note_id, content, thread_key FROM wm_continuity_notes
      WHERE agent_id = ? AND archived = 0 AND salience = 'high' AND ${KEPT_SQL}
      ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
-  ).bind(agentId).first<{ note_id: string; content: string }>()
+  ).bind(agentId).first<{ note_id: string; content: string; thread_key: string | null }>()
     .catch(() => null);
   const surfacedNotes = [
     ...coreNotes,
@@ -1204,9 +1205,18 @@ export async function execBotOrient(
   // Each surfaced note carries the CONVERSATION it came from, not the room it was said in -- a Discord
   // note's thread_key is a channel id, and 659 notes sharing one value is not a grouping. Fails soft: no
   // provenance means the content returns unchanged, so the wire format stays string[].
-  const provenance = await resolveNoteProvenance(ctx.env, surfacedNotes.map(n => n.note_id).filter(Boolean));
+  // ...and the ROOM (2026-10-05): "(#movie-night, Nullsafe Halseth)" ahead of the text, from the bots'
+  // `room:` journal tags (mind/room-label.ts). Two servers now; a channel id alone said neither which room
+  // nor which server. Pure D1, never throws; no room recorded = rendered bare.
+  const [provenance, rooms] = await Promise.all([
+    resolveNoteProvenance(ctx.env, surfacedNotes.map(n => n.note_id).filter(Boolean)),
+    resolveNoteRooms(ctx.env, surfacedNotes),
+  ]);
   const continuity_notes = surfacedNotes
-    .map(n => annotateNote(String(n.content ?? "").slice(0, 200), provenance.get(n.note_id)))
+    .map(n => {
+      const text = String(n.content ?? "").slice(0, 200);
+      return text ? withRoom(annotateNote(text, provenance.get(n.note_id)), rooms.get(n.note_id)) : "";
+    })
     .filter(Boolean);
 
   // ── Writes: every one gated on !readOnly ────────────────────────────────────────────────────────────

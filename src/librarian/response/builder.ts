@@ -12,6 +12,7 @@ import { truncate, ResponseKey } from "./budget.js";
 import { interoceptionLine, parseOffSince, maxDaysOffBaseline, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
 import type { WmOrientResponse, WmJournalEntry, WmConclusion, WmResurfacedConclusion } from "../../webmind/types.js";
 import { relativeTime } from "../../webmind/relative-time.js";
+import { roomLabelFromTags } from "../../mind/room-label.js";
 
 /**
  * Strip content that could be interpreted as instructions when embedded in an AI prompt.
@@ -312,7 +313,9 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   if (wm.recent_notes.length > 0) {
     for (const n of wm.recent_notes) {
       const age = n.created_at ? `, ${relativeTime(n.created_at)}` : "";
-      parts.push(`[Note/${n.salience} by ${n.actor}${age}] «${n.content}»`);
+      // Room (2026-10-05): which Discord room + server it was said in, when one was recorded.
+      const room = n.room ? ` ${n.room}` : "";
+      parts.push(`[Note/${n.salience} by ${n.actor}${age}]${room} «${n.content}»`);
     }
   }
 
@@ -330,7 +333,8 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
     parts.push(`[Recent journal: ${wm.recent_journal.length} entries]`);
     for (const j of wm.recent_journal) {
       const snippet = j.note_text.length > 200 ? j.note_text.slice(0, 200) + "…" : j.note_text;
-      parts.push(`  • [${j.agent} @ ${j.created_at.slice(0, 10)}] «${snippet}»`);
+      const room = j.room ?? roomLabelFromTags(j.tags);
+      parts.push(`  • [${j.agent} @ ${j.created_at.slice(0, 10)}]${room ? ` ${room}` : ""} «${snippet}»`);
     }
   }
 

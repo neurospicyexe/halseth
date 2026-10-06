@@ -357,6 +357,9 @@ export interface RecalledMemory {
   kind: "note" | "handover" | "journal";
   source: string | null;
   score: number;
+  /** Journal rows only: the stored tags JSON, so a renderer can read the `room:` / `channel:` provenance
+   *  (2026-10-05, mind/room-label.ts). Transport metadata, not content. */
+  tags?: string | null;
 }
 
 // Source classes observed in prod (2026-07-19 census). Unlisted sources score neutral --
@@ -517,10 +520,10 @@ export async function recallNotesByMeaning(
     const rows = await env.DB.prepare(
       // review_state = 'kept' (mig 0132): same reason as the notes hydration above -- the 09-26
       // fabrication came back through exactly this query, ranked first, as a discord_speech row.
-      `SELECT id, note_text, created_at, source FROM companion_journal
+      `SELECT id, note_text, created_at, source, tags FROM companion_journal
        WHERE agent = ? AND archived = 0 AND ${KEPT_SQL} AND id IN (${placeholders})`
     ).bind(agentId, ...journalCands.map(c => c.rowId))
-      .all<{ id: string; note_text: string; created_at: string; source: string | null }>();
+      .all<{ id: string; note_text: string; created_at: string; source: string | null; tags: string | null }>();
     const scoreById = new Map(journalCands.map(c => [c.rowId, c.score]));
     for (const r of rows.results ?? []) {
       const score = scoreById.get(r.id) ?? 0;
@@ -528,7 +531,7 @@ export async function recallNotesByMeaning(
       entries.push({
         note_id: r.id, content: r.note_text, created_at: r.created_at,
         salience: "journal", thread_key: null,
-        kind: "journal", source: r.source, score, effective: score * weight,
+        kind: "journal", source: r.source, score, effective: score * weight, tags: r.tags,
       });
     }
   }
