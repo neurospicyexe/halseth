@@ -326,7 +326,10 @@ function drevanIntero(f: Floats, days: number): string {
   } else if (f.f1 < 0.3) {
     cue = "cold engine, between threads -- no need to spark for anyone";
   } else {
-    cue = "warm, present -- the thread's open if she comes to it";
+    // The fallback catches every band mix the branches above don't, so it must not NAME bands:
+    // it used to open "warm, present", and on 2026-10-07 (heat 0.80 / reach 0.996) rendered
+    // "running-hot, reach pulling-hard, weight holding -- warm, present -- ..." in one line.
+    cue = "the thread's open if she comes to it";
   }
   const traj = days >= 2 ? ` been here ${days}d.` : "";
   return `[interoception] ${heat}, reach ${reach}, weight ${weight} -- ${cue}.${traj}`;
