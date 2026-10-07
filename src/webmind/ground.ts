@@ -6,6 +6,7 @@
 import { Env } from "../types.js";
 import { WmAgentId, WmGroundResponse, WmMindThread, WmSessionHandoff, WmContinuityNote, WmOpenLoop, WmArchiveDigest } from "./types.js";
 import { readSittingNotes } from "./sits.js";
+import { collapseNearDuplicateHandoffs, handoffFetchLimit } from "./handoffs.js";
 
 export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGroundResponse> {
   const [threads, handoffs, notes, openLoops, sittingNotes, archivedDigests] = await Promise.all([
@@ -13,8 +14,8 @@ export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGround
       "SELECT * FROM wm_mind_threads WHERE agent_id = ? AND status = 'open' ORDER BY priority DESC, last_touched_at DESC LIMIT 10"
     ).bind(agentId).all<WmMindThread>(),
     env.DB.prepare(
-      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 5"
-    ).bind(agentId).all<WmSessionHandoff>(),
+      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?"
+    ).bind(agentId, handoffFetchLimit(5)).all<WmSessionHandoff>(),
     env.DB.prepare(
       // review_state = 'kept' (mig 0132): ground is a boot surface; drafts wait in the tray.
       "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND review_state = 'kept' ORDER BY created_at DESC LIMIT 10"
@@ -43,7 +44,7 @@ export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGround
 
   return {
     threads: threads.results ?? [],
-    recent_handoffs: handoffs.results ?? [],
+    recent_handoffs: collapseNearDuplicateHandoffs(handoffs.results ?? [], 5, 2),
     recent_notes: notes.results ?? [],
     open_loops: openLoops.results ?? [],
     sitting_notes: sittingNotes,

@@ -36,7 +36,8 @@ import * as B from "../response/orient-blocks.js";
 // nothing under src/mind/ imports this file, so the parity harness (mind/parity.ts -> here -> mind/loader.ts)
 // stays acyclic.
 import { COMPANION_IDS } from "../../companions.js";
-import { OPENED_BY } from "../../db/queries.js";
+import { OPENED_BY, CALLER_CLOSE_KINDS } from "../../db/queries.js";
+import { textContains } from "../../webmind/handoffs.js";
 import { loadMindState } from "../../mind/loader.js";
 import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
 import { KEPT_SQL } from "../../webmind/review-state.js";
@@ -886,10 +887,21 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   // sessionClose writes handover_packets; mindOrient reads wm_session_handoffs -- these are
   // separate tables. Without this, orient shows stale handoff data until companion explicitly
   // calls "write handoff". Awaited so failures surface in the response instead of vanishing.
-  const handoffSummary = p.last_real_thing
+  // Don't append a last_real_thing the spine already says (2026-10-07). The bots' consolidation close
+  // derives last_real_thing as the spine's own final sentence, so 408/408 consolidation closes in the
+  // 14 days to 10-07 ended their wm summary by repeating that sentence under "Last real thing:".
+  const handoffSummary = p.last_real_thing && !textContains(p.spine, p.last_real_thing)
     ? `${p.spine}\n\nLast real thing: ${p.last_real_thing}`
     : p.spine;
   let handoff_warning: string | undefined;
+  // Provenance (2026-10-07): a machine close (the bots' ~2h idle consolidation, a restart shutdown)
+  // must reach wm_session_handoffs AS machine, or orient cannot tell it from a close someone wrote.
+  // close_kind landed on handover_packets on 09-11 but this auto-write hardcoded 'session_close', so
+  // three consolidations re-narrating one idle stretch filled all three orient handoff slots.
+  // Same allowlist the backend applies; anything else stays 'session_close'.
+  const handoffSource = p.close_kind && (CALLER_CLOSE_KINDS as readonly string[]).includes(p.close_kind)
+    ? p.close_kind
+    : "session_close";
   const handoffPayload = {
     agent_id: ctx.req.companion_id as WmAgentId,
     title: p.spine.slice(0, 120),
@@ -898,7 +910,7 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
     state_hint: p.motion_state,
     facet: p.facet ?? undefined,
     actor: "agent" as const,
-    source: "session_close" as const,
+    source: handoffSource,
   };
   try {
     await wmWriteHandoff(ctx.env, handoffPayload);

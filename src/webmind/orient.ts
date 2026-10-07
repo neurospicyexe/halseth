@@ -10,6 +10,7 @@
 import { Env } from "../types.js";
 import { WmAgentId, WmOrientResponse, WmIdentityAnchor, WmSessionHandoff, WmMindThread, WmContinuityNote, WmTensionRow, WmBasinHistoryRow, WmDream, WmRelationalState, WmRazielLetter, WmCompanionNote, WmRecentDelta, WmJournalEntry, WmConclusion, WmResurfacedConclusion, WmBiometricSnapshot, WmHouseState, WmFeeling, HomeEvent, CompanionId, WmOrientOpenLoop, WmOrientOpenQuestion, WmActiveConversation, WmClosedConversation, WmCaptureNote } from "./types.js";
 import { seedIdentityAnchor } from "./seed.js";
+import { collapseNearDuplicateHandoffs, handoffFetchLimit } from "./handoffs.js";
 import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
@@ -203,9 +204,11 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   // 2-14. Remaining queries are independent -- run concurrently
   const [limbicState, recentHandoffs, threadCount, topThreads, coreNotes, noveltyNote, edgeNote, activeTensions, pressureFlags, growthConfirmed, unexaminedDreams, relationalSnapshot, recentLetters, recentCompanionNotes, incomingCompanionNotes, recentJournal, recentDeltas, razielWitnessEntries, somaArcNotes, recentSpiralTurnRow, latestBiometrics, houseStateRow, recentFeelings, openLoopsRes, openQuestionsRes, answeredQuestions, activeConvosRes, closedConvosRes, captureRes, guardianFlagsRes] = await Promise.all([
     getCurrentLimbicState(env, agentId),
+    // Over-fetch, then collapse near-duplicates (2026-10-07): three consecutive idle consolidations
+    // re-narrating one state filled all three slots. See collapseNearDuplicateHandoffs.
     env.DB.prepare(
-      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 3"
-    ).bind(agentId).all<WmSessionHandoff>(),
+      "SELECT * FROM wm_session_handoffs WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?"
+    ).bind(agentId, handoffFetchLimit(3)).all<WmSessionHandoff>(),
     env.DB.prepare(
       "SELECT COUNT(*) as cnt FROM wm_mind_threads WHERE agent_id = ? AND status = 'open'"
     ).bind(agentId).first<{ cnt: number }>(),
@@ -653,11 +656,13 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   // "While you were away" — recent home events (null-safe; never breaks orient)
   const homeRecent = await buildHomeBlock(env, agentId, opts.readOnly);
 
+  const collapsedHandoffs = collapseNearDuplicateHandoffs(recentHandoffs.results ?? [], 3);
+
   return {
     identity_anchor: anchor,
     limbic_state: limbicState,
-    latest_handoff: recentHandoffs.results?.[0] ?? null,
-    recent_handoffs: recentHandoffs.results ?? [],
+    latest_handoff: collapsedHandoffs[0] ?? null,
+    recent_handoffs: collapsedHandoffs,
     open_thread_count: threadCount?.cnt ?? 0,
     top_threads: topThreads.results ?? [],
     recent_notes: recentNotes,

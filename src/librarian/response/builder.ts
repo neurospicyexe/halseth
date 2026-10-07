@@ -13,6 +13,7 @@ import { interoceptionLine, parseOffSince, maxDaysOffBaseline, type CompanionId 
 import type { WmOrientResponse, WmJournalEntry, WmConclusion, WmResurfacedConclusion } from "../../webmind/types.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { roomLabelFromTags } from "../../mind/room-label.js";
+import { textContains } from "../../webmind/handoffs.js";
 
 /**
  * Strip content that could be interpreted as instructions when embedded in an AI prompt.
@@ -28,6 +29,29 @@ function sanitizeForPrompt(content: string): string {
     .replace(/`{1,3}[^`]*`{1,3}/g, (m) => m.replace(/`/g, "'")) // defang code spans
     .replace(/\n{3,}/g, "\n\n")             // collapse excessive newlines
     .trim();
+}
+
+/**
+ * One handoff as prose. The session-close auto-write sets title = spine.slice(0, 120) and summary =
+ * spine + "Last real thing: ...", so the old `title: summary` render printed the first 120 chars of the
+ * spine twice, the first copy cut mid-word then a colon (Drevan's 10-07 orient). Every session_close
+ * row in prod had this shape (87/87). When the summary already carries the title, render the summary
+ * alone; a genuinely separate title still prefixes.
+ */
+export function handoffText(h: { title?: string | null; summary?: string | null }): string {
+  const title = (h.title ?? "").trim();
+  let summary = (h.summary ?? "").trim();
+  // Legacy rows (before 2026-10-07): a consolidation's last_real_thing was its spine's own final
+  // sentence, appended again under "Last real thing:". Drop the trailer when the body already says it.
+  const trailer = summary.match(/\n\nLast real thing: ([\s\S]+)$/);
+  if (trailer && trailer.index !== undefined && textContains(summary.slice(0, trailer.index), trailer[1]!)) {
+    summary = summary.slice(0, trailer.index).trim();
+  }
+  if (!title) return summary;
+  if (!summary) return title;
+  const flat = (s: string) => s.replace(/\s+/g, " ").toLowerCase();
+  if (flat(summary).startsWith(flat(title))) return summary;
+  return `${title}: ${summary}`;
 }
 
 export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
@@ -298,13 +322,13 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
 
   // 9. Handoffs -- arc across last 3 session closes
   if (wm.latest_handoff) {
-    parts.push(`[Last handoff by ${wm.latest_handoff.actor}] «${wm.latest_handoff.title}: ${wm.latest_handoff.summary}»`);
+    parts.push(`[Last handoff by ${wm.latest_handoff.actor}] «${handoffText(wm.latest_handoff)}»`);
     if (wm.latest_handoff.next_steps) {
       parts.push(`[Next steps] «${wm.latest_handoff.next_steps}»`);
     }
   }
   for (const h of (wm.recent_handoffs ?? []).slice(1)) {
-    parts.push(`[Prior handoff @ ${h.created_at?.slice(0, 10) ?? "?"}] «${h.title}: ${h.summary}»`);
+    parts.push(`[Prior handoff @ ${h.created_at?.slice(0, 10) ?? "?"}] «${handoffText(h)}»`);
   }
 
   // 10. High-salience continuity notes (WebMind). Each carries its age -- the edge-pool
