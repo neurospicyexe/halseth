@@ -3,8 +3,18 @@
 // handler can run them in one D1 batch and map with one function. Every source is bound to a
 // since-cursor so the poll is incremental. READS ONLY: nothing here warms heat.
 //
-// care_fact projects the FACT of a gesture only (companion + rule). gesture_note and detail are
-// the care layer's private payload and never enter the room.
+// NO CARE / HEALTH SOURCE (2026-10-07). There used to be a tenth source, care_fact, projecting
+// care_actions as "<companion> made a <rule> gesture". It hid gesture_note and detail but not the
+// rule NAME, and the rule name IS Raziel's health fact ("meds_missed" = his meds routine looks
+// unlogged -- a heuristic, not a human record). The offer carried no subject and no Source, and the
+// rendered line named the companion, so on 2026-10-02 the director handed Drevan "drevan made a
+// meds_missed gesture" in the triad commons and his reply said, in his own voice, that medication
+// slipped yesterday. The [metronome/director] copy of that post then landed in his notes (born
+// draft; he dropped it). That is the sourceless health line the Hex rule forbids, written by
+// the director into a companion's mouth. Care state reaches a companion through orient's care block
+// (to the companion acting on it), never through the shared-room supply. See HEALTH_TABLES below
+// and the guard in director-supply-query.test.ts; re-adding care to the room is Raziel's ruling,
+// and only as a ledger-shaped line (subject Raziel + Source).
 //
 // TIMESTAMP NORMALIZATION (2026-09-03 fix). Seven sources store `created_at` via SQLite
 // `datetime('now')` ("2026-09-03 09:00:00"), three store JS ISO
@@ -22,12 +32,23 @@
 // (notLegacyDistillerNoteSql), so this source is empty until Tranche 2 turns the distillers into clerks.
 import { notLegacyDistillerNoteSql } from "../webmind/review-state.js";
 
-export type SupplyKind = "forage"|"listen"|"question"|"tension"|"project"|"club"|"council"|"inter_note"|"sibling_note"|"care_fact";
+export type SupplyKind = "forage"|"listen"|"question"|"tension"|"project"|"club"|"council"|"inter_note"|"sibling_note";
 export interface SupplySource { kind: SupplyKind; table: string; sql: string; }
 export interface SupplyRow { id: string; owner: string | null; title: string | null; body: string | null; created_at: string; heat: number | null; }
 export interface DirectorSupplyItem { kind: SupplyKind; id: string; table: string; owner: string; title: string; body: string; created_at: string; heat: number | null; consumed_by: string[]; }
 
 const BODY_MAX = 700;
+
+/**
+ * Tables holding Raziel's health / care state. No supply source may read them: the director's
+ * offer is rendered into a companion's prompt with no subject and no Source, so anything read
+ * here comes out as a first-person health line (2026-10-02, meds_missed). Guarded by test.
+ */
+export const HEALTH_TABLES: readonly string[] = [
+  "care_actions", "care_escalations", "care_hold_events",
+  "med_schedule", "med_claims", "med_answers",
+  "biometric_snapshots", "somatic_snapshot",
+];
 
 /** The single normalization expression every source's projection and predicate must share. */
 const NORM = (col: string) => `strftime('%Y-%m-%dT%H:%M:%SZ', ${col})`;
@@ -82,15 +103,11 @@ export const SUPPLY_SOURCES: SupplySource[] = [
         AND content NOT LIKE '[%' AND ${notLegacyDistillerNoteSql()}
         AND ${CURSOR_PREDICATE("created_at", "note_id")}
        ORDER BY ${NORM("created_at")} ASC, note_id ASC LIMIT ?` },
-  { kind: "care_fact", table: "care_actions", sql:
-    `SELECT id, companion_id AS owner, rule AS title, NULL AS body, ${NORM("acted_at")} AS created_at, NULL AS heat
-       FROM care_actions WHERE acted_at IS NOT NULL AND ${CURSOR_PREDICATE("acted_at", "id")}
-       ORDER BY ${NORM("acted_at")} ASC, id ASC LIMIT ?` },
 ];
 
 export function mapRow(src: SupplySource, r: SupplyRow): DirectorSupplyItem {
   const owner = r.owner && r.owner.length > 0 ? r.owner : "system";
-  const body = src.kind === "care_fact" ? `${owner} made a ${r.title ?? "care"} gesture` : (r.body ?? "");
+  const body = r.body ?? "";
   return {
     kind: src.kind, id: r.id, table: src.table, owner,
     title: (r.title ?? "").slice(0, 200), body: body.slice(0, BODY_MAX),

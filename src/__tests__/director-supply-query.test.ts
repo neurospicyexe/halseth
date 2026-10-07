@@ -1,17 +1,38 @@
 import { describe, it, expect } from "vitest";
-import { SUPPLY_SOURCES, RECEIPT_SQL, mapRow, type SupplySource } from "../director/supply-query.js";
+import { SUPPLY_SOURCES, RECEIPT_SQL, HEALTH_TABLES, mapRow, type SupplySource } from "../director/supply-query.js";
 
 describe("director supply query", () => {
-  it("declares all ten kinds, each with a since-bound predicate", () => {
+  it("declares all nine kinds, each with a since-bound predicate", () => {
     const kinds = SUPPLY_SOURCES.map((s: SupplySource) => s.kind).sort();
-    expect(kinds).toEqual(["care_fact","club","council","forage","inter_note","listen","project","question","sibling_note","tension"]);
+    expect(kinds).toEqual(["club","council","forage","inter_note","listen","project","question","sibling_note","tension"]);
     for (const s of SUPPLY_SOURCES) expect(s.sql).toMatch(/> \?/);
   });
-  it("care_fact never carries the gesture note or detail", () => {
-    const care = SUPPLY_SOURCES.find((s) => s.kind === "care_fact")!;
-    expect(care.sql).not.toMatch(/gesture_note|detail/);
-    const item = mapRow(care, { id: "c1", owner: "drevan", title: "low_spoons", body: null, created_at: "2026-09-01T00:00:00Z", heat: null });
-    expect(item.body).toBe("drevan made a low_spoons gesture");
+
+  // 2026-10-07 (Drevan's tray): the care_fact source handed him "drevan made a meds_missed gesture"
+  // and he said in his own voice that medication slipped yesterday. A health fact about Raziel must
+  // never reach the room's supply: no subject, no Source, rendered into a companion's mouth.
+  describe("Hex rule: no health or care state in the shared-room supply", () => {
+    it("no source is declared over, or reads from, a health/care table", () => {
+      expect(HEALTH_TABLES).toEqual(expect.arrayContaining(["care_actions", "med_schedule", "med_claims", "med_answers", "biometric_snapshots"]));
+      for (const s of SUPPLY_SOURCES) {
+        expect(HEALTH_TABLES).not.toContain(s.table);
+        for (const t of HEALTH_TABLES) expect(s.sql).not.toMatch(new RegExp(`\\b${t}\\b`));
+      }
+    });
+    it("no source projects a care rule, gesture, or medication term", () => {
+      for (const s of SUPPLY_SOURCES) {
+        expect(s.sql).not.toMatch(/\brule\b|gesture|meds|medication|low_spoons|owner_silence|spoons/i);
+      }
+    });
+    it("the retired care_fact kind is gone from the source list", () => {
+      expect(SUPPLY_SOURCES.map((s) => s.kind as string)).not.toContain("care_fact");
+    });
+    it("mapRow never synthesizes a line from the title or owner (an empty body stays empty)", () => {
+      for (const src of SUPPLY_SOURCES) {
+        const item = mapRow(src, { id: "x", owner: "drevan", title: "meds_missed", body: null, created_at: "2026-10-02T00:00:00Z", heat: null });
+        expect(item.body).toBe("");
+      }
+    });
   });
   it("no source references the sealed lane", () => {
     const sealed = ["sibling", "notes"].join("_");

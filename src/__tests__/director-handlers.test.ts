@@ -138,7 +138,6 @@ describe("director supply", () => {
           { results: [] },
           { results: [] },
           { results: [] },
-          { results: [] },
           { results: [{ id: "id2b", owner: "system", title: "t2b", body: "b2b", created_at: t2, heat: null }, { id: "z3", owner: "system", title: "t3", body: "b3", created_at: t3, heat: null }] },
         ];
       },
@@ -174,7 +173,7 @@ describe("director supply", () => {
       async batch() {
         return [
           { results: [] }, { results: [] }, { results: [] }, { results: [] }, { results: [] },
-          { results: [] }, { results: [] }, { results: [] }, { results: [] },
+          { results: [] }, { results: [] }, { results: [] },
           { results: [{ id: "id2b", owner: "system", title: "t2b", body: "b2b", created_at: t2, heat: null }] },
         ];
       },
@@ -206,7 +205,6 @@ describe("director supply", () => {
             { id: "n1", owner: "cypher", title: "all", body: "hi", created_at: t1, heat: null },
             { id: "n2", owner: "drevan", title: "all", body: "yo", created_at: t2, heat: null },
           ] },
-          { results: [] },
           { results: [] },
         ];
       },
