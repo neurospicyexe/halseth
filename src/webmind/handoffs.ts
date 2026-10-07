@@ -115,12 +115,14 @@ export function collapseNearDuplicateHandoffs<T extends HandoffText & { source?:
 }
 
 /**
- * How many rows a collapsing reader fetches. The whole per-agent window (the write cap keeps 30):
+ * How many rows a collapsing reader fetches. The whole per-agent window: the write cap keeps the
+ * newest 30 PLUS the 10 newest authored rows, so up to 40. Fetching only 30 would make the exemption
+ * pointless (a protected close past position 30 is kept and never read). And
  * at ~12 consolidations a day the closes somebody wrote are routinely more than a dozen rows back,
  * and the collapse exists to reach them.
  */
 export function handoffFetchLimit(_limit: number): number {
-  return 30;
+  return 40;
 }
 
 // ── Write ─────────────────────────────────────────────────────────────────────

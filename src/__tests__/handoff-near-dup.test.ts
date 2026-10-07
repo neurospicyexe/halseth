@@ -195,7 +195,7 @@ describe("orient and ground over-fetch and collapse", () => {
     const ground = await src("webmind/ground.ts");
     expect(ground).toMatch(/handoffFetchLimit\(5\)/);
     expect(ground).toMatch(/collapseNearDuplicateHandoffs\(handoffs\.results \?\? \[\], 5, 2\)/);
-    expect(handoffFetchLimit(3)).toBe(30);
+    expect(handoffFetchLimit(3)).toBe(40); // newest 30 + up to 10 protected authored rows
   });
 });
 
