@@ -297,6 +297,40 @@ describe("orient: its own block, mark first on every ledger line", () => {
     expect(ledgerBlock([])).toBe("");
   });
 
+  it("idle-consolidation heartbeat collapses to its newest line; real entries keep their slots (10-07)", async () => {
+    const { db, env } = setup();
+    const at = (h: number) => `2026-10-07T${String(h).padStart(2, "0")}:00:00.000Z`;
+    const ids: Record<string, string> = {};
+    // Six heartbeat lines, ~2h apart, each from a different cycled session -- the shape prod shows.
+    for (let i = 0; i < 6; i++) {
+      const sid = `5b0c2f9e-0000-4000-8000-00000000000${i}`;
+      const r = await writeLedger(env, line({
+        function: "distiller", body: `Recorded: idle consolidation at ${String(2 + 2 * i).padStart(2, "0")}:00 UTC.`,
+        source_kind: "session", source_ref: sid, observed_on: "2026-10-07",
+        dedup_key: `consolidation:drevan:${sid}:2026-10-07T${String(2 + 2 * i).padStart(2, "0")}:00`,
+      }));
+      if (!r.ok || r.duplicate) throw new Error(`seed failed: ${JSON.stringify(r)}`);
+      db.prepare("UPDATE ledger_entries SET created_at = ? WHERE id = ?").run(at(2 + 2 * i), r.id);
+      ids[`c${i}`] = r.id;
+    }
+    // Two real lines, older than every heartbeat but the first -- the ones the old read lost.
+    for (const [k, h, key] of [["d1", 1, "distill:drevan:x:0"], ["d2", 3, null]] as const) {
+      const r = await writeLedger(env, line({ body: `Counted: ${h} notes.`, ...(key ? { dedup_key: key } : {}) }));
+      if (!r.ok || r.duplicate) throw new Error(`seed failed: ${JSON.stringify(r)}`);
+      db.prepare("UPDATE ledger_entries SET created_at = ? WHERE id = ?").run(at(h), r.id);
+      ids[k] = r.id;
+    }
+    // Another companion's heartbeat must not count as Drevan's newest.
+    await writeLedger(env, line({ companion_id: "cypher", function: "distiller", body: "Recorded: idle consolidation at 13:00 UTC.",
+      source_kind: "session", source_ref: SESSION, dedup_key: `consolidation:cypher:${SESSION}:2026-10-07T13:00` }));
+
+    const ms = await loadMindState(env, "drevan", "claude" as any);
+    expect(ms.ledger.open.map((e) => e.id)).toEqual([ids.c5, ids.d2, ids.d1]);
+    // "my ledger" is the inspection surface and still lists every open line.
+    const listed = ((await execLedgerRead(ctx(env, "drevan", "my ledger"))).data as any).ledger as any[];
+    expect(listed).toHaveLength(8);
+  });
+
   it("render rule across every surface that emits ledger content", async () => {
     const { env } = setup();
     await writeLedger(env, line());
