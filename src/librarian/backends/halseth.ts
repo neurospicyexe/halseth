@@ -113,10 +113,20 @@ export async function journalRead(env: Env, limit = 20) {
   return r.results ?? [];
 }
 
-export async function woundRead(env: Env) {
+/**
+ * Owner of a living wound, as SQL. living_wounds had no owner column until mig 0144, so "my wounds"
+ * returned every wound to every companion (2026-10-07: Gaia's imposed-silence wound surfaced on
+ * Drevan's list). A NULL owner is a legacy row whose assignment is Raziel's call; until then it reads
+ * as Gaia's -- the convention every other wound path already asserted (MCP wound_add is "Gaia-only by
+ * convention" and embeds as 'gaia'; the admin re-embed labels wounds 'gaia').
+ */
+export const WOUND_OWNER_SQL = "COALESCE(companion_id, 'gaia')";
+
+/** One companion's wounds -- never another's. Raw MCP halseth_wound_read stays the unfiltered view. */
+export async function woundRead(env: Env, companionId: string) {
   const r = await env.DB.prepare(
-    "SELECT * FROM living_wounds ORDER BY created_at DESC"
-  ).all();
+    `SELECT * FROM living_wounds WHERE ${WOUND_OWNER_SQL} = ? ORDER BY created_at DESC`
+  ).bind(companionId).all();
   return r.results ?? [];
 }
 
@@ -298,15 +308,20 @@ export async function dreamLog(env: Env, params: {
   return { id, created_at: now };
 }
 
-export async function woundAdd(env: Env, params: {
+/**
+ * companion_id is the AUTHENTICATED caller (ctx.req.companion_id), passed separately from the
+ * context-parsed params so a request body cannot file a wound under another companion. Before mig
+ * 0144 this path dropped the caller entirely, which is why nothing could scope "my wounds".
+ */
+export async function woundAdd(env: Env, companionId: string, params: {
   name: string; description: string; witness_type: string;
 }): Promise<{ id: string; created_at: string; witness_type: string } | { error: string }> {
   const id = generateId();
   const now = new Date().toISOString();
   try {
     await env.DB.prepare(
-      "INSERT INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, last_visited, last_surfaced_by) VALUES (?, ?, ?, ?, 1, 1, ?, 'companion')"
-    ).bind(id, now, params.name, params.description, now).run();
+      "INSERT INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, last_visited, last_surfaced_by, companion_id) VALUES (?, ?, ?, ?, 1, 1, ?, 'companion', ?)"
+    ).bind(id, now, params.name, params.description, now, companionId).run();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("UNIQUE") || msg.includes("unique")) return { error: "A wound with this name already exists." };

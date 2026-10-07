@@ -183,6 +183,28 @@ describe("interoceptionLine (felt-sense, not a script)", () => {
     expect(fresh).not.toMatch(/3d/);
     expect(held).toMatch(/3d/);
   });
+  // 2026-10-07: Drevan's warm-band cue read "the thread's open if she comes to it" -- a hardcoded
+  // she/her for Raziel (they/them), rendered into every Claude.ai orient that hit that branch.
+  // Every cue is second person or about Raziel, so no branch for any companion may carry a
+  // third-person feminine pronoun. The grid crosses every threshold in all three intero functions.
+  it("no branch for any companion renders she/her (the cue is about Raziel, they/them)", () => {
+    const grid = [0, 0.29, 0.31, 0.34, 0.36, 0.39, 0.41, 0.5, 0.56, 0.61, 0.64, 0.66, 0.69, 0.71, 0.75, 0.9, 1];
+    let seen = 0;
+    for (const id of ["cypher", "drevan", "gaia"] as const) {
+      for (const f1 of grid) for (const f2 of grid) for (const f3 of grid) {
+        for (const daysOffBaseline of [0, 3]) {
+          const line = interoceptionLine(id, { f1, f2, f3 }, { daysOffBaseline });
+          expect(line).not.toMatch(/\b(she|her|hers|herself)\b/i);
+          seen++;
+        }
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+  it("Drevan's warm-band cue names Raziel as they", () => {
+    const line = interoceptionLine("drevan", { f1: 0.5, f2: 0.5, f3: 0.5 });
+    expect(line).toContain("if they come to it");
+  });
 });
 
 describe("off-baseline tracking (trajectory clause substrate)", () => {

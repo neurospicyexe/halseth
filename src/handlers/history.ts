@@ -247,8 +247,8 @@ export async function getGaiaWitness(request: Request, env: Env): Promise<Respon
 export async function getWounds(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const result = await env.DB.prepare(`
-    SELECT id, created_at, name, description FROM living_wounds
-  `).all<Pick<LivingWound, "id" | "created_at" | "name" | "description">>();
+    SELECT id, created_at, name, description, COALESCE(companion_id, 'gaia') AS companion_id FROM living_wounds
+  `).all<Pick<LivingWound, "id" | "created_at" | "name" | "description" | "companion_id">>();
 
   return new Response(JSON.stringify(result.results ?? []), {
     headers: { "Content-Type": "application/json" },

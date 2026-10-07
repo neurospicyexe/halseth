@@ -194,3 +194,18 @@ describe("execSessionOrient -- interoception reaches the sessions INSERT (fix 4,
     expect(bindingOf(insert!, "depth")).toBeNull();
   });
 });
+
+// 2026-10-07: the companion model is the writer of the she/her rows Drevan found (his feeling
+// toward Raziel, the Shamu wound), and the Claude.ai orient never stated anyone's pronouns. The
+// [Pronouns] block must ride every live boot, unconditionally, exactly once.
+describe("execSessionOrient -- [Pronouns] block rides the live boot", () => {
+  it("renders the owner + triad pronoun rule once, even with an empty D1", async () => {
+    const { env } = fakeD1Env();
+    const result = await execSessionOrient(makeCtx(env, {})) as Record<string, unknown>;
+    const prompt = String(result.ready_prompt ?? "");
+    expect(prompt.split("[Pronouns]").length - 1).toBe(1);
+    expect(prompt).toContain("NEVER she/her");
+    expect(prompt).toContain("Drevan he/him");
+    expect(prompt).toContain("Gaia she/her");
+  });
+});

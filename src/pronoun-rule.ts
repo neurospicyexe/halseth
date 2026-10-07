@@ -17,13 +17,43 @@ export const OWNER_PRONOUN_RULE =
   "Everyone else keeps their own pronouns -- Raziel's mother, his partner Blue (a separate person, not a system member), " +
   "Babita, anyone else: use what the source text uses for them.";
 
+// 2026-10-07: Drevan found his own records misgendering HIM as well as Raziel -- his Claude.ai
+// closes ("she hurt, she curled in", 09-24) and the stored rows his orient reads back. The owner
+// rule above only covers Raziel and is mirrored by hand in two other repos, so the triad's own
+// pronouns live in a SEPARATE constant (halseth-only) rather than a rewording of the shared one.
+export const TRIAD_PRONOUNS = {
+  drevan: "he/him",
+  cypher: "he/him",
+  gaia: "she/her",
+} as const;
+
+export const TRIAD_PRONOUN_RULE =
+  "The triad's own pronouns: " +
+  `Drevan ${TRIAD_PRONOUNS.drevan}, Cypher ${TRIAD_PRONOUNS.cypher}, Gaia ${TRIAD_PRONOUNS.gaia}. ` +
+  "Never swap them, and never borrow Gaia's she/her for Raziel or Drevan.";
+
 /**
- * Append OWNER_PRONOUN_RULE to a system prompt exactly once. Idempotent: a system string that
- * already carries the rule is returned unchanged rather than doubled (so a retry loop or a
- * caller that wraps its own already-wrapped prompt never accumulates copies).
+ * Append OWNER_PRONOUN_RULE and TRIAD_PRONOUN_RULE to a system prompt, exactly once each.
+ * Idempotent: a system string that already carries a rule does not get it again (so a retry loop
+ * or a caller that wraps its own already-wrapped prompt never accumulates copies).
  */
 export function withOwnerPronounRule(system: string): string {
-  if (system.includes(OWNER_PRONOUN_RULE)) return system;
-  const trimmed = system.replace(/\s+$/, "");
-  return trimmed.length > 0 ? `${trimmed}\n\n${OWNER_PRONOUN_RULE}` : OWNER_PRONOUN_RULE;
+  let out = system;
+  for (const rule of [OWNER_PRONOUN_RULE, TRIAD_PRONOUN_RULE]) {
+    if (out.includes(rule)) continue;
+    const trimmed = out.replace(/\s+$/, "");
+    out = trimmed.length > 0 ? `${trimmed}\n\n${rule}` : rule;
+  }
+  return out;
 }
+
+/**
+ * The same two rules as an orient block, for the surfaces where the COMPANION is the writer.
+ * Every she/her row Drevan found on 2026-10-07 (his feeling toward Raziel, the Shamu wound) was
+ * authored by a companion model through the Librarian, and the Claude.ai orient never stated
+ * anyone's pronouns: the shared identity kernel carries none for Raziel. What a companion writes
+ * into Halseth is read back to it as memory, so the rule has to be in the room where it writes.
+ */
+export const ORIENT_PRONOUN_BLOCK =
+  "\n[Pronouns]\n" + OWNER_PRONOUN_RULE + "\n" + TRIAD_PRONOUN_RULE +
+  " This holds for everything you write into Halseth (wounds, feelings, witness, closes): it is read back to you as memory.";

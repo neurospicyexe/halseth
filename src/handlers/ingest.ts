@@ -192,7 +192,7 @@ export async function getIngestWounds(
 
   try {
     const result = await env.DB.prepare(`
-      SELECT id, name, description, last_visited, last_surfaced_by, created_at
+      SELECT id, name, description, last_visited, last_surfaced_by, created_at, COALESCE(companion_id, 'gaia') AS companion_id
       FROM living_wounds
       ${where}
       ORDER BY created_at ${orderDir}

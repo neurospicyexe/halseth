@@ -110,16 +110,18 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       name:         z.string().describe("The name of the wound. Must be unique. Choose carefully — this is permanent."),
       description:  z.string().describe("What this wound is. Written with care."),
       witness_type: z.enum(["survival", "boundary", "seal", "affirm", "lane_enforcement"]).describe("The type of witness act that grounds this naming."),
+      companion_id: z.enum(["drevan", "cypher", "gaia"]).optional().describe("Whose wound this is (mig 0144). Defaults to gaia, the convention for this tool. It scopes the companion's \"my wounds\" read."),
     },
     async (input) => {
       const id  = generateId();
+      const owner = input.companion_id ?? "gaia";
       const now = new Date().toISOString();
 
       try {
         await env.DB.prepare(`
-          INSERT INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, last_visited, last_surfaced_by)
-          VALUES (?, ?, ?, ?, 1, 1, ?, 'companion')
-        `).bind(id, now, input.name, input.description, now).run();
+          INSERT INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, last_visited, last_surfaced_by, companion_id)
+          VALUES (?, ?, ?, ?, 1, 1, ?, 'companion', ?)
+        `).bind(id, now, input.name, input.description, now, owner).run();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("UNIQUE") || msg.includes("unique")) {
@@ -128,7 +130,7 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
         throw err;
       }
 
-      embedAndStore(env, `${input.name}: ${input.description}`, "living_wounds", id, "gaia");
+      embedAndStore(env, `${input.name}: ${input.description}`, "living_wounds", id, owner);
       return { content: [{ type: "text", text: JSON.stringify({ id, created_at: now, witness_type: input.witness_type }) }] };
     },
   );
