@@ -82,6 +82,29 @@ describe("noveltyCheck scope", () => {
   });
 });
 
+describe("noveltyCheck -- open-question lane (2026-10-07)", () => {
+  // The two OPEN "Magpie's pronouns" rows scored 0.817 against each other on prod.
+  function envStatus(score: number, status: string) {
+    return {
+      AI: { run: vi.fn(async () => ({ data: [[0.1, 0.2, 0.3]] })) },
+      VECTORIZE: { query: vi.fn(async () => ({ matches: [{ id: "architect_facts:q1", score }] })) },
+      DB: { prepare: () => ({ bind: () => ({ all: async () => ({ results: [{ id: "q1", status }] }) }) }) },
+    } as never;
+  }
+  it("skips an open write that rephrases a HELD open question", async () => {
+    const d = await noveltyCheck(envStatus(0.817, "open"), "magpie pronouns?", "architect_facts", "drevan", "table", { openSkipThreshold: 0.8 });
+    expect(d).toMatchObject({ action: "skip", matchRowId: "q1" });
+  });
+  it("never applies the open threshold against an ACTIVE fact", async () => {
+    const d = await noveltyCheck(envStatus(0.85, "active"), "x", "architect_facts", "drevan", "table", { openSkipThreshold: 0.8 });
+    expect(d.action).toBe("insert");
+  });
+  it("without the option an 0.817 open match still inserts, and reports it as nearest", async () => {
+    const d = await noveltyCheck(envStatus(0.817, "open"), "x", "architect_facts", "drevan", "table");
+    expect(d).toMatchObject({ action: "insert", nearest: { matchRowId: "q1", score: 0.817 } });
+  });
+});
+
 describe("noveltyCheck -- retired facts", () => {
   it("ignores a RETIRED fact's surviving vector", async () => {
     // The supersede path only best-effort deletes vectors, so a dead row's vector can outlive it.

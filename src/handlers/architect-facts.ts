@@ -21,8 +21,7 @@
  * because a conversation about him read as present tense, and stating an uncertain thing flatly is
  * how a wrong fact becomes unfalsifiable.
  */
-import { noveltyCheck } from "../webmind/novelty.js";
-import { storeVector, embedText } from "../mcp/embed.js";
+import { writeArchitectFact, MAX_FACT_CHARS } from "../lib/architect-fact-write.js";
 import type { Env } from "../types.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
@@ -55,8 +54,6 @@ const CATEGORY_TITLES: Record<string, string> = {
   animals: "THE ANIMALS",
   anchors: "WHAT HE BRINGS",
 };
-
-const MAX_FACT_CHARS = 1200;
 
 async function activeFacts(env: Env): Promise<FactRow[]> {
   const res = await env.DB.prepare(
@@ -259,12 +256,6 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
  * Record a fact, or supersede one. A companion may do this itself -- that is the entire point, and
  * the reason the Hermes queue existed was that they could not.
  */
-/** Facts are shared, but the vector metadata still records a writer. Unattributed rows use a
- *  stable sentinel so the value is never undefined in the index. */
-function companionIdForGate(body: Record<string, unknown>): string {
-  return typeof body.companion_id === "string" && body.companion_id.trim() ? body.companion_id.trim() : "shared";
-}
-
 export async function postArchitectFact(request: Request, env: Env): Promise<Response> {
   const unauth = authGuard(request, env);
   if (unauth) return unauth;
@@ -287,95 +278,30 @@ export async function postArchitectFact(request: Request, env: Env): Promise<Res
     return json({ error: "status must be active | open | retired" }, 400);
   }
 
-  const supersedesId = typeof body.supersedes_id === "string" ? body.supersedes_id.trim() : null;
-  if (supersedesId) {
-    const prior = await env.DB.prepare("SELECT id FROM architect_facts WHERE id = ?")
-      .bind(supersedesId).first<{ id: string }>();
-    // Fail loudly. A supersede naming a row that does not exist would otherwise write a duplicate
-    // fact and leave the stale one rendering forever -- the exact failure being fixed here.
-    if (!prior) return json({ error: `supersedes_id ${supersedesId} does not exist` }, 400);
-  }
-
-  // NOVELTY GATE (2026-09-24). Facts were the one write path with no duplicate check, and it
-  // showed: 76 held facts contained 29 rows describing six subjects, because nothing ever asked
-  // "did I already write this down?" Conclusions and the journal have had this gate since 07-20.
-  //
-  // SCOPED TO THE TABLE, NOT THE COMPANION. A fact is about Raziel; it does not belong to
-  // whoever noticed it. Measured the same day: 5 of the 9 duplicate clusters spanned more than
-  // one companion, and the worst (six rows about Rosie and Trigger) was written by all three, so
-  // a companion-scoped gate would have caught almost none of them.
-  //
-  // SKIP ONLY, NEVER AUTO-SUPERSEDE -- `noveltyCheck` already restricts the supersede band to
-  // companion_conclusions, and for facts that restriction is exactly right rather than
-  // incidental. Retiring a fact is irreversible here by design, and today proved that rows which
-  // look like restatements are usually PARTIAL RECORDS of one subject: a naive merge of that
-  // Rosie cluster would have deleted Lucy, Abby and the whole flock. Near-identical text (>=0.95)
-  // is safe to drop; anything less is a consolidation question for Raziel, not a machine's call.
-  //
-  // Fails open by construction: any embedding or Vectorize trouble returns `insert`, so the gate
-  // can never eat a fact.
-  //
-  // NOT FOR A SUPERSEDE (2026-09-26). A correction is by definition close to the row it replaces
-  // (a typo fix scores >=0.95 against it), so the gate matched the very row being retired and
-  // answered deduped: nothing written, nothing retired, while Hearth's /facts said "superseded".
-  // A supersede is an explicit edit of a named row, and it retires that row in the same batch, so
-  // it cannot leave a duplicate behind; the gate exists for unprompted writes. Still embed, so the
-  // corrected fact is indexed for the next write's gate (fails open like the gate does).
-  const novelty = supersedesId
-    ? { action: "insert" as const, embedding: await embedText(env, fact).catch(() => null) }
-    : await noveltyCheck(env, fact, "architect_facts", companionIdForGate(body), "table");
-  if (novelty.action === "skip") {
+  // The write itself -- supersede resolution, the novelty gate, the INSERT/retire batch, the vector
+  // -- lives in lib/architect-fact-write.ts, shared with the Librarian executor. Until 2026-10-07
+  // this handler had the gate and the executor did not, so the companions' own writes were never
+  // deduped and never indexed (the 09-24 / 09-26 notes that used to sit here moved there with it).
+  const result = await writeArchitectFact(env, {
+    fact,
+    category: typeof body.category === "string" ? body.category : null,
+    status: status as "active" | "open" | "retired",
+    companionId: typeof body.companion_id === "string" ? body.companion_id : null,
+    source: typeof body.source === "string" ? body.source : null,
+    supersedesId: typeof body.supersedes_id === "string" ? body.supersedes_id : null,
+    weight: body.weight === undefined || body.weight === null ? null : Number(body.weight),
+  });
+  if (result.kind === "invalid") return json({ error: result.error }, 400);
+  if (result.kind === "deduped") {
     return json({
       ok: true,
       deduped: true,
-      novelty: { action: "skip", match_id: novelty.matchRowId, score: novelty.score },
-      id: novelty.matchRowId,
+      novelty: { action: "skip", match_id: result.matchId, score: result.score },
+      id: result.matchId,
     });
   }
-
-  const id = crypto.randomUUID();
-  const category = typeof body.category === "string" && body.category.trim()
-    ? body.category.trim().toLowerCase()
-    : "general";
-  const companionId = typeof body.companion_id === "string" ? body.companion_id : null;
-  const source = typeof body.source === "string" && body.source.trim()
-    ? body.source.trim()
-    : (companionId ?? "unattributed");
-  const weight = Number.isFinite(Number(body.weight)) ? Number(body.weight) : 100;
-
-  const stmts = [
-    env.DB.prepare(
-      `INSERT INTO architect_facts
-         (id, fact, category, status, companion_id, source, supersedes_id, weight, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-    ).bind(id, fact, category, status, companionId, source, supersedesId, weight),
-  ];
-  if (supersedesId) {
-    // Retire the old row rather than deleting it: lineage is the whole difference between this and
-    // the layer it replaces, where `remove` dropped facts with no record.
-    stmts.push(
-      env.DB.prepare(
-        "UPDATE architect_facts SET status = 'retired', updated_at = datetime('now') WHERE id = ?",
-      ).bind(supersedesId),
-    );
-  }
-  await env.DB.batch(stmts);
-
-  // Store the vector the gate already computed, so the NEXT write has something to match. Without
-  // this the gate is a permanent no-op: architect_facts was never in Vectorize at all, which is
-  // the mechanical reason six copies of the same fact about Rosie could exist.
-  //
-  // After the D1 write and non-fatal: a fact that lands but is not indexed is merely un-deduped
-  // next time; a fact lost because indexing failed is gone.
-  if (novelty.embedding) {
-    await storeVector(env, novelty.embedding, "architect_facts", id, companionIdForGate(body))
-      .catch(() => { console.warn(`[architect-facts] vector store failed for ${id} -- fact is saved, dedup will miss it`); });
-  }
-  if (supersedesId) {
-    // The retired row's vector must go, or it keeps matching and the gate starts answering
-    // "I already know that" about a fact nothing renders any more.
-    await env.VECTORIZE.deleteByIds([`architect_facts:${supersedesId}`]).catch(() => {});
-  }
-
-  return json({ ok: true, id, supersedes_id: supersedesId, status, category });
+  return json({
+    ok: true, id: result.id, supersedes_id: result.supersedesId, status: result.status, category: result.category,
+    ...(result.related ? { related: result.related } : {}),
+  });
 }

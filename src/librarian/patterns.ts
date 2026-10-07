@@ -39,6 +39,8 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "record a fact about raziel", "remember about raziel", "note about raziel",
       "that changed about raziel", "raziel fact changed", "supersede a raziel fact",
       "update what we know about raziel", "halseth_architect_fact_write",
+      // Link mode (2026-10-07): { retire_id, replaced_by } -- the verb the write ack points at.
+      "retire a raziel fact", "raziel fact replaced by",
     ],
     tools: ["halseth_architect_fact_write"],
     response_key: "ack",
