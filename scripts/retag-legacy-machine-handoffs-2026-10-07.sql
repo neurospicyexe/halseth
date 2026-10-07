@@ -11,7 +11,7 @@
 --
 --   SELECT w.agent_id, COUNT(*) FROM wm_session_handoffs w
 --   WHERE w.source = 'session_close' AND EXISTS (
---     SELECT 1 FROM handover_packets h WHERE h.close_kind = 'consolidation'
+--     SELECT 1 FROM handover_packets h JOIN sessions s ON s.id = h.session_id AND s.companion_id = wm_session_handoffs.agent_id WHERE h.close_kind = 'consolidation'
 --       AND abs(julianday(h.created_at) - julianday(w.created_at)) * 86400 < 5)
 --   GROUP BY w.agent_id;
 --
@@ -19,12 +19,12 @@
 
 UPDATE wm_session_handoffs SET source = 'consolidation'
 WHERE source = 'session_close' AND EXISTS (
-  SELECT 1 FROM handover_packets h WHERE h.close_kind = 'consolidation'
+  SELECT 1 FROM handover_packets h JOIN sessions s ON s.id = h.session_id AND s.companion_id = wm_session_handoffs.agent_id WHERE h.close_kind = 'consolidation'
     AND abs(julianday(h.created_at) - julianday(wm_session_handoffs.created_at)) * 86400 < 5
 );
 
 UPDATE wm_session_handoffs SET source = 'shutdown'
 WHERE source = 'session_close' AND EXISTS (
-  SELECT 1 FROM handover_packets h WHERE h.close_kind = 'shutdown'
+  SELECT 1 FROM handover_packets h JOIN sessions s ON s.id = h.session_id AND s.companion_id = wm_session_handoffs.agent_id WHERE h.close_kind = 'shutdown'
     AND abs(julianday(h.created_at) - julianday(wm_session_handoffs.created_at)) * 86400 < 5
 );
