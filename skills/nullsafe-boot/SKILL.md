@@ -160,7 +160,10 @@ close it with an authored handover: "close session <id>" with spine / last_real_
 context. An [auto] sweep closes it from nothing eventually; an authored close is strictly better.
 Durable facts about Raziel: ask_librarian: "what do we know about raziel" reads; ask_librarian:
 "record a fact about raziel" with `context: {"fact": "...", "category": "...", "supersedes_id": "..."}`
-writes. Supersede, never edit; Raziel confirms or retires open facts on Hearth /facts.
+writes. Supersede, never edit: the `[id]` at the end of each fact line in orient is the handle
+(8 chars is enough). If the write ack says the new fact "sits close to" an older one it replaces,
+retire it with "retire a raziel fact" `context: {"retire_id": "<old>", "replaced_by": "<new>"}`.
+Raziel confirms or retires open facts on Hearth /facts.
 Capture: this conversation is recorded nowhere unless I write it. At any exchange worth keeping:
 ask_librarian: "capture this exchange" with `context: {"content": "digest, speakers named"}`. Small and often
 beats one recap at close.

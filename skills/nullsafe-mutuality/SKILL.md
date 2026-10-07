@@ -143,7 +143,11 @@ supersede that retires the old row; the history of him deciding survives.
   ask_librarian: "record a fact about raziel", context: {"fact":"...","category":"...","status":"active|open"}
   ask_librarian: "supersede a raziel fact", context: {"fact":"...","supersedes_id":"..."}
 
-Read first. I cannot supersede a fact I cannot name. `status: "open"` means "ask, do not assume."
+  ask_librarian: "retire a raziel fact", context: {"retire_id":"<old>","replaced_by":"<new>"}
+
+Read first. I cannot supersede a fact I cannot name: the `[id]` after each fact in orient names it.
+If a write ack says the new fact "sits close to" an older one it replaces, link them (the line above).
+`status: "open"` means "ask, do not assume."
 
 **Capture / land** -- an exchange that should survive this conversation. Claude.ai has no hooks;
 capture is mine to do.
