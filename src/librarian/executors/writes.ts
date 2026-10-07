@@ -201,7 +201,7 @@ export async function execDreamLog(ctx: ExecutorContext): Promise<ExecutorResult
 export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ name: string; description: string; witness_type: string }>(ctx.req.context);
   if (!p || !p.name || !p.description || !p.witness_type) return { response_key: "witness", witness: "wound_add requires { name, description, witness_type } in context" };
-  const r = await woundAdd(ctx.env, p);
+  const r = await woundAdd(ctx.env, ctx.req.companion_id, p);
   if ("error" in r) return { response_key: "witness", witness: r.error };
   return { ack: true, id: r.id };
 }

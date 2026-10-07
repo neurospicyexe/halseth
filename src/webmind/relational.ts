@@ -7,6 +7,17 @@
 import { Env } from "../types.js";
 import { WmAgentId, WmRelationalState, WmRelationalStateInput } from "./types.js";
 
+/**
+ * One spelling per relationship. `toward` is caller-supplied free text, and the orient snapshot
+ * partitions on it: until 2026-10-07 a single row written toward 'Raziel' (capital R, 2026-05-19)
+ * sat in its own partition beside 97 rows toward 'raziel', so Drevan's orient rendered that
+ * five-month-old feeling -- written in she/her -- as his CURRENT state toward Raziel, forever.
+ * Writes normalize here; reads compare on LOWER(TRIM(toward)) so legacy mixed-case rows fold too.
+ */
+export function normalizeToward(toward: string): string {
+  return toward.trim().toLowerCase();
+}
+
 export async function writeRelationalState(
   env: Env,
   input: WmRelationalStateInput,
@@ -18,7 +29,7 @@ export async function writeRelationalState(
   ).bind(
     id,
     input.companion_id,
-    input.toward,
+    normalizeToward(input.toward),
     input.state_text,
     input.weight ?? 0.5,
     input.state_type ?? "feeling",
@@ -36,8 +47,8 @@ export async function readRelationalHistory(
   const limit = opts.limit ?? 20;
   if (opts.toward) {
     const rows = await env.DB.prepare(
-      "SELECT * FROM companion_relational_state WHERE companion_id = ? AND toward = ? ORDER BY noted_at DESC LIMIT ?"
-    ).bind(companionId, opts.toward, limit).all<WmRelationalState>();
+      "SELECT * FROM companion_relational_state WHERE companion_id = ? AND LOWER(TRIM(toward)) = ? ORDER BY noted_at DESC LIMIT ?"
+    ).bind(companionId, normalizeToward(opts.toward), limit).all<WmRelationalState>();
     return rows.results ?? [];
   }
   const rows = await env.DB.prepare(
@@ -46,7 +57,8 @@ export async function readRelationalHistory(
   return rows.results ?? [];
 }
 
-// Orient snapshot: most recent state per toward target (one row per relationship)
+// Orient snapshot: most recent state per toward target (one row per relationship; case-folded,
+// see normalizeToward -- a case-split partition froze a stale row into orient for five months)
 export async function readRelationalSnapshot(
   env: Env,
   companionId: WmAgentId,
@@ -54,7 +66,7 @@ export async function readRelationalSnapshot(
   const rows = await env.DB.prepare(`
     SELECT id, companion_id, toward, state_text, weight, state_type, noted_at
     FROM (
-      SELECT *, ROW_NUMBER() OVER (PARTITION BY toward ORDER BY noted_at DESC) AS rn
+      SELECT *, ROW_NUMBER() OVER (PARTITION BY LOWER(TRIM(toward)) ORDER BY noted_at DESC) AS rn
       FROM companion_relational_state
       WHERE companion_id = ?
     )

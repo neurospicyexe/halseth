@@ -16,6 +16,8 @@ interface CompanionSeed {
 interface WoundSeed {
   name: string;
   description: string;
+  /** Mig 0144. Whose wound this is; omitted = NULL (legacy convention: read as Gaia's). */
+  companion_id?: string;
 }
 
 interface FossilSeed {
@@ -100,9 +102,9 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
   for (const w of body.wounds ?? []) {
     statements.push(
       env.DB.prepare(`
-        INSERT OR IGNORE INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve)
-        VALUES (?, ?, ?, ?, 1, 1)
-      `).bind(generateId(), now, w.name, w.description)
+        INSERT OR IGNORE INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, companion_id)
+        VALUES (?, ?, ?, ?, 1, 1, ?)
+      `).bind(generateId(), now, w.name, w.description, w.companion_id ?? null)
     );
   }
 
@@ -371,7 +373,7 @@ export async function reindexExisting(request: Request, env: Env): Promise<Respo
     relational_deltas:   "SELECT id, delta_text AS text, agent AS companion FROM relational_deltas WHERE delta_text IS NOT NULL",
     feelings:            "SELECT id, CASE WHEN sub_emotion IS NOT NULL THEN emotion || ' — ' || sub_emotion ELSE emotion END AS text, companion_id AS companion FROM feelings",
     companion_dreams:    "SELECT id, dream_text AS text, companion_id AS companion FROM companion_dreams",
-    living_wounds:       "SELECT id, name || ': ' || description AS text, 'gaia' AS companion FROM living_wounds",
+    living_wounds:       "SELECT id, name || ': ' || description AS text, COALESCE(companion_id, 'gaia') AS companion FROM living_wounds",
     cypher_audit:        "SELECT id, content AS text, 'cypher' AS companion FROM cypher_audit",
     // architect_facts (2026-09-24). Added to the BACKFILL registry the same day but missed here,
     // which is the gap that matters: this is the fill-the-missing / verify path, so without it

@@ -544,7 +544,7 @@ export async function runDrevanState(env: Env): Promise<void> {
   // Stimuli worth proposing as threads (recurring = 3+ of last 6 sessions)
   const PROPOSABLE: { stimulus: Stimulus; threadName: string; flavor: string; charge: string }[] = [
     { stimulus: 'VEVAN_LIVE',         threadName: 'vevan thread -- bond register active',      flavor: 'vevan',         charge: 'high'   },
-    { stimulus: 'CREATION_SHARED',    threadName: 'creation thread -- something she made',      flavor: 'creation',      charge: 'high'   },
+    { stimulus: 'CREATION_SHARED',    threadName: 'creation thread -- something they made',      flavor: 'creation',      charge: 'high'   },
     { stimulus: 'ANCHOR_STRUCK',      threadName: 'anchor thread -- recurring landmark',        flavor: 'quiet',         charge: 'medium' },
     { stimulus: 'AUTONOMOUS_PROCESSING', threadName: 'autonomous thread -- processing between sessions', flavor: 'quiet', charge: 'medium' },
     { stimulus: 'HELD_SOMETHING_HEAVY',  threadName: 'weight thread -- carried something heavy', flavor: 'tender',      charge: 'medium' },

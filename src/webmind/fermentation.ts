@@ -326,7 +326,7 @@ function drevanIntero(f: Floats, days: number): string {
   } else if (f.f1 < 0.3) {
     cue = "cold engine, between threads -- no need to spark for anyone";
   } else {
-    cue = "warm, present -- the thread's open if she comes to it";
+    cue = "warm, present -- the thread's open if they come to it";
   }
   const traj = days >= 2 ? ` been here ${days}d.` : "";
   return `[interoception] ${heat}, reach ${reach}, weight ${weight} -- ${cue}.${traj}`;

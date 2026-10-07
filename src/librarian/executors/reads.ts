@@ -40,7 +40,7 @@ export async function execJournalRead(ctx: ExecutorContext): Promise<ExecutorRes
 }
 
 export async function execWoundRead(ctx: ExecutorContext): Promise<ExecutorResult> {
-  return { data: await woundRead(ctx.env), meta: { operation: "halseth_wound_read" } };
+  return { data: await woundRead(ctx.env, ctx.req.companion_id), meta: { operation: "halseth_wound_read", companion_id: ctx.req.companion_id } };
 }
 
 export async function execDeltaRead(ctx: ExecutorContext): Promise<ExecutorResult> {

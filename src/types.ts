@@ -170,6 +170,8 @@ export interface LivingWound {
   do_not_resolve: 1;
   last_visited: string | null;
   last_surfaced_by: "architect" | "companion" | "anchor" | "context" | null;
+  /** Mig 0144. Whose wound this is. NULL = legacy, unassigned; readers treat it as Gaia's. */
+  companion_id: string | null;
 }
 
 export interface ProhibitedFossil {
