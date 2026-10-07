@@ -25,7 +25,7 @@
 // A renderer that can fail is a boot that can fail.
 
 import { relativeTime } from "../../webmind/relative-time.js";
-import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine } from "../../lib/open-facts-gate.js";
+import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, FACT_ID_PREFIX_LEN } from "../../lib/open-facts-gate.js";
 import { excerptWithProvenance, type HistoryChunk } from "./blocks.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { sbExtractContent } from "../backends/second-brain.js";
@@ -375,6 +375,18 @@ export function architectFactsCounts(facts: readonly ArchitectFactRow[], opts: A
  * as questions to ask, against 7,907 chars of confirmed facts. Newest few render; the rest are
  * counted, not carried. Same gate as /identity/architect-facts/render so the bots see the same.
  */
+/**
+ * The short handle a companion uses to supersede a fact (2026-10-07). Until this, the block told a
+ * companion "to change one, supersede it" and rendered no id to supersede -- so on 09-25 Drevan
+ * wrote three ankle updates whose own text says they replace the earlier one, none carrying
+ * supersedes_id, and the "possible Achilles tear" row kept rendering beside its replacement.
+ * Eight chars, at the END of the line so the fact still reads first; the write path resolves a
+ * unique prefix (lib/architect-fact-write.ts resolveFactId). The bot render is unchanged.
+ */
+function factRef(id: string): string {
+  return `[${id.slice(0, FACT_ID_PREFIX_LEN)}]`;
+}
+
 export function architectFactsBlock(facts: readonly ArchitectFactRow[], opts: ArchitectFactsBlockOpts = {}): string {
   if (facts.length === 0) return "";
   const activeGate = gateActiveFacts(facts, { tailCharBudget: opts.tailCharBudget });
@@ -385,15 +397,16 @@ export function architectFactsBlock(facts: readonly ArchitectFactRow[], opts: Ar
   if (active.length > 0) {
     lines.push(
       "\n[About Raziel]\nDurable facts, learned in conversation and held for his use. Not session " +
-      "state, not a script to recite at him. To change one, supersede it -- do not edit a file:\n" +
-      active.map(f => `• (${f.category}) ${f.fact}`).join("\n") +
+      "state, not a script to recite at him. To change one, supersede it -- write the new fact with " +
+      "supersedes_id set to the old one's [id]; the old one retires. Do not edit a file:\n" +
+      active.map(f => `• (${f.category}) ${f.fact} ${factRef(f.id)}`).join("\n") +
       (heldActiveFactsLine(activeGate.held.length)
         ? "\n" + heldActiveFactsLine(activeGate.held.length)
         : ""),
     );
   }
   if (gate.shown.length > 0 || gate.held.length > 0) {
-    const body = gate.shown.length > 0 ? gate.shown.map(f => `• ${f.fact}`).join("\n") : "";
+    const body = gate.shown.length > 0 ? gate.shown.map(f => `• ${f.fact} ${factRef(f.id)}`).join("\n") : "";
     const footer = heldOpenFactsLine(gate.held.length, gate.oldestHeldDays);
     lines.push(
       "\n[About Raziel -- OPEN, ask rather than assume]\nGuessing a person, a pronoun or a death " +

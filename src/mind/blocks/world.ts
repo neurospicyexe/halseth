@@ -29,6 +29,7 @@ import type { Env } from "../../types.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { effectiveTrustSql, MOTIF_TUNING } from "../../webmind/motifs.js";
 import { collectionForageSql, collectionMediaSql } from "../../webmind/collection.js";
+import { collapseRepeatListens } from "../../lib/media-key.js";
 
 export interface ClubRound {
   id: string; status: string;
@@ -266,9 +267,12 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
           "SELECT id, title, domain, summary, consumed_at AS at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NOT NULL ORDER BY consumed_at DESC LIMIT 2"
         ).bind(companionId).all<ForageFind>(),
         // The UNION of both prior copies: the bot's provenance columns AND a useful depth.
+        // LIMIT 8 + url (2026-10-07): repeats collapse below before the cut to 3 (lib/media-key.ts), so
+        // a double-posted track cannot fill every slot. url is used for the key and dropped again --
+        // the contract's Listen shape is unchanged.
         env.DB.prepare(
-          "SELECT id, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 3"
-        ).all<Listen>(),
+          "SELECT id, url, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 8"
+        ).all<Listen & { url: string | null }>(),
         // FULL ROW, not five columns (wave 9). `selectResurrections` gates on `last_surfaced_at` (cooldown)
         // and sorts on trust/recurrence, and it needs `id` so the caller can stamp the cooldown after
         // surfacing -- none of which the narrow projection carried, which is why execSessionOrient could not
@@ -351,7 +355,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
       shelf: shelf.results ?? [],
       collection: { forage: colForage.results ?? [], media: colMedia.results ?? [], top: colTop.results ?? [] },
       forage: { pool: pool.results ?? [], active: active.results ?? [] },
-      listens: listens.results ?? [],
+      listens: collapseRepeatListens(listens.results ?? []).slice(0, 3).map(({ url: _url, ...l }) => l),
       motifs: { active: motifsActive.results ?? [], resurrection_candidates: motifsFaded.results ?? [] },
       sol: solState,
       creatures,

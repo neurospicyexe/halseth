@@ -11,6 +11,7 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { bumpSparkle } from "./collection.js";
+import { mediaKey, collapseRepeatListens, MEDIA_REPEAT_WINDOW_HOURS } from "../lib/media-key.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -63,6 +64,25 @@ export async function postMediaExperience(request: Request, env: Env): Promise<R
   const analysisJson = body.analysis_json === undefined || body.analysis_json === null
     ? null : JSON.stringify(body.analysis_json).slice(0, 20_000);
 
+  // REPEAT GUARD (2026-10-07). The same Night Vale track landed twice, 19 minutes apart, with URLs
+  // that differed only in YouTube's per-share `?is=` param -- and both rows filled the orient's two
+  // [Recent listens] slots. Inside the window, a post of the same media (lib/media-key.ts: YouTube
+  // video id, else URL minus tracking params, else title+artist) returns the EXISTING row with 200,
+  // so the bot's follow-up reaction PATCH lands on the row that already exists. A genuine re-listen
+  // after the window still records. Fails open: a lookup error never blocks the write.
+  const key = mediaKey({ url: body.url, title, artist: body.artist });
+  try {
+    const recent = await env.DB.prepare(
+      "SELECT id, url, title, artist FROM media_experiences WHERE created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT 50"
+    ).bind(`-${MEDIA_REPEAT_WINDOW_HOURS} hours`).all<{ id: string; url: string | null; title: string; artist: string | null }>();
+    const hit = (recent.results ?? []).find(r => mediaKey(r) === key);
+    if (hit) {
+      return json({ experience: { id: hit.id, title: hit.title, artist: hit.artist }, deduped: true }, 200);
+    }
+  } catch (err) {
+    console.warn("[mind/media] repeat lookup failed -- recording anyway", { error: String(err) });
+  }
+
   const id = crypto.randomUUID().replace(/-/g, "");
   try {
     await env.DB.prepare(
@@ -93,8 +113,11 @@ export async function getRecentMedia(request: Request, env: Env): Promise<Respon
   try {
     const rows = await env.DB.prepare(
       "SELECT id, media_type, url, title, artist, duration_sec, shared_by, front_state, requested_companion, lyrics IS NOT NULL AS has_lyrics, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT ?"
-    ).bind(limit).all();
-    const experiences = (rows.results ?? []).map(r => {
+    ).bind(Math.min(limit * 2, 50)).all();
+    // Over-fetch and collapse repeats (lib/media-key.ts), same rule as the orient loader, so the
+    // autonomous worker's "recent listens" cannot list one double-posted track twice.
+    const collapsed = collapseRepeatListens((rows.results ?? []) as Array<Record<string, unknown> & { url?: string | null; title?: string | null; artist?: string | null }>).slice(0, limit);
+    const experiences = collapsed.map(r => {
       let reactions: Record<string, string> = {};
       try { reactions = JSON.parse(String((r as Record<string, unknown>)["reactions_json"] ?? "{}")) as Record<string, string>; } catch { /* malformed -> empty */ }
       const { reactions_json: _drop, ...rest } = r as Record<string, unknown>;

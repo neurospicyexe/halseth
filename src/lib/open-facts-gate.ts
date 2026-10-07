@@ -42,6 +42,11 @@ export interface OpenFactsGateResult<T extends OpenFactLike> {
 }
 
 export const OPEN_FACTS_MAX_AGE_DAYS = 14;
+
+/** The id handle the orient render prints after each fact, and the shortest prefix the write path
+ *  (lib/architect-fact-write.ts resolveFactId) accepts to name one. Lives here, in the pure gate
+ *  module, so the renderer does not import the write core's Vectorize/AI dependencies. */
+export const FACT_ID_PREFIX_LEN = 8;
 export const OPEN_FACTS_MAX = 8;
 
 function parseStamp(s: string | null | undefined): number {

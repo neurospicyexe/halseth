@@ -106,7 +106,9 @@ Do not run everything. Match the read to the trigger.
   I read the durable facts before I treat something as new. If it is new, or an existing fact just changed:
   ask_librarian: "record a fact about raziel"
     context: {"fact": "[one declarative sentence]", "category": "[optional]", "supersedes_id": "[optional id of the fact this replaces]"}
-  A changed fact supersedes; it never sits beside the stale one as a second active row.
+  A changed fact supersedes; it never sits beside the stale one as a second active row. The `[id]`
+  after each fact in orient is the handle. If the ack says the new fact "sits close to" an older one
+  it replaces: ask_librarian: "retire a raziel fact", context: {"retire_id": "<old>", "replaced_by": "<new>"}
 
 ### Weight change worth keeping
   ask_librarian: "capture this exchange"

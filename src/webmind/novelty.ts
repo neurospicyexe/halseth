@@ -18,7 +18,11 @@ export const SUPERSEDE_CANDIDATE_WINDOW_DAYS = 14;
 const NOVELTY_TOPK = 3;
 
 export type NoveltyDecision =
-  | { action: "insert"; embedding: number[] | null }
+  /** `nearest` (2026-10-07): the best LIVE candidate that did not clear a threshold, when there was
+   *  one. Additive and optional -- callers that ignore it behave exactly as before. architect_facts
+   *  uses it to hand the companion the id of the row its new fact most resembles, because a fact
+   *  that updates an older one cannot retire it unless the writer can NAME it. */
+  | { action: "insert"; embedding: number[] | null; nearest?: { matchRowId: string; score: number } }
   | { action: "skip"; matchRowId: string; score: number }
   | { action: "supersede"; matchRowId: string; score: number; embedding: number[] };
 
@@ -45,6 +49,17 @@ export async function noveltyCheck(
    * the same belief independently is signal, not duplication.
    */
   scope: "companion" | "table" = "companion",
+  /**
+   * architect_facts only (2026-10-07). When set, a candidate whose row is `status='open'` and scores
+   * at or above this threshold answers `skip` even below NOVELTY_SKIP. Pass it ONLY for an
+   * `status='open'` write: an open fact is a QUESTION to ask Raziel, and a second phrasing of a
+   * question already being held adds load, never information. Measured on prod: the two open
+   * "Magpie's pronouns" rows (drain output 90 minutes apart, 466 vs 200 chars) scored 0.817 --
+   * nowhere near 0.95 -- and they are the ONLY open/open pair at or above 0.80 among 111 indexed
+   * live facts. Active facts keep the strict 0.95: a near-match there is usually a partial record
+   * (the Rosie cluster), and skipping one would lose a fact.
+   */
+  opts: { openSkipThreshold?: number } = {},
 ): Promise<NoveltyDecision> {
   let embedding: number[] | null = null;
   try {
@@ -108,15 +123,16 @@ export async function noveltyCheck(
   // outlive it (the supersede path only best-effort deletes), and matching a dead row would hand
   // the caller a `skip` pointing at a fact nothing renders -- which reads to a companion as "I
   // already know that" about something the system has actually forgotten.
+  const factStatus = new Map<string, string>();
   if (table === "architect_facts") {
     try {
       const rowIds = candidates.map((m) => rowIdOf(m.id));
       const placeholders = rowIds.map(() => "?").join(", ");
       const live = await env.DB.prepare(
-        `SELECT id FROM architect_facts WHERE id IN (${placeholders}) AND status != 'retired'`,
-      ).bind(...rowIds).all<{ id: string }>();
-      const liveIds = new Set((live.results ?? []).map((r) => r.id));
-      candidates = candidates.filter((m) => liveIds.has(rowIdOf(m.id)));
+        `SELECT id, status FROM architect_facts WHERE id IN (${placeholders}) AND status != 'retired'`,
+      ).bind(...rowIds).all<{ id: string; status?: string }>();
+      for (const r of live.results ?? []) factStatus.set(r.id, r.status ?? "active");
+      candidates = candidates.filter((m) => factStatus.has(rowIdOf(m.id)));
     } catch {
       candidates = candidates; // fail open
     }
@@ -134,5 +150,16 @@ export async function noveltyCheck(
     console.log("[novelty-gate] supersede", { table, companionId, matchRowId, score: top.score });
     return { action: "supersede", matchRowId, score: top.score, embedding };
   }
-  return { action: "insert", embedding };
+  if (opts.openSkipThreshold !== undefined && table === "architect_facts") {
+    // Candidates are score-ordered, so the first open one above the bar is the closest held question.
+    const sameQuestion = candidates.find(
+      (m) => m.score >= opts.openSkipThreshold! && factStatus.get(rowIdOf(m.id)) === "open",
+    );
+    if (sameQuestion) {
+      const id = rowIdOf(sameQuestion.id);
+      console.log("[novelty-gate] skip-open", { table, companionId, matchRowId: id, score: sameQuestion.score });
+      return { action: "skip", matchRowId: id, score: sameQuestion.score };
+    }
+  }
+  return { action: "insert", embedding, nearest: { matchRowId, score: top.score } };
 }
