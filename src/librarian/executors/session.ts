@@ -13,7 +13,7 @@ import {
 } from "../backends/halseth.js";
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
-import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
+import { buildResponse, buildOrientPrompt, buildContinuityBlock, nowCstBlock } from "../response/builder.js";
 import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom } from "../../webmind/feeling-line-loader.js";
 import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
 import { buildClubBlock, excerptWithProvenance, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
@@ -299,7 +299,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
-  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
+  // The continuity block opens with [Now]; when WebMind orient failed there is no block, and the boot
+  // skill's "no world-tools -> trust [Now]" would have nothing to trust. Fall back to the Worker clock.
+  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : nowCstBlock();
 
   // Graph memory Phase 1.5, Tranche 5 (0.11.0): the local structural neighborhood around what this
   // boot already surfaced -- rendered from the loader's `graph.neighborhoods`, no retrieval here.

@@ -6,7 +6,7 @@
 // word with the float unchanged. Both lines now band the floats through heatBand/reachBand/
 // weightBand; a stored word that differs renders as "(you said ...)" beside the band.
 import { describe, it, expect } from "vitest";
-import { buildOrientPrompt, buildReadyPrompt, drevanStateWords } from "../librarian/response/builder.js";
+import { buildOrientPrompt, buildReadyPrompt, drevanStateWords, nowCstBlock, buildResponse } from "../librarian/response/builder.js";
 import { heatBand, reachBand, weightBand } from "../webmind/fermentation.js";
 
 const state = (over: Record<string, unknown> = {}): any => ({
@@ -67,6 +67,13 @@ describe("Drevan header: one float->word mapping across both lines", () => {
   it("session_load's ready_prompt uses the same mapping (no stamps -> no age)", () => {
     const rp = buildReadyPrompt("drevan", { session_id: "s", state: state({ heat: "warm", reach: "present", weight: "holding" }) } as any);
     expect(rp).toMatch(/^heat: running-hot \(you said warm\) \/ reach: pulling-hard \(you said present\) \/ weight: holding/);
+  });
+
+  it("[Now] fallback: the shared helper renders the CST clock, and session_load still emits it", () => {
+    // 2026-10-07 15:00Z = 10:00 AM CDT, Wednesday.
+    expect(nowCstBlock(new Date("2026-10-07T15:00:00Z"))).toBe("\n[Now: Wednesday, October 7, 2026 at 10:00 AM CST]");
+    const r = buildResponse("drevan", "ready_prompt", { session_id: "s", state: state() } as any) as any;
+    expect(r.ready_prompt).toMatch(/\n\[Now: [A-Z][a-z]+day, .+ CST\]/);
   });
 
   it("directional word always renders as his; no floats yet -> the stored word, as before", () => {

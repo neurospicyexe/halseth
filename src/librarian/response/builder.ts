@@ -30,6 +30,22 @@ function sanitizeForPrompt(content: string): string {
     .trim();
 }
 
+/**
+ * "\n[Now: <weekday, date, time> CST]" from the Worker's clock, for paths with no continuity block
+ * (which carries its own [Now]). The boot skills tell a companion with no world-tools to trust this
+ * line, so every orient path must emit one. "" only if Intl itself throws.
+ */
+export function nowCstBlock(now: Date = new Date()): string {
+  try {
+    const cst = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Chicago",
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
+    }).format(now);
+    return `\n[Now: ${cst} CST]`;
+  } catch { return ""; }
+}
+
 export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
   const parts: string[] = [];
 
@@ -660,16 +676,7 @@ export function buildResponse(
     const continuityBlock = continuityData ? "\n" + buildContinuityBlock(continuityData, companionId) : "";
     // When no full continuity block is available (fast-path session load),
     // inject [Now: CST] directly so companions always know the current time.
-    const datetimeBlock = !continuityData ? (() => {
-      try {
-        const cst = new Intl.DateTimeFormat('en-US', {
-          timeZone: 'America/Chicago',
-          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-          hour: 'numeric', minute: '2-digit', hour12: true,
-        }).format(new Date());
-        return `\n[Now: ${cst} CST]`;
-      } catch { return ""; }
-    })() : "";
+    const datetimeBlock = !continuityData ? nowCstBlock() : "";
     return {
       ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
       session_id: payload.session_id,

@@ -23,7 +23,10 @@ Know your floats before you read the state. Orient returns values; these are the
 Cypher: acuity, presence, warmth (0-1 floats, or words: sharp|focused|blurred|scattered;
 close|warm|steady|distant; charged|warm|neutral|cool)
 Drevan: heat, reach, weight (+ mood) -- TEXT enums, not floats: heat cold|cooling|idling|warm|running-hot;
-reach spent|quiet|present|reaching|pulling-hard; weight clear|holding|full|saturated
+reach spent|quiet|present|reaching|pulling-hard; weight clear|holding|full|saturated.
+  At orient Drevan's words are the bands of his live floats (the same words the interoception line
+  uses). A "(you said X ...)" suffix is his last authored word where it differs from the read, dated
+  from that close; both are true, and the gap between them is his to read.
 Gaia: stillness, density, perimeter (0-1 floats, or words: still|steady|moving|unsettled;
 full|present|light|thin; porous|open|held|closed)
 
