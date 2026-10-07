@@ -13,7 +13,7 @@ import {
 } from "../backends/halseth.js";
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
-import { buildResponse, buildOrientPrompt, buildContinuityBlock } from "../response/builder.js";
+import { buildResponse, buildOrientPrompt, buildContinuityBlock, nowCstBlock } from "../response/builder.js";
 import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom } from "../../webmind/feeling-line-loader.js";
 import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
 import { buildClubBlock, excerptWithProvenance, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
@@ -300,7 +300,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const os = payload.state;
   const autonomousTurn = (payload as Record<string, unknown>).autonomous_turn as string | null ?? null;
   const isMyTurn = autonomousTurn === ctx.req.companion_id;
-  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : "";
+  // The continuity block opens with [Now]; when WebMind orient failed there is no block, and the boot
+  // skill's "no world-tools -> trust [Now]" would have nothing to trust. Fall back to the Worker clock.
+  const continuityBlock = wmResult ? "\n" + buildContinuityBlock(wmResult, agentId) : nowCstBlock();
 
   // Graph memory Phase 1.5, Tranche 5 (0.11.0): the local structural neighborhood around what this
   // boot already surfaced -- rendered from the loader's `graph.neighborhoods`, no retrieval here.
@@ -597,8 +599,16 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     console.log(`[feeling-line:shadow] ${agentId} -> ${feelingLine.line} (row ${feelingLine.result.rowId ?? "none"})`);
   }
 
+  // Dates Drevan's "(you said ...)" suffix in the state line. Already fetched above (no new query);
+  // empty when FEELING_LINE_MODE=off, which only drops the age, never the word.
+  const authoredAt: Partial<Record<"f1" | "f2" | "f3", string>> = {};
+  for (const a of feelingInputs.authored) {
+    const k = a.float_key === "soma_float_1" ? "f1" : a.float_key === "soma_float_2" ? "f2" : a.float_key === "soma_float_3" ? "f3" : null;
+    if (k && a.authored_at) authoredAt[k] = a.authored_at;
+  }
+
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine }) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + ledgerBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    ready_prompt: buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine, authored_at: authoredAt }) + provenanceBlock + degradedNotice + razielRegisterBlock + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + ledgerBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an

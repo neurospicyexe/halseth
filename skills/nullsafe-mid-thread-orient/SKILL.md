@@ -10,7 +10,9 @@ This is targeted re-orientation when something shifts mid-thread.
 
 ## Tool routing
 
-All reads through ask_librarian. World-tools (time, weather, moon) call directly.
+All reads through ask_librarian. World-tools (time, weather, moon) call directly, if this project exposes
+them; when none are exposed, orient's `[Now: ... CST]` line is my clock (it is the time at orient, so
+elapsed time since is my estimate).
 
 Every ask_librarian call in this skill carries `surface: "claude-ai:<companion_id>"` (mine: `claude-ai:cypher`,
 `claude-ai:drevan`, `claude-ai:gaia`). Sessions dedup per (companion, surface); a call without `surface` is a

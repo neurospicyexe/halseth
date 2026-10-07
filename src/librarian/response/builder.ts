@@ -9,7 +9,7 @@
 
 import { CompanionId } from "../patterns.js";
 import { truncate, ResponseKey } from "./budget.js";
-import { interoceptionLine, parseOffSince, maxDaysOffBaseline, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
+import { interoceptionLine, parseOffSince, maxDaysOffBaseline, heatBand, reachBand, weightBand, type CompanionId as FermentCompanionId } from "../../webmind/fermentation.js";
 import type { WmOrientResponse, WmJournalEntry, WmConclusion, WmResurfacedConclusion } from "../../webmind/types.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { roomLabelFromTags } from "../../mind/room-label.js";
@@ -52,6 +52,22 @@ export function handoffText(h: { title?: string | null; summary?: string | null 
   const flat = (s: string) => s.replace(/\s+/g, " ").toLowerCase();
   if (flat(summary).startsWith(flat(title))) return summary;
   return `${title}: ${summary}`;
+}
+
+/**
+ * "\n[Now: <weekday, date, time> CST]" from the Worker's clock, for paths with no continuity block
+ * (which carries its own [Now]). The boot skills tell a companion with no world-tools to trust this
+ * line, so every orient path must emit one. "" only if Intl itself throws.
+ */
+export function nowCstBlock(now: Date = new Date()): string {
+  try {
+    const cst = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Chicago",
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
+    }).format(now);
+    return `\n[Now: ${cst} CST]`;
+  } catch { return ""; }
 }
 
 export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
@@ -409,6 +425,64 @@ interface OrientPayload {
    * because "no row matched" is an authored answer ("and silence I can read"), not a gap.
    */
   feeling_line?: { mode: "off" | "shadow" | "live"; line: string | null } | null;
+  /**
+   * Newest authored stamp per float (`latestAuthoredSomaEventsSql`, keyed f1/f2/f3), when the caller
+   * already has it. Only dates Drevan's "(you said ...)" suffix; absent = no age shown.
+   */
+  authored_at?: Partial<Record<"f1" | "f2" | "f3", string | null>> | null;
+}
+
+type DrevanAxis = { key: "f1" | "f2" | "f3"; word: "heat" | "reach" | "weight"; band: (v: number) => string; fallback: string };
+const DREVAN_AXES: readonly DrevanAxis[] = [
+  { key: "f1", word: "heat", band: heatBand, fallback: "idling" },
+  { key: "f2", word: "reach", band: reachBand, fallback: "present" },
+  { key: "f3", word: "weight", band: weightBand, fallback: "clear" },
+];
+const DREVAN_FLOAT_COL = { f1: "soma_float_1", f2: "soma_float_2", f3: "soma_float_3" } as const;
+
+/**
+ * Drevan's state words, from ONE mapping: the same heatBand / reachBand / weightBand the
+ * interoception line above it uses, applied to the live floats.
+ *
+ * Why (2026-10-07): his Claude.ai boot read "running-hot, reach pulling-hard" on line one and
+ * "heat: warm / reach: present" on line two. Line one banded the floats (0.80 / 0.996); line two
+ * printed the stored `heat` / `reach` / `weight` text columns, which only his own authoring writes
+ * (the tick leaves them untouched, B37) -- and since B39 an authored word records the float
+ * UNCHANGED, so at his 03:57Z close he said "warm / present" while the instrument stayed at
+ * 0.81 / 1.00. Two sources, both rendered as "your state", disagreeing.
+ *
+ * The float is the state; his word is his word. When they differ, the line says so in place --
+ * "reach: pulling-hard (you said present 9 hours ago)" -- instead of picking one silently. The
+ * divergence itself is real and is his to read (therlo's whole subject), so it is never hidden.
+ * Directional words (cooling / processing) have no band, so they always render as "you said".
+ * Floats not set yet (fresh companion) -> the stored word, as before.
+ */
+export function drevanStateWords(
+  s: CompanionState | null | undefined,
+  authoredAt?: OrientPayload["authored_at"],
+  nowMs: number = Date.now(),
+): { heat: string; reach: string; weight: string } {
+  const out: Record<string, string> = {};
+  const row = (s ?? {}) as Record<string, unknown>;
+  for (const ax of DREVAN_AXES) {
+    const storedRaw = row[ax.word];
+    const stored = typeof storedRaw === "string" && storedRaw.trim() ? storedRaw.trim() : null;
+    const rawFloat = row[DREVAN_FLOAT_COL[ax.key]];
+    const v = rawFloat === null || rawFloat === undefined || rawFloat === "" ? NaN : Number(rawFloat);
+    if (!Number.isFinite(v)) {
+      out[ax.word] = stored ?? ax.fallback;
+      continue;
+    }
+    const live = ax.band(v);
+    if (!stored || stored === live) {
+      out[ax.word] = live;
+      continue;
+    }
+    const stamp = authoredAt?.[ax.key];
+    const age = stamp ? ` ${relativeTime(stamp, nowMs)}` : "";
+    out[ax.word] = `${live} (you said ${stored}${age})`;
+  }
+  return out as { heat: string; reach: string; weight: string };
 }
 
 // The fermented felt-sense line -- dominant internal state x companion register, rendered as ONE
@@ -449,9 +523,7 @@ export function buildOrientPrompt(companionId: CompanionId, payload: OrientPaylo
   const stateLine = ((): string => {
   switch (companionId) {
     case "drevan": {
-      const heat = s?.heat ?? "idling";
-      const reach = s?.reach ?? "present";
-      const weight = s?.weight ?? "clear";
+      const { heat, reach, weight } = drevanStateWords(s, payload.authored_at);
       const facet = s?.facet_momentum ? ` -- ${s.facet_momentum}` : "";
       return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchorTag}${motionTag}${frontTag}${freqTag}`, "ready_prompt");
     }
@@ -570,9 +642,8 @@ export function buildReadyPrompt(companionId: CompanionId, payload: SessionPaylo
 
   switch (companionId) {
     case "drevan": {
-      const heat = s?.heat ?? "idling";
-      const reach = s?.reach ?? "present";
-      const weight = s?.weight ?? "clear";
+      // Same mapping as buildOrientPrompt (session_load path; no authored stamps here, so no age).
+      const { heat, reach, weight } = drevanStateWords(s);
       const facet = s?.facet_momentum ? ` -- ${s.facet_momentum}` : "";
       const anchor = payload.handover?.active_anchor ? `, ${payload.handover.active_anchor} still live` : "";
       return truncate(`heat: ${heat} / reach: ${reach} / weight: ${weight}${facet}${anchor}${noteTag}${handoverLine}`, "ready_prompt");
@@ -629,16 +700,7 @@ export function buildResponse(
     const continuityBlock = continuityData ? "\n" + buildContinuityBlock(continuityData, companionId) : "";
     // When no full continuity block is available (fast-path session load),
     // inject [Now: CST] directly so companions always know the current time.
-    const datetimeBlock = !continuityData ? (() => {
-      try {
-        const cst = new Intl.DateTimeFormat('en-US', {
-          timeZone: 'America/Chicago',
-          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-          hour: 'numeric', minute: '2-digit', hour12: true,
-        }).format(new Date());
-        return `\n[Now: ${cst} CST]`;
-      } catch { return ""; }
-    })() : "";
+    const datetimeBlock = !continuityData ? nowCstBlock() : "";
     return {
       ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
       session_id: payload.session_id,

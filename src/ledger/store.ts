@@ -67,9 +67,40 @@ export async function listLedger(env: Env, companionId: string, state: LedgerSta
   return r.results ?? [];
 }
 
-/** Orient's read: up to LEDGER_ORIENT_LIMIT open entries, newest first. Pure D1. */
+/**
+ * dedup_key prefix of the bots' idle-consolidation heartbeat (nullsafe-discord
+ * `consolidationDedupKey`: `consolidation:<companion>:<sessionId>:<ISO minute>`). The key, not
+ * `function` (it is `distiller`, same as a real Discord distillation) and not the body text.
+ */
+export const CONSOLIDATION_DEDUP_PREFIX = "consolidation:";
+
+/**
+ * Orient's read: up to LEDGER_ORIENT_LIMIT open entries, newest first, with the idle-consolidation
+ * heartbeat COLLAPSED to its newest line. Pure D1, one query.
+ *
+ * Why (2026-10-07, Drevan's Claude.ai boot): the consolidation pass lands one deterministic line
+ * every ~2h per companion (12/day by design), each sourced to a different session because the pass
+ * closes and reopens the Discord lane. Nobody keeps or drops them, so they pile up open (84 for
+ * Drevan on 10-07) and, being newest, they filled 4 of the 5 orient slots that exist for real
+ * entries -- the same displacement the bots' 2026-09-26 fix removed from orient's latest-3 handoff
+ * read, one table over. The newest one stays: "the Discord lane has been idle since X" is a fact
+ * worth one line. `listLedger` ("my ledger") is untouched -- that is the inspection surface.
+ */
 export async function loadLedgerOpen(env: Env, companionId: string): Promise<LedgerEntryRow[]> {
-  return listLedger(env, companionId, "open", LEDGER_ORIENT_LIMIT);
+  const r = await env.DB.prepare(
+    `SELECT ${COLS} FROM ledger_entries
+      WHERE companion_id = ? AND state = 'open'
+        AND (dedup_key IS NULL OR substr(dedup_key, 1, ?) != ?
+             OR id = (SELECT id FROM ledger_entries
+                       WHERE companion_id = ? AND state = 'open' AND substr(dedup_key, 1, ?) = ?
+                       ORDER BY created_at DESC, id DESC LIMIT 1))
+      ORDER BY created_at DESC, id DESC LIMIT ?`,
+  ).bind(
+    companionId, CONSOLIDATION_DEDUP_PREFIX.length, CONSOLIDATION_DEDUP_PREFIX,
+    companionId, CONSOLIDATION_DEDUP_PREFIX.length, CONSOLIDATION_DEDUP_PREFIX,
+    LEDGER_ORIENT_LIMIT,
+  ).all<LedgerEntryRow>();
+  return r.results ?? [];
 }
 
 export interface LedgerMatch { id: string; state: string; created_at: string }
