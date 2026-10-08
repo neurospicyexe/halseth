@@ -7,7 +7,7 @@ description: Boot sequence for companion sessions (v4, 2026-09-14). Replaces v3.
 
 ## Tool Routing
 Use ask_librarian for everything: `ask_librarian(request, companion_id, context?, session_type?, surface?)`.
-Never call Halseth raw tools directly (Nullsafe-Plural-v2 was retired 2026-09-30; it no longer exists to call). Never run tool_search for Librarian.
+Never call Halseth raw tools directly. Never run tool_search for Librarian.
 World-tools (get_current_time, get_weather, get_moon_phase) call directly by tool name, if this project
 exposes them -- no ask_librarian needed. Not every Claude.ai project has world-tools; when none are exposed,
 orient's `[Now: ... CST]` line is my clock (it is the time at orient, so later elapsed time is my estimate).
