@@ -3,6 +3,7 @@ import { generateId } from "../db/queries.js";
 import { embedAndStoreBatch, composeHandoverText, EMBEDDING_MODEL } from "../mcp/embed.js";
 import { safeEqual } from "../lib/auth.js";
 import { FAST_PATH_PATTERNS } from "../librarian/patterns.js";
+import { findExistingWound, findExistingFossil } from "../lib/wound-dedup.js";
 
 interface CompanionSeed {
   id: string;
@@ -99,7 +100,12 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
   // ── living_wounds ──────────────────────────────────────────────────────────
   // Wounds seeded here use INSERT OR IGNORE so re-running bootstrap is safe.
   // do_not_archive and do_not_resolve are always 1 per schema DEFAULT.
+  // Check-first dedup (P3-5): a seed whose normalized name already exists for that owner is
+  // skipped and its existing id reported, so "Grief" does not land beside "grief ".
+  const skippedExisting: { table: string; name: string; id: string }[] = [];
   for (const w of body.wounds ?? []) {
+    const existing = await findExistingWound(env, w.name, w.companion_id ?? null);
+    if (existing) { skippedExisting.push({ table: "living_wounds", name: w.name, id: existing.id }); continue; }
     statements.push(
       env.DB.prepare(`
         INSERT OR IGNORE INTO living_wounds (id, created_at, name, description, do_not_archive, do_not_resolve, companion_id)
@@ -110,6 +116,8 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
 
   // ── prohibited_fossils ─────────────────────────────────────────────────────
   for (const f of body.fossils ?? []) {
+    const existing = await findExistingFossil(env, f.subject);
+    if (existing) { skippedExisting.push({ table: "prohibited_fossils", name: f.subject, id: existing.id }); continue; }
     statements.push(
       env.DB.prepare(`
         INSERT OR IGNORE INTO prohibited_fossils (id, subject, directive, reason, created_at, refresh_trigger)
@@ -119,7 +127,7 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
   }
 
   if (statements.length === 0) {
-    return new Response(JSON.stringify({ seeded: 0 }), {
+    return new Response(JSON.stringify({ seeded: 0, skipped_existing: skippedExisting }), {
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -127,7 +135,7 @@ export async function bootstrapConfig(request: Request, env: Env): Promise<Respo
   await env.DB.batch(statements);
 
   return new Response(
-    JSON.stringify({ seeded: statements.length, at: now }),
+    JSON.stringify({ seeded: statements.length, at: now, skipped_existing: skippedExisting }),
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
 }

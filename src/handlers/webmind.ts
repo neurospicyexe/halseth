@@ -20,7 +20,7 @@ import { dualVectorSearch } from "../librarian/backends/second-brain.js";
 import { writeDream, readDreams, examineDream } from "../webmind/dreams.js";
 import { writeLoop, readLoops, closeLoop, reviewLoop, actOnLoop } from "../webmind/loops.js";
 import { writeRelationalState, readRelationalHistory } from "../webmind/relational.js";
-import { writeLimbicState, getCurrentLimbicState } from "../webmind/limbic.js";
+import { writeLimbicState, getCurrentLimbicState, withLimbicRetirement } from "../webmind/limbic.js";
 import { queueAndRunSpiral } from '../webmind/spiral.js';
 import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput, WmThreadStatus, WmSpiralInput } from "../webmind/types.js";
 
@@ -858,10 +858,8 @@ export async function getMindLimbicCurrent(
 
   try {
     const state = await getCurrentLimbicState(env);
-    if (!state) {
-      return json({ limbic_state: null });
-    }
-    return json({ limbic_state: state });
+    // Retired register (2026-09-14): the row is returned, flagged stale, never as live state.
+    return json(withLimbicRetirement(state));
   } catch (err) {
     console.error("[mind/limbic/current] error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);

@@ -1,6 +1,6 @@
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { queryTensions, queryLatestBasinHistory, queryPressureFlags, queryIdentityAnchor, tensionEdit, tensionStatus, tensionSettle } from "../backends/halseth.js";
-import { getCurrentLimbicState } from "../../webmind/limbic.js";
+import { getCurrentLimbicState, withLimbicRetirement } from "../../webmind/limbic.js";
 import { selectResurrections, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { stripTensionCommandPreamble } from "../../webmind/tension-text.js";
@@ -1060,9 +1060,10 @@ export async function execDriftCheck(ctx: ExecutorContext): Promise<ExecutorResu
 export async function execLimbicRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "limbic_read_failed", reason: "companion_id required" };
   const row = await getCurrentLimbicState(ctx.env, ctx.req.companion_id);
+  // Retired register (2026-09-14): the row is returned, flagged stale, never as live state.
   return {
     response_key: "summary",
-    limbic_state: row ?? null,
+    ...withLimbicRetirement(row),
     meta: { operation: "limbic_read", companion_id: ctx.req.companion_id },
   };
 }

@@ -23,6 +23,7 @@ COMPANIONS_ENABLED   = "true"    # "false" returns 403 on companion routes
 COORDINATION_ENABLED = "true"    # shared zone: tasks, events, lists, routines, etc.
 SYSTEM_NAME          = "Halseth"
 SYSTEM_OWNER         = "REPLACE_WITH_OWNER"
+BRIEFING_ENABLED     = "true"    # ND daily-rhythm briefing (08:00/13:00/20:00 CDT -> #briefings); pushed by the autonomous-worker. Mirrors prod (P3-6).
 # Quiet hours (B7 step 1, 2026-09-27). Outreach is suppressed inside this LOCAL-clock window
 # unless the metronome action carries quiet_hours_allowed = 1. The window wraps midnight and the
 # end hour is exclusive (06 means 06:00 is already morning). QUIET_HOURS_TZ must be an IANA zone
@@ -92,7 +93,8 @@ preview_id = "e3f0d2a9e27b415781d0384d59885546"
 [triggers]
 crons = [
   "*/1 * * * *",   # synthesis queue processor (session summaries, ~1min after close)
-  "0 11 * * *",    # day context synthesis (6am ET / 11am UTC) -- Phase 2, stub for now
+  # "0 11 * * *" (day context synthesis stub) removed 2026-10-08 (P3-6): prod (wrangler.prod.toml)
+  # only ever declared "*/1 * * * *", so the stub never ran anywhere and nothing branches on it.
 ]
 
 # ── Rate limiting (free tier: 1 rule, 10s window, IP-based) ─────────────────
@@ -113,7 +115,7 @@ namespace_id = "1001"
 # Workers Logs. OFF until 2026-09-20, which made the feeling-line shadow mode unobservable: the
 # `[feeling-line:shadow]` line was written on every Claude.ai orient and persisted nowhere, so the
 # evidence the gated cutover exists to collect could only be seen by holding `wrangler tail` open.
-# A shadow mode nobody can read is not a shadow mode. nullsafe-plural-v2 already logs here.
+# A shadow mode nobody can read is not a shadow mode.
 [observability]
 enabled = true
 head_sampling_rate = 1

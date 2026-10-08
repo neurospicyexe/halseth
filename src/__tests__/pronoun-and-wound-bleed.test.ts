@@ -88,8 +88,11 @@ describe("living wounds belong to one companion", () => {
   it("woundAdd stores the companion it was given", async () => {
     const { env, calls } = fakeEnv();
     await woundAdd(env, "drevan", { name: "n", description: "d", witness_type: "seal" });
-    expect(calls[0]!.sql).toMatch(/companion_id\) VALUES/);
-    expect(calls[0]!.binds.at(-1)).toBe("drevan");
+    // The write is preceded by the P3-5 check-first SELECT (wound-fossil-dedup.test.ts), so match the
+    // INSERT by text, not by position.
+    const insert = calls.find((c) => /INSERT INTO living_wounds/.test(c.sql))!;
+    expect(insert.sql).toMatch(/companion_id\) VALUES/);
+    expect(insert.binds.at(-1)).toBe("drevan");
   });
 
   it("the Librarian read scopes to the AUTHENTICATED caller", async () => {

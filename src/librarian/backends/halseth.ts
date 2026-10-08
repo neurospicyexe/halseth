@@ -120,7 +120,8 @@ export async function journalRead(env: Env, limit = 20) {
  * as Gaia's -- the convention every other wound path already asserted (MCP wound_add is "Gaia-only by
  * convention" and embeds as 'gaia'; the admin re-embed labels wounds 'gaia').
  */
-export const WOUND_OWNER_SQL = "COALESCE(companion_id, 'gaia')";
+export { WOUND_OWNER_SQL } from "../../lib/wound-dedup.js";
+import { WOUND_OWNER_SQL, findExistingWound } from "../../lib/wound-dedup.js";
 
 /** One companion's wounds -- never another's. Raw MCP halseth_wound_read stays the unfiltered view. */
 export async function woundRead(env: Env, companionId: string) {
@@ -315,7 +316,10 @@ export async function dreamLog(env: Env, params: {
  */
 export async function woundAdd(env: Env, companionId: string, params: {
   name: string; description: string; witness_type: string;
-}): Promise<{ id: string; created_at: string; witness_type: string } | { error: string }> {
+}): Promise<{ id: string; created_at: string; witness_type: string; existing?: true } | { error: string }> {
+  // Check-first dedup (P3-5): same normalized name for this owner acks the existing row.
+  const existing = await findExistingWound(env, params.name, companionId);
+  if (existing) return { id: existing.id, created_at: existing.created_at, witness_type: params.witness_type, existing: true };
   const id = generateId();
   const now = new Date().toISOString();
   try {

@@ -69,6 +69,7 @@ import {
 } from "./handlers/growth.js";
 import { getTriadRecent, detectThoughtforms } from "./handlers/triad.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
+import { isPublicPath } from "./lib/public-paths.js";
 import { authGuard } from "./lib/auth.js";
 import {
   getPluralMembers, postPluralMember, getPluralMemberByName,
@@ -706,36 +707,8 @@ const router = new Router()
   .on("GET",  "/companions/:companionId/deltas",           listDeltas)
   .on("POST", "/companions/:companionId/deltas",           appendDelta);
 
-// Routes that do NOT require auth (OAuth flow + presence read-only dashboard feed)
-const PUBLIC_PATHS = new Set([
-  "/.well-known/oauth-protected-resource",
-  "/.well-known/oauth-authorization-server",
-  "/oauth/register",
-  "/oauth/authorize",
-  "/oauth/token",
-  "/presence",
-  "/librarian/mcp",  // has its own auth gate that accepts OAuth tokens
-  "/mcp",            // has its own auth gate that accepts OAuth tokens
-  // Bridge does its own auth (checkBridgeAuth: admin tier OR symmetric
-  // BRIDGE_SECRET). Without this exemption the global authGuard 401s a partner
-  // deployment that only holds BRIDGE_SECRET before the handler ever runs.
-  "/bridge/shared",
-  "/bridge/act",
-  "/bridge/toggle",
-  // Library browser upload: authenticated by a short-lived HMAC upload ticket
-  // (src/lib/upload-ticket.ts), fail-closed without UPLOAD_TICKET_SECRET. Exact path only,
-  // so POST /mind/books/upload-ticket (the minting route) stays behind authGuard.
-  "/mind/books/upload",
-]);
-
-function isPublicPath(pathname: string): boolean {
-  // The trailing slash on /mind/tools/image/ exempts ONLY the GET-by-id stream
-  // (public read: unguessable random id, DB-validated; mirrors /assets/). The POST
-  // generator at /mind/tools/image (no trailing slash) stays gated + audited.
-  return PUBLIC_PATHS.has(pathname)
-    || pathname.startsWith("/assets/")
-    || pathname.startsWith("/mind/tools/image/");
-}
+// Routes that do NOT require auth live in src/lib/public-paths.ts (PUBLIC_PATHS + isPublicPath),
+// extracted 2026-10-08 so the set is unit-tested (src/__tests__/public-paths.test.ts).
 
 /**
  * Everything the every-minute cron does, callable from two doors: the Cloudflare `scheduled`

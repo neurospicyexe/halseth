@@ -97,3 +97,27 @@ export async function getCurrentLimbicState(
     "SELECT * FROM limbic_states ORDER BY generated_at DESC LIMIT 1"
   ).first<WmLimbicState>();
 }
+
+// felt.limbic was retired by ruling on 2026-09-14 (register = first-person soma floats + causes).
+// The synthesis that wrote limbic_states stopped on 2026-09-01, so the "current" row is a fossil.
+// The tables and routes stay (P3-4, BUGS.md 2026-10-08), but every reader now gets the row wrapped
+// so no consumer can mistake it for a live register. `stale_since` is the row's generated_at, the
+// column getCurrentLimbicState orders by (the table has no updated_at).
+export const LIMBIC_RETIRED_NOTE =
+  "felt.limbic retired 2026-09-14; register is first-person soma floats";
+
+export interface RetiredLimbicRead {
+  limbic_state: WmLimbicState | null;
+  stale: true;
+  stale_since: string | null;
+  note: string;
+}
+
+export function withLimbicRetirement(row: WmLimbicState | null): RetiredLimbicRead {
+  return {
+    limbic_state: row ?? null,
+    stale: true,
+    stale_since: row ? (row.generated_at ?? row.created_at ?? null) : null,
+    note: LIMBIC_RETIRED_NOTE,
+  };
+}

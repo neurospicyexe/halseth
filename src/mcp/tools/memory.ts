@@ -2,6 +2,7 @@
 // halseth_delta_log uses INSERT only. The history of what was logged is part of
 // the structural record and must never be altered.
 
+import { findExistingWound } from "../../lib/wound-dedup.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { Env } from "../../types.js";
@@ -113,8 +114,13 @@ export function registerMemoryTools(server: McpServer, env: Env): void {
       companion_id: z.enum(["drevan", "cypher", "gaia"]).optional().describe("Whose wound this is (mig 0144). Defaults to gaia, the convention for this tool. It scopes the companion's \"my wounds\" read."),
     },
     async (input) => {
-      const id  = generateId();
       const owner = input.companion_id ?? "gaia";
+      // Check-first dedup (P3-5): same normalized name for this owner acks the existing row.
+      const existing = await findExistingWound(env, input.name, owner);
+      if (existing) {
+        return { content: [{ type: "text", text: JSON.stringify({ id: existing.id, created_at: existing.created_at, witness_type: input.witness_type, existing: true }) }] };
+      }
+      const id  = generateId();
       const now = new Date().toISOString();
 
       try {

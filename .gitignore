@@ -38,3 +38,8 @@ docs/deploy*.md
 *_CHECKLIST.md
 OPS-*.md
 DEPLOY_NOTES*.md
+
+# Disposable orient captures (orient-block-diff before/after snapshots)
+.tmp-orient-before/
+pre-c*/
+post-c*/

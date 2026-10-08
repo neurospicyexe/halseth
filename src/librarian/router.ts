@@ -618,7 +618,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   held_read: execHeldRead,
   identity_anchor_read: execIdentityAnchorRead,
 
-  // Plural (SimplyPlural API)
+  // Plural -- nullsafe-plural-v2 (SimplyPlural) was RETIRED 2026-09-30 (STATUS B43). The executors
+  // stay so the routes keep answering; front state comes from src/front/source.ts ("unknown" until
+  // the new plural app exposes an API).
   plural_get_current_front: execPluralGetCurrentFront,
   plural_get_member: execPluralGetMember,
   plural_update_member_description: execPluralUpdateMemberDescription,

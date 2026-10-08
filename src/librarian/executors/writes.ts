@@ -203,7 +203,7 @@ export async function execWoundAdd(ctx: ExecutorContext): Promise<ExecutorResult
   if (!p || !p.name || !p.description || !p.witness_type) return { response_key: "witness", witness: "wound_add requires { name, description, witness_type } in context" };
   const r = await woundAdd(ctx.env, ctx.req.companion_id, p);
   if ("error" in r) return { response_key: "witness", witness: r.error };
-  return { ack: true, id: r.id };
+  return r.existing ? { ack: true, id: r.id, existing: true } : { ack: true, id: r.id };
 }
 
 export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult> {
