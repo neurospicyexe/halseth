@@ -23,6 +23,7 @@ import { writeRelationalState, readRelationalHistory } from "../webmind/relation
 import { writeLimbicState, getCurrentLimbicState, withLimbicRetirement } from "../webmind/limbic.js";
 import { queueAndRunSpiral } from '../webmind/spiral.js';
 import type { WmAgentId, WmHandoffInput, WmThreadUpsertInput, WmNoteInput, WmDreamInput, WmLoopInput, WmRelationalStateInput, WmLimbicStateInput, WmThreadStatus, WmSpiralInput } from "../webmind/types.js";
+import { notConsolidationHeartbeatSql } from "../ledger/store.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
 const MAX_TEXT_LENGTH = 8000;
@@ -1537,6 +1538,9 @@ export async function getMindCommonsSupply(
           WHERE ? = 1
             AND l.companion_id != ?
             AND l.state IN ('open', 'kept')
+            -- Not the idle-consolidation heartbeat (dedup_key prefix; 12/day/companion, deterministic, no
+            -- content): "the lane has been idle" is not material for a sibling to open a conversation on.
+            AND ${notConsolidationHeartbeatSql("l.")}
             AND l.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
             AND NOT EXISTS (
                   SELECT 1 FROM commons_note_reads r

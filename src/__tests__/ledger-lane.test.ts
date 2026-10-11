@@ -472,6 +472,20 @@ describe("commons supply: siblings see ledger lines about each other, mark intac
     expect(opted.notes.map((n: any) => n.note_id)).toEqual([a.id]);
   });
 
+  it("never serves the idle-consolidation heartbeat (dedup_key prefix), only the real line beside it", async () => {
+    const { db, env } = setup();
+    const real = await seedLedger(env, db, { companion_id: "drevan", dedup_key: "distill:drevan:x:1" });
+    for (let i = 0; i < 3; i++) {
+      await seedLedger(env, db, {
+        companion_id: "drevan", function: "distiller", body: `Recorded: idle consolidation at 0${i}:00 UTC.`,
+        source_kind: "session", source_ref: `5b0c2f9e-0000-4000-8000-00000000000${i}`,
+        dedup_key: `consolidation:drevan:5b0c2f9e-0000-4000-8000-00000000000${i}:2026-10-11T0${i}:00`,
+      });
+    }
+    const b = await (await getMindCommonsSupply(req("/mind/commons-supply/cypher?limit=10&kinds=ledger"), env, { agent_id: "cypher" })).json() as any;
+    expect(b.notes.map((n: any) => n.note_id)).toEqual([real.id]);
+  });
+
   it("the director's sibling_note tier stays empty (it does not read the ledger) and tolerates it", async () => {
     const { db, env } = setup();
     await seedLedger(env, db, { companion_id: "drevan", dedup_key: "d1" });

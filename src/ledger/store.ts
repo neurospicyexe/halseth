@@ -75,6 +75,15 @@ export async function listLedger(env: Env, companionId: string, state: LedgerSta
 export const CONSOLIDATION_DEDUP_PREFIX = "consolidation:";
 
 /**
+ * SQL predicate: this row is NOT an idle-consolidation heartbeat. The prefix is a hardcoded literal
+ * (no bind), so it can be dropped into any query without disturbing its bind order. `alias` is the
+ * table alias with its dot ("l."), or "" for an unaliased query.
+ */
+export function notConsolidationHeartbeatSql(alias = ""): string {
+  return `(${alias}dedup_key IS NULL OR substr(${alias}dedup_key, 1, ${CONSOLIDATION_DEDUP_PREFIX.length}) != '${CONSOLIDATION_DEDUP_PREFIX}')`;
+}
+
+/**
  * Orient's read: up to LEDGER_ORIENT_LIMIT open entries, newest first, with the idle-consolidation
  * heartbeat COLLAPSED to its newest line. Pure D1, one query.
  *
