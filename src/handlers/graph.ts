@@ -21,8 +21,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { rebuildGraph } from "../graph/rebuild.js";
-import { GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_GATE_KEY } from "../graph/tick.js";
+import { GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_GATE_KEY, runGraphRebuildTick } from "../graph/tick.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -35,10 +34,14 @@ export async function postGraphRebuild(request: Request, env: Env): Promise<Resp
   const denied = authGuard(request, env);
   if (denied) return denied;
 
-  const counts = await rebuildGraph(env);
+  // Through the tick's single-flight lease (2026-10-10), never rebuildGraph directly: a manual run
+  // racing the minute cron is the same overlap that left the graph ragged (51269 -> 42130).
+  const r = await runGraphRebuildTick(env, { force: true });
+  if (!r.ran) return json({ error: "a rebuild is already running -- nothing started; retry after it finishes" }, 409);
   return json({
     rebuilt_at: new Date().toISOString(),
-    sources: counts,
+    sources: r.sources,
+    ms: r.ms,
   });
 }
 

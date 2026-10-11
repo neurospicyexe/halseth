@@ -209,3 +209,24 @@ describe("runGraphRebuildTick -- gate identity (never shares an anchor with anot
     expect(gateStampCalls[0]![1]).toBe(GRAPH_REBUILD_GATE_KEY);
   });
 });
+
+describe("POST /admin/graph/rebuild -- manual door shares the cron's lease", () => {
+  it("answers 409 and starts nothing while the cron holds the lease, even though it forces the gate", async () => {
+    const { postGraphRebuild } = await import("../handlers/graph.js");
+    const env = {
+      ADMIN_SECRET: "test-admin",
+      DB: {
+        prepare: (sql: string) => ({
+          bind: () => ({
+            first: async () => null,
+            run: async () => ({ meta: { changes: sql.startsWith("UPDATE") && sql.includes("value < ?") ? 0 : 1 } }),
+          }),
+        }),
+      },
+    } as unknown as Env;
+    const req = new Request("https://h/admin/graph/rebuild", { method: "POST", headers: { Authorization: "Bearer test-admin" } });
+    const res = await postGraphRebuild(req, env);
+    expect(res.status).toBe(409);
+    expect(rebuildGraph).not.toHaveBeenCalled();
+  });
+});
