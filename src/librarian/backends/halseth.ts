@@ -331,6 +331,14 @@ export async function woundAdd(env: Env, companionId: string, params: {
     if (msg.includes("UNIQUE") || msg.includes("unique")) return { error: "A wound with this name already exists." };
     throw err;
   }
+  // Embed like every other writer (journal/notes/handover); this one never did, so a wound added
+  // through the Librarian was invisible to semantic recall (2026-10-07 audit, STATUS 4b). Same text
+  // shape as the MCP wound_add (`name: description`). AWAITED (a floating promise is cancelled when
+  // the response returns) and FAIL-OPEN: the row is already committed, an embed/Vectorize failure
+  // leaves the index stale for the admin rebuild to heal and must never fail the write.
+  await embedAndStoreAsync(env, `${params.name}: ${params.description}`, "living_wounds", id, companionId).catch((err) => {
+    console.error("[woundAdd] embed failed (row kept, index stale):", String(err));
+  });
   return { id, created_at: now, witness_type: params.witness_type };
 }
 

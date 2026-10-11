@@ -93,6 +93,27 @@ describe("woundAdd (Librarian backend)", () => {
     expect(ins[0]!.binds.at(-1)).toBe("drevan");
   });
 
+  it("embeds the new wound under living_wounds:<id> for the caller (awaited)", async () => {
+    const { env } = fakeEnv({ living_wounds: null });
+    const upserts: { id: string; metadata: Record<string, unknown> }[] = [];
+    (env as unknown as Record<string, unknown>).AI = { run: async () => ({ data: [[0.1, 0.2]] }) };
+    (env as unknown as Record<string, unknown>).VECTORIZE = { upsert: async (v: typeof upserts) => { upserts.push(...v); } };
+    const r = await woundAdd(env, "drevan", { name: "Grief", description: "d", witness_type: "survival" });
+    const id = (r as { id: string }).id;
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0]!.id).toBe(`living_wounds:${id}`);
+    expect(upserts[0]!.metadata).toMatchObject({ table: "living_wounds", row_id: id, companion_id: "drevan" });
+  });
+
+  it("an embed failure never fails the write (fail-open)", async () => {
+    const { env, calls } = fakeEnv({ living_wounds: null });
+    (env as unknown as Record<string, unknown>).AI = { run: async () => { throw new Error("AI down"); } };
+    (env as unknown as Record<string, unknown>).VECTORIZE = { upsert: async () => { throw new Error("vz down"); } };
+    const r = await woundAdd(env, "drevan", { name: "Grief", description: "d", witness_type: "survival" });
+    expect("error" in r).toBe(false);
+    expect(inserts(calls, "living_wounds")).toHaveLength(1);
+  });
+
   it("the executor acks with the existing id", async () => {
     const { env } = fakeEnv({ living_wounds: { id: "w_existing", created_at: "2026-05-01T00:00:00.000Z" } });
     const ctx = {
