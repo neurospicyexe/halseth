@@ -86,7 +86,7 @@ export async function getLedger(request: Request, env: Env): Promise<Response> {
   const state = (url.searchParams.get("state")?.trim() || "open");
   if (!LEDGER_STATES.has(state)) return json({ error: "state must be open, kept, or dropped" }, 400);
   const limit = clampLimit(url.searchParams.get("limit"), 20, 100);
-  const entries = await listLedger(env, companionId, state as LedgerState, limit);
+  const entries = await listLedger(env, companionId, state as LedgerState, limit, { includeHeartbeats: true });
   return json({ companion_id: companionId, state, entries, count: entries.length });
 }
 

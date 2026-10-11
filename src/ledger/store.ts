@@ -58,15 +58,6 @@ export interface LedgerEntryRow {
 
 const COLS = "id, companion_id, function, content, source_kind, source_ref, observed_on, created_at, state, state_at, promoted_journal_id";
 
-/** Entries about one subject in one state, newest first. */
-export async function listLedger(env: Env, companionId: string, state: LedgerState = "open", limit = LEDGER_LIST_LIMIT): Promise<LedgerEntryRow[]> {
-  const cap = Math.min(Math.max(1, Math.floor(limit) || LEDGER_LIST_LIMIT), 100);
-  const r = await env.DB.prepare(
-    `SELECT ${COLS} FROM ledger_entries WHERE companion_id = ? AND state = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
-  ).bind(companionId, state, cap).all<LedgerEntryRow>();
-  return r.results ?? [];
-}
-
 /**
  * dedup_key prefix of the bots' idle-consolidation heartbeat (nullsafe-discord
  * `consolidationDedupKey`: `consolidation:<companion>:<sessionId>:<ISO minute>`). The key, not
@@ -81,6 +72,25 @@ export const CONSOLIDATION_DEDUP_PREFIX = "consolidation:";
  */
 export function notConsolidationHeartbeatSql(alias = ""): string {
   return `(${alias}dedup_key IS NULL OR substr(${alias}dedup_key, 1, ${CONSOLIDATION_DEDUP_PREFIX.length}) != '${CONSOLIDATION_DEDUP_PREFIX}')`;
+}
+
+/**
+ * Entries about one subject in one state, newest first. By default the idle-consolidation heartbeat is
+ * left out (2026-10-11, STATUS 4b: 106/111/106 of Cypher's/Drevan's/Gaia's open lines were heartbeats,
+ * 12 a day by design, so "my ledger" was a wall of "the lane has been idle" with the real entries
+ * buried). Rows are never touched: keep/drop/promote by id still reach a heartbeat, and the
+ * ops/Hearth read passes `includeHeartbeats` to see everything.
+ */
+export async function listLedger(
+  env: Env, companionId: string, state: LedgerState = "open", limit = LEDGER_LIST_LIMIT,
+  opts: { includeHeartbeats?: boolean } = {},
+): Promise<LedgerEntryRow[]> {
+  const cap = Math.min(Math.max(1, Math.floor(limit) || LEDGER_LIST_LIMIT), 100);
+  const hb = opts.includeHeartbeats ? "" : ` AND ${notConsolidationHeartbeatSql()}`;
+  const r = await env.DB.prepare(
+    `SELECT ${COLS} FROM ledger_entries WHERE companion_id = ? AND state = ?${hb} ORDER BY created_at DESC, id DESC LIMIT ?`,
+  ).bind(companionId, state, cap).all<LedgerEntryRow>();
+  return r.results ?? [];
 }
 
 /**

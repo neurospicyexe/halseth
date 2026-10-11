@@ -326,9 +326,15 @@ describe("orient: its own block, mark first on every ledger line", () => {
 
     const ms = await loadMindState(env, "drevan", "claude" as any);
     expect(ms.ledger.open.map((e) => e.id)).toEqual([ids.c5, ids.d2, ids.d1]);
-    // "my ledger" is the inspection surface and still lists every open line.
+    // "my ledger" leaves the heartbeat out entirely (10-11: 84 of them buried the real lines); rows untouched.
     const listed = ((await execLedgerRead(ctx(env, "drevan", "my ledger"))).data as any).ledger as any[];
-    expect(listed).toHaveLength(8);
+    expect(listed.map((e) => e.id)).toEqual([ids.d2, ids.d1]);
+    // The ops/Hearth read (GET /ledger) is the unfiltered inspection surface and still lists all eight.
+    const all = await (await getLedger(req("/ledger?companion_id=drevan&state=open&limit=50"), env)).json() as any;
+    expect(all.count).toBe(8);
+    // Nothing was deleted or changed: a heartbeat is still reachable by id.
+    const hb = await execLedgerDrop(ctx(env, "drevan", `drop ledger ${ids.c0}`));
+    expect(hb).toMatchObject({ ack: true });
   });
 
   it("render rule across every surface that emits ledger content", async () => {
