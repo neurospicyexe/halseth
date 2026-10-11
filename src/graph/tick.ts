@@ -34,6 +34,40 @@ import { rebuildGraph, type SourceCount } from "./rebuild.js";
 
 export const GRAPH_REBUILD_GATE_HOURS = 24;
 
+// RUN LEASE (2026-10-10). The 24h gate is stamped only AFTER a run completes (deliberate: a failed
+// run retries). But the rebuild is DELETE-all-mechanical then ~500 sequential 100-row inserts, i.e.
+// minutes, and the cron fires every minute -- so every tick during a run saw "no stamp" and started
+// ANOTHER rebuild whose DELETE wiped the first one's progress mid-insert. Overlapping runs leave a
+// ragged graph (health check: 51269 -> 42130 edges, moved_by missing July, follows ending 09-21).
+// The lease makes the run single-flight. It expires so a run killed mid-flight (CPU/wall limit)
+// retries after the TTL instead of wedging forever. Own key: never another job's anchor.
+export const GRAPH_REBUILD_LEASE_KEY = "graph_rebuild_lease_at";
+export const GRAPH_REBUILD_LEASE_TTL_MS = 20 * 60 * 1000;
+const LEASE_RELEASED = "1970-01-01T00:00:00.000Z";
+
+/** Claim the single-flight lease. True only if this caller now holds it. */
+async function acquireRebuildLease(env: Env): Promise<boolean> {
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO companion_settings (companion_id, key, value, updated_at)
+     VALUES (?, ?, ?, datetime('now'))`
+  ).bind(GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_LEASE_KEY, LEASE_RELEASED).run();
+  const nowIso = new Date().toISOString();
+  const expiredBefore = new Date(Date.now() - GRAPH_REBUILD_LEASE_TTL_MS).toISOString();
+  const res = await env.DB.prepare(
+    `UPDATE companion_settings SET value = ?, updated_at = datetime('now')
+     WHERE companion_id = ? AND key = ? AND value < ?`
+  ).bind(nowIso, GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_LEASE_KEY, expiredBefore).run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+async function releaseRebuildLease(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `UPDATE companion_settings SET value = ?, updated_at = datetime('now') WHERE companion_id = ? AND key = ?`
+    ).bind(LEASE_RELEASED, GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_LEASE_KEY).run();
+  } catch (err) { console.error("graph rebuild lease release failed (TTL will expire it)", err); }
+}
+
 // The gate's own storage key -- exported so tests can assert no other job's anchor (e.g. the
 // salience prune's own key, a different key in the same table) shares this identity.
 export const GRAPH_REBUILD_GATE_COMPANION_ID = "_system";
@@ -75,8 +109,15 @@ export async function runGraphRebuildTick(env: Env, opts: { force?: boolean } = 
     }
   }
 
+  if (!(await acquireRebuildLease(env))) return { ran: false }; // another invocation is mid-rebuild
+
   const start = Date.now();
-  const sources = await rebuildGraph(env);
+  let sources: SourceCount[];
+  try {
+    sources = await rebuildGraph(env);
+  } finally {
+    await releaseRebuildLease(env);
+  }
   const ms = Date.now() - start;
 
   console.log("[graph-rebuild-tick] rebuilt", { ms, sources });

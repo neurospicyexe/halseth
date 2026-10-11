@@ -155,6 +155,41 @@ describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not
   });
 });
 
+describe("runGraphRebuildTick -- single-flight lease (overlapping runs shredded the graph 2026-10-10)", () => {
+  function leaseEnv(held: boolean) {
+    const sqls: string[] = [];
+    const env = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind: () => ({
+            first: async () => null,
+            run: async () => {
+              sqls.push(sql);
+              const isLeaseClaim = sql.startsWith("UPDATE") && sql.includes("value < ?");
+              return { meta: { changes: isLeaseClaim && held ? 0 : 1 } };
+            },
+          }),
+        }),
+      },
+    };
+    return { env: env as unknown as Env, sqls };
+  }
+
+  it("does NOT start a second rebuild while another invocation holds the lease", async () => {
+    const { env } = leaseEnv(true);
+    const result = await runGraphRebuildTick(env);
+    expect(result.ran).toBe(false);
+    expect(rebuildGraph).not.toHaveBeenCalled();
+  });
+
+  it("releases the lease after a failed run so the retry is not wedged", async () => {
+    vi.mocked(rebuildGraph).mockRejectedValueOnce(new Error("boom"));
+    const { env, sqls } = leaseEnv(false);
+    await expect(runGraphRebuildTick(env)).rejects.toThrow("boom");
+    expect(sqls.filter((q) => q.startsWith("UPDATE")).length).toBe(2); // claim + release
+  });
+});
+
 describe("runGraphRebuildTick -- gate identity (never shares an anchor with another job)", () => {
   it("the stamp's (companion_id, key) pair is distinct from the salience prune's own", () => {
     // Same sentinel companion_id (deliberately -- neither job is a real companion), but a
