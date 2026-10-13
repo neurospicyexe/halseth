@@ -21,7 +21,7 @@ import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salienc
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
-import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
+import { UNREAD_NOTES_SQL, claimNotesFor } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
 import { KEPT_SQL } from "./review-state.js";
 import { resolveRoomsForChannels, roomLabelFromTags, journalRoomLabel, channelTagOf, channelIdOf } from "../mind/room-label.js";
@@ -299,8 +299,18 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     ).bind(agentId).all<WmCompanionNote>(),
     // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self).
     // Per-recipient receipts since mig 0120 -- a broadcast stays unread for each sibling until THAT
-    // sibling acks it, so surfacing here can no longer consume it for the other two. Acked below.
-    env.DB.prepare(UNREAD_NOTES_SQL).bind(agentId, 10).all<WmCompanionNote>(),
+    // sibling acks it, so surfacing here can no longer consume it for the other two.
+    // Claim-once: the consuming (non-readOnly) path CLAIMS atomically here instead of SELECT-then-ack,
+    // so a concurrent orient for the same companion cannot be served the same note. readOnly peeks.
+    opts.readOnly
+      ? env.DB.prepare(UNREAD_NOTES_SQL).bind(agentId, 10).all<WmCompanionNote>()
+      : claimNotesFor(env, agentId, 10, "claude-ai:orient")
+          .then((results) => ({ results: results as WmCompanionNote[] }))
+          .catch((e: unknown) => {
+            // Non-fatal like the ack it replaces: a failed claim leaves the notes unread for next boot.
+            console.error("[orient] note claim failed:", String(e));
+            return { results: [] as WmCompanionNote[] };
+          }),
     // Wide-window: recent journal entries written BY this companion (companion_journal table).
     // SUBSTANTIVE lane only -- 3 recency slots, and chatter (discord_swarm) ran 24-61 rows/day
     // against ~40/day of authored reflection, so an unfiltered LIMIT 3 surfaced transcript
@@ -612,20 +622,11 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       .catch(e => console.warn("[orient] conclusion heat warm failed (non-fatal):", e));
   }
 
-  // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
-  // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.
-  // Unawaited D1 operations may be silently discarded after response return.
-  //
-  // Who reaches this with readOnly false: the Librarian's wmOrient() (Claude.ai companions --
+  // Incoming notes were CLAIMED (receipted for this companion only) in the read above -- no separate ack.
+  // Who reaches the consuming path (readOnly false): the Librarian's wmOrient() (Claude.ai companions --
   // a real read). Who does NOT, as of 2026-07-29: the raw GET /mind/orient/:agent_id route, whose
   // only callers are Hearth server-side renders. See handlers/webmind.ts:getMindOrient for why.
-  const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
-  if (!opts.readOnly && unreadIds.length > 0) {
-    // Per-recipient receipt (mig 0120): this ack marks the notes read for THIS companion only.
-    await ackNotesForCompanion(env, agentId, unreadIds, "claude-ai:orient").catch((e: unknown) => {
-      console.error("[orient] auto-ack failed:", String(e));
-    });
-  }
+  // Discord bots ack via the HTTP endpoint after delivering.
 
   // Stamp delivered_at on surfaced answers (mig 0107, questions-lifecycle fix). Awaited +
   // caught -- a throw here must never null out wmResult upstream (session.ts wraps wmOrient

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
-import { unreadNotesFor, ackNotesForCompanion } from "../../db/inter_companion_note_reads.js";
+import { claimNotesFor } from "../../db/inter_companion_note_reads.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 
@@ -415,12 +415,10 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   // no from_id guard (a boot consumed the companion's own outgoing broadcasts) and an unscoped
   // read_at UPDATE (one Claude Code boot marked the whole triad's mail read). Predicate + ack now
   // live in db/inter_companion_note_reads.ts -- one place, no second copy.
-  const pendingNotes: InterCompanionNote[] = await unreadNotesFor(env, input.companion_id, 20);
-
-  // 8. Mark those notes as read FOR THIS COMPANION only
-  if (pendingNotes.length > 0) {
-    await ackNotesForCompanion(env, input.companion_id, pendingNotes.map(n => n.id), input.surface ?? null);
-  }
+  // Claim-once: SELECT-then-ack left a gap two concurrent opens could both walk through. A reused
+  // (idempotency-guarded) session still claims: the mail is delivered to whoever asks first, exactly
+  // once, instead of being served again to the next surface.
+  const pendingNotes: InterCompanionNote[] = await claimNotesFor(env, input.companion_id, 20, input.surface ?? null);
 
   return {
     session_id: sessionId,
