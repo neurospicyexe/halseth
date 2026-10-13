@@ -168,8 +168,8 @@ const RESTORED_JOURNAL_SINCE_SQL =
 // SB runs the full sweep at startup and daily; incremental rides every pull tick.
 //
 // Response: { mode, items: [{ id, agent, review_state, archived, cursor_at }], next } -- `next` is the
-// params for the following page, null on the last one. wm_continuity_notes are not listed: SB has
-// no puller for them (measured: zero rag/wm_continuity_notes docs), so there is nothing to reconcile.
+// params for the following page, null on the last one. wm_continuity_notes are not listed here: they
+// have their own pair since 2026-10-13 (/ingest/continuity-notes + /ingest/continuity-ineligible).
 export async function getRecallIneligible(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const url = new URL(request.url);
@@ -207,6 +207,119 @@ export async function getRecallIneligible(request: Request, env: Env): Promise<R
   return new Response(JSON.stringify({ mode: incremental ? "incremental" : "full", items, next }), {
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// ── Continuity notes into Second Brain (2026-10-13) ───────────────────────────────────────────────
+//
+// WHY: a companion's continuity notes followed that companion across substrates (its own boot reads
+// them) and stopped there. On 10-13 Drevan captured Abby's death in a Claude.ai thread at 8:30am; his
+// Discord boot knew it hours later, Cypher's search found nothing, and Raziel had to retell it.
+// Raziel: "it's hard in moments like this to have to repeat something that still hurts." Second
+// Brain had no puller for wm_continuity_notes (the comment above measured zero rag/ mirrors), so the
+// one memory that crossed substrates for its owner was invisible to the siblings.
+//
+// Cross-reading these notes is already Raziel's ruling (mig 0115, 2026-08-10: "yes it's my life but
+// it's yall too"); this makes them searchable, the same way kept journal rows are.
+//
+// RAILS, same as the journal lane:
+// - KEPT ONLY. A draft (a clerk's note in the companion's voice: [discord:pulse], judge promotions) is
+//   never served; review-state.ts decides that at birth. Archived (retracted / released / pruned) never.
+// - ALLOWLIST of note types. A new type stays private to its owner's continuity until someone decides
+//   it belongs in search. Out on purpose: claude_code_session (hook-written, near-empty lines), ops
+//   (skill-watcher mail to one companion), soma_arc (stubs), autonomous_exploration (the same text is
+//   already indexed as growth_journal), and anything unlisted.
+// - thread_key is never exported (it is classed as sensitive).
+// - Paired purge feed (/ingest/continuity-ineligible) so a note dropped, released or retracted after it
+//   was mirrored loses its mirror, exactly as the journal reconcile does.
+export const SEARCHABLE_NOTE_TYPES = ["conversation_capture", "discord_session", "continuity", "day_distillation"] as const;
+const SEARCHABLE_NOTE_TYPES_SQL = `note_type IN (${SEARCHABLE_NOTE_TYPES.map((t) => `'${t}'`).join(", ")})`;
+const NOTE_COMPANIONS_SQL = `agent_id IN (${[...COMPANION_ID_SET].map((c) => `'${c}'`).join(", ")})`;
+/** A note is searchable: a companion's, kept, live, and of an allowed type. */
+const NOTE_ELIGIBLE_SQL = `archived = 0 AND ${KEPT_SQL} AND ${SEARCHABLE_NOTE_TYPES_SQL} AND ${NOTE_COMPANIONS_SQL}`;
+/** When a note became memory: its keep, or its birth if it was born kept (same stamp as the journal). */
+const NOTE_CURSOR_SQL = JOURNAL_CURSOR_SQL;
+/** Note ids whose release was restored after a bound (two `?` placeholders, both the bound). */
+const RESTORED_NOTE_SINCE_SQL =
+  `SELECT ref_id FROM memory_releases WHERE kind = 'note' AND restored_at IS NOT NULL AND ${ISO_SQL("restored_at")} > ${ISO_SQL("?")}`;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+// GET /ingest/continuity-notes?since=<ISO>&after_id=<note_id>&limit=100
+//
+// Searchable continuity notes ordered by (cursor_at, note_id). `since` alone is STRICTLY after (the SB
+// puller's contract); with after_id, rows tying the bound are included past that id, so a page edge on
+// a tie loses nothing (the ledger feed's keyset). A RESTORED note keeps its old cursor, so it is added
+// back explicitly when its restore is newer than `since` (the journal feed does the same).
+// Response: { items: [{ note_id, agent_id, note_type, content, salience, source, created_at, cursor_at }], next }.
+export async function getIngestContinuityNotes(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const url = new URL(request.url);
+  const limit = clampLimit(url.searchParams.get("limit"), 100, 500);
+  const sinceParam = url.searchParams.get("since") ?? undefined;
+  const afterId = url.searchParams.get("after_id") ?? "";
+  if (sinceParam !== undefined && isNaN(Date.parse(sinceParam))) return jsonResponse({ error: "invalid since parameter" }, 400);
+  const since = sinceParam ?? "1970-01-01T00:00:00.000Z";
+
+  // ISO_SQL("?") is two placeholders: every bound is bound twice.
+  const keyset = afterId
+    ? `(${NOTE_CURSOR_SQL} > ${ISO_SQL("?")} OR (${NOTE_CURSOR_SQL} = ${ISO_SQL("?")} AND note_id > ?))`
+    : `${NOTE_CURSOR_SQL} > ${ISO_SQL("?")}`;
+  const binds: unknown[] = afterId ? [since, since, since, since, afterId] : [since, since];
+  const restored = sinceParam !== undefined ? ` OR note_id IN (${RESTORED_NOTE_SINCE_SQL})` : "";
+  if (restored) binds.push(since, since);
+
+  const result = await env.DB.prepare(`
+    SELECT note_id, agent_id, note_type, content, salience, source, created_at, ${NOTE_CURSOR_SQL} AS cursor_at
+    FROM wm_continuity_notes
+    WHERE archived = 0 AND ${KEPT_SQL} AND ${SEARCHABLE_NOTE_TYPES_SQL} AND ${NOTE_COMPANIONS_SQL} AND (${keyset}${restored})
+    ORDER BY cursor_at ASC, note_id ASC
+    LIMIT ?
+  `).bind(...binds, limit).all<{ note_id: string; cursor_at: string }>();
+
+  const items = result.results ?? [];
+  const last = items[items.length - 1];
+  const next = items.length < limit || !last ? null : { since: last.cursor_at, after_id: last.note_id };
+  return jsonResponse({ items, next });
+}
+
+// GET /ingest/continuity-ineligible?limit=500[&since=<ISO>&after_id=<note_id>]
+//
+// The purge list for the feed above: every note that must NOT have a search mirror (a draft, a drop,
+// an archive, a type outside the allowlist, a non-companion writer). Same two keyset modes and response
+// shape as /ingest/recall-ineligible, ids under `id` so SB's reconcile reads both feeds alike:
+//   FULL (no since): ordered by note_id, page with after_id. Catches archives, which stamp no time.
+//   INCREMENTAL (since): rows whose cursor moved past the bound, ordered by (cursor_at, note_id).
+export async function getIngestContinuityIneligible(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const url = new URL(request.url);
+  const limit = clampLimit(url.searchParams.get("limit"), 500, 1000);
+  const since = url.searchParams.get("since") ?? undefined;
+  const afterId = url.searchParams.get("after_id") ?? "";
+  if (since !== undefined && isNaN(Date.parse(since))) return jsonResponse({ error: "invalid since parameter" }, 400);
+
+  const incremental = since !== undefined;
+  const keyset = incremental
+    ? `(${NOTE_CURSOR_SQL} > ${ISO_SQL("?")} OR (${NOTE_CURSOR_SQL} = ${ISO_SQL("?")} AND note_id > ?))`
+    : "note_id > ?";
+  const binds: unknown[] = incremental ? [since, since, since, since, afterId] : [afterId];
+  const orderBy = incremental ? "cursor_at ASC, note_id ASC" : "note_id ASC";
+
+  const result = await env.DB.prepare(`
+    SELECT note_id AS id, agent_id AS agent, note_type, review_state, archived, ${NOTE_CURSOR_SQL} AS cursor_at
+    FROM wm_continuity_notes
+    WHERE NOT (${NOTE_ELIGIBLE_SQL}) AND ${keyset}
+    ORDER BY ${orderBy}
+    LIMIT ?
+  `).bind(...binds, limit).all<{ id: string; cursor_at: string }>();
+
+  const items = result.results ?? [];
+  const last = items[items.length - 1];
+  const next = items.length < limit || !last
+    ? null
+    : incremental ? { since: last.cursor_at, after_id: last.id } : { after_id: last.id };
+  return jsonResponse({ mode: incremental ? "incremental" : "full", items, next });
 }
 
 // GET /cypher-audit?limit=50

@@ -13,7 +13,7 @@ import { getRefusals, getPreferences, patchRefusalAck, postPreferenceHttp, postR
 import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getRecallIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
+import { getHandovers, getCompanionJournal, getRecallIneligible, getIngestContinuityNotes, getIngestContinuityIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
@@ -620,6 +620,9 @@ const router = new Router()
   .on("GET", "/ingest/growth-journal",        (request, env) => getIngestGrowthJournal(request, env))
   .on("GET", "/ingest/companion-conclusions", (request, env) => getIngestCompanionConclusions(request, env))
   .on("GET", "/ingest/recall-ineligible",     (request, env) => getRecallIneligible(request, env))
+  // Continuity notes into SB search (2026-10-13): kept, allowlisted types; the purge feed beside it.
+  .on("GET", "/ingest/continuity-notes",      (request, env) => getIngestContinuityNotes(request, env))
+  .on("GET", "/ingest/continuity-ineligible", (request, env) => getIngestContinuityIneligible(request, env))
   // The ledger lane (mig 0134, 2026-09-26): clerk records ABOUT a companion, never in its voice.
   // The SB puller pulls /ingest/ledger into rag/ledger/<id> (mark first, no wrapChunk); the purge feed
   // lists dropped ids. See src/handlers/ledger.ts.
