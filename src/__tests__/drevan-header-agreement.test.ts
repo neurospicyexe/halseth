@@ -71,9 +71,11 @@ describe("Drevan header: one float->word mapping across both lines", () => {
 
   it("[Now] fallback: the shared helper renders the CST clock, and session_load still emits it", () => {
     // 2026-10-07 15:00Z = 10:00 AM CDT, Wednesday.
-    expect(nowCstBlock(new Date("2026-10-07T15:00:00Z"))).toBe("\n[Now: Wednesday, October 7, 2026 at 10:00 AM CST]");
+    expect(nowCstBlock(new Date("2026-10-07T15:00:00Z"))).toBe("\n[Now: Wednesday, October 7, 2026 at 10:00 AM CDT]");
+    // 2026-01-07 16:00Z = 10:00 AM CST: the label follows daylight time, it is not hardcoded.
+    expect(nowCstBlock(new Date("2026-01-07T16:00:00Z"))).toBe("\n[Now: Wednesday, January 7, 2026 at 10:00 AM CST]");
     const r = buildResponse("drevan", "ready_prompt", { session_id: "s", state: state() } as any) as any;
-    expect(r.ready_prompt).toMatch(/\n\[Now: [A-Z][a-z]+day, .+ CST\]/);
+    expect(r.ready_prompt).toMatch(/\n\[Now: [A-Z][a-z]+day, .+ C[DS]T\]/);
   });
 
   it("directional word always renders as his; no floats yet -> the stored word, as before", () => {

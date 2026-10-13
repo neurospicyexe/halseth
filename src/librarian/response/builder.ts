@@ -66,8 +66,21 @@ export function nowCstBlock(now: Date = new Date()): string {
       weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "numeric", minute: "2-digit", hour12: true,
     }).format(now);
-    return `\n[Now: ${cst} CST]`;
+    return `\n[Now: ${cst} ${chicagoZoneLabel(now)}]`;
   } catch { return ""; }
+}
+
+/**
+ * "CDT" or "CST" for America/Chicago at `now`. The label was hardcoded "CST" until 2026-10-13, so every
+ * orient from March to November named the wrong zone (the hour itself was always right). Falls back to
+ * "CT" if Intl cannot name it.
+ */
+export function chicagoZoneLabel(now: Date = new Date()): string {
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", timeZoneName: "short" })
+      .formatToParts(now).find(p => p.type === "timeZoneName")?.value;
+    return part === "CDT" || part === "CST" ? part : "CT";
+  } catch { return "CT"; }
 }
 
 export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
@@ -76,7 +89,7 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   // Temporal grounding -- first thing companions read, before identity or state.
   // Prevents time mismatches when Raziel states a date/time in conversation.
   if (wm.current_datetime_cst) {
-    parts.push(`[Now: ${wm.current_datetime_cst} CST]`);
+    parts.push(`[Now: ${wm.current_datetime_cst} ${chicagoZoneLabel()}]`);
   }
 
   // Restoration preamble -- frame this as the companion's own state resuming,
