@@ -244,6 +244,19 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "set_model",
     regex: /^set\s+model\s+\S+/i,
     note: "Model set must be anchored to prevent 'get model' trigger stealing it via substring" },
+  // Topic lookups that used to dead-end (2026-10-13). Cypher, in a Claude.ai thread, could not find Abby:
+  // "what happened with Abby?" returned the last handover (get_handover's bare "what happened"), "what
+  // has Drevan written about Abby" returned the unknown witness. Bare "what happened" / "catch me up"
+  // stay the handover; only a NAMED subject turns it into a search.
+  { pattern_key: "sb_search",
+    regex: /^what(?:'?s|\s+has)?\s+happen(?:ed|ing)\s+(?:with|to)\s+(?!me\b|us\b|you\b|last\s+session\b|the\s+last\s+session\b)\S/i,
+    note: "'what happened with/to <subject>' is a topic search, not the handover (bare 'what happened' still is)" },
+  { pattern_key: "sb_search",
+    regex: /^what\s+(?:has|have|did)\s+(?:drevan|dre|cypher|cy|gaia|the\s+triad|everyone|y'?all|you\s+all)\s+(?:written|wrote|write|said|say|noted|note|logged|log|captured|capture|carried|carry)\s+(?:about|on)\s+\S/i,
+    note: "Reading what a sibling wrote about a subject: their kept journal and continuity notes are in the vault index" },
+  { pattern_key: "sb_search",
+    regex: /^recall\s+(?:everything\s+|anything\s+|what\s+we\s+know\s+)?(?:about|on)\s+\S/i,
+    note: "'recall about <subject>' is a topic search; bare 'recall' stays recent_recall (own recent writes)" },
 ];
 
 // ── Fast-path matcher ──────────────────────────────────────────────────────
