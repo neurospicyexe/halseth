@@ -6,6 +6,7 @@
 import { Env } from "../types.js";
 import { WmAgentId, WmGroundResponse, WmMindThread, WmSessionHandoff, WmContinuityNote, WmOpenLoop, WmArchiveDigest } from "./types.js";
 import { readSittingNotes } from "./sits.js";
+import { bootLoopsSql } from "./loops.js";
 import { collapseNearDuplicateHandoffs, handoffFetchLimit } from "./handoffs.js";
 
 export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGroundResponse> {
@@ -20,16 +21,9 @@ export async function mindGround(env: Env, agentId: WmAgentId): Promise<WmGround
       // review_state = 'kept' (mig 0132): ground is a boot surface; drafts wait in the tray.
       "SELECT * FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND review_state = 'kept' ORDER BY created_at DESC LIMIT 10"
     ).bind(agentId).all<WmContinuityNote>(),
-    // Open loops: unresolved things with weight -- heaviest first
-    env.DB.prepare(
-      // `opened_at ASC` as tiebreak, added wave 7. This shipped as bare `weight DESC`, which is
-      // NONDETERMINISTIC at equal weight -- two boots could legitimately return different loops in a
-      // different order with nothing changed in the data. Three copies of this query existed with three
-      // different orderings (orient: opened_at ASC, bot: opened_at DESC, here: none). ASC is canonical: at
-      // equal weight the loop that has been open LONGEST surfaces first, which is the same tiebreak the
-      // tension query uses (charge DESC, first_noted_at ASC). One convention for "what am I carrying".
-      "SELECT * FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
-    ).bind(agentId).all<WmOpenLoop>(),
+    // Open loops: unresolved x intensity -- decayed weight, one ordering for every boot path
+    // (bootLoopsSql). Was `weight DESC, opened_at ASC`; see loops.ts for what that actually did.
+    env.DB.prepare(bootLoopsSql()).bind(agentId).all<WmOpenLoop>(),
     // Sitting notes: oldest first (longest waiting for metabolization).
     // Migration 0034 moved sits to companion_journal/companion_journal_sits;
     // read through the canonical reader so ground can never drift from the write path again.

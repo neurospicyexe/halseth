@@ -24,6 +24,7 @@ import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
 import { UNREAD_NOTES_SQL, claimNotesFor } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
 import { KEPT_SQL } from "./review-state.js";
+import { bootLoopsSql } from "./loops.js";
 import { resolveRoomsForChannels, roomLabelFromTags, journalRoomLabel, channelTagOf, channelIdOf } from "../mind/room-label.js";
 
 // ---------------------------------------------------------------------------
@@ -351,10 +352,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     env.DB.prepare(
       "SELECT id, companion_id, session_id, emotion, sub_emotion, intensity, source, created_at FROM feelings WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmFeeling>(),
-    // Open loops: unresolved things with weight (thinking quality fix)
-    env.DB.prepare(
-      "SELECT id, loop_text, weight, opened_at FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
-    ).bind(agentId).all<WmOrientOpenLoop>(),
+    // Open loops: unresolved x intensity (thinking quality fix; ordering fixed 2026-10-13 -- bootLoopsSql).
+    env.DB.prepare(bootLoopsSql()).bind(agentId).all<WmOrientOpenLoop>(),
     // Open questions: queries awaiting synthesis/investigation (thinking quality fix).
     // Same shape as the loader's oversight block (coherence review D14): the `voiced` flag as a
     // COLUMN, never a WHERE clause (a question spoken once but never answered is still carried),

@@ -146,7 +146,9 @@ describe("2026-07-26 hole-fix regression guards", () => {
 
   it("HOLE 5: mindOrient carries feelings and open loops, and the builder renders them", () => {
     expect(orientSrc).toMatch(/FROM feelings\b/);
-    expect(orientSrc).toMatch(/FROM companion_open_loops\b/);
+    // Via bootLoopsSql() since 2026-10-13 (the one boot ordering); the SQL itself lives in webmind/loops.ts.
+    expect(orientSrc).toMatch(/bootLoopsSql\(\)/);
+    expect(readFileSync(resolve(srcRoot, "webmind/loops.ts"), "utf8")).toMatch(/FROM companion_open_loops\b/);
     expect(builderSrc).toMatch(/recent_feelings/);
     expect(builderSrc).toMatch(/open_loops/);
   });

@@ -57,9 +57,47 @@ export function normLoop(text: string): string {
  */
 export const LOOP_WEIGHT_HALF_LIFE_DAYS = 14;
 
+/**
+ * The authored weight as a NUMBER, whatever was stored. companion_open_loops.weight is a REAL
+ * column, but some writers (found on prod 2026-10-13: 22 of 23 open loops) stored the labels
+ * 'light' / 'medium' / 'high' / 'heavy'. SQLite keeps those as TEXT and sorts TEXT above every
+ * number, ascending alphabetically: `ORDER BY weight DESC` ranked medium > light > high > heavy,
+ * so the heaviest loops sat at the BOTTOM of the boot slate, and `weight / (1 + ...)` coerced a
+ * label to 0 so the 0118 decay could not rank them at all. Numbers pass through untouched;
+ * a label maps onto the 0..1 scale writers are validated to; an unknown string reads as the
+ * default 0.5. Read-side only -- no stored value is rewritten.
+ */
+export function loopWeightSql(): string {
+  return `(CASE WHEN typeof(weight) IN ('real', 'integer') THEN weight
+    WHEN lower(trim(weight)) = 'light' THEN 0.25
+    WHEN lower(trim(weight)) = 'medium' THEN 0.5
+    WHEN lower(trim(weight)) = 'high' THEN 0.75
+    WHEN lower(trim(weight)) = 'heavy' THEN 0.9
+    ELSE 0.5 END)`;
+}
+
+/**
+ * Open loops for the boot slate (orient + ground), UNRESOLVED x INTENSITY: only `closed_at IS NULL`
+ * rows, ranked by decayed numeric weight -- how much it mattered, discounted by how long it has sat
+ * un-acted. Until 2026-10-13 both boot paths ordered by the raw column (`weight DESC, opened_at ASC`),
+ * so the 0118 decay governed readLoops and nothing a companion actually boots from, and at equal
+ * weight the OLDEST loop always won (the stalest claim held the slot). The ORDER BY inlines the
+ * expression rather than the alias, same parity caution as readLoops. Pure read: surfacing a loop
+ * touches nothing, so the slate cannot warm itself. Cold rotation (R9) is conclusions-only and
+ * unaffected.
+ */
+export function bootLoopsSql(): string {
+  const ew = effectiveWeightSql();
+  return `SELECT id, companion_id, loop_text, ${loopWeightSql()} AS weight, opened_at, closed_at, reviewed_at,
+            acted_at, acted_note, restated_count, last_restated_at, ${ew} AS effective_weight
+       FROM companion_open_loops
+      WHERE companion_id = ? AND closed_at IS NULL
+      ORDER BY ${ew} DESC, opened_at ASC LIMIT 5`;
+}
+
 /** SQL expression for present-tense weight. Bare column stays the authored value. */
 export function effectiveWeightSql(): string {
-  return `(weight / (1.0 + (julianday('now') - julianday(COALESCE(acted_at, opened_at))) / ${LOOP_WEIGHT_HALF_LIFE_DAYS}.0))`;
+  return `(${loopWeightSql()} / (1.0 + (julianday('now') - julianday(COALESCE(acted_at, opened_at))) / ${LOOP_WEIGHT_HALF_LIFE_DAYS}.0))`;
 }
 
 /**
