@@ -66,6 +66,11 @@ export interface Env {
   DREVAN_MCP_SECRET?: string;
   GAIA_MCP_SECRET?:   string;
 
+  // Off-VPS dead-man's switch (src/deadman.ts). Both secrets unset = detector disabled.
+  DEADMAN_TELEGRAM_BOT_TOKEN?: string;  // wrangler secret
+  DEADMAN_TELEGRAM_CHAT_ID?:   string;  // wrangler secret
+  DEADMAN_STALE_MINUTES?:      string;  // optional, default 30, min 5
+
   // ND daily-rhythm briefing gate (accessibility layer). Ships dormant; set to "true" to
   // enable delivery of morning/midday/evening briefings via the letter_to_raziel rail.
   BRIEFING_ENABLED?: string;

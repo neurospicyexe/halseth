@@ -100,6 +100,7 @@ import { getProjects, getProjectLog, postProjectLog } from "./handlers/projects.
 import { runCareTick } from "./care/tick.js";
 import { runBudgetReplenish } from "./care/budget.js";
 import { runChangelogAnnounce } from "./mind/changelog.js";
+import { recordKickHeartbeat, runDeadmanCheck } from "./deadman.js";
 import { postSiblingSend, getSiblingUnread, postSiblingRead, postSiblingDisclose } from "./handlers/siblings.js";
 import { getBudget, postBudgetSpend } from "./handlers/budget.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
@@ -200,6 +201,7 @@ const router = new Router()
   .on("POST", "/admin/run-scheduled", async (request, env) => {
     const denied = authGuard(request, env);
     if (denied) return denied;
+    await recordKickHeartbeat(env);
     await runScheduledWork(env);
     return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
   })
@@ -811,6 +813,8 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runScheduledWork(env));
+    // Dead-man's switch: native-cron ONLY (never in runScheduledWork, which the VPS kick also drives).
+    ctx.waitUntil(runDeadmanCheck(env));
 
     // RETIRED 2026-08-01: the bot-orient parity sampler used to run here.
     //
