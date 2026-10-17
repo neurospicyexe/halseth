@@ -83,10 +83,22 @@ async function resolveObservation(
 ): Promise<{ id: string; confidence: number; status: string; observation: string } | { error: string }> {
   const companionId = ctx.req.companion_id!;
   if (p?.id) {
+    const id = p.id.trim();
     const row = await ctx.env.DB.prepare(
       "SELECT id, confidence, status, observation FROM companion_self_model WHERE id = ? AND companion_id = ?"
-    ).bind(p.id, companionId).first<{ id: string; confidence: number; status: string; observation: string }>();
-    return row ?? { error: "observation not found by id" };
+    ).bind(id, companionId).first<{ id: string; confidence: number; status: string; observation: string }>();
+    if (row) return row;
+    // Companions carry ids shortened ("sm_a789e3a6", 2026-10-16: Drevan could not graduate his own
+    // ready observation by the id he had). A unique prefix of 8+ chars after "sm_" resolves.
+    if (/^sm_[0-9a-f-]{8,}$/i.test(id)) {
+      const pre = await ctx.env.DB.prepare(
+        "SELECT id, confidence, status, observation FROM companion_self_model WHERE companion_id = ? AND id LIKE ? LIMIT 2"
+      ).bind(companionId, `${id}%`).all<{ id: string; confidence: number; status: string; observation: string }>();
+      const hits = pre.results ?? [];
+      if (hits.length === 1) return hits[0]!;
+      if (hits.length > 1) return { error: "that id prefix matches more than one observation -- pass the full id" };
+    }
+    return { error: "observation not found by id" };
   }
   const fragment = (p?.observation ?? "").trim();
   if (!fragment) return { error: "needs { id } or { observation } fragment in context" };
@@ -133,7 +145,7 @@ function makeSelfModelAction(action: "confirm" | "revise" | "graduate") {
       data: {
         id: row.id, confidence, status,
         message: status === "ready"
-          ? "Confidence 0.8 reached -- this observation is ready to propose to Raziel."
+          ? `Confidence 0.8 reached -- this observation is ready to propose to Raziel. When Raziel agrees, make it canon with "graduate observation" and context { id: "${row.id}" }.`
           : `Confidence now ${confidence.toFixed(1)}.`,
       },
     };
