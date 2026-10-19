@@ -25,6 +25,7 @@ import { writeArchitectFact, MAX_FACT_CHARS } from "../lib/architect-fact-write.
 import type { Env } from "../types.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
+import { embedText, EMBEDDING_MODEL } from "../mcp/embed.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -183,7 +184,17 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   // Status and weight are independently optional: send either, or both.
   const hasStatus = typeof body.status === "string" && body.status !== "";
   const hasWeight = body.weight !== undefined && body.weight !== null;
-  if (!hasStatus && !hasWeight) return json({ error: "send status and/or weight" }, 400);
+  // category (B3, 2026-10-18): re-file a fact without rewriting it. Trimmed + lowercased, then held
+  // to the same shape the writer produces so a PATCH cannot invent a category the render cannot title.
+  const hasCategory = body.category !== undefined && body.category !== null;
+  if (!hasStatus && !hasWeight && !hasCategory) return json({ error: "send status, weight and/or category" }, 400);
+  let category = "";
+  if (hasCategory) {
+    category = typeof body.category === "string" ? body.category.trim().toLowerCase() : "";
+    if (!/^[a-z_]{2,32}$/.test(category)) {
+      return json({ error: "category must match /^[a-z_]{2,32}$/ (lowercase letters and underscores)" }, 400);
+    }
+  }
 
   const status = hasStatus ? String(body.status) : "";
   if (hasStatus && !["active", "retired"].includes(status)) {
@@ -195,7 +206,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
     return json({ error: "weight must be a number 0-100 (under 100 = always renders)" }, 400);
   }
 
-  const prior = await env.DB.prepare("SELECT id, status, weight FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number }>();
+  const prior = await env.DB.prepare("SELECT id, status, weight, category FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number; category: string }>();
   if (!prior) return json({ error: `fact ${id} does not exist` }, 404);
   // Re-ranking a retired fact is meaningless -- it renders nowhere. Reject rather than
   // silently accept a write that changes nothing a companion will ever read.
@@ -205,6 +216,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   const binds: unknown[] = [];
   if (hasStatus) { sets.push("status = ?"); binds.push(status); }
   if (hasWeight) { sets.push("weight = ?"); binds.push(weight); }
+  if (hasCategory) { sets.push("category = ?"); binds.push(category); }
   await env.DB.prepare(
     `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
   ).bind(...binds, id).run();
@@ -213,6 +225,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
     ok: true, id,
     ...(hasStatus ? { from: prior.status, status } : {}),
     ...(hasWeight ? { from_weight: prior.weight, weight } : {}),
+    ...(hasCategory ? { from_category: prior.category, category } : {}),
   });
 }
 
@@ -304,4 +317,83 @@ export async function postArchitectFact(request: Request, env: Env): Promise<Res
     ok: true, id: result.id, supersedes_id: result.supersedesId, status: result.status, category: result.category,
     ...(result.related ? { related: result.related } : {}),
   });
+}
+
+const SHORTLIST_DEFAULT_K = 12;
+const SHORTLIST_MAX_K = 30;
+const SHORTLIST_MAX_Q = 2000;
+
+/**
+ * GET /identity/architect-facts/shortlist?q=&k=&companion=&text=
+ *
+ * B3 (facts out of SOUL): the facts a turn is actually about, by meaning, instead of the whole
+ * block in every prompt. Embeds q, queries the architect_facts vectors, joins to D1 and keeps only
+ * live rows (active|open): retired or missing rows are dropped. Vectorize is a disposable index;
+ * D1 decides what is alive. `fact` text is returned only with text=1. `companion` is validated but
+ * does not filter (facts are shared).
+ */
+export async function getArchitectFactsShortlist(request: Request, env: Env): Promise<Response> {
+  const unauth = authGuard(request, env);
+  if (unauth) return unauth;
+
+  const url = new URL(request.url);
+  const companionParam = url.searchParams.get("companion");
+  if (companionParam !== null && !KNOWN_COMPANIONS.has(companionParam)) {
+    return json({ error: "companion must be cypher | drevan | gaia" }, 400);
+  }
+  const q = (url.searchParams.get("q") ?? "").trim().slice(0, SHORTLIST_MAX_Q);
+  if (!q) return json({ error: "q is required" }, 400);
+
+  const kRaw = url.searchParams.get("k");
+  let k = kRaw === null || kRaw === "" ? SHORTLIST_DEFAULT_K : Number.parseInt(kRaw, 10);
+  if (!Number.isFinite(k)) k = SHORTLIST_DEFAULT_K;
+  k = Math.min(Math.max(k, 1), SHORTLIST_MAX_K);
+  const withText = url.searchParams.get("text") === "1";
+
+  let matches: Array<{ id: string; score: number }>;
+  try {
+    const vector = await embedText(env, q);
+    if (!vector) throw new Error("embedding returned no vector");
+    const res = await env.VECTORIZE.query(vector, {
+      topK: Math.min(k * 2, 50),
+      filter: { table: "architect_facts" },
+    });
+    matches = (res.matches ?? []).map((m) => ({ id: String(m.id), score: m.score ?? 0 }));
+  } catch (err) {
+    return json({ items: [], error: `shortlist unavailable: ${String(err instanceof Error ? err.message : err)}` }, 502);
+  }
+
+  const prefix = "architect_facts:";
+  const scored = new Map<string, number>();
+  for (const m of matches) {
+    if (!m.id.startsWith(prefix)) continue;
+    const rowId = m.id.slice(prefix.length);
+    if (!rowId) continue;
+    if (!scored.has(rowId) || m.score > (scored.get(rowId) as number)) scored.set(rowId, m.score);
+  }
+  if (scored.size === 0) return json({ items: [], model: EMBEDDING_MODEL });
+
+  const ids = [...scored.keys()];
+  let rows: Array<{ id: string; category: string; status: string; fact: string }>;
+  try {
+    const res = await env.DB.prepare(
+      `SELECT id, category, status, fact FROM architect_facts
+        WHERE status IN ('active', 'open') AND id IN (${ids.map(() => "?").join(",")})`,
+    ).bind(...ids).all<{ id: string; category: string; status: string; fact: string }>();
+    rows = res.results ?? [];
+  } catch (err) {
+    return json({ items: [], error: `shortlist unavailable: ${String(err instanceof Error ? err.message : err)}` }, 502);
+  }
+
+  const items = rows
+    .map((r) => ({
+      id: r.id,
+      category: r.category,
+      status: r.status as "active" | "open",
+      score: scored.get(r.id) ?? 0,
+      ...(withText ? { fact: r.fact } : {}),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
+  return json({ items, model: EMBEDDING_MODEL });
 }

@@ -77,7 +77,7 @@ import {
 } from "./handlers/plural-store.js";
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
 import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
-import { getArchitectFacts, getArchitectFactsRender, postArchitectFact, patchArchitectFactStatus } from "./handlers/architect-facts.js";
+import { getArchitectFacts, getArchitectFactsRender, getArchitectFactsShortlist, postArchitectFact, patchArchitectFactStatus } from "./handlers/architect-facts.js";
 import { getRosterWho, getRosterStats, postRosterRefresh } from "./handlers/roster.js";
 import { runRosterRefresh } from "./roster/pk-roster.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
@@ -372,6 +372,7 @@ const router = new Router()
   // companions themselves. /render is what the VPS sync job pulls into every prompt-bearing file.
   .on("GET",  "/identity/architect-facts",              (request, env)         => getArchitectFacts(request, env))
   .on("GET",  "/identity/architect-facts/render",       (request, env)         => getArchitectFactsRender(request, env))
+  .on("GET",  "/identity/architect-facts/shortlist",    (request, env)         => getArchitectFactsShortlist(request, env))
   .on("POST", "/identity/architect-facts",              (request, env)         => postArchitectFact(request, env))
   // 2026-09-14: the confirm/retire verb an OPEN fact never had (Hearth /facts calls it).
   .on("PATCH", "/identity/architect-facts/:id",         (request, env, params) => patchArchitectFactStatus(request, env, params ?? {}))
