@@ -37,6 +37,7 @@ const ALLOW: Allow[] = [
   { file: "webmind/vibecheck.ts", match: "SELECT COUNT(*) AS n FROM companion_journal WHERE agent = ? AND source = 'discord_speech'", reason: "day ledger: how many times each companion SPOKE today -- a count of speech (which is drafts by design), no text read" },
   { file: "webmind/briefing.ts", match: "WHERE agent = 'steward' AND created_at >= date('now') AND tags LIKE ?", reason: "briefing once-a-day idempotency lookup (steward letters, born kept)" },
 
+  { file: "handlers/tray.ts", match: "SELECT note_id FROM wm_continuity_notes WHERE agent_id = ? AND correlation_id = ?", reason: "POST /admin/tray/draft idempotency lookup: must see a draft in ANY state (a dropped import is not re-created); reads the id only, no text" },
   // ── Liveness / health / counts: a draft is still a WRITE ──
   { file: "guardian/writer-liveness.ts", match: "SELECT MAX(created_at) AS ts FROM companion_journal", reason: "writer liveness: is the speech journaler writing at all -- drafts are exactly its output" },
   { file: "guardian/writer-liveness.ts", match: "SELECT MAX(created_at) AS ts FROM wm_continuity_notes", reason: "writer liveness for the notes store" },

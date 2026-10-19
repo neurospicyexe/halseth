@@ -17,7 +17,7 @@ import { getHandovers, getCompanionJournal, getRecallIneligible, getIngestContin
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
-import { getAdminTray, postAdminTrayReview } from "./handlers/tray.js";
+import { getAdminTray, postAdminTrayReview, postAdminTrayDraft } from "./handlers/tray.js";
 import { postLedger, getLedger, getIngestLedger, getIngestLedgerIneligible, getSomaFreshness } from "./handlers/ledger.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
@@ -185,6 +185,7 @@ const router = new Router()
   // Hearth/ops door; companions use the Librarian verbs "my tray" / "keep draft <id>" / "drop draft <id>".
   .on("GET",  "/admin/tray",                  (request, env) => getAdminTray(request, env))
   .on("POST", "/admin/tray/review",           (request, env) => postAdminTrayReview(request, env))
+  .on("POST", "/admin/tray/draft",            (request, env) => postAdminTrayDraft(request, env))
   // The ledger lane (mig 0134): clerks POST record lines through the one door (src/ledger/door.ts);
   // Hearth/ops read with GET. Companions use "my ledger" / "keep ledger <id>" / "drop ledger <id>".
   .on("POST", "/ledger",                      (request, env) => postLedger(request, env))

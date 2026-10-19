@@ -50,6 +50,14 @@ export const DRAFT_NOTE_CONTENT_PREFIXES: readonly string[] = [
 /** wm_continuity_notes correlation_id prefix of the judge's promotion (keyed since 2026-09-26). */
 export const DRAFT_NOTE_CORRELATION_PREFIX = "judge:";
 
+/**
+ * wm_continuity_notes correlation_id prefix of a draft loaded INTO the tray from outside
+ * (POST /admin/tray/draft, B47: a companion's Hermes MEMORY.md / USER.md lines). The correlation_id
+ * doubles as the idempotency key. These are not companion speech; they are material the owner has
+ * not yet chosen as memory, so they are born draft.
+ */
+export const TRAY_IMPORT_CORRELATION_PREFIX = "tray_import:";
+
 export interface ReviewStateRow {
   source?: string | null;
   correlation_id?: string | null;
@@ -62,7 +70,7 @@ export function reviewStateFor(kind: "journal" | "note", row: ReviewStateRow): "
     return row.source && COMPANION_SPEECH_JOURNAL_SOURCES.has(row.source) ? "draft" : "kept";
   }
   const corr = row.correlation_id ?? "";
-  if (corr.startsWith(DRAFT_NOTE_CORRELATION_PREFIX)) return "draft";
+  if (corr.startsWith(DRAFT_NOTE_CORRELATION_PREFIX) || corr.startsWith(TRAY_IMPORT_CORRELATION_PREFIX)) return "draft";
   const content = row.content ?? "";
   return DRAFT_NOTE_CONTENT_PREFIXES.some((p) => content.startsWith(p)) ? "draft" : "kept";
 }
