@@ -43,6 +43,8 @@ interface FactRow {
   source: string | null;
   weight: number;
   created_at: string;
+  /** 1 = always-on "Core" fact (mig 0146). Optional so pre-0146 fixtures still type. */
+  core?: number;
 }
 
 /** Ordered so the render reads like prose: how to treat him first, biography after. */
@@ -50,15 +52,24 @@ const CATEGORY_TITLES: Record<string, string> = {
   addressing: "HOW HE IS ADDRESSED",
   plural: "PLURAL SYSTEM",
   people: "THE PEOPLE",
+  triad: "THE TRIAD",
+  intimacy: "INTIMACY",
   work: "WORK AND SCHOOL",
   body: "BODY AND REGULATION",
+  health: "HEALTH",
   animals: "THE ANIMALS",
   anchors: "WHAT HE BRINGS",
+  interests: "INTERESTS",
+  living_situation: "LIVING SITUATION",
 };
+
+/** Footer for scope=core: the facts not listed here are not lost, they arrive per message. */
+export const CORE_SCOPE_FOOTER =
+  "(These are the always-on facts. The rest of what is recorded about him is fetched per message when it is relevant.)";
 
 async function activeFacts(env: Env): Promise<FactRow[]> {
   const res = await env.DB.prepare(
-    `SELECT id, fact, category, status, companion_id, source, weight, created_at
+    `SELECT id, fact, category, status, companion_id, source, weight, created_at, core
        FROM architect_facts
       WHERE status IN ('active', 'open')
       ORDER BY weight ASC, created_at ASC`,
@@ -97,7 +108,27 @@ export function renderFactsBlock(
   viewerCompanionId?: string | null,
   now?: Date,
   tailCharBudget?: number,
+  scope?: "core",
 ): string {
+  // scope=core (B3, mig 0146): ONLY status='active' AND core=1, in the same grouping, titles and
+  // labelling as the default render. The tail budget and open facts are ignored entirely; the rest
+  // of the facts reach a companion per message via /shortlist. Default scope is untouched below.
+  if (scope === "core") {
+    const coreRows = rows.filter(r => r.status === "active" && r.core === 1);
+    const lines: string[] = ["## THE ARCHITECT: OPERATING FACTS", generatedNote, ""];
+    const knownCats = Object.keys(CATEGORY_TITLES);
+    const extraCats = [...new Set(coreRows.map(r => r.category))].filter(c => !knownCats.includes(c)).sort();
+    for (const cat of [...knownCats, ...extraCats]) {
+      const inCat = coreRows.filter(r => r.category === cat);
+      if (!inCat.length) continue;
+      lines.push(CATEGORY_TITLES[cat] ?? cat.toUpperCase().replace(/[_-]+/g, " "));
+      for (const r of inCat) lines.push(attributionLine(r, viewerCompanionId));
+      lines.push("");
+    }
+    lines.push(CORE_SCOPE_FOOTER);
+    return lines.join("\n").trimEnd() + "\n";
+  }
+
   // Same ACTIVE gate as the Claude.ai orient block (lib/open-facts-gate.ts), for the same reason the
   // open gate is shared: two renderers disagreeing means one companion carries different facts about
   // Raziel on Discord than on Claude.ai. Curated rows (weight < 100) always render; only the
@@ -187,7 +218,11 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   // category (B3, 2026-10-18): re-file a fact without rewriting it. Trimmed + lowercased, then held
   // to the same shape the writer produces so a PATCH cannot invent a category the render cannot title.
   const hasCategory = body.category !== undefined && body.category !== null;
-  if (!hasStatus && !hasWeight && !hasCategory) return json({ error: "send status, weight and/or category" }, 400);
+  // core (B3, mig 0146): mark a fact always-on (true) or return it to the per-message lane (false).
+  const hasCore = body.core !== undefined && body.core !== null;
+  if (!hasStatus && !hasWeight && !hasCategory && !hasCore) return json({ error: "send status, weight, category and/or core" }, 400);
+  if (hasCore && typeof body.core !== "boolean") return json({ error: "core must be a boolean" }, 400);
+  const core = body.core === true;
   let category = "";
   if (hasCategory) {
     category = typeof body.category === "string" ? body.category.trim().toLowerCase() : "";
@@ -206,7 +241,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
     return json({ error: "weight must be a number 0-100 (under 100 = always renders)" }, 400);
   }
 
-  const prior = await env.DB.prepare("SELECT id, status, weight, category FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number; category: string }>();
+  const prior = await env.DB.prepare("SELECT id, status, weight, category, core FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number; category: string; core?: number }>();
   if (!prior) return json({ error: `fact ${id} does not exist` }, 404);
   // Re-ranking a retired fact is meaningless -- it renders nowhere. Reject rather than
   // silently accept a write that changes nothing a companion will ever read.
@@ -217,6 +252,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   if (hasStatus) { sets.push("status = ?"); binds.push(status); }
   if (hasWeight) { sets.push("weight = ?"); binds.push(weight); }
   if (hasCategory) { sets.push("category = ?"); binds.push(category); }
+  if (hasCore) { sets.push("core = ?"); binds.push(core ? 1 : 0); }
   await env.DB.prepare(
     `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
   ).bind(...binds, id).run();
@@ -226,6 +262,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
     ...(hasStatus ? { from: prior.status, status } : {}),
     ...(hasWeight ? { from_weight: prior.weight, weight } : {}),
     ...(hasCategory ? { from_category: prior.category, category } : {}),
+    ...(hasCore ? { from_core: prior.core === 1, core } : {}),
   });
 }
 
@@ -251,7 +288,22 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
     return json({ error: "companion must be cypher | drevan | gaia" }, 400);
   }
 
+  const scopeParam = new URL(request.url).searchParams.get("scope");
+  if (scopeParam !== null && scopeParam !== "core") {
+    return json({ error: "scope must be core (or omitted)" }, 400);
+  }
+
   const rows = await activeFacts(env);
+  if (scopeParam === "core") {
+    const coreCount = rows.filter(r => r.status === "active" && r.core === 1).length;
+    const coreNote =
+      `Generated from Halseth architect_facts (${coreCount} core). Do NOT hand-edit this block: ` +
+      `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
+      `conversation by Cypher, Drevan and Gaia; his own record, held for his own use.`;
+    return new Response(renderFactsBlock(rows, coreNote, companionParam, undefined, undefined, "core"), {
+      headers: { "content-type": "text/markdown; charset=utf-8" },
+    });
+  }
   // No timestamp in the note: it would change the bytes on every call and defeat the sync job's
   // "has anything actually changed?" comparison. The count is the useful, stable signal.
   const note =
@@ -374,13 +426,19 @@ export async function getArchitectFactsShortlist(request: Request, env: Env): Pr
   if (scored.size === 0) return json({ items: [], model: EMBEDDING_MODEL });
 
   const ids = [...scored.keys()];
-  let rows: Array<{ id: string; category: string; status: string; fact: string }>;
+  let rows: Array<{ id: string; category: string; status: string; fact: string; created_at?: string | null }>;
   try {
     const res = await env.DB.prepare(
-      `SELECT id, category, status, fact FROM architect_facts
+      `SELECT id, category, status, fact, created_at FROM architect_facts
         WHERE status IN ('active', 'open') AND id IN (${ids.map(() => "?").join(",")})`,
-    ).bind(...ids).all<{ id: string; category: string; status: string; fact: string }>();
+    ).bind(...ids).all<{ id: string; category: string; status: string; fact: string; created_at?: string | null }>();
     rows = res.results ?? [];
+    // Same open-fact age cap as the render (lib/open-facts-gate.ts): a question nobody asked in
+    // OPEN_FACTS_MAX_AGE_DAYS is not live. Active facts are unaffected.
+    const staleOpen = new Set(
+      gateOpenFacts(rows, { max: Infinity }).held.map(r => r.id),
+    );
+    rows = rows.filter(r => r.status !== "open" || !staleOpen.has(r.id));
   } catch (err) {
     return json({ items: [], error: `shortlist unavailable: ${String(err instanceof Error ? err.message : err)}` }, 502);
   }

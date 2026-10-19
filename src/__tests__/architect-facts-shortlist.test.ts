@@ -2,7 +2,10 @@
 import { describe, it, expect } from "vitest";
 import { getArchitectFactsShortlist, patchArchitectFactStatus } from "../handlers/architect-facts.js";
 
-interface DbRow { id: string; category: string; status: string; fact: string }
+interface DbRow { id: string; category: string; status: string; fact: string; created_at?: string }
+
+const fresh = () => new Date(Date.now() - 86_400_000).toISOString();
+const stale = () => new Date(Date.now() - 30 * 86_400_000).toISOString();
 
 function mkEnv(opts: {
   matches?: Array<{ id: string; score: number }>;
@@ -45,7 +48,7 @@ const get = (qs: string, auth = "Bearer s") =>
 
 const ROWS: DbRow[] = [
   { id: "a", category: "body", status: "active", fact: "fact a" },
-  { id: "b", category: "people", status: "open", fact: "fact b" },
+  { id: "b", category: "people", status: "open", fact: "fact b", created_at: fresh() },
   { id: "c", category: "work", status: "retired", fact: "fact c" },
   { id: "d", category: "work", status: "active", fact: "fact d" },
 ];
@@ -167,5 +170,21 @@ describe("PATCH architect fact category", () => {
       expect(res.status).toBe(400);
       expect(writes).toHaveLength(0);
     }
+  });
+});
+
+describe("shortlist open-fact age cap", () => {
+  it("drops open facts older than the render's cap, keeps fresh open and all active", async () => {
+    const rows: DbRow[] = [
+      { id: "fo", category: "people", status: "open", fact: "fresh open", created_at: fresh() },
+      { id: "so", category: "people", status: "open", fact: "stale open", created_at: stale() },
+      { id: "uo", category: "people", status: "open", fact: "undated open" },
+      { id: "oa", category: "body", status: "active", fact: "old active", created_at: stale() },
+    ];
+    const matches = rows.map((r, i) => ({ id: `architect_facts:${r.id}`, score: 0.9 - i / 10 }));
+    const { env } = mkEnv({ matches, rows });
+    const res = await getArchitectFactsShortlist(get("?q=x"), env);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id).sort()).toEqual(["fo", "oa"]);
   });
 });
