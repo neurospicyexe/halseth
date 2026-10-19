@@ -65,7 +65,7 @@ const CATEGORY_TITLES: Record<string, string> = {
 
 /** Footer for scope=core: the facts not listed here are not lost, they arrive per message. */
 export const CORE_SCOPE_FOOTER =
-  "(These are the always-on facts. The rest of what is recorded about him is fetched per message when it is relevant.)";
+  "(These are the always-on facts. The rest of what is recorded about them is fetched per message when it is relevant.)";
 
 async function activeFacts(env: Env): Promise<FactRow[]> {
   const res = await env.DB.prepare(
@@ -299,7 +299,7 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
     const coreNote =
       `Generated from Halseth architect_facts (${coreCount} core). Do NOT hand-edit this block: ` +
       `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
-      `conversation by Cypher, Drevan and Gaia; his own record, held for his own use.`;
+      `conversation by Cypher, Drevan and Gaia; their own record, held for their own use.`;
     return new Response(renderFactsBlock(rows, coreNote, companionParam, undefined, undefined, "core"), {
       headers: { "content-type": "text/markdown; charset=utf-8" },
     });
@@ -309,7 +309,7 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
   const note =
     `Generated from Halseth architect_facts (${rows.length} live). Do NOT hand-edit this block: ` +
     `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
-    `conversation by Cypher, Drevan and Gaia; his own record, held for his own use.`;
+    `conversation by Cypher, Drevan and Gaia; their own record, held for their own use.`;
   const body = renderFactsBlock(rows, note, companionParam, undefined,
     activeFactsTailBudget(env.ARCHITECT_FACTS_TAIL_BUDGET));
   return new Response(body, {
