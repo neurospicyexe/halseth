@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { getArchitectFactsShortlist, patchArchitectFactStatus } from "../handlers/architect-facts.js";
 
-interface DbRow { id: string; category: string; status: string; fact: string; created_at?: string }
+interface DbRow { id: string; category: string; status: string; fact: string; created_at?: string; core?: number }
 
 const fresh = () => new Date(Date.now() - 86_400_000).toISOString();
 const stale = () => new Date(Date.now() - 30 * 86_400_000).toISOString();
@@ -35,7 +35,8 @@ function mkEnv(opts: {
     DB: {
       prepare: (_sql: string) => ({
         bind: (...ids: string[]) => ({
-          all: async () => ({ results: rows.filter((r) => ids.includes(r.id) && ["active", "open"].includes(r.status)) }),
+          // Mirrors the handler's SQL: the id set OR every open row (the render's cap needs all of them).
+          all: async () => ({ results: rows.filter((r) => (ids.includes(r.id) || r.status === "open") && ["active", "open"].includes(r.status)) }),
         }),
       }),
     },
@@ -70,7 +71,7 @@ describe("GET architect-facts shortlist", () => {
     expect(body.items[0]!).toEqual({ id: "b", category: "people", status: "open", score: 0.9 });
     expect(body.model).toBe("@cf/baai/bge-base-en-v1.5");
     expect(queries[0]!.filter).toEqual({ table: "architect_facts" });
-    expect(queries[0]!.topK).toBe(24);
+    expect(queries[0]!.topK).toBe(48);
   });
 
   it("text=1 includes fact text", async () => {
@@ -186,5 +187,43 @@ describe("shortlist open-fact age cap", () => {
     const res = await getArchitectFactsShortlist(get("?q=x"), env);
     const body = (await res.json()) as { items: Array<{ id: string }> };
     expect(body.items.map((i) => i.id).sort()).toEqual(["fo", "oa"]);
+  });
+});
+
+describe("shortlist core exclusion (B3 blocker A)", () => {
+  it("never returns active core facts; non-core fill the slots; asks Vectorize for headroom", async () => {
+    const rows: DbRow[] = [
+      { id: "c1", category: "addressing", status: "active", fact: "core one", core: 1 },
+      { id: "c2", category: "addressing", status: "active", fact: "core two", core: 1 },
+      { id: "n1", category: "body", status: "active", fact: "non core", core: 0 },
+    ];
+    const matches = rows.map((r, i) => ({ id: `architect_facts:${r.id}`, score: 0.9 - i / 10 }));
+    const { env, queries } = mkEnv({ matches, rows });
+    const res = await getArchitectFactsShortlist(get("?q=x&k=2"), env);
+    const body = (await res.json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(["n1"]);
+    expect(queries[0]!.topK).toBeGreaterThan(4); // more than k*2 so core rows do not eat the slots
+  });
+
+  it("an OPEN core row is not hidden (scope=core never renders open, so this lane is its only route)", async () => {
+    const rows: DbRow[] = [{ id: "oc", category: "people", status: "open", fact: "q", created_at: fresh(), core: 1 }];
+    const { env } = mkEnv({ matches: [{ id: "architect_facts:oc", score: 0.9 }], rows });
+    const body = (await (await getArchitectFactsShortlist(get("?q=x"), env)).json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(["oc"]);
+  });
+});
+
+describe("shortlist open-fact row cap (B3 blocker B)", () => {
+  it("applies the render's 8-row cap across ALL open facts, not just the shortlisted ones", async () => {
+    // 10 fresh open facts, o0 newest ... o9 oldest. The render shows o0..o7; o8/o9 are held.
+    const rows: DbRow[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `o${i}`, category: "people", status: "open", fact: `open ${i}`,
+      created_at: new Date(Date.now() - (i + 1) * 3_600_000).toISOString(),
+    }));
+    // Only the two held ones match semantically, plus one shown.
+    const matches = ["o9", "o8", "o2"].map((id, i) => ({ id: `architect_facts:${id}`, score: 0.9 - i / 10 }));
+    const { env } = mkEnv({ matches, rows });
+    const body = (await (await getArchitectFactsShortlist(get("?q=x"), env)).json()) as { items: Array<{ id: string }> };
+    expect(body.items.map((i) => i.id)).toEqual(["o2"]);
   });
 });

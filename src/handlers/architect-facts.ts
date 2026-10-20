@@ -407,7 +407,8 @@ export async function getArchitectFactsShortlist(request: Request, env: Env): Pr
     const vector = await embedText(env, q);
     if (!vector) throw new Error("embedding returned no vector");
     const res = await env.VECTORIZE.query(vector, {
-      topK: Math.min(k * 2, 50),
+      // Headroom: core facts are dropped below, and they sit in the top of most queries.
+      topK: Math.min(k * 4, 50),
       filter: { table: "architect_facts" },
     });
     matches = (res.matches ?? []).map((m) => ({ id: String(m.id), score: m.score ?? 0 }));
@@ -426,19 +427,26 @@ export async function getArchitectFactsShortlist(request: Request, env: Env): Pr
   if (scored.size === 0) return json({ items: [], model: EMBEDDING_MODEL });
 
   const ids = [...scored.keys()];
-  let rows: Array<{ id: string; category: string; status: string; fact: string; created_at?: string | null }>;
+  type Row = { id: string; category: string; status: string; fact: string; created_at?: string | null; core?: number | null };
+  let rows: Row[];
   try {
+    // Open rows are fetched in full (not just the matched ids) because the render's cap is over ALL
+    // open facts: a held one must stay held even when it is the only open fact the query matched.
     const res = await env.DB.prepare(
-      `SELECT id, category, status, fact, created_at FROM architect_facts
-        WHERE status IN ('active', 'open') AND id IN (${ids.map(() => "?").join(",")})`,
-    ).bind(...ids).all<{ id: string; category: string; status: string; fact: string; created_at?: string | null }>();
-    rows = res.results ?? [];
-    // Same open-fact age cap as the render (lib/open-facts-gate.ts): a question nobody asked in
-    // OPEN_FACTS_MAX_AGE_DAYS is not live. Active facts are unaffected.
-    const staleOpen = new Set(
-      gateOpenFacts(rows, { max: Infinity }).held.map(r => r.id),
-    );
-    rows = rows.filter(r => r.status !== "open" || !staleOpen.has(r.id));
+      `SELECT id, category, status, fact, created_at, core FROM architect_facts
+        WHERE status IN ('active', 'open') AND (status = 'open' OR id IN (${ids.map(() => "?").join(",")}))`,
+    ).bind(...ids).all<Row>();
+    const all = res.results ?? [];
+    // Same open-fact gate as the render (lib/open-facts-gate.ts): 14-day age cap AND the 8-row cap,
+    // newest first. A fact the render would hold is not live here either. Active facts are unaffected.
+    const shownOpen = new Set(gateOpenFacts(all).shown.map(r => r.id));
+    rows = all.filter(r =>
+      scored.has(r.id) &&
+      // Core facts are always in the prompt (render scope=core); injecting them again is a duplicate.
+      // Only ACTIVE core is excluded: scope=core never renders open rows, so an open core fact has
+      // no other route to a prompt.
+      !(r.status === "active" && r.core === 1) &&
+      (r.status !== "open" || shownOpen.has(r.id)));
   } catch (err) {
     return json({ items: [], error: `shortlist unavailable: ${String(err instanceof Error ? err.message : err)}` }, 502);
   }
