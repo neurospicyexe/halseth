@@ -84,7 +84,13 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
 
   // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
   // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
-  const decision = await noveltyCheck(env, trimmedText, "companion_conclusions", companion_id);
+  // NOT FOR A DECLARED SUPERSEDE (2026-10-19, same rule as architect-fact-write.ts): a correction
+  // is by definition close to the row it replaces, so a pronoun-only rewrite matched the very row
+  // being retired and answered deduped -- the supersede never happened. The companion's own pen
+  // wins; the null embedding routes the vector through the re-embed path below.
+  const decision = supersedesId
+    ? { action: "insert" as const, embedding: null }
+    : await noveltyCheck(env, trimmedText, "companion_conclusions", companion_id);
 
   if (decision.action === "skip") {
     return json({
