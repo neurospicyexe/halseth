@@ -103,7 +103,7 @@ describe("architect-facts render -- cross-companion attribution", () => {
       row({ fact: "fact two", companion_id: "gaia", category: "plural" }),
     ];
     const block = renderFactsBlock(rows, "note", "gaia");
-    const addressingIdx = block.indexOf("HOW HE IS ADDRESSED");
+    const addressingIdx = block.indexOf("HOW THEY ARE ADDRESSED");
     const pluralIdx = block.indexOf("PLURAL SYSTEM");
     expect(addressingIdx).toBeGreaterThan(-1);
     expect(pluralIdx).toBeGreaterThan(addressingIdx);

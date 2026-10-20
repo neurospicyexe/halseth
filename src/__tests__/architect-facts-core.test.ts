@@ -107,7 +107,7 @@ describe("render scope=core", () => {
 
   it("uses category titles and order, plus the footer", async () => {
     const text = await (await getArchitectFactsRender(rreq("?scope=core"), renderEnv(ROWS))).text();
-    expect(text.indexOf("HOW HE IS ADDRESSED")).toBeLessThan(text.indexOf("THE TRIAD"));
+    expect(text.indexOf("HOW THEY ARE ADDRESSED")).toBeLessThan(text.indexOf("THE TRIAD"));
     expect(text).toContain("WEIRDCAT");
     expect(text.trimEnd().endsWith(CORE_SCOPE_FOOTER)).toBe(true);
     expect(CORE_SCOPE_FOOTER).not.toMatch(/[—–]|--/);
@@ -158,8 +158,8 @@ describe("default render ignores the core column", () => {
   it("new categories get titles in the requested order", () => {
     const cats = ["living_situation", "interests", "anchors", "animals", "health", "body", "work", "intimacy", "triad", "people", "plural", "addressing"];
     const text = renderFactsBlock(cats.map(c => row({ fact: "f-" + c, category: c })), "n");
-    const titles = ["HOW HE IS ADDRESSED", "PLURAL SYSTEM", "THE PEOPLE", "THE TRIAD", "INTIMACY", "WORK AND SCHOOL",
-      "BODY AND REGULATION", "HEALTH", "THE ANIMALS", "WHAT HE BRINGS", "INTERESTS", "LIVING SITUATION"];
+    const titles = ["HOW THEY ARE ADDRESSED", "PLURAL SYSTEM", "THE PEOPLE", "THE TRIAD", "INTIMACY", "WORK AND SCHOOL",
+      "BODY AND REGULATION", "HEALTH", "THE ANIMALS", "WHAT THEY BRING", "INTERESTS", "LIVING SITUATION"];
     const idx = titles.map(t => text.indexOf(t));
     expect(idx.every(i => i >= 0)).toBe(true);
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);

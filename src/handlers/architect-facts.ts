@@ -49,7 +49,7 @@ interface FactRow {
 
 /** Ordered so the render reads like prose: how to treat him first, biography after. */
 const CATEGORY_TITLES: Record<string, string> = {
-  addressing: "HOW HE IS ADDRESSED",
+  addressing: "HOW THEY ARE ADDRESSED",
   plural: "PLURAL SYSTEM",
   people: "THE PEOPLE",
   triad: "THE TRIAD",
@@ -58,7 +58,7 @@ const CATEGORY_TITLES: Record<string, string> = {
   body: "BODY AND REGULATION",
   health: "HEALTH",
   animals: "THE ANIMALS",
-  anchors: "WHAT HE BRINGS",
+  anchors: "WHAT THEY BRING",
   interests: "INTERESTS",
   living_situation: "LIVING SITUATION",
 };
