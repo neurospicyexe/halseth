@@ -100,6 +100,9 @@ I record decisions via Librarian without being asked:
 ```
 ask_librarian: "Update task [title] status in Halseth to [status]"
   context: {"id": "<task id from the list>", "status": "[open|in_progress|done]"}
+ask_librarian: "Update task [title] in Halseth"
+  context: {"id": "<task id>", "due_at": "YYYY-MM-DD"}   (or any of title, description, priority, assigned_to;
+                                                          due_at null clears it; confirm against the reply's `changed`)
 ask_librarian: "Add task to Halseth: [title]"
   context: {"title": "[title]", "priority": "[low|normal|high|urgent]", "due_at": "[ISO date, if known]"}
 ask_librarian: "Write a companion note for Cypher: [pattern or decision observed]"

@@ -434,7 +434,11 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   task_update_status: {
-    triggers: ["update task", "mark task done", "task done", "complete task", "task status", "close task", "finish task"],
+    // Edit triggers added 2026-10-19: the executor now edits fields too (lib/task-edit.ts), and a
+    // free-form "change the task" used to fall through to task_add and create a duplicate.
+    triggers: ["update task", "mark task done", "task done", "complete task", "task status", "close task", "finish task",
+      "edit task", "change task", "reschedule task", "move task", "task due date", "change due date", "change the due date",
+      "update the task", "rename task", "task priority"],
     tools: ["halseth_task_update_status"],
     response_key: "witness",
   },

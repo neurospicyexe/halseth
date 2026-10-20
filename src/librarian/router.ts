@@ -244,6 +244,9 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "set_model",
     regex: /^set\s+model\s+\S+/i,
     note: "Model set must be anchored to prevent 'get model' trigger stealing it via substring" },
+  { pattern_key: "task_update_status",
+    regex: /^(?:please\s+)?(?:update|edit|change|reschedule|move|rename|set|push|bump)\b[^.\n]{0,80}?\btasks?\b/i,
+    note: "2026-10-19: 'change the due date of the task for Vireth' hit task_add's 'task for' (earlier in the sweep) and made a duplicate; an edit verb at the head is an edit" },
   // Topic lookups that used to dead-end (2026-10-13). Cypher, in a Claude.ai thread, could not find Abby:
   // "what happened with Abby?" returned the last handover (get_handover's bare "what happened"), "what
   // has Drevan written about Abby" returned the unknown witness. Bare "what happened" / "catch me up"

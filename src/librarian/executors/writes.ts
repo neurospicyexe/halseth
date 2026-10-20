@@ -6,6 +6,7 @@ import { noveltyCheck } from "../../webmind/novelty.js";
 import { effectiveHeatSql } from "../../webmind/heat.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { normalizeWitnessType } from "../../lib/witness-type.js";
+import { applyTaskEdits, pickTaskEdits } from "../../lib/task-edit.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { COMPANION_SPEECH_JOURNAL_SOURCES } from "../../webmind/review-state.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
@@ -263,13 +264,35 @@ export async function execTaskAdd(ctx: ExecutorContext): Promise<ExecutorResult>
 }
 
 export async function execTaskUpdateStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ id: string; status: string }>(ctx.req.context);
-  if (!p || !p.id || !p.status) return { response_key: "witness", witness: "task_update_status requires { id, status } in context" };
-  // Attribute the close to the companion doing it (mig 0119), so the others are told who
-  // finished it and this companion is not mailed about their own action.
-  const r = await taskUpdateStatus(ctx.env, p.id, p.status, ctx.req.companion_id ?? null);
-  if ("error" in r) return { response_key: "witness", witness: r.error };
-  return { ack: true, id: r.id, status: r.status };
+  // 2026-10-19: was status-only, and acked while dropping due_at (10-14: moved dates never landed).
+  // Now { id } plus any of status / title / description / priority / due_at / assigned_to.
+  const p = parseContext<Record<string, unknown> & { id?: string; status?: string }>(ctx.req.context);
+  if (!p || !p.id) {
+    return { response_key: "witness", witness: "task update requires { id } plus at least one of status, title, description, priority, due_at, assigned_to in context" };
+  }
+  const id = String(p.id);
+  const edits = pickTaskEdits(p);
+  const hasEdits = Object.keys(edits).length > 0;
+  if (!p.status && !hasEdits) {
+    return { response_key: "witness", witness: "task update needs a change: status, title, description, priority, due_at or assigned_to" };
+  }
+
+  let changed: string[] = [];
+  if (hasEdits) {
+    const e = await applyTaskEdits(ctx.env, id, edits);
+    if (!e.ok) return { response_key: "witness", witness: e.error };
+    changed = e.changed;
+  }
+  let status: string | undefined;
+  if (p.status) {
+    // Attribute the close to the companion doing it (mig 0119), so the others are told who
+    // finished it and this companion is not mailed about their own action.
+    const r = await taskUpdateStatus(ctx.env, id, String(p.status), ctx.req.companion_id ?? null);
+    if ("error" in r) return { response_key: "witness", witness: r.error };
+    status = r.status;
+    changed.push("status");
+  }
+  return { ack: true, id, ...(status ? { status } : {}), changed };
 }
 
 export async function execTaskList(ctx: ExecutorContext): Promise<ExecutorResult> {

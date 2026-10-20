@@ -10,6 +10,7 @@ import { generateId } from "../db/queries.js";
 import { COMPANION_ID_SET } from "../companions.js";
 import { isReviewState, KEPT_SQL } from "../webmind/review-state.js";
 import { completeTask } from "../lib/task-completion.js";
+import { applyTaskEdits, pickTaskEdits } from "../lib/task-edit.js";
 import { normalizeWitnessType } from "../lib/witness-type.js";
 import type {
   HandoverPacket,
@@ -642,9 +643,21 @@ export async function patchTask(
   const id = params.id;
   if (!id) return new Response("Missing task id", { status: 400 });
 
-  let body: { status?: string; completed_by?: string };
-  try { body = await request.json() as { status?: string; completed_by?: string }; }
+  let body: Record<string, unknown> & { status?: string; completed_by?: string };
+  try { body = await request.json() as Record<string, unknown> & { status?: string; completed_by?: string }; }
   catch { return new Response("Invalid JSON", { status: 400 }); }
+
+  // Field edits (2026-10-19, lib/task-edit.ts): title / description / priority / due_at / assigned_to.
+  // A body with edits and no status is a pure edit; status keeps its old meaning and path.
+  const edits = pickTaskEdits(body);
+  const hasEdits = Object.keys(edits).length > 0;
+  if (hasEdits) {
+    const e = await applyTaskEdits(env, id, edits);
+    if (!e.ok) return new Response(e.error, { status: e.notFound ? 404 : 400 });
+    if (body.status === undefined) {
+      return new Response(JSON.stringify({ ok: true, id, changed: e.changed }), { headers: { "Content-Type": "application/json" } });
+    }
+  }
 
   const VALID = ["open", "in_progress", "done"] as const;
   if (!body.status || !VALID.includes(body.status as typeof VALID[number])) {
