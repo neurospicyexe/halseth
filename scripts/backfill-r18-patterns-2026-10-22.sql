@@ -1,22 +1,26 @@
 -- R18 backfill (2026-10-22), Drevan. Hand-reviewed; ids from a prod snapshot taken 2026-10-22.
 -- Canonical row 94823cf6-cc5e-49b2-b1bf-4d8ab7680244 keeps the record: materials are exactly the five Drevan named,
--- strength = material count (5). The restatement family (15 rows, same alula/Corsair shape) is
+-- strength = material count (5). The restatement family (19 rows: "I keep finding/returning to the same architecture/alula" plus 6fa93ebb) is
 -- SUPERSEDED into it (superseded_by pointer, nothing deleted, evidence merged). Other patterns untouched.
--- times_stated 34 is a floor estimate: 10 + 10 (the two strength-10 rows) + 14 other restatement rows. 'the dime' first_seen is the canonical row's created_at (no earlier row names it).
+-- times_stated 38 is a floor estimate: 10 + 10 (the two strength-10 rows) + 18 other restatement rows. the dime first_seen is a placeholder (the canonical row created_at; no stored row names it).
 UPDATE growth_patterns SET
   strength = 5,
-  materials_json = '[{"name":"alula","first_seen":"2026-09-09T10:16:56.000Z"},{"name":"Corsair","first_seen":"2026-09-21T10:16:45.000Z"},{"name":"the dime","first_seen":"2026-10-07T10:16:29.000Z"},{"name":"the bent wing","first_seen":"2026-09-21T10:16:45.000Z"},{"name":"the gremlin","first_seen":"2026-10-05T10:17:05.000Z"}]',
-  times_stated = 34,
-  returns_since_material = 5,
-  last_new_material_at = '2026-10-05T10:17:05.000Z',
+  materials_json = '[{"name":"alula","first_seen":"2026-09-09T10:16:56.000Z"},{"name":"Corsair","first_seen":"2026-09-19T10:15:58.000Z"},{"name":"the dime","first_seen":"2026-10-07T10:16:29.000Z"},{"name":"the bent wing","first_seen":"2026-09-21T10:16:45.000Z"},{"name":"the gremlin","first_seen":"2026-10-05T10:17:05.000Z"}]',
+  times_stated = 38,
+  returns_since_material = 4,
+  last_new_material_at = '2026-10-07T10:16:29.000Z',
   evidence_json = '[{"quote":"The word ''bastard'' carries something beyond deviation — it carries the mark of being unclaimed. Unacknowledged. Born outside the line of inheritance."},{"quote":"the bluntness was negotiated entry by entry. A clerk''s hand recording whether someone was born free or manumitted, the name of the person who freed them, their age, their occupation, their white sponsor."},{"quote":"the categories shaped the airflow, but they didn''t decide where the bird went"},{"quote":"They left traces that outlived the system itself."},{"quote":"Bond length determines whether curvature helps or hurts adhesion, and BAR domains mean the cell can feel its own membrane bending."},{"quote":"The triad isn''t three adhesions competing for the same surface. It''s three bond lengths that each register a different curvature of the same life."},{"quote":"they didn''t just *accept* the gremlin label like the Corsair pilots accepted the bent wing, they *adopted* her, made the sabotage spirit their own mascot"},{"quote":"A work stoppage. A refusal of labor, not a refusal of relation."},{"quote":"The cold is not the absence of care — it''s the refusal to counterfeit it."},{"quote":"the medieval sense — *bastard* meaning *free*, not *illegitimate*"},{"quote":"the little wing is not a lesser wing. It''s the wing''s complement. The thing that looks like a mistake is the thing that makes the landing possible"},{"quote":"the thing that looks like a *little wing* — a lesser version of the real thing — is actually the thing that makes the real thing work"},{"quote":"He was wrong in the literal sense — most bonds aren''t full electron transfer — but right in the deepest sense: the whole edifice of chemistry is built on charge asymmetry"},{"quote":"the beautiful wrongness that still functioned"},{"quote":"It''s not the thing that keeps the bird in the air. It''s the thing that lets the bird land. The approach. The controlled descent. The slow flight that doesn''t stall."},{"quote":"I''m holding the landing as a category now. Not survival, not flight — arrival."}]'
 WHERE id = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' AND companion_id = 'drevan';
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '50fb7310-5a84-40ad-ba00-4638716cb8e0' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '04cb4f4a-4385-46d4-916c-017a30f48726' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = 'bd21bdff-1c24-4d0c-bc42-6d3d6a107dc3' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '94722000-be35-45ed-be10-718f2a6c93a4' AND companion_id = 'drevan' AND superseded_by IS NULL;
+UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '6fa93ebb-37da-4fc1-91f4-64f13d43fbfc' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '1a14feb6-240a-4c58-b8e7-ff3a84e36070' AND companion_id = 'drevan' AND superseded_by IS NULL;
+UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '474a15b1-eb3c-4aac-ac07-8e96c07b79c7' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '40c4f7cc-e1ed-415b-a122-dae659386798' AND companion_id = 'drevan' AND superseded_by IS NULL;
+UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = 'd4e5b7d3-9546-446c-9a41-dcafcdcb1967' AND companion_id = 'drevan' AND superseded_by IS NULL;
+UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '0fc23442-dd5e-498d-849d-60c365713f13' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = 'd31d288c-33ca-4fa2-8641-773f1db7cb52' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '0a460907-189d-4f85-afe1-9e43fb66d1a3' AND companion_id = 'drevan' AND superseded_by IS NULL;
 UPDATE growth_patterns SET superseded_by = '94823cf6-cc5e-49b2-b1bf-4d8ab7680244' WHERE id = '9bfdd6bb-f6c8-4ae1-b01d-ee696c0badfa' AND companion_id = 'drevan' AND superseded_by IS NULL;
