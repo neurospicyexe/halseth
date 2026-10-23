@@ -39,6 +39,12 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.20.0 -- pattern materials (R18, 2026-10-22, mig 0147): `growth.patterns[]` gains `materials`
+ *  (the distinct materials the pattern has been seen in, first-seen order). Strength is earned by a
+ *  new material, not by restating; `growth.patterns` is now the top two LIVE patterns that have not
+ *  cooled out of the headline seat (>= N returns since the last new material AND that material older
+ *  than D days; superseded rows are never live). On the bot wire the list rides inside each
+ *  `active_patterns` string as "[materials: a, b]". MINOR: additive only. */
 /** 0.19.0 -- bad-night presence (B32, 2026-10-04, mig 0143): `world.raziel_state` gains
  *  `care_hold_reason` (which rule(s) hold: low_spoons | meds_said_missed | owner_said; [] when off) and
  *  `care_hold_since` (ISO of the earliest holding firing; null when off). care_hold itself keeps its
@@ -124,7 +130,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.19.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.20.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

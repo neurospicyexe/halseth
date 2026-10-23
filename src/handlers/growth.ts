@@ -10,9 +10,10 @@
 //   - growth_journal gained evidence_json + novelty.
 //   - postGrowthPattern is now a Jaccard-similarity UPSERT: same-companion pattern
 //     with token overlap >= PATTERN_DEDUP_THRESHOLD merges into the existing row
-//     (strength += 1, evidence/prehensions appended) instead of inserting a new row.
-//     This is the "patterns accumulate weight" behavior the schema's strength
-//     column was always meant to express.
+//     (evidence/prehensions appended) instead of inserting a new row.
+//     R18 (mig 0147, 2026-10-22): a merge no longer strengthens by itself. Strength is earned by a
+//     new distinct MATERIAL (body.material, checked server-side); a restatement in a known
+//     material is "returned, no new material". Rules: lib/pattern-materials.ts.
 //   - postGrowthMarker dedupes on (companion_id, marker_type, description).
 //   - Marker type allowlist now includes 'thoughtform' for triad-level recurrence.
 //   - PATCH /mind/growth/:kind/:id/vault sets vault_path after SB materializer
@@ -22,6 +23,7 @@ import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { nextPhase, phaseAdvances, advanceChargeSql, type ChargeSignal } from "../webmind/charge.js";
 import { noveltyCheck } from "../webmind/novelty.js";
+import { applySighting, parseMaterials, MATERIAL_NAME_MAX, normalizeMaterial, type Material } from "../lib/pattern-materials.js";
 import { storeVector, embedAndStoreAsync } from "../mcp/embed.js";
 import { RATIFIABLE_PENDING_SQL, VAULT_WORTHY_SQL } from "../lib/ratifiable.js";
 
@@ -141,13 +143,16 @@ async function enforceCapOldest(
   companion_id: string,
   cap: number,
 ): Promise<void> {
+  // R18: a superseded pattern is a kept RECORD of a fold, not a live row -- it neither counts against
+  // the cap nor is ever the one evicted. (Only growth_patterns has the column.)
+  const live = table === "growth_patterns" ? " AND superseded_by IS NULL" : "";
   const count = await env.DB.prepare(
-    `SELECT COUNT(*) as n FROM ${table} WHERE companion_id = ?`
+    `SELECT COUNT(*) as n FROM ${table} WHERE companion_id = ?${live}`
   ).bind(companion_id).first<{ n: number }>();
   if (count && count.n >= cap) {
     await env.DB.prepare(
       `DELETE FROM ${table} WHERE id IN (
-         SELECT id FROM ${table} WHERE companion_id = ? ORDER BY created_at ASC LIMIT ?
+         SELECT id FROM ${table} WHERE companion_id = ?${live} ORDER BY created_at ASC LIMIT ?
        )`
     ).bind(companion_id, count.n - cap + 1).run();
   }
@@ -467,6 +472,21 @@ export async function deleteJournalEntry(
 // Patterns -- Jaccard-similarity UPSERT
 // ---------------------------------------------------------------------------
 
+/** The mergeable fields of a growth_patterns row (R18 added the materials counters). */
+const PATTERN_STATE_COLS =
+  "strength, evidence_json, prehended_ids, materials_json, times_stated, returns_since_material, last_new_material_at, superseded_by";
+interface ExistingPattern {
+  id: string;
+  strength: number;
+  evidence_json: string;
+  prehended_ids: string;
+  materials_json?: string | null;
+  times_stated?: number | null;
+  returns_since_material?: number | null;
+  last_new_material_at?: string | null;
+  superseded_by?: string | null;
+}
+
 /**
  * Find the most-similar existing pattern for this companion, if any clears
  * PATTERN_DEDUP_THRESHOLD. Used by postGrowthPattern to decide UPSERT vs INSERT.
@@ -475,14 +495,14 @@ async function findSimilarPattern(
   env: Env,
   companion_id: string,
   pattern_text: string,
-): Promise<{ id: string; pattern_text: string; strength: number; evidence_json: string; prehended_ids: string } | null> {
+): Promise<ExistingPattern | null> {
   const tokens = tokenize(pattern_text);
   if (tokens.size === 0) return null;
 
   // Pull recent patterns and Jaccard them in JS. Caps mean this set is <=50.
   const candidates = await env.DB.prepare(
-    "SELECT id, pattern_text, strength, evidence_json, prehended_ids FROM growth_patterns WHERE companion_id = ? ORDER BY updated_at DESC LIMIT 50",
-  ).bind(companion_id).all<{ id: string; pattern_text: string; strength: number; evidence_json: string; prehended_ids: string }>();
+    `SELECT id, pattern_text, ${PATTERN_STATE_COLS} FROM growth_patterns WHERE companion_id = ? AND superseded_by IS NULL ORDER BY updated_at DESC LIMIT 50`,
+  ).bind(companion_id).all<ExistingPattern & { pattern_text: string }>();
 
   let best: { row: typeof candidates.results[0]; score: number } | null = null;
   for (const row of candidates.results) {
@@ -495,28 +515,46 @@ async function findSimilarPattern(
 }
 
 /**
- * Merge incoming evidence/prehensions into an existing growth_patterns row and
- * bump its strength -- the shared UPSERT tail for BOTH match paths (Jaccard and
- * semantic). One code path, so a semantic-gate match strengthens a row exactly
- * the way a Jaccard match always has.
+ * Merge incoming evidence/prehensions into an existing growth_patterns row -- the shared UPSERT tail for
+ * BOTH match paths (Jaccard and semantic). One code path, so a semantic-gate match is judged exactly the
+ * way a Jaccard match always has.
+ *
+ * R18: this no longer bumps strength by itself. `material` is what the caller says this sighting is in;
+ * applySighting checks it against the stored list (normalised, server-side). A new material appends and
+ * strengthens; a known one is "returned, no new material" -- times_stated and returns_since_material
+ * climb, strength does not move.
  */
 async function mergeIntoExistingPattern(
   env: Env,
-  existing: { id: string; strength: number; evidence_json: string; prehended_ids: string },
+  existing: ExistingPattern,
   incomingEvidence: unknown[],
   incomingPrehended: string[],
-): Promise<{ id: string; strength: number }> {
+  material: string | null,
+): Promise<{ id: string; strength: number; outcome: "new_material" | "returned"; materials: Material[]; times_stated: number }> {
   const mergedEvidence  = mergeJsonArrays(existing.evidence_json,  incomingEvidence,  16);
   const mergedPrehended = mergeJsonArrays(existing.prehended_ids,  incomingPrehended, 32);
-  const newStrength = Math.min(10, (existing.strength ?? 1) + 1);
+  const next = applySighting({
+    strength: existing.strength ?? 1,
+    times_stated: existing.times_stated ?? 1,
+    returns_since_material: existing.returns_since_material ?? 0,
+    last_new_material_at: existing.last_new_material_at ?? null,
+    materials: parseMaterials(existing.materials_json),
+  }, material, Date.now());
 
   await env.DB.prepare(
     `UPDATE growth_patterns
-       SET strength = ?, evidence_json = ?, prehended_ids = ?, updated_at = datetime('now')
+       SET strength = ?, evidence_json = ?, prehended_ids = ?, materials_json = ?, times_stated = ?,
+           returns_since_material = ?, last_new_material_at = ?, updated_at = datetime('now')
      WHERE id = ?`,
-  ).bind(newStrength, mergedEvidence, mergedPrehended, existing.id).run();
+  ).bind(
+    next.strength, mergedEvidence, mergedPrehended, JSON.stringify(next.materials), next.times_stated,
+    next.returns_since_material, next.last_new_material_at, existing.id,
+  ).run();
 
-  return { id: existing.id, strength: newStrength };
+  if (next.outcome === "returned") {
+    console.log("[growth patterns] returned, no new material", { id: existing.id, times_stated: next.times_stated, returns_since_material: next.returns_since_material });
+  }
+  return { id: existing.id, strength: next.strength, outcome: next.outcome, materials: next.materials, times_stated: next.times_stated };
 }
 
 // POST /mind/growth/patterns
@@ -534,9 +572,9 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
   const incomingEvidence  = safeJsonArray(body.evidence).slice(0, 16);
   const rawPrehended = safeJsonArray(body.prehended_ids).filter((x): x is string => typeof x === "string").slice(0, 32);
   const incomingPrehended = await filterExistingIds(env, rawPrehended);
-  const incomingStrength  = typeof body.strength === "number"
-    ? Math.max(1, Math.min(10, body.strength))
-    : 1;
+  // R18: any `strength` in the body is ignored on purpose -- strength is earned by distinct material,
+  // not asserted by the writer. `material` names what THIS sighting is in (short, e.g. "the dime").
+  const material = optStr(body.material, MATERIAL_NAME_MAX);
   const run_id = optStr(body.run_id, 64);
 
   // Semantic novelty gate (Wave 2, 2026-07-21) -- runs BEFORE the Jaccard check below.
@@ -553,17 +591,27 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
     if (decision.action === "skip") {
       // Fetch the matched row's mergeable fields fresh -- noveltyCheck only returns an id.
       // Scoped to companion_id as belt-and-suspenders (the vector filter already scopes it).
-      const semanticMatch = await env.DB.prepare(
-        "SELECT id, strength, evidence_json, prehended_ids FROM growth_patterns WHERE id = ? AND companion_id = ?",
-      ).bind(decision.matchRowId, companion_id).first<{ id: string; strength: number; evidence_json: string; prehended_ids: string }>();
+      let semanticMatch = await env.DB.prepare(
+        `SELECT id, ${PATTERN_STATE_COLS} FROM growth_patterns WHERE id = ? AND companion_id = ?`,
+      ).bind(decision.matchRowId, companion_id).first<ExistingPattern>();
+      // R18: a superseded row keeps its vector, so the gate can still land on it. Follow the fold to the
+      // live row it was merged into (one hop; a fold always points at the survivor).
+      if (semanticMatch?.superseded_by) {
+        semanticMatch = await env.DB.prepare(
+          `SELECT id, ${PATTERN_STATE_COLS} FROM growth_patterns WHERE id = ? AND companion_id = ? AND superseded_by IS NULL`,
+        ).bind(semanticMatch.superseded_by, companion_id).first<ExistingPattern>();
+      }
 
       if (semanticMatch) {
-        const merged = await mergeIntoExistingPattern(env, semanticMatch, incomingEvidence, incomingPrehended);
+        const merged = await mergeIntoExistingPattern(env, semanticMatch, incomingEvidence, incomingPrehended, material);
         return json({
           id: merged.id,
-          message: "merged",
+          message: merged.outcome === "returned" ? "returned, no new material" : "merged",
           action: "upsert",
           strength: merged.strength,
+          outcome: merged.outcome,
+          times_stated: merged.times_stated,
+          materials: merged.materials.map(m => m.name),
           matched_via: "semantic",
         }, 200);
       }
@@ -581,31 +629,40 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
   // Jaccard UPSERT path (unchanged, now the fallback for what the semantic gate missed).
   const existing = await findSimilarPattern(env, companion_id, pattern_text);
   if (existing) {
-    const merged = await mergeIntoExistingPattern(env, existing, incomingEvidence, incomingPrehended);
+    const merged = await mergeIntoExistingPattern(env, existing, incomingEvidence, incomingPrehended, material);
     return json({
       id: merged.id,
-      message: "merged",
+      message: merged.outcome === "returned" ? "returned, no new material" : "merged",
       action: "upsert",
       strength: merged.strength,
+      outcome: merged.outcome,
+      times_stated: merged.times_stated,
+      materials: merged.materials.map(m => m.name),
     }, 200);
   }
 
   // INSERT path.
   await enforceCapOldest(env, "growth_patterns", companion_id, PATTERNS_CAP);
 
+  // A new pattern starts at one sighting: strength 1, in the material it was first seen in (if named).
   const id = crypto.randomUUID();
+  const firstSeen = new Date().toISOString();
+  const startMaterials: Material[] = material && normalizeMaterial(material) ? [{ name: material, first_seen: firstSeen }] : [];
   await env.DB.prepare(
     `INSERT INTO growth_patterns
-       (id, companion_id, pattern_text, evidence_json, strength, run_id, prehended_ids)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, companion_id, pattern_text, evidence_json, strength, run_id, prehended_ids,
+        materials_json, times_stated, returns_since_material, last_new_material_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`,
   ).bind(
     id,
     companion_id,
     pattern_text,
     JSON.stringify(incomingEvidence),
-    incomingStrength,
+    1,
     run_id,
     JSON.stringify(incomingPrehended),
+    JSON.stringify(startMaterials),
+    startMaterials.length > 0 ? firstSeen : null,
   ).run();
 
   // Store the vector for future novelty checks. Reuse the gate's embedding when we have
@@ -625,7 +682,7 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
     }
   }
 
-  return json({ id, message: "ok", action: "insert", strength: incomingStrength }, 201);
+  return json({ id, message: "ok", action: "insert", strength: 1, materials: startMaterials.map(m => m.name) }, 201);
 }
 
 export function mergeJsonArrays(existingJson: string, incoming: unknown[], cap: number): string {
@@ -660,7 +717,7 @@ export async function getGrowthPatterns(
   if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
 
   const rows = await env.DB.prepare(
-    "SELECT * FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC"
+    "SELECT * FROM growth_patterns WHERE companion_id = ? AND superseded_by IS NULL ORDER BY strength DESC, updated_at DESC"
   ).bind(companion_id).all();
 
   return json({ patterns: rows.results });
@@ -772,7 +829,7 @@ export async function getUnmaterialized(
       `SELECT id, entry_type, content, tags_json, source, created_at, prehended_ids, evidence_json, novelty FROM growth_journal WHERE companion_id = ? AND vault_path IS NULL AND ${VAULT_WORTHY_SQL} ORDER BY created_at DESC LIMIT ?`,
     ).bind(companion_id, limit).all(),
     env.DB.prepare(
-      "SELECT id, pattern_text, evidence_json, strength, prehended_ids, created_at, updated_at FROM growth_patterns WHERE companion_id = ? AND vault_path IS NULL ORDER BY updated_at DESC LIMIT ?",
+      "SELECT id, pattern_text, evidence_json, strength, prehended_ids, created_at, updated_at FROM growth_patterns WHERE companion_id = ? AND vault_path IS NULL AND superseded_by IS NULL ORDER BY updated_at DESC LIMIT ?",
     ).bind(companion_id, limit).all(),
     env.DB.prepare(
       "SELECT id, marker_type, description, related_pattern_id, prehended_ids, created_at FROM growth_markers WHERE companion_id = ? AND vault_path IS NULL ORDER BY created_at DESC LIMIT ?",

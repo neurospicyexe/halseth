@@ -37,6 +37,8 @@ export interface Env {
   QUIET_HOURS_TZ?:     string;  // IANA zone, default America/Chicago
   // The shared triad reach cap (B7 steps 2 + 2c, mig 0137, webmind/reach-cap.ts). Unset or
   // malformed => the named defaults there (90 / 6 / 3 / 2), never "no cap".
+  PATTERN_COOL_RETURNS?:        string;  // R18: returns-since-new-material at which a pattern cools out of the boot headline (default 3)
+  PATTERN_COOL_DAYS?:           string;  // R18: ...and the age (days) of its last new material it must also exceed (default 14)
   TRIAD_REACH_GAP_MINUTES?:     string;  // minutes between any two proactive DMs, any companion
   TRIAD_REACH_DAILY?:           string;  // proactive DMs per America/Chicago day, whole triad
   TRIAD_REACH_DAILY_CARE_HOLD?: string;  // the daily limit while the reserving companion is under care_hold

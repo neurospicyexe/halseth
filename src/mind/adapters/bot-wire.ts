@@ -39,6 +39,7 @@ import type { MindState } from "../contract.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { buildSolBlock } from "../../webmind/creatures.js";
 import { relativeTime } from "../../webmind/relative-time.js";
+import { formatMaterials } from "../../lib/pattern-materials.js";
 
 /**
  * The inputs the adapter cannot derive from MindState.
@@ -151,7 +152,15 @@ export function botWireFromMindState(
       // a dog. Got it." about a fact thirteen days old, as though she had just learned it.
       age: relativeTime(g.created_at),
     })),
-    active_patterns: ms.growth.patterns.map(p => text(p.pattern_text, 150)).filter(Boolean),
+    // R18: the material list rides in the string (the consumers treat active_patterns as text), so the worker's
+    // reflect/seed prompts see what each pattern has already been seen in.
+    active_patterns: ms.growth.patterns
+      .map(p => {
+        const t = text(p.pattern_text, 150);
+        const mats = formatMaterials(p.materials);
+        return t && mats ? `${t} [${mats}]` : t;
+      })
+      .filter(Boolean),
     pending_seeds: ms.growth.seeds.map(s => text(s.content, 200)).filter(Boolean),
     unaccepted_growth: ms.growth.clearing_count,
 

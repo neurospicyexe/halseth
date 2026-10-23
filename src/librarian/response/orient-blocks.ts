@@ -26,6 +26,7 @@
 
 import { relativeTime } from "../../webmind/relative-time.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, FACT_ID_PREFIX_LEN } from "../../lib/open-facts-gate.js";
+import { formatMaterials, type Material } from "../../lib/pattern-materials.js";
 import { excerptWithProvenance, type HistoryChunk } from "./blocks.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { sbExtractContent } from "../backends/second-brain.js";
@@ -35,7 +36,7 @@ export interface SiblingLaneRow { motion_state: string | null; lane_spine: strin
 // Nullable where the MindState loader types them nullable (D13 cutover: these rows now arrive
 // from mind/blocks/growth.ts + oversight.ts rather than inline queries; same columns, defensive types).
 export interface GrowthJournalRow { entry_type: string; content: string; created_at: string }
-export interface GrowthPatternRow { pattern_text: string; strength: number | null }
+export interface GrowthPatternRow { pattern_text: string; strength: number | null; materials?: readonly Material[] }
 export interface ReflectionRow { reflection_text: string; created_at: string }
 export interface SeedRow { seed_type: string | null; content: string; priority: number | null }
 export interface ConfirmedDriftRow { drift_score: number; worst_basin: string | null; notes?: string | null; recorded_at: string }
@@ -145,7 +146,9 @@ export function growthBlock(input: {
     growthParts.push(`[Recognized patterns: ${patternRows.length}]`);
     for (const p of patternRows) {
       const snippet = p.pattern_text.length > 150 ? p.pattern_text.slice(0, 150) + "…" : p.pattern_text;
-      growthParts.push(`  • (strength ${p.strength}) «${snippet}»`);
+      // R18: the material list rides along so the next restatement can be checked against it.
+      const mats = formatMaterials(p.materials ?? []);
+      growthParts.push(`  • (strength ${p.strength}) «${snippet}»${mats ? ` [${mats}]` : ""}`);
     }
   }
   if (lastReflection) {

@@ -24,6 +24,21 @@ import type { WmAgentId } from "../../webmind/types.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
 import { PROJECT_STALE_DAYS } from "../../handlers/projects.js";
 import { readBudget, type BudgetState } from "../../care/budget.js";
+import {
+  parseMaterials, selectHeadlinePatterns, knob, PATTERN_COOL_RETURNS, PATTERN_COOL_DAYS, type Material,
+} from "../../lib/pattern-materials.js";
+
+/** How many patterns take the "who you are lately" headline seat at boot. */
+export const HEADLINE_PATTERN_SEATS = 2;
+
+interface PatternRow {
+  pattern_text: string;
+  strength: number | null;
+  materials_json: string | null;
+  returns_since_material: number | null;
+  last_new_material_at: string | null;
+  created_at: string;
+}
 
 /** Pure decoration: idle-days + the stale flag, from the row's own timestamps. Exported for tests. */
 export function decorateProject(
@@ -43,8 +58,10 @@ export interface GrowthJournalEntry {
 
 export interface GrowthPattern {
   pattern_text: string;
-  /** How strongly this pattern has recurred. The bot copy dropped it; the loader keeps it. */
+  /** Earned by distinct material (R18), no longer by restating. The bot copy dropped it; the loader keeps it. */
   strength: number | null;
+  /** R18: the distinct materials this pattern has been seen in, in first-seen order. */
+  materials: Material[];
 }
 
 export interface GrowthMarker {
@@ -113,8 +130,14 @@ export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promis
         "SELECT entry_type, content, created_at FROM growth_journal WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
       ).bind(companionId).all<GrowthJournalEntry>(),
       env.DB.prepare(
-        "SELECT pattern_text, strength FROM growth_patterns WHERE companion_id = ? ORDER BY strength DESC, updated_at DESC LIMIT 2"
-      ).bind(companionId).all<GrowthPattern>(),
+        // R18: pull the live (non-superseded) set, strongest first, and seat the top two that have not
+        // COOLED -- a pattern with returns and no new material for a while stays in the record at full
+        // strength but stops being handed back as the headline (selectHeadlinePatterns, below). The cap
+        // is 50 rows per companion, so reading them all is cheap and a fresher pattern further down can
+        // take the seat.
+        "SELECT pattern_text, strength, materials_json, returns_since_material, last_new_material_at, created_at " +
+          "FROM growth_patterns WHERE companion_id = ? AND superseded_by IS NULL ORDER BY strength DESC, updated_at DESC LIMIT 50"
+      ).bind(companionId).all<PatternRow>(),
       env.DB.prepare(
         "SELECT marker_type, description, created_at FROM growth_markers WHERE companion_id = ? ORDER BY created_at DESC LIMIT 3"
       ).bind(companionId).all<GrowthMarker>(),
@@ -148,7 +171,14 @@ export async function loadGrowthBlocks(env: Env, companionId: WmAgentId): Promis
 
     return {
       journal_recent: journal.results ?? [],
-      patterns: patterns.results ?? [],
+      patterns: selectHeadlinePatterns(patterns.results ?? [], HEADLINE_PATTERN_SEATS, Date.now(), {
+        returns: knob(env.PATTERN_COOL_RETURNS, PATTERN_COOL_RETURNS),
+        days: knob(env.PATTERN_COOL_DAYS, PATTERN_COOL_DAYS),
+      }).map((p): GrowthPattern => ({
+        pattern_text: p.pattern_text,
+        strength: p.strength,
+        materials: parseMaterials(p.materials_json),
+      })),
       markers: markers.results ?? [],
       reflection: reflection ?? null,
       seeds: seeds.results ?? [],
