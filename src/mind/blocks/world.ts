@@ -49,6 +49,9 @@ export interface ForageFind {
 export interface Listen {
   id: string; title: string;
   artist: string | null;
+  /** 'song' | 'video' | 'other' (mig 0071 CHECK). A video (the watch pipeline, 2026-10-23) was READ from
+   *  its transcript, not heard; renderers say "watched" for it. Null only on a pre-0071 shape. */
+  media_type: string | null;
   /** Who gave it and who it was for. Dropped by one query for months; the model invented both. */
   shared_by: string | null;
   requested_companion: string | null;
@@ -271,7 +274,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         // a double-posted track cannot fill every slot. url is used for the key and dropped again --
         // the contract's Listen shape is unchanged.
         env.DB.prepare(
-          "SELECT id, url, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 8"
+          "SELECT id, url, media_type, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 8"
         ).all<Listen & { url: string | null }>(),
         // FULL ROW, not five columns (wave 9). `selectResurrections` gates on `last_surfaced_at` (cooldown)
         // and sorts on trust/recurrence, and it needs `id` so the caller can stamp the cooldown after

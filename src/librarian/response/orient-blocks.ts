@@ -58,7 +58,7 @@ export interface CollectionRow { title: string; kind: string; sparkle: number }
 export interface ForageRow { domain: string; title: string; gathered_at: string }
 export interface ConsumedForageRow { domain: string; title: string; consumed_at: string }
 export interface TripwireRow { trigger_text: string }
-export interface ListenRow { title: string; artist: string | null; created_at: string; reacted: string[] }
+export interface ListenRow { title: string; artist: string | null; created_at: string; reacted: string[]; media_type?: string | null }
 export interface GuardianFlagRow { id: string; severity: string; summary: string; flag_type: string }
 export interface MotifRowLite { display: string; recurrence_count: number }
 export interface ResurrectedMotifRow { display: string; last_seen: string }
@@ -271,12 +271,15 @@ export function tripwireBlock(tripwires: readonly TripwireRow[]): string {
     : "";
 }
 
-/** Music actually heard, not referenced -- lets a session pick the thread back up. */
+/** Music actually heard (and, since 2026-10-23, videos actually read from their transcript), not
+ *  referenced -- lets a session pick the thread back up. A video says "watched", or the companion
+ *  remembers a transcript as a song it listened to. */
 export function listensBlock(recentListens: readonly ListenRow[]): string {
   return recentListens.length > 0
-    ? `\n[Recent listens]\n` + recentListens.map(l =>
-        `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""} (heard ${relativeTime(l.created_at)})${l.reacted.length > 0 ? `, heard by ${l.reacted.join(", ")}` : ""}`
-      ).join("\n")
+    ? `\n[Recent listens]\n` + recentListens.map(l => {
+        const verb = l.media_type === "video" ? "watched" : "heard";
+        return `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""} (${verb} ${relativeTime(l.created_at)})${l.reacted.length > 0 ? `, ${verb} by ${l.reacted.join(", ")}` : ""}`;
+      }).join("\n")
     : "";
 }
 

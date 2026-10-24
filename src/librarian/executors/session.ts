@@ -293,6 +293,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       id: r.id,
       title: (r.title ?? "").slice(0, 150),
       artist: r.artist ? r.artist.slice(0, 100) : null,
+      media_type: r.media_type ?? "song",
       reacted: Object.keys(reactions),
       created_at: r.created_at,
     };

@@ -225,6 +225,7 @@ export function botWireFromMindState(
       } catch { /* malformed -> no reaction, never breaks orient */ }
       return {
         id: l.id, title: text(l.title, 150), artist: l.artist ? text(l.artist, 100) : null,
+        media_type: l.media_type ?? "song",
         shared_by: l.shared_by ?? null, requested_companion: l.requested_companion ?? null,
         own_reaction: ownReaction, also_heard_by: reactedBy, created_at: l.created_at,
       };
