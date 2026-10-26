@@ -39,7 +39,7 @@ QUIET_HOURS_TZ       = "America/Chicago"
 #   live   -- the authored vocabulary replaces the hand-authored interoception cue text
 # Read `node scripts/feeling-line-diff.mjs` before flipping to live, and apply mig 0131 first
 # (the loader returns silence on a missing table, so either order is safe).
-FEELING_LINE_MODE    = "shadow"
+FEELING_LINE_MODE    = "live"
 
 # PluralKit system id for the roster lookup (mig 0117). Public, unauthenticated -- not a secret.
 # Leave blank to disable: lookups then answer "unavailable", never "not found".
