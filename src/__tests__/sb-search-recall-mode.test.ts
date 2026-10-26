@@ -10,12 +10,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const dual = vi.fn(async () => JSON.stringify({ chunks: [] }));
+const filtered = vi.fn(async () => JSON.stringify({ chunks: [] }));
 vi.mock("../librarian/backends/second-brain.js", async (orig) => ({
   ...(await orig<typeof import("../librarian/backends/second-brain.js")>()),
   dualVectorSearch: (...a: unknown[]) => dual(...(a as [])),
+  filteredRecall: (...a: unknown[]) => filtered(...(a as [])),
 }));
 
-import { execSbSearch, sbSearchMode } from "../librarian/executors/memory.js";
+import { execSbSearch, execSbRecall, sbSearchMode } from "../librarian/executors/memory.js";
 
 const ctx = (request: string, context?: Record<string, unknown>) =>
   ({ env: {}, req: { request, companion_id: "cypher", context: context ? JSON.stringify(context) : undefined } }) as never;
@@ -55,6 +57,20 @@ describe("execSbSearch passes the mode through", () => {
   it("recall phrasing sends mode recall", async () => {
     await execSbSearch(ctx("have we talked about Abby"));
     expect(dual).toHaveBeenCalledWith({}, "have we talked about Abby", undefined, null, null, "recall");
+  });
+
+  it("sb_recall with a subject becomes a recall-mode search, not a recency list", async () => {
+    filtered.mockClear();
+    await execSbRecall(ctx("pull from memory what we wrote about the Fargo watch party"));
+    expect(filtered).not.toHaveBeenCalled();
+    expect(dual).toHaveBeenCalledWith({}, "pull from memory what we wrote about the Fargo watch party", undefined, null, null, "recall");
+  });
+
+  it("a bare recency ask stays a recency list", async () => {
+    filtered.mockClear();
+    await execSbRecall(ctx("recent vault entries"));
+    expect(filtered).toHaveBeenCalledTimes(1);
+    expect(dual).not.toHaveBeenCalled();
   });
 
   it("exploratory phrasing sends no mode", async () => {

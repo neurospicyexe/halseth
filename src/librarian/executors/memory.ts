@@ -236,8 +236,18 @@ export async function execSbFileChunks(ctx: ExecutorContext): Promise<ExecutorRe
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No chunks found.", meta: { operation: "sb_file_chunks" } };
 }
 
+// sb_recall is a RECENCY filter (newest rows for a companion/content_type); it cannot look anything up.
+// Its triggers ("what we wrote about", "pull from memory") invite specific questions, and until 2026-10-26
+// those silently got the newest rows with the subject ignored. A request that names a subject is a
+// lookup, so it goes to sb_search in recall mode; a bare recency ask stays here.
+const SUBJECT_RE = /\b(?:about|on|regarding|re:)\s+\S/i;
+
 export async function execSbRecall(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ companion?: string; content_type?: string; limit?: number }>(ctx.req.context);
+  if (SUBJECT_RE.test(ctx.req.request)) {
+    const ctxObj = { ...(parseContext<Record<string, unknown>>(ctx.req.context) ?? {}), mode: "recall" };
+    return execSbSearch({ ...ctx, req: { ...ctx.req, context: JSON.stringify(ctxObj) } });
+  }
   const result = await filteredRecall(ctx.env, { companion: p?.companion ?? ctx.req.companion_id, content_type: p?.content_type, limit: p?.limit });
   return { data: result ? truncateRaw(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_recall" } };
 }
