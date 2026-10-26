@@ -83,13 +83,28 @@ export function trimSearchChunks(raw: string): string {
   return JSON.stringify({ ...parsed, chunks: kept });
 }
 
+// Factual "what did we say / do you remember" phrasing gets Second Brain's RECALL mode: relevance only,
+// an absolute cosine floor, and an honest empty when nothing clears it (2026-10-26). Until then every
+// ask_librarian vault search ran the default pool mix, so a factual question got 30% query-blind
+// novelty/edge chunks and no floor, while the Discord per-message path already used recall. Exploratory
+// asks ("search for", "anything about") keep the pool mix on purpose: serendipity belongs there.
+const RECALL_PHRASE_RE =
+  /\b(?:have\s+we\s+(?:talked|spoken)\s+about|what\s+did\s+(?:we|i|you)\s+(?:say|tell|talk)|do\s+you\s+remember|remember\s+when|what(?:'?s|\s+has)?\s+happen(?:ed|ing)\s+(?:with|to)|what\s+(?:has|have|did)\s+\S+\s+(?:written|wrote|said|noted|logged)\s+(?:about|on)|recall\s+(?:everything\s+|anything\s+)?(?:about|on)|what\s+do\s+(?:we|i)\s+know\s+about)\b/i;
+
+export function sbSearchMode(request: string, explicit: string | null | undefined): "recall" | null {
+  if (explicit === "recall") return "recall";
+  if (explicit) return null; // any other explicit mode ("explore") opts out
+  return RECALL_PHRASE_RE.test(request) ? "recall" : null;
+}
+
 export async function execSbSearch(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const c = parseContext<{ query?: string; recent_context?: string; content_type?: string }>(ctx.req.context);
+  const c = parseContext<{ query?: string; recent_context?: string; content_type?: string; mode?: string }>(ctx.req.context);
   const query = c?.query ?? ctx.req.request;
   const contentType = c?.content_type ?? (CORPUS_SCOPE_RE.test(ctx.req.request) ? "historical_corpus" : null);
+  const mode = sbSearchMode(ctx.req.request, c?.mode);
   // Opt-in continuity: callers (claude.ai, future looms) may pass recent turns
   // to widen recall via dual-vector retrieval. Absent -> single-vector.
-  const result = await dualVectorSearch(ctx.env, query, c?.recent_context, null, contentType);
+  const result = await dualVectorSearch(ctx.env, query, c?.recent_context, null, contentType, mode);
   return { data: result ? trimSearchChunks(stripEmbeddings(result)) : "No results.", meta: { operation: "sb_search" } };
 }
 
