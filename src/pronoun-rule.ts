@@ -9,6 +9,8 @@
 // The identical constant exists in nullsafe-discord packages/shared/src/pronoun-rule.ts and in
 // nullsafe-second-brain -- these repos cannot import each other, so keep all copies in sync by hand.
 
+import { RECALLED_DATA_RULE } from "./recalled-text.js";
+
 // Wording tuned against the live model 2026-09-24 (see the nullsafe-discord copy for why).
 export const OWNER_PRONOUN_RULE =
   "PRONOUNS (hard rule; apply it silently, never restate it or annotate anyone's pronouns in your output): " +
@@ -39,7 +41,9 @@ export const TRIAD_PRONOUN_RULE =
  */
 export function withOwnerPronounRule(system: string): string {
   let out = system;
-  for (const rule of [OWNER_PRONOUN_RULE, TRIAD_PRONOUN_RULE]) {
+  // RECALLED_DATA_RULE since 2026-10-27: this is the one hook every Halseth clerk's system prompt
+  // (synthesis, drift, clearing, emergent SOMA) passes through, and they all summarize stored rows.
+  for (const rule of [OWNER_PRONOUN_RULE, TRIAD_PRONOUN_RULE, RECALLED_DATA_RULE]) {
     if (out.includes(rule)) continue;
     const trimmed = out.replace(/\s+$/, "");
     out = trimmed.length > 0 ? `${trimmed}\n\n${rule}` : rule;

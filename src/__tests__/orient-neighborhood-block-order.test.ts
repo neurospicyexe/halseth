@@ -24,7 +24,8 @@ describe("execSessionOrient ready_prompt block order (graph memory Tranche 5)", 
   });
 
   it("places neighborhoodBlock after continuityBlock and before narrativeBlock in the concatenation", () => {
-    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: buildOrientPrompt"));
+    // Since 2026-10-27 the whole concatenation is wrapped in neutralizeRecalled(...) (recalled-text.ts).
+    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: neutralizeRecalled(buildOrientPrompt"));
     expect(line, "ready_prompt concatenation line not found").toBeTruthy();
 
     const idxContinuity = line!.indexOf("+ continuityBlock");
@@ -49,7 +50,7 @@ describe("execSessionOrient ready_prompt block order (graph memory Phase 2, prov
   });
 
   it("places provenanceBlock immediately after the orient header and before continuityBlock", () => {
-    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: buildOrientPrompt"));
+    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: neutralizeRecalled(buildOrientPrompt"));
     expect(line, "ready_prompt concatenation line not found").toBeTruthy();
 
     const idxHeader = line!.indexOf("buildOrientPrompt(");

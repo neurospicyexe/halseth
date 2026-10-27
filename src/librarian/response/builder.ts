@@ -14,6 +14,7 @@ import type { WmOrientResponse, WmJournalEntry, WmConclusion, WmResurfacedConclu
 import { relativeTime } from "../../webmind/relative-time.js";
 import { roomLabelFromTags } from "../../mind/room-label.js";
 import { textContains } from "../../webmind/handoffs.js";
+import { neutralizeRecalled, ORIENT_DATA_LINE } from "../../recalled-text.js";
 
 /**
  * Strip content that could be interpreted as instructions when embedded in an AI prompt.
@@ -715,7 +716,9 @@ export function buildResponse(
     // inject [Now: CST] directly so companions always know the current time.
     const datetimeBlock = !continuityData ? nowCstBlock() : "";
     return {
-      ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
+      // Recalled text is data (2026-10-27): the continuity block quotes notes, journals and sibling
+      // writes; defused as a whole, like execSessionOrient's ready_prompt (session.ts).
+      ready_prompt: neutralizeRecalled(basePrompt + frontTag + datetimeBlock + continuityBlock + (continuityBlock ? ORIENT_DATA_LINE : "")),
       session_id: payload.session_id,
       // Default false, never null: an absent flag must read as "this caller opened it"
       // only when the loader genuinely said so. Both loaders always set it, so the ??
