@@ -25,6 +25,7 @@ import { Env } from "../types.js";
 import { embedAndStoreAsync } from "../mcp/embed.js";
 import { isReviewState, TRAY_REWRITE_SOURCE, type ReviewState } from "./review-state.js";
 import { classifyKeywordTags } from "../synthesis/tag-classifier.js";
+import { lintPronouns, formatPronounFlags } from "../pronoun-lint.js";
 
 export type TrayKind = "journal" | "note";
 export type TrayDecision = "kept" | "dropped";
@@ -56,6 +57,12 @@ export interface TrayDraft {
   source: string | null;
   created_at: string;
   excerpt: string;
+  /**
+   * B4 pronoun lint on the FULL text (not the excerpt), e.g. `"she" near Raziel (they/them)`. Present
+   * only when something was flagged. A question for the reviewer, never a verdict: K7, it may be his
+   * mother's "her". Nothing rewrites the row.
+   */
+  pronoun_flags?: string[];
 }
 
 export interface TrayStats {
@@ -85,13 +92,15 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
   // string compare puts every space-form row before every T-form row of the same day.
   const [journal, notes, jStats, nStats] = await Promise.all([
     env.DB.prepare(
-      `SELECT id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt
+      `SELECT id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt,
+              note_text AS body
          FROM companion_journal
         WHERE agent = ? AND archived = 0 AND review_state = 'draft'
         ORDER BY sort_at DESC LIMIT ?`,
     ).bind(agent, cap).all<TrayListRow>(),
     env.DB.prepare(
-      `SELECT note_id AS id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(content, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt
+      `SELECT note_id AS id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(content, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt,
+              content AS body
          FROM wm_continuity_notes
         WHERE agent_id = ? AND archived = 0 AND review_state = 'draft'
         ORDER BY sort_at DESC LIMIT ?`,
@@ -106,7 +115,11 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
   ]
     .sort((a, b) => (b.sort_at ?? "").localeCompare(a.sort_at ?? ""))
     .slice(0, cap)
-    .map(({ sort_at: _sortAt, ...d }) => d);
+    .map(({ sort_at: _sortAt, body, ...d }) => {
+      // The full text is read only to lint it; the listing still carries just the excerpt.
+      const flags = formatPronounFlags(lintPronouns(body));
+      return flags.length > 0 ? { ...d, pronoun_flags: flags } : d;
+    });
 
   const draft = num(jStats?.draft) + num(nStats?.draft);
   const kept = num(jStats?.kept) + num(nStats?.kept);
@@ -123,7 +136,7 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
 }
 
 interface StatsRow { draft: number | null; kept: number | null; dropped: number | null }
-interface TrayListRow { id: string; source: string | null; created_at: string; sort_at: string | null; excerpt: string }
+interface TrayListRow { id: string; source: string | null; created_at: string; sort_at: string | null; excerpt: string; body: string | null }
 
 /** One ISO shape for any stored stamp; falls back to the raw value if SQLite cannot parse it. */
 const SORT_AT_SQL = "COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at), created_at)";
@@ -339,6 +352,8 @@ export interface TrayDraftFull {
   actor: string | null;
   correlation_id: string | null;
   text: string;
+  /** B4 pronoun lint on `text`; empty when nothing was flagged. See TrayDraft.pronoun_flags. */
+  pronoun_flags: string[];
 }
 
 export type ReadDraftResult =
@@ -382,7 +397,7 @@ export async function readDraft(env: Env, input: { agent: string; id: string; ki
       channel: channelTag ? channelTag.slice("channel:".length) : null,
       external_id: str(r["external_id"]), session_id: str(r["session_id"]), tags,
       thread_key: null, note_type: null, salience: null, actor: null, correlation_id: null,
-      text,
+      text, pronoun_flags: formatPronounFlags(lintPronouns(text)),
     } };
   }
 
@@ -403,7 +418,7 @@ export async function readDraft(env: Env, input: { agent: string; id: string; ki
     external_id: null, session_id: null, tags: null,
     thread_key: threadKey, note_type: str(r["note_type"]), salience: str(r["salience"]), actor: str(r["actor"]),
     correlation_id: str(r["correlation_id"]),
-    text,
+    text, pronoun_flags: formatPronounFlags(lintPronouns(text)),
   } };
 }
 

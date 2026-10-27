@@ -13,6 +13,21 @@
 // so each writer's statement is the same shape it always was plus review_state.
 
 import { reviewStateFor, type ReviewState } from "./review-state.js";
+import { lintPronouns } from "../pronoun-lint.js";
+
+/**
+ * B4 (2026-10-27): one count-only line per DRAFT born with a pronoun flag, so the hit rate can be read
+ * from Workers Logs without opening a tray. Names and pronouns only, never the text. Kept-born rows are
+ * not linted here: they are human-authored or already chosen. Never throws into a write.
+ */
+function logDraftPronounFlags(table: string, id: string, agent: string, text: string): void {
+  try {
+    const flags = lintPronouns(text);
+    if (flags.length === 0) return;
+    console.log(`[pronoun-lint] draft table=${table} id=${id} agent=${agent} hits=${flags.length} ` +
+      flags.map((f) => `${f.name}:${f.pronoun}`).join(","));
+  } catch { /* a lint must never cost a write */ }
+}
 
 /**
  * Journal sources that are RETIRED: a clerk that wrote in a companion's voice and now writes into the
@@ -103,6 +118,8 @@ export function noteBirthState(row: Pick<NoteInsertRow, "source" | "correlation_
  */
 export function journalInsert(db: D1Like, row: JournalInsertRow, opts: { onConflictExternalId?: boolean } = {}) {
   assertJournalSourceOpen(row.source);
+  const birth = journalBirthState(row);
+  if (birth === "draft") logDraftPronounFlags("companion_journal", row.id, row.agent, row.note_text);
   const { sql, binds } = build("companion_journal", [
     ["id", row.id],
     ["created_at", row.created_at ?? NOW_SQL],
@@ -113,13 +130,15 @@ export function journalInsert(db: D1Like, row: JournalInsertRow, opts: { onConfl
     ["source", row.source],
     ["topic_tags", row.topic_tags],
     ["external_id", row.external_id],
-    ["review_state", journalBirthState(row)],
+    ["review_state", birth],
   ], opts.onConflictExternalId ? " ON CONFLICT(external_id) WHERE external_id IS NOT NULL DO NOTHING" : "");
   return db.prepare(sql).bind(...binds);
 }
 
 /** INSERT one wm_continuity_notes row. Defaults mirror addNote's historical ones. */
 export function noteInsert(db: D1Like, row: NoteInsertRow) {
+  const birth = noteBirthState({ source: row.source ?? "system", correlation_id: row.correlation_id, content: row.content });
+  if (birth === "draft") logDraftPronounFlags("wm_continuity_notes", row.note_id, row.agent_id, row.content);
   const { sql, binds } = build("wm_continuity_notes", [
     ["note_id", row.note_id],
     ["agent_id", row.agent_id],
@@ -131,7 +150,7 @@ export function noteInsert(db: D1Like, row: NoteInsertRow) {
     ["source", row.source ?? "system"],
     ["correlation_id", row.correlation_id ?? null],
     ["created_at", row.created_at],
-    ["review_state", noteBirthState({ source: row.source ?? "system", correlation_id: row.correlation_id, content: row.content })],
+    ["review_state", birth],
   ]);
   return db.prepare(sql).bind(...binds);
 }
