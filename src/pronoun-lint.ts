@@ -51,7 +51,11 @@ const PERSON_WORD_RE = new RegExp(
   "\\b(?:mother|mom|mum|mama|dad|father|papa|parents?|sister|brother|sibling|daughter|son|aunt|uncle|" +
   "grand(?:ma|mother|pa|father)|wife|husband|girlfriend|boyfriend|niece|nephew|cousin|friend|therapist|" +
   "doctor|nurse|teacher|student|boss|coworker|co-worker|manager|neighbou?r|lady|woman|women|girl|man|men|guy|" +
-  "boy|kid|child|member|alter|headmate|vet)s?\\b",
+  "boy|kid|child|member|alter|headmate|vet|" +
+  // Animals and story people (prod sample 10-27: "she's old and sore" was the dog, "she gets" a survivor).
+  "dog|pup|puppy|cat|kitten|kitty|horse|mare|hen|chicken|rooster|bird|pet|animal|" +
+  "survivor|character|protagonist|hero|heroine|villain|queen|king|princess|prince|witch|narrator|author|" +
+  "writer|singer|artist|actress|actor)s?\\b",
   "i",
 );
 

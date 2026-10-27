@@ -55,6 +55,11 @@ describe("lintPronouns: stays silent when it cannot know", () => {
     expect(words("Raziel met a friend; she brought soup.")).toEqual([]);
   });
 
+  it("animals and story people silence it (prod draft sample, 10-27)", () => {
+    expect(words("The dog isn't doing it to Crash; she's old and sore.")).toEqual([]);
+    expect(words("Drevan named the lane, and the survivor doesn't get a better death, she gets a witness.")).toEqual([]);
+  });
+
   it("an unknown proper name silences it (a fronting member, a cat, Babita)", () => {
     expect(words("Megan told Raziel she was fronting.")).toEqual([]);
     expect(words("Raziel and Babita planned the wall; she printed it.")).toEqual([]);
