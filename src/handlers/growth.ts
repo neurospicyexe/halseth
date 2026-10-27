@@ -50,6 +50,18 @@ const MARKERS_CAP = 100;
 // rare and should be unambiguous.
 export const PATTERN_DEDUP_THRESHOLD = 0.5;
 
+// R18 paraphrase band (2026-10-27). The semantic gate merges only at NOVELTY_SKIP (0.95) and Jaccard
+// only at 0.5; a companion RESTATING a pattern in new words lands between both and became a new row, so
+// returns never accumulated and cooling could never fire (Gaia's "sharper instrument by shifting from
+// what a mark/state/boundary means" family: four live rows). Calibrated on prod 10-27 (135 live
+// patterns, 3,045 same-companion pairs): no pair reaches 0.88 cosine; restatements sit at 0.80-0.87,
+// topic-neighbours ("silence" pairs) at 0.80-0.84 too, but with Jaccard <= 0.14. Cosine >= 0.80 AND
+// Jaccard >= 0.18 caught 12 pairs, all restatement families by eye, 0 wrong; it misses 2 (0.838/0.13,
+// 0.802/0.10), which stay apart. Edges are tight (lowest hit 0.802 / 0.19): tune from the
+// `[growth patterns] band fold` log lines, not from feel.
+export const PATTERN_BAND_COSINE = 0.80;
+export const PATTERN_BAND_JACCARD = 0.18;
+
 // Common English stop words and pattern-prefix noise stripped before
 // Jaccard token comparison so structural overlap (the actual claim) wins
 // over lexical filler.
@@ -515,6 +527,38 @@ async function findSimilarPattern(
 }
 
 /**
+ * R18 paraphrase band: the gate's nearest live-or-folded pattern, if cosine >= PATTERN_BAND_COSINE and
+ * the words overlap >= PATTERN_BAND_JACCARD. A folded nearest row is followed one hop to its survivor
+ * (folded rows keep their vectors, so they are often the closest hit). Jaccard is taken against the
+ * better of the nearest row's text and the survivor's, since the nearest is the closer phrasing.
+ * Returns null on anything missing; never throws into the write.
+ */
+async function findBandMatch(
+  env: Env,
+  companion_id: string,
+  pattern_text: string,
+  nearest: { matchRowId: string; score: number } | null,
+): Promise<{ row: ExistingPattern; cos: number; jac: number } | null> {
+  if (!nearest || nearest.score < PATTERN_BAND_COSINE) return null;
+  try {
+    const sel = `SELECT id, pattern_text, ${PATTERN_STATE_COLS} FROM growth_patterns WHERE id = ? AND companion_id = ?`;
+    const near = await env.DB.prepare(sel).bind(nearest.matchRowId, companion_id).first<ExistingPattern & { pattern_text: string }>();
+    if (!near) return null;
+    const survivor = near.superseded_by
+      ? await env.DB.prepare(`${sel} AND superseded_by IS NULL`).bind(near.superseded_by, companion_id).first<ExistingPattern & { pattern_text: string }>()
+      : near;
+    if (!survivor) return null;
+    const mine = tokenize(pattern_text);
+    const jac = Math.max(jaccard(mine, tokenize(near.pattern_text)), jaccard(mine, tokenize(survivor.pattern_text)));
+    if (jac < PATTERN_BAND_JACCARD) return null;
+    return { row: survivor, cos: nearest.score, jac };
+  } catch (err) {
+    console.warn("[growth patterns] band lookup failed, inserting:", String(err));
+    return null;
+  }
+}
+
+/**
  * Merge incoming evidence/prehensions into an existing growth_patterns row -- the shared UPSERT tail for
  * BOTH match paths (Jaccard and semantic). One code path, so a semantic-gate match is judged exactly the
  * way a Jaccard match always has.
@@ -586,6 +630,7 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
   // try/catch here is defense in depth -- this write path must never be blocked by
   // the gate. Reuses the gate's embedding on insert (net +0 AI.run on the common path).
   let noveltyEmbedding: number[] | null = null;
+  let noveltyNearest: { matchRowId: string; score: number } | null = null;
   try {
     const decision = await noveltyCheck(env, pattern_text, "growth_patterns", companion_id);
     if (decision.action === "skip") {
@@ -621,6 +666,7 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
       console.warn("[growth patterns] semantic match row missing, falling through", { matchRowId: decision.matchRowId });
     } else {
       noveltyEmbedding = decision.embedding;
+      if (decision.action === "insert") noveltyNearest = decision.nearest ?? null;
     }
   } catch (err) {
     console.warn("[growth patterns] novelty gate error, falling back to Jaccard:", String(err));
@@ -638,6 +684,45 @@ export async function postGrowthPattern(request: Request, env: Env): Promise<Res
       outcome: merged.outcome,
       times_stated: merged.times_stated,
       materials: merged.materials.map(m => m.name),
+    }, 200);
+  }
+
+  // R18 paraphrase band: a restatement in new words folds into the pattern it restates.
+  const band = await findBandMatch(env, companion_id, pattern_text, noveltyNearest);
+  if (band) {
+    // The incoming text is kept as a FOLDED record (superseded_by = survivor), the R18 backfill shape:
+    // reversible, nothing lost, and its vector stays so the next restatement in this family lands here.
+    // Superseded rows do not count against the cap, so no enforceCapOldest.
+    const foldId = crypto.randomUUID();
+    const seen = new Date().toISOString();
+    const foldMaterials: Material[] = material && normalizeMaterial(material) ? [{ name: material, first_seen: seen }] : [];
+    await env.DB.prepare(
+      `INSERT INTO growth_patterns
+         (id, companion_id, pattern_text, evidence_json, strength, run_id, prehended_ids,
+          materials_json, times_stated, returns_since_material, last_new_material_at, superseded_by)
+       VALUES (?, ?, ?, ?, 1, ?, ?, ?, 1, 0, ?, ?)`,
+    ).bind(
+      foldId, companion_id, pattern_text, JSON.stringify(incomingEvidence), run_id, JSON.stringify(incomingPrehended),
+      JSON.stringify(foldMaterials), foldMaterials.length > 0 ? seen : null, band.row.id,
+    ).run();
+    if (noveltyEmbedding) {
+      await storeVector(env, noveltyEmbedding, "growth_patterns", foldId, companion_id)
+        .catch((e) => console.warn(`[growth patterns] vector store failed for fold ${foldId}:`, String(e)));
+    }
+    const merged = await mergeIntoExistingPattern(env, band.row, incomingEvidence, incomingPrehended, material);
+    console.log("[growth patterns] band fold", {
+      survivor: band.row.id, fold: foldId, cos: Number(band.cos.toFixed(3)), jac: Number(band.jac.toFixed(2)), outcome: merged.outcome,
+    });
+    return json({
+      id: merged.id,
+      message: merged.outcome === "returned" ? "returned, no new material" : "merged",
+      action: "upsert",
+      strength: merged.strength,
+      outcome: merged.outcome,
+      times_stated: merged.times_stated,
+      materials: merged.materials.map(m => m.name),
+      matched_via: "band",
+      folded_id: foldId,
     }, 200);
   }
 
