@@ -33,6 +33,15 @@ export type TrayDecision = "kept" | "dropped";
 export const TRAY_LIST_LIMIT = 20;
 export const TRAY_STATS_DAYS = 30;
 export const TRAY_EXCERPT_CHARS = 200;
+/** B4: newest named drafts per store the pronoun scan reads, and how many flagged ones lead the list. */
+export const TRAY_FLAG_SCAN = 200;
+export const TRAY_FLAGGED_SHOWN = 10;
+
+/** Names the pronoun lint knows (pronoun-lint.ts KNOWN), as a case-sensitive GLOB prefilter. Literals only. */
+const LINT_NAME_FRAGMENTS = ["Raziel", "Crash", "Dre", "Cy", "Gaia", "Blue"];
+function namedGlobSql(col: string): string {
+  return "(" + LINT_NAME_FRAGMENTS.map((n) => `${col} GLOB '*${n}*'`).join(" OR ") + ")";
+}
 
 interface KindWiring { table: string; idCol: string; ownerCol: string; textCol: string }
 
@@ -74,6 +83,8 @@ export interface TrayStats {
   /** kept / (kept + dropped) over the window, as a whole-number percentage; null when nothing was reviewed. */
   keep_rate_pct: number | null;
   window_days: number;
+  /** B4: live drafts the pronoun lint flags (scan of up to TRAY_FLAG_SCAN named drafts per store). */
+  pronoun_flagged: number;
 }
 
 export interface TrayView {
@@ -90,7 +101,7 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
   // sort_at: created_at normalised IN SQL to one ISO shape, so the two stores merge in true time order.
   // Rows carry both 'T...Z' (JS writers) and 'YYYY-MM-DD HH:MM:SS' (datetime('now') writers); a raw
   // string compare puts every space-form row before every T-form row of the same day.
-  const [journal, notes, jStats, nStats] = await Promise.all([
+  const [journal, notes, jStats, nStats, jScan, nScan] = await Promise.all([
     env.DB.prepare(
       `SELECT id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt,
               note_text AS body
@@ -107,30 +118,61 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
     ).bind(agent, cap).all<TrayListRow>(),
     env.DB.prepare(statsSql("companion_journal", "agent")).bind(agent).first<StatsRow>(),
     env.DB.prepare(statsSql("wm_continuity_notes", "agent_id")).bind(agent).first<StatsRow>(),
+    // B4 flag scan: a flagged draft deep in a tray of hundreds would never reach the newest-N listing.
+    // Only rows naming someone the lint knows can flag, so the GLOB prefilter loses nothing.
+    env.DB.prepare(
+      `SELECT id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt,
+              note_text AS body
+         FROM companion_journal
+        WHERE agent = ? AND archived = 0 AND review_state = 'draft' AND ${namedGlobSql("note_text")}
+        ORDER BY sort_at DESC LIMIT ?`,
+    ).bind(agent, TRAY_FLAG_SCAN).all<TrayListRow>(),
+    env.DB.prepare(
+      `SELECT note_id AS id, source, created_at, ${SORT_AT_SQL} AS sort_at, substr(content, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt,
+              content AS body
+         FROM wm_continuity_notes
+        WHERE agent_id = ? AND archived = 0 AND review_state = 'draft' AND ${namedGlobSql("content")}
+        ORDER BY sort_at DESC LIMIT ?`,
+    ).bind(agent, TRAY_FLAG_SCAN).all<TrayListRow>(),
   ]);
 
-  const drafts: TrayDraft[] = [
-    ...(journal.results ?? []).map((r) => ({ ...r, kind: "journal" as const })),
-    ...(notes.results ?? []).map((r) => ({ ...r, kind: "note" as const })),
-  ]
-    .sort((a, b) => (b.sort_at ?? "").localeCompare(a.sort_at ?? ""))
-    .slice(0, cap)
-    .map(({ sort_at: _sortAt, body, ...d }) => {
-      // The full text is read only to lint it; the listing still carries just the excerpt.
-      const flags = formatPronounFlags(lintPronouns(body));
-      return flags.length > 0 ? { ...d, pronoun_flags: flags } : d;
-    });
+  type Tagged = TrayListRow & { kind: TrayKind };
+  const tag = (rows: TrayListRow[] | undefined, kind: TrayKind): Tagged[] => (rows ?? []).map((r) => ({ ...r, kind }));
+  const newestFirst = (a: Tagged, b: Tagged) => (b.sort_at ?? "").localeCompare(a.sort_at ?? "");
+  // The full text is read only to lint it; the listing still carries just the excerpt.
+  const shape = ({ sort_at: _sortAt, body, ...d }: Tagged): TrayDraft => {
+    const flags = formatPronounFlags(lintPronouns(body));
+    return flags.length > 0 ? { ...d, pronoun_flags: flags } : d;
+  };
+
+  const flagged = [...tag(jScan.results, "journal"), ...tag(nScan.results, "note")]
+    .map(shape)
+    .filter((d) => d.pronoun_flags)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const flaggedShown = flagged.slice(0, Math.min(TRAY_FLAGGED_SHOWN, cap));
+  const shownKeys = new Set(flaggedShown.map((d) => `${d.kind}:${d.id}`));
+  const newest = [...tag(journal.results, "journal"), ...tag(notes.results, "note")]
+    .sort(newestFirst)
+    .filter((r) => !shownKeys.has(`${r.kind}:${r.id}`))
+    .slice(0, cap - flaggedShown.length)
+    .map(shape);
+  // Flagged drafts first: a check the owner never sees is not a check.
+  const drafts: TrayDraft[] = [...flaggedShown, ...newest];
+  const scanFull = (jScan.results?.length ?? 0) >= TRAY_FLAG_SCAN || (nScan.results?.length ?? 0) >= TRAY_FLAG_SCAN;
+  const pronounLine = flagged.length > 0
+    ? `; ${flagged.length}${scanFull ? "+" : ""} flagged for pronouns (listed first)`
+    : "";
 
   const draft = num(jStats?.draft) + num(nStats?.draft);
   const kept = num(jStats?.kept) + num(nStats?.kept);
   const dropped = num(jStats?.dropped) + num(nStats?.dropped);
   const reviewed = kept + dropped;
   const keep_rate_pct = reviewed > 0 ? Math.round((kept / reviewed) * 100) : null;
-  const stats: TrayStats = { draft, kept, dropped, keep_rate_pct, window_days: TRAY_STATS_DAYS };
-  const stats_line = keep_rate_pct === null
+  const stats: TrayStats = { draft, kept, dropped, keep_rate_pct, window_days: TRAY_STATS_DAYS, pronoun_flagged: flagged.length };
+  const stats_line = (keep_rate_pct === null
     ? `${draft} in the tray; nothing reviewed in ${TRAY_STATS_DAYS}d (keep rate: no denominator yet)`
     : `${draft} in the tray; ${TRAY_STATS_DAYS}d: ${kept} kept / ${dropped} dropped = keep rate ${keep_rate_pct}%` +
-      (keep_rate_pct === 100 ? " (100% means nobody is reviewing)" : "");
+      (keep_rate_pct === 100 ? " (100% means nobody is reviewing)" : "")) + pronounLine;
 
   return { agent, drafts, stats, stats_line };
 }

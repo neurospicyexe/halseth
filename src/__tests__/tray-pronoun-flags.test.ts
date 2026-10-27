@@ -39,6 +39,22 @@ describe("tray pronoun flags", () => {
     expect(clean).not.toHaveProperty("body");
   });
 
+  it("a flagged draft deep in a big tray leads the list and is counted in stats_line", async () => {
+    const { env } = mk();
+    await noteInsert(env.DB, { note_id: "77777777-aaaa-4aaa-8aaa-000000000007", agent_id: "drevan", content: "[discord:pulse] Raziel laughed and she kept going.", created_at: "2026-10-01T00:00:00Z" }).run();
+    for (let i = 0; i < 25; i++) {
+      const n = String(i).padStart(2, "0");
+      await noteInsert(env.DB, { note_id: `88888888-aaaa-4aaa-8aaa-0000000000${n}`, agent_id: "drevan", content: `[discord:pulse] Raziel said they were fine (${n}).`, created_at: `2026-10-20T00:${n}:00Z` }).run();
+    }
+    const view = await listTray(env, "drevan");
+    expect(view.drafts).toHaveLength(20);
+    expect(view.drafts[0]!.id).toBe("77777777-aaaa-4aaa-8aaa-000000000007");
+    expect(view.drafts[0]!.pronoun_flags).toEqual(['"she" near Raziel (they/them)']);
+    expect(view.drafts[1]!.id).toBe("88888888-aaaa-4aaa-8aaa-000000000024");
+    expect(view.stats.pronoun_flagged).toBe(1);
+    expect(view.stats_line).toContain("1 flagged for pronouns (listed first)");
+  });
+
   it("readDraft carries the flags (empty array when clean)", async () => {
     const { env } = mk();
     await noteInsert(env.DB, { note_id: "33333333-cccc-4ccc-8ccc-000000000003", agent_id: "cypher", content: "[discord:pulse] Drevan went quiet and she did not answer.", created_at: "2026-10-27T03:00:00Z" }).run();

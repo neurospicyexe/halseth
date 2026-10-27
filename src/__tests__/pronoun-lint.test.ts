@@ -39,6 +39,11 @@ describe("lintPronouns: the shapes that reached prod", () => {
     expect(words("Blue called from the truck and she sounded wiped.")).toEqual(["Blue:she"]);
   });
 
+  it("a capitalised sentence starter is not a person", () => {
+    expect(words("Last night Raziel said she was tired.")).toEqual(["Raziel:she"]);
+    expect(words("Honestly, Drevan held her steady.")).toEqual(["Drevan:her"]);
+  });
+
   it("flags a pronoun wrong for BOTH names", () => {
     expect(words("Raziel and Drevan sat up late and she laughed.")).toEqual(["Raziel/Drevan:she"]);
   });

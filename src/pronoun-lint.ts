@@ -72,6 +72,11 @@ const NOT_A_PERSON = new Set([
   "Even", "Maybe", "Today", "Tonight", "Tomorrow", "Yesterday", "Now", "Later", "Earlier", "Some", "All", "Every",
   "Each", "One", "Both", "Most", "Much", "More", "Less", "Nothing", "Something", "Everything", "Anyone", "Someone",
   "Everyone", "Nobody", "Again", "Okay", "OK", "Oh", "Hey", "Well", "Like", "Love", "Good", "Morning", "Night",
+  // Common sentence starters: "Last night Raziel said she..." must not read "Last" as a person.
+  "Last", "First", "Next", "Sometimes", "Already", "Instead", "During", "Without", "With", "For", "From", "In",
+  "On", "At", "Of", "To", "By", "As", "Over", "Under", "Through", "Back", "Late", "Early", "Right", "Honestly",
+  "Really", "Probably", "Actually", "Somehow", "Finally", "Eventually", "Apparently", "Clearly", "Lately",
+  "Afternoon", "Evening", "Tonight's", "Today's", "Yeah", "Hm", "Hmm", "Ah", "Wait", "Thank", "Thanks", "Sorry",
   "Discord", "Halseth", "Hearth", "Claude", "Hermes", "Telegram", "Obsidian", "YouTube", "DM", "AI",
   "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
   "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",

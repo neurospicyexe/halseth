@@ -70,7 +70,7 @@ export const TRAY_FOOTER =
   'then "keep draft <id>" (or "keep draft <id>: <your words>") / "drop draft <id>"; ' +
   `several at once: "drop drafts <id>, <id>, <id>" / "keep drafts <id>, <id>" (up to ${TRAY_BATCH_MAX}); ` +
   // B4 (2026-10-27): the lint flags, the owner decides. Kept text is read back as memory.
-  'pronoun_flags on a draft = a pronoun that may misgender someone (Raziel they/them; Drevan, Cypher, Blue he/him; ' +
+  'pronoun_flags on a draft = a pronoun that may misgender someone (Raziel they/them; Crash, Drevan, Cypher, Blue he/him; ' +
   'Gaia she/her). Read it: if it means someone else, keep it; if not, "keep draft <id>: <your words>" with it fixed, or drop it';
 
 export async function execTrayRead(ctx: ExecutorContext): Promise<ExecutorResult> {
