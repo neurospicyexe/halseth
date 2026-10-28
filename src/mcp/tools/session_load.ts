@@ -6,6 +6,7 @@ import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
 import { claimNotesFor } from "../../db/inter_companion_note_reads.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
+import { edgeForResumedFrom, insertEdgeStatements } from "../../graph/live.js";
 
 const COMPANION_IDENTITY = {
   cypher: {
@@ -170,6 +171,12 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     stmts.push(env.DB.prepare(
       "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
     ).bind(input.prior_handover_id));
+    // Same 'resumed_from' edge halseth_session_open writes (2026-10-27 graph audit: that tool was
+    // the edge's ONLY writer and has opened 1 session ever, so the live lane sat at 0 rows while
+    // this path, which marks the same packet returned, wrote nothing). Same batch, same covenant.
+    stmts.push(...insertEdgeStatements(env.DB, [edgeForResumedFrom({
+      sessionId, priorHandoverId: input.prior_handover_id, writer: input.companion_id ?? null, createdAt: now,
+    })]));
   }
   if (stmts.length > 0) {
     await env.DB.batch(stmts);
@@ -327,7 +334,11 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     sessionStatements.push(
       env.DB.prepare(
         "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
-      ).bind(input.prior_handover_id)
+      ).bind(input.prior_handover_id),
+      // See loadOrientData: all three session-open paths write the edge or neither does.
+      ...insertEdgeStatements(env.DB, [edgeForResumedFrom({
+        sessionId, priorHandoverId: input.prior_handover_id, writer: input.companion_id ?? null, createdAt: now,
+      })]),
     );
   }
 
