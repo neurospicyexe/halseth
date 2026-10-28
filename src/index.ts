@@ -45,6 +45,7 @@ import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
 import { postSomaBackfillEvents, getSomaEvents } from "./handlers/soma-events.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, getMindNotesSearch, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postMindPin, getMindPins } from "./handlers/pins.js";
+import { getMindMap } from "./handlers/map.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "./handlers/director.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
@@ -339,6 +340,7 @@ const router = new Router()
   .on("POST", "/mind/notes/demote",            (request, env) => postMindNotesDemote(request, env))
   .on("POST", "/mind/pin",                     (request, env) => postMindPin(request, env))
   .on("GET",  "/mind/pins/:companion_id",       (request, env, params) => getMindPins(request, env, params ?? {}))
+  .on("GET",  "/mind/map",                     (request, env) => getMindMap(request, env))
   .on("GET",  "/mind/notes/recent",            (request, env) => getMindNotesRecent(request, env))
   // Meaning-search over a companion's own notes. The AUTOMATIC path (per-message bot recall);
   // the Librarian's notes_recall_meaning stays the companion-initiated, loop-guarded one.
