@@ -23,6 +23,7 @@ import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../../graph/live.js";
+import { carryPinStatement } from "../../webmind/pins.js";
 import { noteInsert, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE, RetiredJournalSourceError } from "../../webmind/tray-insert.js";
 
 // Strip a leading note-command preamble ("Write a companion note for gaia:", "for drevan:",
@@ -731,6 +732,8 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   ];
   const supersededIds: string[] = [];
   if (supersedes) {
+    // The pin travels with the belief (mig 0148): batched before the UPDATE that retires the old row.
+    stmts.push(carryPinStatement(ctx.env.DB, { oldId: supersedes, newId, owner: ctx.req.companion_id }));
     // `superseded_by IS NULL` guard keeps this from clobbering an already-superseded row.
     stmts.push(
       ctx.env.DB.prepare(

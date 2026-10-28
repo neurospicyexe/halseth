@@ -11,6 +11,7 @@ import type { WmAgentId } from "../webmind/types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../mcp/embed.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../graph/live.js";
+import { carryPinStatement } from "../webmind/pins.js";
 import { effectiveHeatSql } from "../webmind/heat.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
@@ -131,6 +132,8 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   // cannot clobber an already-superseded row.
   const supersededIds: string[] = [];
   if (supersedesId) {
+    // The pin travels with the belief (mig 0148): batched before the UPDATE that retires the old row.
+    stmts.push(carryPinStatement(env.DB, { oldId: supersedesId, newId, owner: companion_id }));
     stmts.push(
       env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
@@ -277,9 +280,13 @@ export async function supersedeConclusionById(
     return json({ error: "superseded_by (id of the newer conclusion) is required" }, 400);
   }
 
-  const result = await env.DB.prepare(
-    "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
-  ).bind(superseded_by.trim(), id, companion_id).run();
+  // The pin travels with the belief (mig 0148), read from the old row while it is still live.
+  const [, result] = await env.DB.batch([
+    carryPinStatement(env.DB, { oldId: id, newId: superseded_by.trim(), owner: companion_id }),
+    env.DB.prepare(
+      "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
+    ).bind(superseded_by.trim(), id, companion_id),
+  ]);
 
-  return json({ ok: (result.meta.changes ?? 0) > 0 });
+  return json({ ok: (result?.meta.changes ?? 0) > 0 });
 }

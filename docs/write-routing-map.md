@@ -71,6 +71,9 @@ the traps below exist because names lie.
 | `project_close` | execProjectClose | projects.ts | companion_projects | done or released -- companion-chosen ending, never a sweep |
 | `project_pause` | execProjectPause | projects.ts | companion_projects | |
 | `project_resume` | execProjectResume | projects.ts | companion_projects | respects the open cap |
+| `memory_pin` | execMemoryPin | pinning.ts | companion_conclusions / wm_continuity_notes (pinned_at, pinned_by) | mig 0148; owner-only, kept + live rows only, refused at PIN_CAP (5 conclusions / 2 notes) with the current pins listed; never writes heat. Raziel's door: POST /mind/pin (pinned_by 'raziel') |
+| `memory_unpin` | execMemoryUnpin | pinning.ts | companion_conclusions / wm_continuity_notes (pinned_at, pinned_by -> NULL) | owner-only |
+| `memory_pins_read` | execMemoryPinsRead | pinning.ts | READ | both kinds with caps; GET /mind/pins/:companion_id is the HTTP twin |
 | `memory_release` | execMemoryRelease | forgetting.ts | memory_releases + companion_journal/wm_continuity_notes/companion_conclusions | C7 (mig 0123); archive-never-delete (sets archived=1), reason REQUIRED, owner-only; batch logs the release |
 | `memory_release_undo` | execMemoryReleaseUndo | forgetting.ts | memory_releases + the released row's table | 30d window; sets restored_at + archived=0 |
 | `memory_releases_read` | execMemoryReleasesRead | forgetting.ts | READ | last 20, with days_left on live releases |

@@ -136,6 +136,12 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "memory_unpin",
+    regex: /^(?:please\s+)?unpin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
+    note: "Pins (mig 0148): anchored so 'unpin the note about X' can never be read as a note write." },
+  { pattern_key: "memory_pin",
+    regex: /^(?:please\s+)?pin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
+    note: "Pins (mig 0148): anchored so 'pin the note about X' can never fall to the earlier 'note about' trigger." },
   { pattern_key: "creature_interact",
     regex: /^(?:(?:please|go|let\s+me|i(?:'ll|\s+will|\s+want\s+to)?)\s+)?(?:feed|play\s+with|pet|give|gift|bring|talk\s+to|speak\s+to|tend(?:\s+to)?|visit|sit\s+with|note\s+to|say\s+.{1,200}?\s+to)\s+sol\b|^(?:give|gift|bring)\b.{0,200}?\bto\s+sol\b/i,
     note: "Tending Sol by plain verb: 'give Sol a shiny word' (the skill's own example) and 'pet'/'visit'/'note to Sol' missed the trigger sweep entirely, and 'sit with Sol' was stolen by note_sit (2026-09-28)." },
@@ -388,6 +394,7 @@ import {
 import {
   execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead, execBudgetRead,
 } from "./executors/forgetting.js";
+import { execMemoryPin, execMemoryUnpin, execMemoryPinsRead } from "./executors/pinning.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
@@ -470,6 +477,10 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 
   // Chosen forgetting (consequence layer C7, mig 0123). Archive-never-delete, 30d reversible,
   // reason required; canon/kernel structurally unreachable.
+  // Pins (mig 0148): an orient slot + immunity from cap/compression/demote; never heat.
+  memory_pin: execMemoryPin,
+  memory_unpin: execMemoryUnpin,
+  memory_pins_read: execMemoryPinsRead,
   memory_release: execMemoryRelease,
   memory_release_undo: execMemoryReleaseUndo,
   memory_releases_read: execMemoryReleasesRead,

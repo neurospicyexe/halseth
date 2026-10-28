@@ -15,6 +15,7 @@ import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql, SURFACE_BUMP } from "./heat.js";
+import { PIN_CAP } from "./pins.js";
 import { effectiveChargeSql } from "../librarian/backends/halseth.js";
 import { neighborhood } from "../graph/traverse.js";
 import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
@@ -219,13 +220,15 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // 3-pool surfacing: Core (rows 0-2), Novelty (row 5, skipping rows 3-4 intentionally), Edge (deep history random)
     // Core + Novelty rank by effective heat (0074): accessed-and-warm rows outrank
     // merely-recent ones; the 4h coherence bonus keeps just-written notes on top.
+    // Pins (mig 0148, webmind/pins.ts) lead Core, oldest pin first, then heat fills the rest; novelty and
+    // edge skip pinned rows so a pin never takes two of the five slots.
     // review_state = 'kept' on all three pools (mig 0132): the judge's promotion lands at salience
     // 'high' by design, which is exactly the tier these pools draw from -- an unreviewed clerk note
     // would otherwise open the next boot in the companion's own voice.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
-       ORDER BY ${effectiveHeatSql()} DESC LIMIT 3`
+       WHERE agent_id = ? AND (salience = 'high' OR pinned_at IS NOT NULL) AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
+       ORDER BY (pinned_at IS NULL), pinned_at ASC, ${effectiveHeatSql()} DESC LIMIT 3`
     ).bind(agentId).all<WmContinuityNote>(),
     // Novelty draws from the COLD end, never-accessed first (2026-07-26). It used to be
     // `LIMIT 1 OFFSET 5` over the same effective-heat ordering as Core -- i.e. the
@@ -237,12 +240,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // small surface bump rotates each out again after it is shown.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL}
        ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL}
          AND created_at < datetime('now', '-30 days')
        ORDER BY RANDOM() LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
@@ -544,6 +547,20 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   const CONCLUSION_CAP = 6;
   const seenIds = new Set<string>();
   const active_conclusions: WmConclusion[] = [];
+  // PINS FIRST (mig 0148, webmind/pins.ts): oldest pin first, then the type-spread + top-up below fill
+  // what is left of the cap. PIN_CAP.conclusion (5) < CONCLUSION_CAP, so one fresh belief always shows.
+  // Zero pins -> this adds nothing and the list is exactly what it was.
+  const pinnedConclusions = await env.DB.prepare(
+    `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
+            created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+       FROM companion_conclusions
+      WHERE companion_id = ? AND pinned_at IS NOT NULL AND superseded_by IS NULL AND archived = 0
+      ORDER BY pinned_at ASC LIMIT ?`
+  ).bind(agentId, PIN_CAP.conclusion).all<WmConclusion>().then((r) => r.results ?? []).catch(() => [] as WmConclusion[]);
+  for (const row of pinnedConclusions) {
+    seenIds.add(row.id);
+    active_conclusions.push(row);
+  }
   for (const result of typeResultSets) {
     const reranked = rerankConclusions(result?.results ?? [], typeDegrees, PER_TYPE_LIMIT);
     for (const { effective_heat: _effective_heat, ...row } of reranked) {

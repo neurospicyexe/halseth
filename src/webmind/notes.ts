@@ -67,7 +67,7 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
   // outside the cap entirely: review is their bound, not the cap. Were drafts left in the protected
   // top-100 heat set, 100 hot pulse drafts would push kept notes out of it and get THEM deleted.
   const evictableRow = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND ${KEPT_SQL}`
+    `SELECT COUNT(*) AS c FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND pinned_at IS NULL AND ${KEPT_SQL}`
   ).bind(input.agent_id).first<{ c: number }>();
   const overCap = (evictableRow?.c ?? 0) >= NOTE_CAP;
 
@@ -102,9 +102,9 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     // just-inserted row is excluded by id so the cap can never evict what it just wrote.
     const overflow = await env.DB.prepare(`
       SELECT note_id, content, created_at FROM wm_continuity_notes
-      WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND ${KEPT_SQL} AND note_id != ? AND note_id NOT IN (
+      WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND pinned_at IS NULL AND ${KEPT_SQL} AND note_id != ? AND note_id NOT IN (
         SELECT note_id FROM wm_continuity_notes
-        WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND ${KEPT_SQL} ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
+        WHERE agent_id = ? AND archived = 0 AND salience != 'high' AND pinned_at IS NULL AND ${KEPT_SQL} ORDER BY ${effectiveHeatSql()} DESC LIMIT 100
       )
       ORDER BY created_at ASC
     `).bind(input.agent_id, id, input.agent_id)
@@ -217,7 +217,7 @@ export async function demoteNotes(
   const before = opts.before ?? new Date().toISOString();
   const r = await env.DB.prepare(
     `UPDATE wm_continuity_notes SET salience = 'normal'
-     WHERE agent_id = ? AND note_type = ? AND salience = 'high' AND archived = 0 AND created_at <= ?`,
+     WHERE agent_id = ? AND note_type = ? AND salience = 'high' AND archived = 0 AND pinned_at IS NULL AND created_at <= ?`,
   ).bind(opts.agent_id, opts.note_type, before).run();
   return r.meta.changes ?? 0;
 }
@@ -252,7 +252,7 @@ export async function getEligibleNotesForCompression(
   // recalled -- a draft digested here would launder into memory, and a dropped row archived here would
   // leave the keep rate. Drafts and dropped rows keep their place; the count and the pick agree.
   const countRow = await env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL}`
+    `SELECT COUNT(*) as cnt FROM wm_continuity_notes WHERE agent_id = ? AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL}`
   ).bind(agentId).first<{ cnt: number }>();
   const activeCount = countRow?.cnt ?? 0;
 
@@ -261,10 +261,10 @@ export async function getEligibleNotesForCompression(
   const rows = await env.DB.prepare(
     activeCount > COMPRESS_COUNT_CAP
       ? `SELECT note_id, content, created_at FROM wm_continuity_notes
-         WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL}
+         WHERE agent_id = ? AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL}
          ORDER BY created_at ASC LIMIT ?`
       : `SELECT note_id, content, created_at FROM wm_continuity_notes
-         WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL} AND created_at < ?
+         WHERE agent_id = ? AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL} AND created_at < ?
          ORDER BY created_at ASC LIMIT ?`
   ).bind(
     agentId,
@@ -299,9 +299,10 @@ export async function archiveNotes(
     ),
     // Owner-scoped and kept-only (tray pass 2): the ids come back from an external summariser, so the
     // UPDATE re-asserts what getEligibleNotesForCompression promised rather than trusting the list.
+    // pinned_at IS NULL (mig 0148): a note pinned between the pick and this write stays live.
     env.DB.prepare(
       `UPDATE wm_continuity_notes SET archived = 1
-        WHERE agent_id = ? AND ${KEPT_SQL} AND note_id IN (${noteIds.map(() => '?').join(', ')})`
+        WHERE agent_id = ? AND pinned_at IS NULL AND ${KEPT_SQL} AND note_id IN (${noteIds.map(() => '?').join(', ')})`
     ).bind(agentId, ...noteIds),
   ];
 
@@ -410,6 +411,7 @@ function sourceWeight(kind: RecalledMemory["kind"], source: string | null): numb
 }
 
 const RECALL_SCORE_FLOOR = 0.35;  // don't warm noise; leave until A+B have data (fix set D)
+const PIN_RECALL_BOOST = 1.25;   // mig 0148 pins: rank nudge above the floor, see the notes hydration
 
 export async function recallNotesByMeaning(
   env: Env,
@@ -477,14 +479,16 @@ export async function recallNotesByMeaning(
       // review_state = 'kept' (mig 0132): a draft is embedded too (D1 is truth, the index is
       // rebuildable), so THIS is also where the tray holds -- an unreviewed clerk note has a vector
       // and must still never come back as the companion's own memory.
-      `SELECT note_id, content, created_at, salience, thread_key, source FROM wm_continuity_notes
+      `SELECT note_id, content, created_at, salience, thread_key, source, pinned_at FROM wm_continuity_notes
        WHERE agent_id = ? AND archived = 0 AND ${KEPT_SQL} AND note_id IN (${placeholders})`
     ).bind(agentId, ...noteCands.map(c => c.rowId))
-      .all<RecalledNote & { source: string | null }>();
+      .all<RecalledNote & { source: string | null; pinned_at: string | null }>();
     const scoreById = new Map(noteCands.map(c => [c.rowId, c.score]));
     for (const r of rows.results ?? []) {
       const score = scoreById.get(r.note_id) ?? 0;
-      const weight = sourceClass === "life" ? sourceWeight("note", r.source) : 1;
+      // A pin (mig 0148) ranks higher among candidates that ALREADY cleared the floor above; it never
+      // lifts an irrelevant note into recall. Rank only: `score` stays the honest vector score.
+      const weight = (sourceClass === "life" ? sourceWeight("note", r.source) : 1) * (r.pinned_at ? PIN_RECALL_BOOST : 1);
       entries.push({
         note_id: r.note_id, content: r.content, created_at: r.created_at,
         salience: r.salience, thread_key: r.thread_key,

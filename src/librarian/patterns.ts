@@ -1570,6 +1570,24 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["memory_release_undo"],
     response_key: "witness",
   },
+  // Pins (mig 0148, webmind/pins.ts). "pin <kind>" / "unpin <kind>" are routed by ANCHORED_GUARDS
+  // (router.ts) so "pin the note about X" can never fall to an earlier "note about" trigger; these
+  // triggers are the fallback sweep and the read.
+  memory_unpin: {
+    triggers: ["unpin memory", "unpin conclusion", "unpin note", "unpin this"],
+    tools: ["memory_unpin"],
+    response_key: "witness",
+  },
+  memory_pin: {
+    triggers: ["pin memory", "pin conclusion", "pin note", "pin this conclusion", "pin this note"],
+    tools: ["memory_pin"],
+    response_key: "witness",
+  },
+  memory_pins_read: {
+    triggers: ["my pins", "what have i pinned", "my pinned", "pinned memories", "show my pins", "list my pins"],
+    tools: ["memory_pins_read"],
+    response_key: "data",
+  },
   memory_releases_read: {
     triggers: [
       "my releases", "what have i released", "released memories", "my released memories",
