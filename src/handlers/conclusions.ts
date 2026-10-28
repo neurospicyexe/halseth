@@ -235,7 +235,8 @@ export async function getConclusions(
 // with effective heat spanning 77x -- so a heat-ranked read of 10 would have handed back the same
 // frozen foreground orient already shows. A deliberate pull should reach further than the boot
 // block, and `total` makes the rest countable instead of invisible.
-  const COLS = "id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged";
+  // pinned_at/pinned_by (mig 0148): Hearth shows and toggles the pin from this list (map M3).
+  const COLS = "id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged, pinned_at, pinned_by";
   const query = includeSuperseded
     ? `SELECT ${COLS} FROM companion_conclusions WHERE companion_id = ? ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`
     : `SELECT ${COLS} FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`;
