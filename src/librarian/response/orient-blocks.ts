@@ -735,7 +735,7 @@ interface NeighborhoodGroup {
  * The local structural neighborhood around whatever this boot already surfaced -- rendered, not
  * searched (hard law 4, graph-memory spec: "Orient is a contract, not search. It gains rendered
  * neighborhoods; it does not gain retrieval logic"). `neighborhoods` is MindState's
- * `graph.neighborhoods` (contract 0.11.0) -- already the output of a bounded, heat-gated D1 traverse
+ * `graph.neighborhoods` (contract 0.11.0) -- already the output of a bounded (not heat-gated) D1 traverse
  * (src/graph/traverse.ts::neighborhood); this function does no I/O and no ranking, only grouping and
  * truncation for display.
  *

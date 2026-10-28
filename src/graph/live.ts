@@ -40,11 +40,12 @@
 //         ever writes supersede_candidate_id/score, a gate PROPOSAL (mig 0112) -- the older belief
 //         stays live, no superseded_by UPDATE ever runs there. Wiring a live edge for that site would
 //         fabricate a confirmed 'supersedes' edge for a belief no mind has actually retired.
-//   3. Session open with prior_handover_id -- src/mcp/tools/session.ts (halseth_session_open).
+//   3. Session open with prior_handover_id -- src/mcp/tools/session.ts (halseth_session_open), and
+//      src/mcp/tools/session_load.ts (loadOrientData, loadSessionData; added 2026-10-27).
 //      NEW edge_type 'resumed_from', provenance 'live' (see the lane note above): rebuild.ts's own
 //      section (g) documents that there is no persisted column recording which session consumed a
 //      handover packet -- the opening session's id is never written anywhere else. This call site is
-//      the ONLY writer of this relationship, so it cannot use a rebuild-owned lane.
+//      the only kind of writer of this relationship, so it cannot use a rebuild-owned lane.
 //      -> edgeForResumedFrom.
 //   4. companion_soma_events authored appends (graph memory Phase 2, tranche 2, 2026-09-14) --
 //        src/librarian/backends/halseth.ts (sessionClose's float write; updateCompanionState, which

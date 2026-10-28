@@ -115,17 +115,19 @@ export async function runGraphRebuildTick(env: Env, opts: { force?: boolean } = 
   let sources: SourceCount[];
   try {
     sources = await rebuildGraph(env);
+    // Stamp only now that the run has actually completed (mirrors the salience prune writing its
+    // stamp only after its scan/archive finished, never before -- a thrown error above leaves this
+    // unreached, so a failed attempt is retried next minute rather than gated out for 24h).
+    // INSIDE the lease (2026-10-27 graph audit): stamping after the release left a window where a
+    // caller that read the stale gate during this run (CF cron + VPS kick both fire every minute)
+    // takes the freed lease and runs a second full DELETE + rebuild.
+    await stampGraphRebuildGate(env);
   } finally {
     await releaseRebuildLease(env);
   }
   const ms = Date.now() - start;
 
   console.log("[graph-rebuild-tick] rebuilt", { ms, sources });
-
-  // Stamp only now that the run has actually completed (mirrors the salience prune writing its
-  // stamp only after its scan/archive finished, never before -- a thrown error above leaves this
-  // unreached, so a failed attempt is retried next minute rather than gated out for 24h).
-  await stampGraphRebuildGate(env);
 
   return { ran: true, sources, ms };
 }

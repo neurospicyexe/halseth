@@ -3,6 +3,8 @@
 // Graph memory Phase 1, second deliverable (docs/private/graph-memory-spec-2026-08-28.md):
 // "a bounded traversal (1-2 hops, typed, heat-gated) hanging off existing vector search as
 // seeder. Vector search unchanged; it becomes the entry point, not the whole answer."
+// As built (checked 2026-10-27): typed and bounded, NOT heat-gated -- `withHeat` only attaches
+// node_heat for callers to rank by; nothing here drops a low-heat neighbour.
 //
 // `neighborhood()` takes the rows a vector/semantic search already surfaced (the seeds) and
 // walks graph_edges (mig 0127) outward 1-2 hops, BOTH directions, to find what's structurally

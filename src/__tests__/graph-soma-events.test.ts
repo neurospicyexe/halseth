@@ -10,6 +10,7 @@ import {
   buildSomaEventEdges,
   rebuildGraph,
   ALONGSIDE_LANES,
+  JOURNAL_CLOSE_GRACE_MS,
   type SomaEventGraphRow,
   type CommonsPostGraphRow,
   type AutonomyReflectionGraphRow,
@@ -169,6 +170,21 @@ describe("buildSomaEventEdges -- alongside", () => {
     expect(edges.map((e) => e.dst_id)).toEqual(["same"]);
     expect(edges[0]!.provenance).toBe("mechanical:session");
     expect(edges[0]!.dst_table).toBe("companion_journal");
+  });
+
+  it("the close's own witness note, written ~2s AFTER its float move, is alongside it (prod: 0 of 78 before)", () => {
+    const twoSecLater = new Date(Date.parse(AT) + 2_000).toISOString();
+    const edgeOfGrace = new Date(Date.parse(AT) + JOURNAL_CLOSE_GRACE_MS).toISOString();
+    const pastGrace = new Date(Date.parse(AT) + JOURNAL_CLOSE_GRACE_MS + 1).toISOString();
+    const rows = [
+      journal("witness", { created_at: twoSecLater }),
+      journal("edge", { created_at: edgeOfGrace }),
+      // A second close of the same session hours later is a different act, not this move's cause.
+      journal("next-day", { created_at: pastGrace }),
+    ];
+    const edges = typesOf(buildSomaEventEdges([ev()], new Set(["s1"]), rows, []), "alongside");
+    expect(edges.map((e) => e.dst_id).sort()).toEqual(["edge", "witness"]);
+    expect(edges.every((e) => e.provenance === "mechanical:session")).toBe(true);
   });
 
   it("commons posts by the companion or raziel inside the window -> mechanical:window", () => {

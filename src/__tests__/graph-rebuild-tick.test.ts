@@ -188,6 +188,15 @@ describe("runGraphRebuildTick -- single-flight lease (overlapping runs shredded 
     await expect(runGraphRebuildTick(env)).rejects.toThrow("boom");
     expect(sqls.filter((q) => q.startsWith("UPDATE")).length).toBe(2); // claim + release
   });
+
+  it("stamps the gate BEFORE releasing the lease -- a caller that read the stale gate mid-run cannot rerun", async () => {
+    const { env, sqls } = leaseEnv(false);
+    await runGraphRebuildTick(env);
+    const stampAt = sqls.findIndex((q) => q.startsWith("INSERT INTO companion_settings"));
+    const releaseAt = sqls.findIndex((q) => q.startsWith("UPDATE") && !q.includes("value < ?"));
+    expect(stampAt).toBeGreaterThanOrEqual(0);
+    expect(releaseAt).toBeGreaterThan(stampAt);
+  });
 });
 
 describe("runGraphRebuildTick -- gate identity (never shares an anchor with another job)", () => {

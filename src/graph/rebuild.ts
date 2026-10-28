@@ -433,7 +433,8 @@ export function buildMentionsEdges(
 //                 was written at or before it; 'mechanical:window' means it landed inside the 60
 //                 minutes ending at the event (both ends inclusive). The lanes:
 //
-//                   companion_journal    same session                       -> mechanical:session
+//                   companion_journal    same session, at or before the move or -> mechanical:session
+//                                        in its own close fan-out (JOURNAL_CLOSE_GRACE_MS)
 //                   commons_posts        by this companion or raziel, window -> mechanical:window
 //                   autonomy_reflections by this companion, window          -> mechanical:window
 //                   forage_finds         CONSUMED inside the window, owned by this companion or
@@ -468,11 +469,19 @@ export function buildMentionsEdges(
 // the same byTimeThenId order, and the window lanes are entered by a lower-bound binary search on
 // `ms >= windowLo` then walked forward until `ms > at`. The two same-session lanes (journal, and
 // the delta rows that share the event's session) have no lower bound, so they are indexed by
-// session_id in a Map built once and filtered `<= at`. Candidate set, newest-first sort, tie on id,
+// session_id in a Map built once and filtered `<= at` (journal: `<= at + JOURNAL_CLOSE_GRACE_MS`). Candidate set, newest-first sort, tie on id,
 // and the cap of 6 are unchanged -- the index changes cost, never output (tests pin this with a
 // shuffled-input byte-identity check).
 const ALONGSIDE_WINDOW_MS = 60 * 60 * 1000;
 const ALONGSIDE_CAP = 6;
+// JOURNAL CLOSE GRACE (2026-10-27 graph audit). "Written at or before the move" was the plan's rule,
+// but a session close writes its floats FIRST (backends/halseth.ts sessionClose) and its witness
+// note in the fan-out AFTER (executors/session.ts, `now` taken later), ~2s apart. Measured on prod:
+// 78 authored_close events, 78 same-session same-companion journal rows, 0 passing `<=` -- the lane
+// had never produced an edge. Two minutes covers the close's own fan-out and nothing else: the only
+// rows further out (6, Drevan, 8h and 23h later) are a SECOND close of the same session, a different
+// act that must not read as what moved this number.
+export const JOURNAL_CLOSE_GRACE_MS = 2 * 60 * 1000;
 
 export interface SomaEventGraphRow {
   id: string;
@@ -696,7 +705,7 @@ export function buildSomaEventEdges(
     if (e.session_id) {
       for (const j of indexJournal.get(e.session_id) ?? []) {
         if (j.row.agent !== e.companion_id) continue;
-        if (j.ms > at) continue;
+        if (j.ms > at + JOURNAL_CLOSE_GRACE_MS) continue;
         alongside.push({ table: "companion_journal", id: j.row.id, created_at: j.row.created_at, ms: j.ms, provenance: "mechanical:session" });
       }
     }
