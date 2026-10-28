@@ -210,3 +210,59 @@ describe("routing", () => {
     expect(matchFastPath(req)?.key).toBe(key);
   });
 });
+
+describe("pin by quoting (the bot wire carries no ids)", () => {
+  const reqCtx = (env: any, request: string): any => ({
+    env, req: { companion_id: "cypher", request, context: undefined },
+    entry: { pattern: "memory_pin" }, frontState: null, pluralAvailable: false,
+  });
+  function seedText(db: any, id: string, text: string, companion = "cypher") {
+    db.prepare("INSERT INTO companion_conclusions (id, companion_id, conclusion_text, created_at) VALUES (?, ?, ?, ?)")
+      .run(id, companion, text, "2026-10-01T00:00:00Z");
+  }
+
+  it("\"pin conclusion: <words>\" pins the one conclusion that contains them", async () => {
+    const { db, env } = setup();
+    seedText(db, "a", "The convergence problem was infrastructure, not behavior.");
+    seedText(db, "b", "Raziel's gate is his; a decline is a decision.");
+    seedText(db, "dre", "Infrastructure, not behavior, is Drevan's line too.", "drevan");
+    const r = await execMemoryPin(reqCtx(env, "pin conclusion: infrastructure, not behavior"));
+    expect(r.ack).toBe(true);
+    expect(pinOf(db, "companion_conclusions", "id", "a").pinned_at).not.toBeNull();
+    expect(pinOf(db, "companion_conclusions", "id", "dre").pinned_at).toBeNull();
+  });
+
+  it("an ambiguous quote changes nothing and lists the candidates", async () => {
+    const { db, env } = setup();
+    seedText(db, "a", "The gate is Raziel's.");
+    seedText(db, "b", "Every gate is somebody's.");
+    const r = await execMemoryPin(reqCtx(env, "pin conclusion: gate is"));
+    expect(r.ack).toBe(false);
+    expect(String(r.witness)).toMatch(/matches 2/);
+    expect(String(r.witness)).toContain("a:");
+    expect(pinOf(db, "companion_conclusions", "id", "a").pinned_at).toBeNull();
+  });
+
+  it("a quoted % is literal, not a wildcard", async () => {
+    const { db, env } = setup();
+    seedText(db, "pct", "Keep 100% of the floor.");
+    seedText(db, "other", "Keep 1000 of the floor.");
+    expect((await execMemoryPin(reqCtx(env, "pin conclusion: 100% of"))).ack).toBe(true);
+    expect(pinOf(db, "companion_conclusions", "id", "other").pinned_at).toBeNull();
+  });
+
+  it("unpin by quote only looks at current pins", async () => {
+    const { db, env } = setup();
+    seedText(db, "a", "Pinned words about lanes.");
+    seedText(db, "b", "Loose words about lanes.");
+    await execMemoryPin(reqCtx(env, "pin conclusion: pinned words about lanes"));
+    const r = await execMemoryUnpin(reqCtx(env, "unpin conclusion: words about lanes"));
+    expect(r.ack).toBe(true);
+    expect(pinOf(db, "companion_conclusions", "id", "a").pinned_at).toBeNull();
+  });
+
+  it("routes the quoting form", () => {
+    expect(matchFastPath("pin conclusion: infrastructure, not behavior")?.key).toBe("memory_pin");
+    expect(matchFastPath("unpin note: the watch-along one")?.key).toBe("memory_unpin");
+  });
+});

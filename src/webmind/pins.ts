@@ -92,3 +92,21 @@ export function carryPinStatement(db: D1Database, args: { oldId: string; newId: 
                        AND o.superseded_by IS NULL AND o.archived = 0)`,
   ).bind(args.oldId, args.owner, args.oldId, args.owner, args.newId, args.owner, args.oldId, args.owner);
 }
+
+/** Live rows of the owner's whose text contains `quote` (case-insensitive, literal), newest first, at
+ *  most 6. `pinnedOnly` narrows to current pins (for unpin). Lets a companion pin by quoting a few
+ *  words: the bot wire never carries conclusion ids, so "pin conclusion: <words>" is the only form a
+ *  Discord turn can actually use. */
+export async function findByQuote(env: Env, args: { kind: PinKind; owner: string; quote: string; pinnedOnly?: boolean }): Promise<Array<{ id: string; text: string }>> {
+  const k = KIND[args.kind];
+  // `!` is the LIKE escape: a quoted % or _ matches itself, not "anything".
+  const needle = args.quote.trim().toLowerCase().replace(/[!%_]/g, (c) => "!" + c);
+  if (needle.length < 4) return [];
+  const r = await env.DB.prepare(
+    `SELECT ${k.idCol} AS id, ${k.text} AS text FROM ${k.table}
+      WHERE ${k.ownerCol} = ? AND ${k.live} ${args.pinnedOnly ? "AND pinned_at IS NOT NULL" : ""}
+        AND lower(${k.text}) LIKE ? ESCAPE '!'
+      ORDER BY created_at DESC LIMIT 6`,
+  ).bind(args.owner, `%${needle}%`).all<{ id: string; text: string }>();
+  return r.results ?? [];
+}
