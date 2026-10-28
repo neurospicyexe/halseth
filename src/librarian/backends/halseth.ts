@@ -898,6 +898,7 @@ export async function companionJournalAdd(
   note_text: string,
   tags?: string,
   source?: string,
+  sessionId?: string | null,
 ): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; match_id?: string; score: number } }> {
   // Ledger lane (mig 0134): a retired clerk source is refused before the novelty gate spends anything.
   assertJournalSourceOpen(source);
@@ -932,7 +933,7 @@ export async function companionJournalAdd(
   // Imp tray (mig 0132): born `draft` when the source is the companion's own speech or a clerk's
   // note in its voice; recall serves `kept` only. journalInsert() applies the one birth rule.
   await journalInsert(env.DB, {
-    id, created_at: now, agent, note_text, tags: resolvedTags, session_id: null,
+    id, created_at: now, agent, note_text, tags: resolvedTags, session_id: sessionId ?? null,
     source: source ?? null, topic_tags: topicTags,
   }).run();
 

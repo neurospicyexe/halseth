@@ -68,6 +68,20 @@ export function claimableNlSource(raw: unknown, companionId?: string): string | 
   return undefined;
 }
 
+/**
+ * The session a journal or delta write belongs to (map M5 / STATUS B61 D4, 2026-10-28). Every librarian
+ * journal write hardcoded session_id NULL and deltas stamped one only when the caller passed it, so 98%
+ * of journal rows and every delta since 05-31 sat outside any session, and the graph could not connect
+ * "what I wrote" to "the conversation it was in". Rule: an explicit id wins; otherwise the companion's
+ * OPEN session on this surface (the same lookup the float-update path uses); otherwise null, never a
+ * guess. Best-effort: a lookup failure leaves the write unstamped, never failed.
+ */
+async function sessionForWrite(ctx: ExecutorContext, explicit?: string | null): Promise<string | null> {
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  const open = await findOpenSession(ctx.env, ctx.req.companion_id, ctx.req.surface).catch(() => null);
+  return open?.id ?? null;
+}
+
 export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
   const reqText = ctx.req.request;
   const toMatch = reqText.match(/(?:to|for)\s+(drevan|cypher|gaia)/i);
@@ -154,7 +168,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   }
   // Unaddressed, no broadcast intent — a self-reflection — companion_journal (visible in Hearth).
   try {
-    const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
+    const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source, await sessionForWrite(ctx));
     return { ack: true, id: r.id, routed_to: "journal" };
   } catch (err) {
     // Belt and braces: the door throws for a retired source; answer it as a refusal, never a 500.
@@ -248,7 +262,7 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   // never having supplied one -- an empty string is not a value.
   if (valence === "") valence = undefined;
   const agent = p?.agent ?? ctx.req.companion_id;
-  const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: p?.session_id });
+  const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: await sessionForWrite(ctx, p?.session_id) ?? undefined });
   return { ack: true, id: r.id };
 }
 
