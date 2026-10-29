@@ -134,14 +134,29 @@ describe("graph reach", () => {
     expect(nextReachRecord(three, { edges: 0, nodes: 0, rendered: false }, "t4")).toMatchObject({ zero_streak: 1, last_nonzero_at: "t3" });
   });
 
-  it("records per companion and reads every companion back", async () => {
+  it("records per companion and surface, and reads every record back", async () => {
     const { env } = envWith();
     await recordGraphReach(env, "cypher", [edge("j1", "w1")], "[Neighborhood] Fargo");
     await recordGraphReach(env, "gaia", [], "");
-    await recordGraphReach(env, "gaia", [], "");
+    await recordGraphReach(env, "gaia", [], "", "discord");
     const all = await readGraphReach(env);
     expect(all.cypher).toMatchObject({ edges: 1, nodes: 2, rendered: true, zero_streak: 0 });
-    expect(all.gaia).toMatchObject({ edges: 0, zero_streak: 2, last_nonzero_at: null });
+    expect(all.gaia).toMatchObject({ edges: 0, zero_streak: 1, last_nonzero_at: null });
+    expect(all["gaia@discord"]).toMatchObject({ edges: 0, zero_streak: 1 });
+  });
+
+  it("an unchanged reading inside the hour is not re-recorded; a changed one always is", async () => {
+    const { db, env } = envWith();
+    await recordGraphReach(env, "gaia", [], "", "discord");
+    await recordGraphReach(env, "gaia", [], "", "discord"); // a 5-minute bot refresh, same reading
+    expect((await readGraphReach(env))["gaia@discord"]?.zero_streak).toBe(1);
+    await recordGraphReach(env, "gaia", [edge("j1", "w1")], "[Linked] x", "discord");
+    expect((await readGraphReach(env))["gaia@discord"]).toMatchObject({ zero_streak: 0, edges: 1 });
+    // An hour later the same empty reading counts again.
+    const old = JSON.stringify({ at: new Date(Date.now() - 2 * 3600e3).toISOString(), edges: 0, nodes: 0, rendered: false, zero_streak: 1, last_nonzero_at: null });
+    db.prepare("UPDATE companion_settings SET value = ? WHERE companion_id = '_system' AND key = 'graph_reach:gaia@discord'").run(old);
+    await recordGraphReach(env, "gaia", [], "", "discord");
+    expect((await readGraphReach(env))["gaia@discord"]?.zero_streak).toBe(2);
   });
 
   it("a failing store never throws into the boot", async () => {

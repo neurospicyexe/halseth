@@ -17,6 +17,11 @@
 import type { Env } from "../types.js";
 
 export const GRAPH_REACH_COMPANION_ID = "_system";
+/** An unchanged reading inside this window is not re-recorded. The Discord bots re-orient every 5
+ *  minutes (SOMA_REFRESH_INTERVAL_MS), so without it the record is rewritten ~860 times a day and the
+ *  zero streak counts refreshes: three empty ones would be fifteen minutes, not three boots. With it,
+ *  the streak counts at most one empty reading per hour per surface. A CHANGED reading always records. */
+export const GRAPH_REACH_RECORD_MIN_MS = 60 * 60 * 1000;
 /** Claude.ai orient records under the bare companion id; another surface appends `@<surface>`
  *  ("cypher@discord"), so one surface's frequent boots never overwrite another's reading. */
 export const graphReachKey = (companionId: string, surface?: string) =>
@@ -72,7 +77,11 @@ export async function recordGraphReach(
     const row = await env.DB.prepare(
       "SELECT value FROM companion_settings WHERE companion_id = ? AND key = ?",
     ).bind(GRAPH_REACH_COMPANION_ID, key).first<{ value: string }>();
-    const next = nextReachRecord(parseRecord(row?.value), summarizeReach(edges, renderedText), new Date().toISOString());
+    const prev = parseRecord(row?.value);
+    const now = summarizeReach(edges, renderedText);
+    if (prev && prev.edges === now.edges && prev.nodes === now.nodes && prev.rendered === now.rendered
+        && Date.now() - Date.parse(prev.at) < GRAPH_REACH_RECORD_MIN_MS) return;
+    const next = nextReachRecord(prev, now, new Date().toISOString());
     await env.DB.prepare(
       `INSERT INTO companion_settings (companion_id, key, value, updated_at)
        VALUES (?, ?, ?, datetime('now'))
