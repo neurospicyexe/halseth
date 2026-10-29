@@ -98,6 +98,21 @@ describe("routing an edit", () => {
     expect(matchFastPath("Update task Vireth samples status in Halseth to done")?.key).toBe("task_update_status");
   });
 
+  it("2026-10-29: add-shaped phrasings with an edit verb are not edits (L-1)", () => {
+    for (const r of ["set a new task for Friday: call the vet", "set up a task to refill meds", "push this to my tasks"]) {
+      expect(matchFastPath(r)?.key, r).not.toBe("task_update_status");
+    }
+    expect(matchFastPath("set a new task for Friday: call the vet")?.key).toBe("task_add");
+    expect(matchFastPath("set up a task to refill meds")?.key).toBe("task_add");
+    expect(matchFastPath("push this to my tasks")?.key).toBe("task_add");
+  });
+
+  it("2026-10-29: genuine edits with those verbs still edit (L-1)", () => {
+    for (const r of ["set the vet task to done", "push the dentist task to Monday", "update task priority", "move the task for Vireth to Friday"]) {
+      expect(matchFastPath(r)?.key, r).toBe("task_update_status");
+    }
+  });
+
   it("adding a task still adds", () => {
     expect(matchFastPath("Add task for Raziel: water the chickens")?.key).toBe("task_add");
     expect(matchFastPath("new task: call the vet")?.key).toBe("task_add");

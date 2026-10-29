@@ -61,9 +61,24 @@ export async function pinRow(env: Env, args: { kind: PinKind; id: string; owner:
   if (!row) return { ok: false, reason: "not_found", pins };
   if (row.pinned_at) return { ok: true, changed: false, pins };
   if (pins.length >= PIN_CAP[args.kind]) return { ok: false, reason: "cap_reached", pins };
-  await env.DB.prepare(
-    `UPDATE ${k.table} SET pinned_at = ?, pinned_by = ? WHERE ${k.idCol} = ? AND ${k.ownerCol} = ? AND pinned_at IS NULL`,
-  ).bind(args.now ?? new Date().toISOString(), args.by, args.id, args.owner).run();
+  // 2026-10-29 (L-3): the count above is only a fast path; two racing pins both read cap-1 and both
+  // wrote. The UPDATE itself carries the cap (live pinned count < cap, in the WHERE), so D1's
+  // single-writer serialisation decides who gets the last slot.
+  const res = await env.DB.prepare(
+    `UPDATE ${k.table} SET pinned_at = ?, pinned_by = ?
+      WHERE ${k.idCol} = ? AND ${k.ownerCol} = ? AND pinned_at IS NULL
+        AND (SELECT COUNT(*) FROM ${k.table} WHERE ${k.ownerCol} = ? AND pinned_at IS NOT NULL AND ${k.live}) < ?`,
+  ).bind(args.now ?? new Date().toISOString(), args.by, args.id, args.owner, args.owner, PIN_CAP[args.kind]).run();
+  if ((res.meta?.changes ?? 0) === 0) {
+    // Row exists and was unpinned a moment ago: either the cap filled, or a twin call pinned this
+    // very row first (idempotent success, not a refusal).
+    const now = await env.DB.prepare(
+      `SELECT pinned_at FROM ${k.table} WHERE ${k.idCol} = ? AND ${k.ownerCol} = ?`,
+    ).bind(args.id, args.owner).first<{ pinned_at: string | null }>();
+    const after = await listPins(env, args.kind, args.owner);
+    if (now?.pinned_at) return { ok: true, changed: false, pins: after };
+    return { ok: false, reason: "cap_reached", pins: after };
+  }
   return { ok: true, changed: true, pins: await listPins(env, args.kind, args.owner) };
 }
 

@@ -15,7 +15,7 @@ import { describe, it, expect } from "vitest";
 import { makeSqliteD1, seedNote } from "./helpers/sqlite-d1.js";
 import { mindOrient } from "../webmind/orient.js";
 import { getEligibleNotesForCompression, archiveNotes, demoteNotes } from "../webmind/notes.js";
-import { PIN_CAP, carryPinStatement } from "../webmind/pins.js";
+import { PIN_CAP, carryPinStatement, pinRow } from "../webmind/pins.js";
 import { execMemoryPin, execMemoryUnpin, execMemoryPinsRead } from "../librarian/executors/pinning.js";
 import { execMemoryRelease, execMemoryReleaseUndo } from "../librarian/executors/forgetting.js";
 import { matchFastPath } from "../librarian/router.js";
@@ -160,6 +160,34 @@ describe("verbs -- pin / unpin / my pins", () => {
     expect((await execMemoryPin(ctxFor(env, "cypher", { kind: "note", id: `k${PIN_CAP.note}` }))).ack).toBe(true);
     const read = await execMemoryPinsRead(ctxFor(env, "cypher", {}));
     expect((read.data as any).notes.map((p: any) => p.id)).toEqual(["k1", `k${PIN_CAP.note}`]);
+  });
+});
+
+describe("the cap is enforced by the UPDATE itself (L-3, 2026-10-29)", () => {
+  it("a pin that lands between the count and the write cannot push past the cap", async () => {
+    const { db, env } = setup();
+    for (let i = 0; i <= PIN_CAP.note; i++) seedNote(db, { note_id: `r${i}` });
+    // Fill to cap-1 so the count check passes for the racer.
+    for (let i = 0; i < PIN_CAP.note - 1; i++) await pinRow(env, { kind: "note", id: `r${i}`, owner: "cypher", by: "cypher" });
+    let raced = false;
+    const racing = {
+      ...env,
+      DB: {
+        prepare: (sql: string) => {
+          if (!raced && /^UPDATE wm_continuity_notes SET pinned_at = \?, pinned_by = \?\s/.test(sql)) {
+            raced = true; // the twin call wins the last slot after our count read cap-1
+            db.prepare("UPDATE wm_continuity_notes SET pinned_at = '2026-10-29T00:00:00Z', pinned_by = 'twin' WHERE note_id = ?").run(`r${PIN_CAP.note - 1}`);
+          }
+          return env.DB.prepare(sql);
+        },
+      },
+    };
+    const out = await pinRow(racing, { kind: "note", id: `r${PIN_CAP.note}`, owner: "cypher", by: "cypher" });
+    expect(raced).toBe(true);
+    expect(out.ok).toBe(false);
+    expect((out as any).reason).toBe("cap_reached");
+    expect(out.pins.length).toBe(PIN_CAP.note);
+    expect(pinOf(db, "wm_continuity_notes", "note_id", `r${PIN_CAP.note}`).pinned_at).toBeNull();
   });
 });
 

@@ -2,7 +2,7 @@
 // that already name another row (concluded_in, in_thread, logged_on), title mentions from notes and
 // conclusions (projects included), and people -- only the ones on Raziel's list, matched exactly.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import { rebuildGraphDetailed } from "../graph/rebuild.js";
 import { addPerson, archivePerson, listPeople } from "../graph/people.js";
@@ -106,5 +106,50 @@ describe("people", () => {
     await rebuildGraphDetailed(env);
     const list: any = await (await getMindPeople(new Request("https://x/mind/people", { headers: auth }), env)).json();
     expect(list.people).toMatchObject([{ label: "Raziel", kind: "centre" }, { label: "Blue", kind: "person", added_by: "raziel", mentions: 1 }]);
+  });
+});
+
+describe("graph_people read failure (L-2, 2026-10-29)", () => {
+  // A transient D1 error on the people read used to read as "nobody on the list": every
+  // mechanical:person / mechanical:front:* edge went stale and was deleted.
+  const failingPeople = (env: any, message: string) => ({
+    ...env,
+    DB: {
+      prepare: (sql: string) => {
+        if (/FROM graph_people/.test(sql)) return { all: () => Promise.reject(new Error(message)) };
+        return env.DB.prepare(sql);
+      },
+      batch: (stmts: any[]) => env.DB.batch(stmts),
+    },
+  });
+
+  it("a transient error on the people read deletes nothing", async () => {
+    const { db, env } = envWith();
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'drevan', 'Blue came by', ?)").run(at);
+    await addPerson(env, { label: "Blue", kind: "person", added_by: "raziel" });
+    await rebuildGraphDetailed(env);
+    const before = edges(db, "mentions", "graph_people");
+    expect(before.length).toBe(1);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await rebuildGraphDetailed(failingPeople(env, "D1_ERROR: network connection lost"));
+    warn.mockRestore();
+    expect(edges(db, "mentions", "graph_people")).toEqual(before);
+
+    // And the next healthy run still converges: archiving now does delete.
+    const [p] = (await listPeople(env)).filter((x) => x.label === "Blue");
+    await archivePerson(env, p!.id);
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people")).toEqual([]);
+  });
+
+  it("a missing graph_people table still reads as an empty list (stale people edges go)", async () => {
+    const { db, env } = envWith();
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'drevan', 'Blue came by', ?)").run(at);
+    await addPerson(env, { label: "Blue", kind: "person", added_by: "raziel" });
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").length).toBe(1);
+    await rebuildGraphDetailed(failingPeople(env, "D1_ERROR: no such table: graph_people"));
+    expect(edges(db, "mentions", "graph_people")).toEqual([]);
   });
 });

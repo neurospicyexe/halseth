@@ -10,7 +10,10 @@ vi.mock("../mcp/embed.js", () => ({
   storeVector: vi.fn(async () => undefined),
 }));
 // The semantic gate is its own suite; here every write goes down the Jaccard path.
-vi.mock("../webmind/novelty.js", () => ({
+// 2026-10-29 (L-4): spread the real module and override only noveltyCheck. The bare factory left out
+// SUPERSEDE_CANDIDATE_WINDOW_DAYS, so the orient only ever ran its "supersede candidates load failed" fallback.
+vi.mock("../webmind/novelty.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../webmind/novelty.js")>()),
   noveltyCheck: vi.fn(async () => ({ action: "insert", embedding: null })),
 }));
 

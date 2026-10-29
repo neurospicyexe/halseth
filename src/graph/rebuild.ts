@@ -1046,10 +1046,19 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     // derives no people lane rather than failing the whole rebuild).
     db.prepare("SELECT id, label, match_names, kind FROM graph_people WHERE archived = 0").all<{ id: string; label: string; match_names: string; kind: string }>()
       .then((r) => (r.results ?? []).map((p) => ({ id: p.id, label: p.label, match_names: parseMatchNames(p.match_names), kind: p.kind })))
-      .catch(() => [] as PersonMatchRow[]),
+      .catch((e: unknown): PersonMatchRow[] | null => {
+        // 2026-10-29: ONLY "table not created yet" reads as an empty list. Any other D1 error (a
+        // transient blip) used to read as "nobody on the list" and the stale pass deleted every
+        // people edge. null = the source is unknown this run; see peopleUnread below.
+        if (/no such table/i.test(e instanceof Error ? e.message : String(e))) return [];
+        console.warn("[graph] graph_people read failed; skipping the people source this run", e);
+        return null;
+      }),
     selectColumns<ArchitectFactGraphRow>(db, "architect_facts", ["id", "companion_id", "status", "created_at"]),
     selectColumns<RelationalStateGraphRow>(db, "companion_relational_state", ["id", "companion_id", "toward", "noted_at"]),
   ]);
+  const peopleUnread = people === null;
+  const peopleRows: PersonMatchRow[] = people ?? [];
   const projectTitles: MentionTitleRow[] = projects
     .filter((p) => p.status === "open" || p.status === "paused")
     .map((p) => ({ table: "companion_projects", id: p.id, title: p.title }));
@@ -1081,7 +1090,7 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
         ...journal.map((j) => ({ table: "companion_journal", id: j.id, writer: j.agent, text: j.note_text, created_at: j.created_at })),
         ...threadNotes.map((n) => ({ table: "wm_continuity_notes", id: n.note_id, writer: n.agent_id, text: n.content, created_at: n.created_at })),
         ...conclusionSources.map((c) => ({ table: "companion_conclusions", id: c.id, writer: c.companion_id, text: c.conclusion_text, created_at: c.created_at })),
-      ], people),
+      ], peopleRows),
     },
     {
       source: "notes+conclusions+journal~title",
@@ -1147,6 +1156,9 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
   }
   const staleIds: string[] = [];
   for (const [k, ex] of existing) {
+    // A failed people read derived nothing, which is not the same as "no edges wanted": leave
+    // that source's edges (everything pointing at graph_people) alone this run.
+    if (peopleUnread && ex.dst_table === "graph_people") continue;
     if (isMechanical(ex.provenance) && !desired.has(k)) staleIds.push(ex.id);
   }
 
