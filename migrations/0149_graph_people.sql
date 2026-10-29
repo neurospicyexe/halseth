@@ -8,7 +8,8 @@
 -- are named for, and the graph never guesses. So a person is linked only after Raziel names them here.
 --
 -- MATCHING (src/graph/rebuild.ts, lane l): every spelling in match_names (plus label) is matched
--- CASE-SENSITIVELY and word-bounded in kept journal, notes and conclusions. A spelling two active
+-- CASE-SENSITIVELY and word-bounded (so "Blue" never matches "blue"; a sentence-initial "Blue" still
+-- matches -- measured 54 of 301 rows, every sampled one the person) in kept journal, notes and conclusions. A spelling two active
 -- people share is skipped for both -- ambiguous, never resolved by picking one.
 
 CREATE TABLE IF NOT EXISTS graph_people (

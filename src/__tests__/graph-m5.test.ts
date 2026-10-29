@@ -89,6 +89,8 @@ describe("people", () => {
     const add = await postMindPeople(new Request("https://x/mind/people", { method: "POST", headers: auth, body: JSON.stringify({ label: "Magpie", kind: "headmate" }) }), env);
     expect(add.status).toBe(200);
     db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'gaia', 'Magpie fronted', ?)").run(at);
+    // A draft (bot speech is born one) is linked by the rebuild but hidden on the map: not counted.
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at, review_state) VALUES ('j2', 'gaia', 'Magpie again', ?, 'draft')").run(at);
     await rebuildGraphDetailed(env);
     const list: any = await (await getMindPeople(new Request("https://x/mind/people", { headers: auth }), env)).json();
     expect(list.people).toMatchObject([{ label: "Magpie", kind: "headmate", added_by: "raziel", mentions: 1 }]);

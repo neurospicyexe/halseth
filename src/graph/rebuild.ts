@@ -505,8 +505,10 @@ export function buildTextMentionsEdges(textRows: MentionTextRow[], titleRows: Me
 }
 
 // ── l. M5 people (mig 0149) ───────────────────────────────────────────────────────────────────────
-// Kept journal, notes and conclusions that NAME a person on Raziel's list -> graph_people. Unlike the
-// title lane this match is CASE-SENSITIVE: "Blue" the person, never "blue" the colour, and a list
+// Journal, notes and conclusions that NAME a person on Raziel's list -> graph_people (derived from
+// every row like the other lanes; the map and orient hide what isn't visible). Unlike the title lane
+// this match is CASE-SENSITIVE: "Blue" never matches "blue", though a sentence-initial "Blue" still
+// matches (measured 54 of 301 rows on the 10-27 backup, every sampled one the person), and a list
 // spelling is matched exactly as written. A spelling two live people share is skipped for both
 // (src/graph/people.ts ambiguousSpellings): the graph never resolves an ambiguity by picking one.
 // One edge per (row, person) however many spellings hit.

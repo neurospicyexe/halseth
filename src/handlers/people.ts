@@ -10,6 +10,18 @@
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { addPerson, archivePerson, listPeople } from "../graph/people.js";
+import { KEPT_SQL } from "../webmind/review-state.js";
+
+// Counted the way the map shows them: only links whose source row is visible (kept, not archived,
+// not superseded). The rebuild derives from every row, drafts included, so a raw edge count would
+// promise links the map then hides when Raziel taps through.
+const VISIBLE_MENTIONS_SQL = `
+  SELECT g.dst_id, COUNT(*) AS n FROM graph_edges g
+   WHERE g.dst_table = 'graph_people' AND (
+     (g.src_table = 'companion_journal' AND EXISTS (SELECT 1 FROM companion_journal j WHERE j.id = g.src_id AND j.archived = 0 AND j.${KEPT_SQL}))
+  OR (g.src_table = 'wm_continuity_notes' AND EXISTS (SELECT 1 FROM wm_continuity_notes n WHERE n.note_id = g.src_id AND n.archived = 0 AND n.${KEPT_SQL}))
+  OR (g.src_table = 'companion_conclusions' AND EXISTS (SELECT 1 FROM companion_conclusions c WHERE c.id = g.src_id AND c.archived = 0 AND c.superseded_by IS NULL)))
+   GROUP BY g.dst_id`;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -20,7 +32,7 @@ export async function getMindPeople(request: Request, env: Env): Promise<Respons
   if (denied) return denied;
   const [people, counts] = await Promise.all([
     listPeople(env),
-    env.DB.prepare("SELECT dst_id, COUNT(*) AS n FROM graph_edges WHERE dst_table = 'graph_people' GROUP BY dst_id")
+    env.DB.prepare(VISIBLE_MENTIONS_SQL)
       .all<{ dst_id: string; n: number }>().then((r) => new Map((r.results ?? []).map((x) => [x.dst_id, Number(x.n)]))),
   ]);
   return json({ people: people.map((p) => ({ ...p, mentions: counts.get(p.id) ?? 0 })) });
