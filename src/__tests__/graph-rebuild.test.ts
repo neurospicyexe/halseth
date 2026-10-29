@@ -443,6 +443,12 @@ describe("rebuildGraph", () => {
         "companion_soma_events.follows",
         "companion_soma_events.session",
         "companion_soma_events.alongside",
+        // M5 (2026-10-28): reference lanes, mentions beyond the journal, and Raziel's people list.
+        "companion_conclusions.source_sessions",
+        "wm_continuity_notes.thread_key",
+        "project_log.project_id",
+        "graph_people~name",
+        "notes+conclusions+journal~title",
       ].sort(),
     );
   });

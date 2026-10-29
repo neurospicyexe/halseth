@@ -37,6 +37,7 @@
 import type { Env } from "../types.js";
 import { COMPANION_IDS } from "../companions.js";
 import { NOTE_REF_TABLES, type NoteRefType } from "../librarian/backends/halseth.js";
+import { ambiguousSpellings, parseMatchNames, spellingsOf } from "./people.js";
 
 export const MECHANICAL_PROVENANCE_LIKE = "mechanical%";
 
@@ -413,6 +414,124 @@ export function buildMentionsEdges(
     }
   }
   return edges;
+}
+
+// ── j. M5 reference lanes (2026-10-28, docs/PLAN-memory-map-2026-10-28.md) ─────────────────────────
+// Three columns that already NAME another row, so the edge is read off the data, never inferred.
+// Each emits only when the referenced row exists -- a pointer at nothing is skipped, not invented
+// (measured on the 10-27 backup: 20/20 source_sessions resolve, 44 of 184 thread-keyed notes have a
+// thread row, 31/31 project_log rows have their project).
+//
+//   concluded_in -- companion_conclusions.source_sessions (JSON array of session ids) -> sessions
+//   in_thread    -- wm_continuity_notes.thread_key -> wm_mind_threads, whose key is (thread_key,
+//                   agent_id); the node id is `<agent_id>:<thread_key>` (src/graph/map.ts labels it)
+//   logged_on    -- project_log.project_id -> companion_projects
+export interface ConclusionSourceRow { id: string; companion_id: string; source_sessions: string | null; created_at: string }
+export interface ThreadNoteRow { note_id: string; agent_id: string; thread_key: string | null; created_at: string }
+export interface ProjectLogRow { id: string; project_id: string; companion_id: string; created_at: string }
+
+export const threadNodeId = (agentId: string, threadKey: string) => `${agentId}:${threadKey}`;
+
+export function buildConcludedInEdges(rows: ConclusionSourceRow[], sessionIds: Set<string>): GraphEdgeRow[] {
+  const out: GraphEdgeRow[] = [];
+  for (const c of rows.slice().sort((a, b) => a.id.localeCompare(b.id))) {
+    if (!c.source_sessions) continue;
+    let ids: unknown;
+    try { ids = JSON.parse(c.source_sessions); } catch { continue; }
+    if (!Array.isArray(ids)) continue;
+    for (const sid of [...new Set(ids.filter((x): x is string => typeof x === "string"))].sort()) {
+      if (!sessionIds.has(sid)) continue;
+      out.push({
+        src_table: "companion_conclusions", src_id: c.id, dst_table: "sessions", dst_id: sid,
+        edge_type: "concluded_in", writer: c.companion_id, provenance: "mechanical", created_at: c.created_at,
+      });
+    }
+  }
+  return out;
+}
+
+export function buildThreadEdges(notes: ThreadNoteRow[], threads: Array<{ thread_key: string; agent_id: string }>): GraphEdgeRow[] {
+  const known = new Set(threads.map((t) => threadNodeId(t.agent_id, t.thread_key)));
+  const out: GraphEdgeRow[] = [];
+  for (const n of notes.slice().sort((a, b) => a.note_id.localeCompare(b.note_id))) {
+    if (!n.thread_key) continue;
+    const tid = threadNodeId(n.agent_id, n.thread_key);
+    if (!known.has(tid)) continue;
+    out.push({
+      src_table: "wm_continuity_notes", src_id: n.note_id, dst_table: "wm_mind_threads", dst_id: tid,
+      edge_type: "in_thread", writer: n.agent_id, provenance: "mechanical", created_at: n.created_at,
+    });
+  }
+  return out;
+}
+
+export function buildProjectLogEdges(rows: ProjectLogRow[], projectIds: Set<string>): GraphEdgeRow[] {
+  return rows.slice().sort((a, b) => a.id.localeCompare(b.id))
+    .filter((r) => projectIds.has(r.project_id))
+    .map((r) => ({
+      src_table: "project_log", src_id: r.id, dst_table: "companion_projects", dst_id: r.project_id,
+      edge_type: "logged_on", writer: r.companion_id, provenance: "mechanical", created_at: r.created_at,
+    }));
+}
+
+// ── k. M5 mentions beyond the journal ─────────────────────────────────────────────────────────────
+// Source (e) only read the journal against shelf titles. Notes and conclusions talk about the same
+// things (measured: 27 notes name "The Winged Bastard", a project the journal names 3 times), and a
+// companion's own projects are titles worth matching too. Same MATCH RULE, same skip rules, same
+// provenance as (e); journal rows here are matched against PROJECT titles only, since (e) already
+// covers journal x shelf and a second pass would only re-derive its edges.
+export interface MentionTextRow { table: string; id: string; writer: string; text: string | null; created_at: string }
+export interface MentionTitleRow { table: string; id: string; title: string }
+
+export function buildTextMentionsEdges(textRows: MentionTextRow[], titleRows: MentionTitleRow[]): GraphEdgeRow[] {
+  const titles = titleRows
+    .filter((t) => !isSkippableTitle(t.title))
+    .slice()
+    .sort((a, b) => (a.table === b.table ? a.id.localeCompare(b.id) : a.table.localeCompare(b.table)));
+  const patterns = titles.map((t) => ({ ref: t, re: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(t.title)}(?![\\p{L}\\p{N}])`, "iu") }));
+  const rows = textRows.slice().sort((a, b) => (a.table === b.table ? a.id.localeCompare(b.id) : a.table.localeCompare(b.table)));
+  const out: GraphEdgeRow[] = [];
+  for (const r of rows) {
+    if (!r.text) continue;
+    for (const { ref, re } of patterns) {
+      if (!re.test(r.text)) continue;
+      out.push({
+        src_table: r.table, src_id: r.id, dst_table: ref.table, dst_id: ref.id,
+        edge_type: "mentions", writer: r.writer, provenance: "mechanical:title", created_at: r.created_at,
+      });
+    }
+  }
+  return out;
+}
+
+// ── l. M5 people (mig 0149) ───────────────────────────────────────────────────────────────────────
+// Kept journal, notes and conclusions that NAME a person on Raziel's list -> graph_people. Unlike the
+// title lane this match is CASE-SENSITIVE: "Blue" the person, never "blue" the colour, and a list
+// spelling is matched exactly as written. A spelling two live people share is skipped for both
+// (src/graph/people.ts ambiguousSpellings): the graph never resolves an ambiguity by picking one.
+// One edge per (row, person) however many spellings hit.
+export interface PersonMatchRow { id: string; label: string; match_names: string[] }
+
+export function buildPeopleMentionsEdges(textRows: MentionTextRow[], people: PersonMatchRow[]): GraphEdgeRow[] {
+  const ambiguous = ambiguousSpellings(people);
+  const matchers = people.slice().sort((a, b) => a.id.localeCompare(b.id)).map((p) => ({
+    id: p.id,
+    res: spellingsOf(p).filter((s) => !ambiguous.has(s))
+      .map((s) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(s)}(?![\\p{L}\\p{N}])`, "u")),
+  })).filter((m) => m.res.length > 0);
+  const rows = textRows.slice().sort((a, b) => (a.table === b.table ? a.id.localeCompare(b.id) : a.table.localeCompare(b.table)));
+  const out: GraphEdgeRow[] = [];
+  for (const r of rows) {
+    if (!r.text) continue;
+    for (const m of matchers) {
+      if (!m.res.some((re) => re.test(r.text!))) continue;
+      out.push({
+        src_table: r.table, src_id: r.id, dst_table: "graph_people", dst_id: m.id,
+        edge_type: "mentions", writer: r.writer, provenance: "mechanical:person", created_at: r.created_at,
+      });
+    }
+  }
+  return out;
 }
 
 // ── i. companion_soma_events -> 'moved_by' / 'follows' / 'logged_in' / 'alongside' ────────────────
@@ -871,6 +990,22 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     selectColumns<ForageFindGraphRow>(db, "forage_finds", ["id", "companion_id", "consumed_at", "consumed_by"]),
     selectColumns<AutonomyRunGraphRow>(db, "autonomy_runs", ["id", "companion_id", "started_at", "completed_at", "created_at"]),
   ]);
+  // M5 lanes (j, k). A separate await so the tuple above keeps its shape; same whole-table convention.
+  const [conclusionSources, threadNotes, threads, projectLogs, projects, people] = await Promise.all([
+    selectColumns<ConclusionSourceRow & { conclusion_text: string | null }>(db, "companion_conclusions", ["id", "companion_id", "source_sessions", "created_at", "conclusion_text"]),
+    selectColumns<ThreadNoteRow & { content: string | null }>(db, "wm_continuity_notes", ["note_id", "agent_id", "thread_key", "created_at", "content"]),
+    selectColumns<{ thread_key: string; agent_id: string }>(db, "wm_mind_threads", ["thread_key", "agent_id"]),
+    selectColumns<ProjectLogRow>(db, "project_log", ["id", "project_id", "companion_id", "created_at"]),
+    selectColumns<{ id: string; title: string; status: string }>(db, "companion_projects", ["id", "title", "status"]),
+    // mig 0149. Tolerates the table not existing yet (a Worker deployed ahead of its migration
+    // derives no people lane rather than failing the whole rebuild).
+    db.prepare("SELECT id, label, match_names FROM graph_people WHERE archived = 0").all<{ id: string; label: string; match_names: string }>()
+      .then((r) => (r.results ?? []).map((p) => ({ id: p.id, label: p.label, match_names: parseMatchNames(p.match_names) })))
+      .catch(() => [] as PersonMatchRow[]),
+  ]);
+  const projectTitles: MentionTitleRow[] = projects
+    .filter((p) => p.status === "open" || p.status === "paused")
+    .map((p) => ({ table: "companion_projects", id: p.id, title: p.title }));
   const shelfTitles: ShelfTitleRow[] = [
     ...watchTitles.map((r) => ({ table: "watch_shelf" as const, id: r.id, title: r.title })),
     // Whole-table read (this file's convention: correlate in JS, not in SQL) filtered here to
@@ -889,6 +1024,30 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     { source: "companion_tensions", edges: buildTensionEdges(tensions) },
     { source: "handover_packets.session_id", edges: buildHandoverEdges(handovers) },
     { source: "companion_journal.note_text~title", edges: buildMentionsEdges(journal, shelfTitles) },
+    { source: "companion_conclusions.source_sessions", edges: buildConcludedInEdges(conclusionSources, sessionIds) },
+    { source: "wm_continuity_notes.thread_key", edges: buildThreadEdges(threadNotes, threads) },
+    { source: "project_log.project_id", edges: buildProjectLogEdges(projectLogs, new Set(projects.map((p) => p.id))) },
+    {
+      source: "graph_people~name",
+      edges: buildPeopleMentionsEdges([
+        ...journal.map((j) => ({ table: "companion_journal", id: j.id, writer: j.agent, text: j.note_text, created_at: j.created_at })),
+        ...threadNotes.map((n) => ({ table: "wm_continuity_notes", id: n.note_id, writer: n.agent_id, text: n.content, created_at: n.created_at })),
+        ...conclusionSources.map((c) => ({ table: "companion_conclusions", id: c.id, writer: c.companion_id, text: c.conclusion_text, created_at: c.created_at })),
+      ], people),
+    },
+    {
+      source: "notes+conclusions+journal~title",
+      edges: [
+        ...buildTextMentionsEdges([
+          ...threadNotes.map((n) => ({ table: "wm_continuity_notes", id: n.note_id, writer: n.agent_id, text: n.content, created_at: n.created_at })),
+          ...conclusionSources.map((c) => ({ table: "companion_conclusions", id: c.id, writer: c.companion_id, text: c.conclusion_text, created_at: c.created_at })),
+        ], [...shelfTitles, ...projectTitles]),
+        ...buildTextMentionsEdges(
+          journal.map((j) => ({ table: "companion_journal", id: j.id, writer: j.agent, text: j.note_text, created_at: j.created_at })),
+          projectTitles,
+        ),
+      ],
+    },
     // Source (i) is ONE builder reported as FOUR source rows. The builder has to walk the events once
     // (the `follows` chain and the merged alongside cap are both per-event state), but a single
     // "companion_soma_events: 412" count would be illegible -- four families with very different

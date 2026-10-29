@@ -61,6 +61,8 @@ interface Spec {
   from: string;
   /** Visibility predicate (rows failing it are dropped). Columns unqualified, `t.` prefixed when joined. */
   where?: string;
+  /** SQL for the node id when it is not `t.id` (wm_continuity_notes' note_id, wm_mind_threads' composite). */
+  idCol?: string;
   label: (r: Record<string, unknown>) => string;
   text?: (r: Record<string, unknown>) => string | null;
 }
@@ -168,6 +170,29 @@ const SPECS: Record<string, Spec> = {
     select: "t.id, t.companion_id AS owner, t.created_at, t.run_type",
     label: (r) => `${String(r.run_type ?? "run").replace(/_/g, " ")} ${day(r.created_at)}`,
   },
+  // M5 (2026-10-28): the companions' own projects, their log, and the mind threads notes belong to.
+  companion_projects: {
+    kind: "project", from: "companion_projects t",
+    select: "t.id, t.companion_id AS owner, t.created_at, t.title, t.status, t.intention",
+    label: (r) => `${r.title}${r.status && r.status !== "open" ? ` (${r.status})` : ""}`,
+    text: (r) => (r.intention ? clip(r.intention, TEXT_CHARS) : null),
+  },
+  project_log: {
+    kind: "project log", from: "project_log t",
+    select: "t.id, t.companion_id AS owner, t.created_at, t.entry AS body",
+    label: (r) => clip(r.body, LABEL_CHARS), text: (r) => clip(r.body, TEXT_CHARS),
+  },
+  wm_mind_threads: {
+    kind: "thread", from: "wm_mind_threads t", idCol: "(t.agent_id || ':' || t.thread_key)",
+    select: "(t.agent_id || ':' || t.thread_key) AS id, t.agent_id AS owner, t.created_at, t.title, t.status",
+    label: (r) => `${r.title}${r.status && r.status !== "open" ? ` (${r.status})` : ""}`,
+  },
+  graph_people: {
+    kind: "person", from: "graph_people t",
+    select: "t.id, 'raziel' AS owner, t.created_at, t.label, t.kind AS person_kind, t.note",
+    where: "t.archived = 0",
+    label: (r) => String(r.label ?? ""), text: (r) => (r.note ? clip(r.note, TEXT_CHARS) : null),
+  },
   relational_deltas: {
     kind: "moment", from: "relational_deltas t",
     select: "t.id, COALESCE(NULLIF(t.companion_id, ''), t.agent) AS owner, t.created_at, t.delta_text AS body, t.delta_type",
@@ -192,7 +217,7 @@ export async function loadMapNodes(env: Env, refs: Array<{ table: string; id: st
     const ids = [...idSet];
     for (let i = 0; i < ids.length; i += ID_CHUNK) {
       const chunk = ids.slice(i, i + ID_CHUNK);
-      const idCol = table === "wm_continuity_notes" ? "t.note_id" : "t.id";
+      const idCol = spec.idCol ?? (table === "wm_continuity_notes" ? "t.note_id" : "t.id");
       const sql = `SELECT ${spec.select} FROM ${spec.from} WHERE ${idCol} IN (${chunk.map(() => "?").join(",")})${spec.where ? ` AND ${spec.where}` : ""}`;
       try {
         const rows = (await env.DB.prepare(sql).bind(...chunk).all<Record<string, unknown>>()).results ?? [];

@@ -702,6 +702,12 @@ const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
   companions: "companion",
   watch_shelf: "show",
   obsession_shelf: "fixation",
+  // M5 lanes.
+  companion_projects: "project",
+  project_log: "project log",
+  wm_mind_threads: "thread",
+  wm_continuity_notes: "note",
+  graph_people: "person",
 };
 
 const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
@@ -719,6 +725,10 @@ const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
   // Pre-existing gap, closed here: 'resumed_from' is the one 'live'-provenance lane (written at
   // session open, src/graph/live.ts) and it never had a verb, so it rendered as the raw edge_type.
   resumed_from: "resumed from",
+  // M5 lanes.
+  concluded_in: "concluded in",
+  in_thread: "in thread",
+  logged_on: "log for",
 };
 
 /** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
@@ -851,6 +861,9 @@ const NEIGHBORHOOD_PASSIVE_VERBS: Record<string, string> = {
   follows: "followed by",
   alongside: "alongside",
   resumed_from: "resumed by",
+  concluded_in: "produced",
+  in_thread: "holds",
+  logged_on: "logged",
 };
 
 /** Neighbors that say little on their own; shown only after content-bearing ones. */
