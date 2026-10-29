@@ -1583,6 +1583,23 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["memory_pin"],
     response_key: "witness",
   },
+  // Our own links (M4, mig 0151, graph/links.ts). "link ..." / "unlink ..." are routed by
+  // ANCHORED_GUARDS; these are the fallback sweep and the read.
+  graph_unlink: {
+    triggers: ["unlink conclusion", "unlink note", "unlink journal", "unlink tension", "unlink my"],
+    tools: ["graph_unlink"],
+    response_key: "witness",
+  },
+  graph_link: {
+    triggers: ["link conclusion", "link note", "link journal", "link tension", "link letter", "link my"],
+    tools: ["graph_link"],
+    response_key: "witness",
+  },
+  graph_links_read: {
+    triggers: ["my links", "what have i linked", "show my links", "list my links", "my connections on the map"],
+    tools: ["graph_links_read"],
+    response_key: "data",
+  },
   memory_pins_read: {
     triggers: ["my pins", "what have i pinned", "my pinned", "pinned memories", "show my pins", "list my pins"],
     tools: ["memory_pins_read"],

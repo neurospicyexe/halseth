@@ -33,6 +33,9 @@
 //       'resumed_from', written at session open in src/mcp/tools/session.ts). This file's DELETE
 //       does NOT match 'live' and this file NEVER derives it -- a 'live' row is written once, by
 //       exactly one call site, and must survive every rebuild untouched.
+//   'asserted' -- AUTHORED (M4, mig 0151, src/graph/links.ts). A mind's own link, edge_type
+//       'linked:<writer>'. Like 'live', this file never derives, updates or deletes it; only its
+//       writer removes it, through graph/links.ts, and the graph_links ledger keeps that it existed.
 
 import type { Env } from "../types.js";
 import { COMPANION_IDS } from "../companions.js";

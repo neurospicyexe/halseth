@@ -738,6 +738,14 @@ const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
   toward: "toward",
 };
 
+/** M4 (mig 0151): a mind's own link, 'linked:<writer>', reads the same from either end and says whose
+ *  it is -- "linked by Drevan" -- so a boot never mistakes a sibling's connection for the system's. */
+function linkVerb(edgeType: string): string | undefined {
+  if (!edgeType.startsWith("linked:")) return undefined;
+  const w = edgeType.slice("linked:".length);
+  return `linked by ${w.charAt(0).toUpperCase()}${w.slice(1)}`;
+}
+
 /** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
 function shortNeighborId(id: string): string {
   return id.slice(0, 8);
@@ -816,7 +824,7 @@ export function neighborhoodBlock(
   const lines: string[] = [];
   for (const g of sortedGroups) {
     if (lines.length >= maxLines) break;
-    const verb = NEIGHBORHOOD_EDGE_VERBS[g.edgeType] ?? g.edgeType;
+    const verb = linkVerb(g.edgeType) ?? NEIGHBORHOOD_EDGE_VERBS[g.edgeType] ?? g.edgeType;
     const label = NEIGHBORHOOD_TABLE_LABELS[g.table] ?? g.table;
     const srcLabel = NEIGHBORHOOD_TABLE_LABELS[g.srcTable] ?? g.srcTable;
     const line = g.dstLabel
@@ -918,9 +926,9 @@ function anchoredNeighborhoodBlock(
     // separate person. The front rides on the link and is SAID, every time, in words a literal model
     // cannot misread: 'with Raziel, fronting as Magpie' -- never 'mentions: Magpie'.
     const fronts = frontsOf(e.provenance);
-    let verb = anchorIsSrc
+    let verb = linkVerb(e.edge_type) ?? (anchorIsSrc
       ? (NEIGHBORHOOD_EDGE_VERBS[e.edge_type] ?? e.edge_type)
-      : (NEIGHBORHOOD_PASSIVE_VERBS[e.edge_type] ?? e.edge_type);
+      : (NEIGHBORHOOD_PASSIVE_VERBS[e.edge_type] ?? e.edge_type));
     let suffix: string | undefined;
     if (fronts.length > 0) {
       verb = anchorIsSrc ? "with" : "fronting as " + fronts.join(" and ") + " in";
