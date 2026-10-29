@@ -9,6 +9,13 @@ import type { Env } from "../types.js";
 export const PERSON_KINDS = ["headmate", "person", "pet", "other"] as const;
 export type PersonKind = typeof PERSON_KINDS[number];
 
+/** Raziel's own names (Raziel confirmed 2026-10-29: "Yes I'm crash"). The centre every memory is
+ *  relative to is never a node on the list: "Raziel" alone is in 824 kept rows and "Crash" in 928,
+ *  so a node for him would link to nearly everything and say nothing. Refused on add, and never
+ *  matched by the rebuild even if a row slipped in. */
+export const CENTRE_NAMES = new Set(["raziel", "crash"]);
+export const isCentreName = (s: string) => CENTRE_NAMES.has(s.trim().toLowerCase());
+
 /** Shorter spellings match inside too much ordinary text to mean a person. */
 export const PERSON_MIN_NAME_LEN = 3;
 
@@ -32,7 +39,7 @@ export function parseMatchNames(raw: unknown): string[] {
 
 /** Every spelling a person matches on: label plus match_names, deduped, short ones dropped. */
 export function spellingsOf(p: { label: string; match_names: string[] }): string[] {
-  return [...new Set([p.label.trim(), ...p.match_names])].filter((s) => s.length >= PERSON_MIN_NAME_LEN);
+  return [...new Set([p.label.trim(), ...p.match_names])].filter((s) => s.length >= PERSON_MIN_NAME_LEN && !isCentreName(s));
 }
 
 /** Spellings claimed by more than one live person. Matched for nobody: the graph never picks. */
@@ -64,7 +71,8 @@ export async function addPerson(env: Env, input: {
   const label = input.label.trim();
   if (label.length < PERSON_MIN_NAME_LEN) return { ok: false, reason: `a name needs at least ${PERSON_MIN_NAME_LEN} characters` };
   const kind = input.kind && (PERSON_KINDS as readonly string[]).includes(input.kind) ? input.kind : "person";
-  const names = parseMatchNames(input.match_names ?? []).filter((n) => n !== label);
+  if (isCentreName(label)) return { ok: false, reason: `${label} is Raziel, the centre every memory is relative to -- never a node on the map` };
+  const names = parseMatchNames(input.match_names ?? []).filter((n) => n !== label && !isCentreName(n));
   const existing = await env.DB.prepare("SELECT id FROM graph_people WHERE label = ? AND archived = 0").bind(label).first<{ id: string }>();
   if (existing) return { ok: false, reason: `${label} is already on the list` };
   const id = crypto.randomUUID();

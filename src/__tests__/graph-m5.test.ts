@@ -75,6 +75,17 @@ describe("people", () => {
     expect(edges(db, "mentions", "graph_people")).toEqual([]);
   });
 
+  it("refuses Raziel's own names, and never matches them even as another person's spelling", async () => {
+    const { db, env } = envWith();
+    expect((await addPerson(env, { label: "Crash", added_by: "raziel" })).ok).toBe(false);
+    expect((await addPerson(env, { label: "raziel", added_by: "raziel" })).ok).toBe(false);
+    const r: any = await addPerson(env, { label: "Jude", match_names: ["Crash"], added_by: "raziel" });
+    expect(r.person.match_names).toEqual([]);
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'drevan', 'Crash laughed', ?)").run(at);
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people")).toEqual([]);
+  });
+
   it("refuses a duplicate or too-short name", async () => {
     const { env } = envWith();
     expect((await addPerson(env, { label: "Jo", added_by: "raziel" })).ok).toBe(false);
