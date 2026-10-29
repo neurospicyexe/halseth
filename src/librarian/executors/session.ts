@@ -1,4 +1,5 @@
 import { loadTitleLabels } from "../../graph/labels.js";
+import { recordGraphReach } from "../../graph/reach.js";
 import { SOMA_AXIS_KEYS, translateSomaVocab } from "../../soma/vocab.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { activeFactsTailBudget } from "../../lib/open-facts-gate.js";
@@ -315,6 +316,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // `mentions` group reads "Fargo", not "watch_shelf". Best-effort lookup, degrades to id labels.
   const graphLabels = await loadTitleLabels(ctx.env, mindState.graph.neighborhoods);
   const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, { labels: graphLabels });
+  // M7: what the graph actually reached this boot, for the zero-reach alarm (src/graph/reach.ts).
+  await recordGraphReach(ctx.env, agentId, mindState.graph.neighborhoods, neighborhoodBlock);
 
   // Graph memory Phase 2, tranche 1 (0.13.0): why these numbers. Rendered from the loader's
   // `felt.soma_provenance` (mig 0130) -- the newest move per float and what moved it. Concatenated

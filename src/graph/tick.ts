@@ -30,7 +30,7 @@
 // writes graph_edges rows, never a timestamp column another job's gate depends on.
 
 import type { Env } from "../types.js";
-import { rebuildGraph, type SourceCount } from "./rebuild.js";
+import { rebuildGraphDetailed, type RebuildDiff, type SourceCount } from "./rebuild.js";
 
 export const GRAPH_REBUILD_GATE_HOURS = 24;
 
@@ -73,6 +73,37 @@ async function releaseRebuildLease(env: Env): Promise<void> {
 export const GRAPH_REBUILD_GATE_COMPANION_ID = "_system";
 export const GRAPH_REBUILD_GATE_KEY = "graph_rebuild_last_run_at";
 
+// LANE HISTORY (M7, 2026-10-28). The last two completed runs' per-source counts, so the VPS health
+// check can see a lane that produced edges yesterday and none today -- a dead lane, which a total
+// edge count hides as long as the other lanes hold the sum up. Own key, never read by a gate.
+export const GRAPH_REBUILD_COUNTS_KEY = "graph_rebuild_counts";
+
+export interface GraphRebuildRun { at: string; ms: number; sources: SourceCount[]; diff?: RebuildDiff }
+export interface GraphRebuildCounts { last: GraphRebuildRun; prev: GraphRebuildRun | null }
+
+export async function readGraphRebuildCounts(env: Env): Promise<GraphRebuildCounts | null> {
+  const row = await env.DB.prepare(
+    "SELECT value FROM companion_settings WHERE companion_id = ? AND key = ?"
+  ).bind(GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_COUNTS_KEY).first<{ value: string }>();
+  if (!row?.value) return null;
+  try {
+    const v = JSON.parse(row.value) as GraphRebuildCounts;
+    return v && typeof v === "object" && v.last ? v : null;
+  } catch { return null; }
+}
+
+async function recordGraphRebuildCounts(env: Env, run: GraphRebuildRun): Promise<void> {
+  try {
+    const before = await readGraphRebuildCounts(env);
+    const value: GraphRebuildCounts = { last: run, prev: before?.last ?? null };
+    await env.DB.prepare(
+      `INSERT INTO companion_settings (companion_id, key, value, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(companion_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_COUNTS_KEY, JSON.stringify(value)).run();
+  } catch (err) { console.error("graph rebuild counts record failed", err); }
+}
+
 /** Hours since this tick's own last-run stamp, or null if it has never run. */
 async function hoursSinceLastRebuild(env: Env): Promise<number | null> {
   const row = await env.DB.prepare(
@@ -101,7 +132,7 @@ async function stampGraphRebuildGate(env: Env): Promise<void> {
  * Logs a single line with per-source inserted counts and elapsed ms on every completed run (not on
  * a gated-out no-op, since there is nothing to report).
  */
-export async function runGraphRebuildTick(env: Env, opts: { force?: boolean } = {}): Promise<{ ran: boolean; sources?: SourceCount[]; ms?: number }> {
+export async function runGraphRebuildTick(env: Env, opts: { force?: boolean } = {}): Promise<{ ran: boolean; sources?: SourceCount[]; diff?: RebuildDiff; ms?: number }> {
   if (!opts.force) {
     const elapsedHours = await hoursSinceLastRebuild(env);
     if (elapsedHours !== null && elapsedHours < GRAPH_REBUILD_GATE_HOURS) {
@@ -113,8 +144,9 @@ export async function runGraphRebuildTick(env: Env, opts: { force?: boolean } = 
 
   const start = Date.now();
   let sources: SourceCount[];
+  let diff: RebuildDiff;
   try {
-    sources = await rebuildGraph(env);
+    ({ sources, diff } = await rebuildGraphDetailed(env));
     // Stamp only now that the run has actually completed (mirrors the salience prune writing its
     // stamp only after its scan/archive finished, never before -- a thrown error above leaves this
     // unreached, so a failed attempt is retried next minute rather than gated out for 24h).
@@ -127,7 +159,9 @@ export async function runGraphRebuildTick(env: Env, opts: { force?: boolean } = 
   }
   const ms = Date.now() - start;
 
-  console.log("[graph-rebuild-tick] rebuilt", { ms, sources });
+  await recordGraphRebuildCounts(env, { at: new Date().toISOString(), ms, sources, diff });
 
-  return { ran: true, sources, ms };
+  console.log("[graph-rebuild-tick] rebuilt", { ms, diff, sources });
+
+  return { ran: true, sources, diff, ms };
 }

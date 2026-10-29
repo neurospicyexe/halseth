@@ -18,18 +18,23 @@ import {
   GRAPH_REBUILD_GATE_HOURS,
   GRAPH_REBUILD_GATE_COMPANION_ID,
   GRAPH_REBUILD_GATE_KEY,
+  GRAPH_REBUILD_COUNTS_KEY,
 } from "../graph/tick.js";
 import { PRUNE_GATE_COMPANION_ID, PRUNE_GATE_KEY } from "../webmind/salience-prune.js";
 import type { Env } from "../types.js";
 import type { SourceCount } from "../graph/rebuild.js";
 
+// The tick runs the diff rebuild's detailed form (M7); the alias keeps every assertion below
+// reading as "the rebuild ran / did not run".
 vi.mock("../graph/rebuild.js", () => ({
-  rebuildGraph: vi.fn(),
+  rebuildGraphDetailed: vi.fn(),
 }));
 
-import { rebuildGraph } from "../graph/rebuild.js";
+import { rebuildGraphDetailed as rebuildGraph } from "../graph/rebuild.js";
 
 beforeEach(() => vi.clearAllMocks());
+
+const run = (sources: SourceCount[]) => ({ sources, diff: { derived: 0, added: 0, updated: 0, removed: 0 } });
 
 const SAMPLE_COUNTS: SourceCount[] = [
   { source: "companion_conclusions.superseded_by", inserted: 3 },
@@ -40,6 +45,7 @@ const SAMPLE_COUNTS: SourceCount[] = [
 function makeEnv(opts: { gateLastRunIso?: string | null } = {}) {
   const gateStampCalls: unknown[][] = [];
   let gateValue: string | null = opts.gateLastRunIso ?? null;
+  const otherKeys = new Map<string, string>();
 
   const env = {
     DB: {
@@ -47,12 +53,18 @@ function makeEnv(opts: { gateLastRunIso?: string | null } = {}) {
         bind: (...args: unknown[]) => ({
           first: async () => {
             if (sql.includes("FROM companion_settings")) {
+              if (args[1] !== GRAPH_REBUILD_GATE_KEY) {
+                const v = otherKeys.get(String(args[1]));
+                return v !== undefined ? { value: v } : null;
+              }
               return gateValue !== null ? { value: gateValue } : null;
             }
             return null;
           },
           run: async () => {
-            if (sql.includes("INSERT INTO companion_settings")) {
+            if (sql.includes("INSERT INTO companion_settings") && args[1] !== GRAPH_REBUILD_GATE_KEY) {
+              otherKeys.set(String(args[1]), String(args[2]));
+            } else if (sql.includes("INSERT INTO companion_settings")) {
               gateStampCalls.push(args);
               gateValue = args[2] as string;
             }
@@ -62,12 +74,12 @@ function makeEnv(opts: { gateLastRunIso?: string | null } = {}) {
       }),
     },
   };
-  return { env: env as unknown as Env, gateStampCalls, getGateValue: () => gateValue };
+  return { env: env as unknown as Env, gateStampCalls, getGateValue: () => gateValue, otherKeys };
 }
 
 describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not daily)", () => {
   it("runs and stamps on a first (never-run-before) pass", async () => {
-    vi.mocked(rebuildGraph).mockResolvedValueOnce(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run(SAMPLE_COUNTS));
     const { env, gateStampCalls } = makeEnv();
 
     const result = await runGraphRebuildTick(env);
@@ -80,7 +92,7 @@ describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not
   });
 
   it("blocks an unforced second run within the 24h window -- rebuildGraph never re-fires", async () => {
-    vi.mocked(rebuildGraph).mockResolvedValue(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValue(run(SAMPLE_COUNTS));
     const { env } = makeEnv();
 
     const first = await runGraphRebuildTick(env);
@@ -94,7 +106,7 @@ describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not
 
   it("does not block when the prior stamp is already 24h+ old", async () => {
     const staleIso = new Date(Date.now() - (GRAPH_REBUILD_GATE_HOURS + 1) * 60 * 60 * 1000).toISOString();
-    vi.mocked(rebuildGraph).mockResolvedValueOnce(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run(SAMPLE_COUNTS));
     const { env } = makeEnv({ gateLastRunIso: staleIso });
 
     const result = await runGraphRebuildTick(env);
@@ -103,7 +115,7 @@ describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not
   });
 
   it("force bypasses the gate even immediately after a run", async () => {
-    vi.mocked(rebuildGraph).mockResolvedValue(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValue(run(SAMPLE_COUNTS));
     const { env } = makeEnv();
 
     const first = await runGraphRebuildTick(env);
@@ -115,7 +127,7 @@ describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not
   });
 
   it("does not stamp (and does not rebuild) when gated out -- a blocked call performs no work at all", async () => {
-    vi.mocked(rebuildGraph).mockResolvedValue(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValue(run(SAMPLE_COUNTS));
     const { env, gateStampCalls } = makeEnv();
 
     await runGraphRebuildTick(env);
@@ -139,19 +151,42 @@ describe("runGraphRebuildTick -- 24h self-gate (the cron fires every minute, not
     expect(gateStampCalls).toHaveLength(0);
 
     // And the retry actually proceeds: no stale gate was left behind by the failed attempt.
-    vi.mocked(rebuildGraph).mockResolvedValueOnce(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run(SAMPLE_COUNTS));
     const retried = await runGraphRebuildTick(env);
     expect(retried.ran).toBe(true);
   });
 
   it("still stamps a completed run that inserted nothing -- re-arms the 24h window", async () => {
-    vi.mocked(rebuildGraph).mockResolvedValueOnce([]);
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run([]));
     const { env, gateStampCalls } = makeEnv();
 
     const result = await runGraphRebuildTick(env);
     expect(result.ran).toBe(true);
     expect(result.sources).toEqual([]);
     expect(gateStampCalls).toHaveLength(1); // ran (inserted nothing), still a completed run
+  });
+});
+
+describe("runGraphRebuildTick -- lane history for the dead-lane alarm (M7)", () => {
+  it("records each completed run's counts and keeps the run before it as prev", async () => {
+    const { env, otherKeys } = makeEnv();
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run(SAMPLE_COUNTS));
+    await runGraphRebuildTick(env, { force: true });
+    const day2: SourceCount[] = [{ source: "companion_conclusions.superseded_by", inserted: 0 }];
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run(day2));
+    await runGraphRebuildTick(env, { force: true });
+
+    const rec = JSON.parse(otherKeys.get(GRAPH_REBUILD_COUNTS_KEY)!);
+    expect(rec.last.sources).toEqual(day2);
+    expect(rec.prev.sources).toEqual(SAMPLE_COUNTS);
+    expect(rec.last.diff).toEqual({ derived: 0, added: 0, updated: 0, removed: 0 });
+  });
+
+  it("a failed run records nothing -- history only holds runs that completed", async () => {
+    const { env, otherKeys } = makeEnv();
+    vi.mocked(rebuildGraph).mockRejectedValueOnce(new Error("D1 unavailable"));
+    await expect(runGraphRebuildTick(env)).rejects.toThrow("D1 unavailable");
+    expect(otherKeys.has(GRAPH_REBUILD_COUNTS_KEY)).toBe(false);
   });
 });
 
@@ -208,7 +243,7 @@ describe("runGraphRebuildTick -- gate identity (never shares an anchor with anot
   });
 
   it("writes the stamp keyed on exactly its own identity, into companion_settings", async () => {
-    vi.mocked(rebuildGraph).mockResolvedValueOnce(SAMPLE_COUNTS);
+    vi.mocked(rebuildGraph).mockResolvedValueOnce(run(SAMPLE_COUNTS));
     const { env, gateStampCalls } = makeEnv();
 
     await runGraphRebuildTick(env);

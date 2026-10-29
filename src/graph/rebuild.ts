@@ -2,9 +2,9 @@
 //
 // Graph memory Phase 1 (docs/private/graph-memory-spec-2026-08-28.md). graph_edges (mig 0127) is a
 // DERIVED, DISPOSABLE projection over relationships that already exist in D1 -- it holds no fact
-// nothing else holds. rebuildGraph is the only writer: DELETE every mechanical-provenance row, then
-// re-derive from source tables and INSERT OR IGNORE. Run it twice against unchanged source data and
-// the row set is byte-identical (deterministic edge identity = UNIQUE(src_table, src_id, dst_table,
+// nothing else holds. rebuildGraph is the only writer of the mechanical lanes: re-derive from
+// source tables, then write only the difference (see the rebuild section at the bottom). Run it
+// twice against unchanged source data and the row set is byte-identical (deterministic edge identity = UNIQUE(src_table, src_id, dst_table,
 // dst_id, edge_type), enforced at the schema level, not just in this code).
 //
 // WHY WHOLE-TABLE READS. Every source SELECT here is `SELECT * FROM <table>` with no WHERE/JOIN --
@@ -26,8 +26,9 @@
 // the spec's ambition and the current schema, not an oversight in this file.
 //
 // TWO PROVENANCE LANES, one table (src/graph/live.ts carries the live-write half of this split):
-//   'mechanical%' -- REBUILD-OWNED. Every lane this file derives. The DELETE below matches this
-//       pattern and this file is the only place that lane is ever regenerated from scratch.
+//   'mechanical%' -- REBUILD-OWNED. Every lane this file derives. The stale-row DELETE below only
+//       ever removes rows matching this pattern, and this file is the only place that lane is
+//       ever regenerated.
 //   'live' -- WRITE-TIME-ONLY. Lanes with no persisted source column to derive from (currently:
 //       'resumed_from', written at session open in src/mcp/tools/session.ts). This file's DELETE
 //       does NOT match 'live' and this file NEVER derives it -- a 'live' row is written once, by
@@ -53,6 +54,8 @@ export interface GraphEdgeRow {
 export interface SourceCount {
   source: string;
   inserted: number;
+  /** Edges this run newly wrote (the diff rebuild writes only what changed). */
+  added?: number;
   /** Per-dst_table breakdown of `inserted`, present only on sources that merge several lanes under
    *  one cap (today: companion_soma_events.alongside). Every lane is listed, zero included -- a lane
    *  that produced nothing must be a visible 0, not an absent key. */
@@ -780,35 +783,75 @@ export function buildSomaEventEdges(
 }
 
 // ── rebuild ─────────────────────────────────────────────────────────────────────────────────────
+//
+// DIFF, NOT WIPE (M7, 2026-10-28). Until now the rebuild was DELETE-every-mechanical-row then ~500
+// sequential 100-row insert batches: minutes during which orient, the map and Hearth all read a
+// graph that was empty and then partially refilled (the nightly run lands mid-afternoon Raziel's
+// time). Now every edge is DERIVED in memory first, the current table is read once, and only the
+// difference is written: new keys inserted, changed rows updated in place, stale mechanical rows
+// deleted. Same end state as the wipe (identity is still the UNIQUE key, first source to derive a
+// key still claims it, a 'live' row holding a key still wins), but readers only ever see whole rows
+// appear or disappear, and an unchanged night writes nothing at all.
 
-async function insertEdges(db: D1Database, edges: GraphEdgeRow[]): Promise<number> {
-  if (edges.length === 0) return 0;
-  let inserted = 0;
-  for (const group of chunk(edges, BATCH_CHUNK_SIZE)) {
-    const stmts = group.map((e) =>
-      db.prepare(
-        `INSERT OR IGNORE INTO graph_edges
-           (src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(e.src_table, e.src_id, e.dst_table, e.dst_id, e.edge_type, e.writer, e.provenance, e.created_at),
-    );
-    const results = await db.batch(stmts);
-    for (const r of results) inserted += r.meta?.changes ?? 0;
+const LOAD_PAGE_SIZE = 5000;
+// D1 caps bound parameters per statement at 100; 90 ids leaves headroom.
+const DELETE_IDS_PER_STATEMENT = 90;
+
+interface ExistingEdgeRow extends GraphEdgeRow { id: string }
+
+export interface RebuildDiff {
+  derived: number;
+  added: number;
+  updated: number;
+  removed: number;
+}
+
+const edgeKey = (e: Pick<GraphEdgeRow, "src_table" | "src_id" | "dst_table" | "dst_id" | "edge_type">) =>
+  `${e.src_table}\u0000${e.src_id}\u0000${e.dst_table}\u0000${e.dst_id}\u0000${e.edge_type}`;
+
+const isMechanical = (provenance: string) => provenance.startsWith(MECHANICAL_PROVENANCE_LIKE.replace("%", ""));
+
+/** Whole graph_edges table, keyset-paged on id so no single read carries the full ~50k rows. */
+async function loadExistingEdges(db: D1Database): Promise<ExistingEdgeRow[]> {
+  const out: ExistingEdgeRow[] = [];
+  let after = "";
+  for (;;) {
+    const res = await db.prepare(
+      `SELECT id, src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at
+         FROM graph_edges WHERE id > ? ORDER BY id LIMIT ?`,
+    ).bind(after, LOAD_PAGE_SIZE).all<ExistingEdgeRow>();
+    const rows = res.results ?? [];
+    out.push(...rows);
+    if (rows.length < LOAD_PAGE_SIZE) return out;
+    after = rows[rows.length - 1]!.id;
   }
-  return inserted;
+}
+
+async function runChunked(db: D1Database, stmts: D1PreparedStatement[]): Promise<number> {
+  let changes = 0;
+  for (const group of chunk(stmts, BATCH_CHUNK_SIZE)) {
+    const results = await db.batch(group);
+    for (const r of results) changes += r.meta?.changes ?? 0;
+  }
+  return changes;
+}
+
+function insertStatement(db: D1Database, e: GraphEdgeRow): D1PreparedStatement {
+  return db.prepare(
+    `INSERT OR IGNORE INTO graph_edges
+       (src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(e.src_table, e.src_id, e.dst_table, e.dst_id, e.edge_type, e.writer, e.provenance, e.created_at);
 }
 
 /**
- * Full, deterministic, idempotent rebuild of graph_edges from source-of-truth tables.
- *
- * DELETE FROM graph_edges WHERE provenance LIKE 'mechanical%' first, so every source below starts
- * from empty and re-derivation is the only path to a row existing -- no accumulation across runs,
- * no drift between what the sources say and what the table holds.
+ * Deterministic, idempotent rebuild of the mechanical lanes of graph_edges from source-of-truth
+ * tables, written as a diff against what the table already holds (see the section comment above).
+ * Returns per-source counts -- `inserted` is the number of edges that source holds after the run
+ * (what the old wipe-and-insert reported), `added` the ones this run newly wrote -- plus the diff.
  */
-export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
+export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceCount[]; diff: RebuildDiff }> {
   const db = env.DB;
-
-  await db.prepare(`DELETE FROM graph_edges WHERE provenance LIKE ?`).bind(MECHANICAL_PROVENANCE_LIKE).run();
 
   const [conclusions, deltas, journal, notes, tensions, handovers, sessions, watchTitles, obsessionTitles, somaEvents, commonsPosts, reflections, forageFinds, autonomyRuns] = await Promise.all([
     selectAll<ConclusionRow>(db, "companion_conclusions"),
@@ -867,20 +910,76 @@ export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
     })(),
   ];
 
+  // Desired state. First source to derive a key claims it -- the order INSERT OR IGNORE used to
+  // enforce by statement order, kept so per-source counts mean what they always meant.
+  const desired = new Map<string, { edge: GraphEdgeRow; source: string }>();
+  for (const s of sources) {
+    for (const e of s.edges) {
+      const k = edgeKey(e);
+      if (!desired.has(k)) desired.set(k, { edge: e, source: s.source });
+    }
+  }
+
+  const existing = new Map<string, ExistingEdgeRow>();
+  for (const row of await loadExistingEdges(db)) existing.set(edgeKey(row), row);
+
+  const held = new Map<string, number>();
+  const toInsert: Array<{ edge: GraphEdgeRow; source: string }> = [];
+  const updates: D1PreparedStatement[] = [];
+  for (const [k, d] of desired) {
+    const ex = existing.get(k);
+    if (!ex) { toInsert.push(d); continue; }
+    // A 'live' row already holds this identity: it wins, exactly as INSERT OR IGNORE let it.
+    if (!isMechanical(ex.provenance)) continue;
+    held.set(d.source, (held.get(d.source) ?? 0) + 1);
+    if (ex.writer !== d.edge.writer || ex.provenance !== d.edge.provenance || ex.created_at !== d.edge.created_at) {
+      updates.push(db.prepare(
+        "UPDATE graph_edges SET writer = ?, provenance = ?, created_at = ? WHERE id = ?",
+      ).bind(d.edge.writer, d.edge.provenance, d.edge.created_at, ex.id));
+    }
+  }
+  const staleIds: string[] = [];
+  for (const [k, ex] of existing) {
+    if (isMechanical(ex.provenance) && !desired.has(k)) staleIds.push(ex.id);
+  }
+
+  // Inserts first, deletes last: a reader mid-run sees the new graph arriving before the old one
+  // leaves, never a hole where both are gone.
+  const added = new Map<string, number>();
+  for (const group of chunk(toInsert, BATCH_CHUNK_SIZE)) {
+    const results = await db.batch(group.map((d) => insertStatement(db, d.edge)));
+    results.forEach((r, i) => {
+      if ((r.meta?.changes ?? 0) > 0) {
+        const src = group[i]!.source;
+        added.set(src, (added.get(src) ?? 0) + 1);
+        held.set(src, (held.get(src) ?? 0) + 1);
+      }
+    });
+  }
+  const updated = await runChunked(db, updates);
+  const removed = await runChunked(db, chunk(staleIds, DELETE_IDS_PER_STATEMENT).map((ids) =>
+    db.prepare(`DELETE FROM graph_edges WHERE id IN (${ids.map(() => "?").join(", ")})`).bind(...ids),
+  ));
+
   const counts: SourceCount[] = [];
   for (const s of sources) {
-    const inserted = await insertEdges(db, s.edges);
+    const base: SourceCount = { source: s.source, inserted: held.get(s.source) ?? 0, added: added.get(s.source) ?? 0 };
     if (s.lanes) {
-      // Derived from the same edge list that was inserted, keyed on dst_table. INSERT OR IGNORE
-      // means `inserted` can be lower than edges.length; the breakdown counts what was DERIVED per
-      // lane, which is the question "is this lane alive" actually asks.
+      // Derived from the source's own edge list, keyed on dst_table: the breakdown counts what was
+      // DERIVED per lane, which is the question "is this lane alive" actually asks.
       const lanes: Record<string, number> = {};
       for (const lane of s.lanes) lanes[lane] = 0;
       for (const e of s.edges) lanes[e.dst_table] = (lanes[e.dst_table] ?? 0) + 1;
-      counts.push({ source: s.source, inserted, lanes });
-    } else {
-      counts.push({ source: s.source, inserted });
+      base.lanes = lanes;
     }
+    counts.push(base);
   }
-  return counts;
+  let addedTotal = 0;
+  for (const n of added.values()) addedTotal += n;
+  return { sources: counts, diff: { derived: desired.size, added: addedTotal, updated, removed } };
+}
+
+/** Per-source counts only -- the shape every caller before the diff rebuild used. */
+export async function rebuildGraph(env: Env): Promise<SourceCount[]> {
+  return (await rebuildGraphDetailed(env)).sources;
 }

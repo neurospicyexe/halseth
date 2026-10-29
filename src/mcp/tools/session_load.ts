@@ -128,6 +128,34 @@ export interface SessionLoadInput {
   surface?: string;
 }
 
+// D3 (2026-10-28, Raziel: "a boot that shows a handover counts as resuming it"). Both open paths show
+// the newest human-closed packet (close_kind IS NULL): session_open returns it whole, orient renders
+// its anchor and motion state. Callers almost never pass prior_handover_id (the live 'resumed_from'
+// lane held 0 rows at the 10-27 audit), so when none was named, a NEW session resumes the packet it
+// was shown. A reused session already had its boot; a packet that closed this very session is not
+// something it resumes. Same writes as the explicit path: returned = 1 plus the live edge.
+async function resumeShownHandover(env: Env, args: {
+  sessionId: string;
+  isNew: boolean;
+  explicit: string | undefined;
+  shown: { id: string; session_id: string } | null | undefined;
+  companionId: string | undefined;
+  now: string;
+}): Promise<void> {
+  if (args.explicit || !args.isNew || !args.shown?.id || args.shown.session_id === args.sessionId) return;
+  try {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL").bind(args.shown.id),
+      ...insertEdgeStatements(env.DB, [edgeForResumedFrom({
+        sessionId: args.sessionId, priorHandoverId: args.shown.id, writer: args.companionId ?? null, createdAt: args.now,
+      })]),
+    ]);
+  } catch (err) {
+    // Never fail a boot over a continuity edge.
+    console.warn("[session] resume-shown-handover write failed", { sessionId: args.sessionId, error: String(err) });
+  }
+}
+
 // ── Orient: session creation + identity anchoring ────────────────────────────
 // Returns who-am-I context: identity, SOMA floats, somatic snapshot, last anchor.
 // Session record is created here; session_id flows to ground.
@@ -191,8 +219,8 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       .bind(input.companion_id).first<CompanionState>(),
     env.DB.prepare("SELECT * FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1")
       .bind(input.companion_id).first<SomaticSnapshot>(),
-    env.DB.prepare("SELECT active_anchor, motion_state FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1")
-      .first<{ active_anchor: string | null; motion_state: string | null }>(),
+    env.DB.prepare("SELECT id, session_id, active_anchor, motion_state FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1")
+      .first<{ id: string; session_id: string; active_anchor: string | null; motion_state: string | null }>(),
     env.DB.prepare("SELECT autonomous_turn FROM house_state WHERE id = 'main'")
       .first<{ autonomous_turn: string | null }>(),
     env.DB.prepare(
@@ -205,6 +233,9 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       .first<{ id: string; created_at: string }>(),
     getCurrentFronters(env),
   ]);
+  await resumeShownHandover(env, {
+    sessionId, isNew: !skipInsert, explicit: input.prior_handover_id, shown: lastHandover, companionId: input.companion_id, now,
+  });
 
   return {
     session_id: sessionId,
@@ -354,6 +385,9 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const handover = await env.DB.prepare(
     "SELECT * FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
   ).first<HandoverPacket>();
+  await resumeShownHandover(env, {
+    sessionId, isNew: !skipInsert, explicit: input.prior_handover_id, shown: handover, companionId: input.companion_id, now,
+  });
 
   // 3. Read companion_state row for this companion
   const state = await env.DB.prepare(

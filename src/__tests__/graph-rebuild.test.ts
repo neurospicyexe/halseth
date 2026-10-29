@@ -27,6 +27,8 @@ function uniqueKey(r: Row): string {
   return [r.src_table, r.src_id, r.dst_table, r.dst_id, r.edge_type].join(" ");
 }
 
+let edgeSeq = 0;
+
 class FakeStatement {
   constructor(
     private sql: string,
@@ -40,6 +42,22 @@ class FakeStatement {
 
   async run(): Promise<{ meta: { changes: number } }> {
     const sql = this.sql.trim();
+
+    // The diff rebuild (M7) deletes stale rows by id and updates changed ones in place.
+    if (sql.startsWith("DELETE FROM graph_edges WHERE id IN")) {
+      const ids = new Set(this.bound.map(String));
+      const before = (this.tables.graph_edges ?? []).length;
+      this.tables.graph_edges = (this.tables.graph_edges ?? []).filter((r) => !ids.has(String(r.id)));
+      return { meta: { changes: before - this.tables.graph_edges.length } };
+    }
+
+    if (sql.startsWith("UPDATE graph_edges SET")) {
+      const [writer, provenance, created_at, id] = this.bound;
+      const row = (this.tables.graph_edges ?? []).find((r) => r.id === id);
+      if (!row) return { meta: { changes: 0 } };
+      Object.assign(row, { writer, provenance, created_at });
+      return { meta: { changes: 1 } };
+    }
 
     if (sql.startsWith("DELETE FROM graph_edges")) {
       const pattern = String(this.bound[0] ?? "").replace("%", "");
@@ -57,7 +75,7 @@ class FakeStatement {
       const key = uniqueKey(row);
       const exists = this.tables.graph_edges.some((r) => uniqueKey(r) === key);
       if (exists) return { meta: { changes: 0 } };
-      row.id = `edge-${this.tables.graph_edges.length}`;
+      row.id = `edge-${String(++edgeSeq).padStart(6, "0")}`;
       this.tables.graph_edges.push(row);
       return { meta: { changes: 1 } };
     }
@@ -66,6 +84,14 @@ class FakeStatement {
   }
 
   async all<T = Row>(): Promise<{ results: T[] }> {
+    if (/FROM graph_edges WHERE id > \?/.test(this.sql)) {
+      const [after, limit] = this.bound as [string, number];
+      const rows = [...(this.tables.graph_edges ?? [])]
+        .filter((r) => String(r.id ?? "") > after)
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+        .slice(0, limit);
+      return { results: (rows as unknown) as T[] };
+    }
     const m = /FROM (\w+)/.exec(this.sql);
     const name = m?.[1] ?? "misc";
     return { results: ((this.tables[name] ?? []) as unknown) as T[] };
@@ -110,7 +136,10 @@ describe("rebuildGraph", () => {
 
     expect(rowsAfterFirst).toBeGreaterThan(0);
     expect(rowsAfterSecond).toBe(rowsAfterFirst);
-    expect(second).toEqual(first);
+    // Same holdings per source; the second run ADDS nothing (diff rebuild: unchanged data, no writes).
+    const holdings = (c: typeof first) => c.map(({ source, inserted, lanes }) => ({ source, inserted, lanes }));
+    expect(holdings(second)).toEqual(holdings(first));
+    expect(second.every((c) => c.added === 0)).toBe(true);
   });
 
   it("supersedes edge points replacement --supersedes--> old, not reversed", async () => {
@@ -320,7 +349,7 @@ describe("rebuildGraph", () => {
     }
   });
 
-  it("delete-then-rebuild still removes dangling-marked rows via the 'mechanical%' LIKE match", async () => {
+  it("rebuild removes dangling-marked rows once their source row is gone", async () => {
     const { env, tables } = makeEnv({
       companion_conclusions: [],
       relational_deltas: [
@@ -337,8 +366,8 @@ describe("rebuildGraph", () => {
     const danglingBefore = tables.graph_edges.filter((e) => e.provenance === "mechanical:dangling");
     expect(danglingBefore.length).toBeGreaterThan(0);
 
-    // Second rebuild starts with the same DELETE FROM graph_edges WHERE provenance LIKE 'mechanical%'
-    // that rebuildGraph itself issues -- prove the dangling row does not survive as an orphaned
+    // Second rebuild diffs against what the table holds and deletes every mechanical row no source
+    // derives any more -- prove the dangling row does not survive as an orphaned
     // leftover if the source row disappears, and that regeneration is stable if it doesn't.
     tables.relational_deltas = [];
     await rebuildGraph(env);

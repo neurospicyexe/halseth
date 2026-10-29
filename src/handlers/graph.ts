@@ -18,10 +18,18 @@
 //     drop here means something else deleted rows a rebuild should never be able to touch.
 //   * total_count     -- whole-table count, to catch a rebuild wipe or regression the mechanical
 //     DELETE+re-derive should never produce but a bug could.
+// M7 (2026-10-28) adds two readouts, still raw (thresholds stay the script's job):
+//   * rebuild_counts  -- the last two completed runs' per-source counts and diff
+//     (src/graph/tick.ts), so a lane that went from N to 0 is visible as a DEAD LANE even while
+//     the total holds steady.
+//   * reach           -- per companion, what the last orient actually rendered from the graph
+//     (src/graph/reach.ts). Freshness is not reach: the 10-27 audit found a fresh 50k-edge graph
+//     that reached almost nothing.
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_GATE_KEY, runGraphRebuildTick } from "../graph/tick.js";
+import { GRAPH_REBUILD_GATE_COMPANION_ID, GRAPH_REBUILD_GATE_KEY, readGraphRebuildCounts, runGraphRebuildTick } from "../graph/tick.js";
+import { readGraphReach } from "../graph/reach.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -41,6 +49,7 @@ export async function postGraphRebuild(request: Request, env: Env): Promise<Resp
   return json({
     rebuilt_at: new Date().toISOString(),
     sources: r.sources,
+    diff: r.diff,
     ms: r.ms,
   });
 }
@@ -61,9 +70,16 @@ export async function getGraphHealth(request: Request, env: Env): Promise<Respon
     "SELECT COUNT(*) AS n FROM graph_edges"
   ).first<{ n: number }>();
 
+  const [rebuildCounts, reach] = await Promise.all([
+    readGraphRebuildCounts(env).catch(() => null),
+    readGraphReach(env).catch(() => ({})),
+  ]);
+
   return json({
     last_rebuild_at: gate?.value ?? null,
     live_count: Number(liveRow?.n ?? 0),
     total_count: Number(totalRow?.n ?? 0),
+    rebuild_counts: rebuildCounts,
+    reach,
   });
 }
