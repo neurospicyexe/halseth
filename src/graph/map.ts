@@ -45,7 +45,8 @@ export interface MapNode {
   seed: boolean;
 }
 
-export interface MapEdge { src: string; dst: string; type: string; writer: string; provenance: string; created_at: string }
+/** `why` is the writer's own words on a mind's link (M4, provenance 'asserted'); null on derived edges. */
+export interface MapEdge { src: string; dst: string; type: string; writer: string; provenance: string; created_at: string; why: string | null }
 
 const clip = (s: unknown, n: number) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
@@ -252,7 +253,7 @@ export async function loadMapNodes(env: Env, refs: Array<{ table: string; id: st
   return out;
 }
 
-interface EdgeRow { src_table: string; src_id: string; dst_table: string; dst_id: string; edge_type: string; writer: string; provenance: string; created_at: string }
+interface EdgeRow { src_table: string; src_id: string; dst_table: string; dst_id: string; edge_type: string; writer: string; provenance: string; created_at: string; why: string | null }
 
 /** Edges touching any of the refs, newest first, at most PER_NODE_EDGES per ref per direction. */
 async function edgesAround(env: Env, refs: Array<{ table: string; id: string }>, withFollows: boolean): Promise<EdgeRow[]> {
@@ -266,12 +267,14 @@ async function edgesAround(env: Env, refs: Array<{ table: string; id: string }>,
       const ph = chunk.map(() => "?").join(",");
       for (const side of ["src", "dst"] as const) {
         const rows = (await env.DB.prepare(
-          `SELECT src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at FROM (
+          `SELECT src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at,
+                  CASE WHEN provenance = 'asserted' THEN (SELECT l.why FROM graph_links l WHERE l.edge_id = x.id AND l.unlinked_at IS NULL) END AS why
+             FROM (
              SELECT g.*, ROW_NUMBER() OVER (PARTITION BY g.${side}_id ORDER BY g.created_at DESC, g.id) AS rn
                FROM graph_edges g
               WHERE g.${side}_table = ? AND g.${side}_id IN (${ph})
                 AND g.src_table != ? AND g.dst_table != ? ${follows}
-           ) WHERE rn <= ?`,
+           ) x WHERE rn <= ?`,
         ).bind(table, ...chunk, SEALED_TABLE, SEALED_TABLE, PER_NODE_EDGES).all<EdgeRow>()).results ?? [];
         out.push(...rows);
       }
@@ -339,7 +342,7 @@ export async function buildMap(env: Env, opts: { reader: MapReader; center?: { t
     const k = `${src}|${dst}|${e.edge_type}`;
     if (edgeKey.has(k)) continue;
     edgeKey.add(k);
-    edges.push({ src, dst, type: e.edge_type, writer: e.writer, provenance: e.provenance, created_at: e.created_at });
+    edges.push({ src, dst, type: e.edge_type, writer: e.writer, provenance: e.provenance, created_at: e.created_at, why: e.why ?? null });
   }
 
   // Node cap: seeds first, then by degree. Isolated non-seed nodes never survive (nothing links them).

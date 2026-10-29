@@ -74,6 +74,9 @@ the traps below exist because names lie.
 | `memory_pin` | execMemoryPin | pinning.ts | companion_conclusions / wm_continuity_notes (pinned_at, pinned_by) | mig 0148; owner-only, kept + live rows only, refused at PIN_CAP (5 conclusions / 2 notes) with the current pins listed; never writes heat. Raziel's door: POST /mind/pin (pinned_by 'raziel') |
 | `memory_unpin` | execMemoryUnpin | pinning.ts | companion_conclusions / wm_continuity_notes (pinned_at, pinned_by -> NULL) | owner-only |
 | `memory_pins_read` | execMemoryPinsRead | pinning.ts | READ | both kinds with caps; GET /mind/pins/:companion_id is the HTTP twin |
+| `graph_link` | execGraphLink | links.ts | graph_links (ledger) + graph_edges (provenance 'asserted', edge_type 'linked:<writer>') | mig 0151, M4; any visible map row on either end, anyone's; a quote names exactly one row; idempotent either direction; never writes heat. Raziel's door: POST /mind/link (writer 'raziel') |
+| `graph_unlink` | execGraphUnlink | links.ts | graph_links (unlinked_at stamp) + graph_edges (DELETE of the one asserted row) | writer only, and only from Claude.ai (OAuth + claude-ai: surface) or Raziel's door; bots, Hermes and autonomous runs are refused; the ledger row is never deleted |
+| `graph_links_read` | execGraphLinksRead | links.ts | READ | the writer's live links, ends named by the map labeler; GET /mind/links/:writer is the HTTP twin |
 | `memory_release` | execMemoryRelease | forgetting.ts | memory_releases + companion_journal/wm_continuity_notes/companion_conclusions | C7 (mig 0123); archive-never-delete (sets archived=1), reason REQUIRED, owner-only; batch logs the release |
 | `memory_release_undo` | execMemoryReleaseUndo | forgetting.ts | memory_releases + the released row's table | 30d window; sets restored_at + archived=0 |
 | `memory_releases_read` | execMemoryReleasesRead | forgetting.ts | READ | last 20, with days_left on live releases |

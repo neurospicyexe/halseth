@@ -39,6 +39,9 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.24.0 -- our own links (M4, mig 0151, 2026-10-29): any mind can link any two visible rows
+ *  ('link <kind>: <words> to <kind>: <words>: why'). `graph.neighborhoods` may now carry edge_type
+ *  'linked:<writer>' (provenance 'asserted'), rendered "linked by <Writer>". MINOR: additive only. */
 /** 0.23.0 -- one centre (mig 0150, 2026-10-29): `graph.neighborhoods` entries carry `provenance`, so a
  *  system name's link to Raziel's centre node renders its front ("with Raziel, fronting as Magpie").
  *  System members are Raziel, never separate person nodes. MINOR: additive only. */
@@ -143,7 +146,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.23.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.24.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

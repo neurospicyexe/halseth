@@ -139,6 +139,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "memory_unpin",
     regex: /^(?:please\s+)?unpin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
     note: "Pins (mig 0148): anchored so 'unpin the note about X' can never be read as a note write." },
+  { pattern_key: "graph_unlink",
+    regex: /^(?:please\s+)?unlink\s+\S/i,
+    note: "M4 our links (mig 0151): anchored so the quoted words after 'unlink' can never be routed by a trigger they contain." },
+  { pattern_key: "graph_link",
+    regex: /^(?:please\s+)?link\s+(?!to\b)\S[\s\S]*?\s+to\s+\S/i,
+    note: "M4 our links (mig 0151): 'link <kind>: <words> to <kind>: <words>: why'. Anchored so a quote mentioning a note, a tension or a journal can never fall to that write's trigger." },
   { pattern_key: "memory_pin",
     regex: /^(?:please\s+)?pin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
     note: "Pins (mig 0148): anchored so 'pin the note about X' can never fall to the earlier 'note about' trigger." },
@@ -395,6 +401,7 @@ import {
   execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead, execBudgetRead,
 } from "./executors/forgetting.js";
 import { execMemoryPin, execMemoryUnpin, execMemoryPinsRead } from "./executors/pinning.js";
+import { execGraphLink, execGraphUnlink, execGraphLinksRead } from "./executors/links.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
@@ -481,6 +488,11 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   memory_pin: execMemoryPin,
   memory_unpin: execMemoryUnpin,
   memory_pins_read: execMemoryPinsRead,
+  // Our own links (M4, mig 0151): any visible node to any visible node, writer = the mind; unlink
+  // only by the writer with someone in the room (graph/links.ts).
+  graph_link: execGraphLink,
+  graph_unlink: execGraphUnlink,
+  graph_links_read: execGraphLinksRead,
   memory_release: execMemoryRelease,
   memory_release_undo: execMemoryReleaseUndo,
   memory_releases_read: execMemoryReleasesRead,

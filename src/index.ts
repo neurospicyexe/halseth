@@ -45,6 +45,7 @@ import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
 import { postSomaBackfillEvents, getSomaEvents } from "./handlers/soma-events.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, getMindNotesSearch, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
 import { postMindPin, getMindPins } from "./handlers/pins.js";
+import { postMindLink, getMindLinks } from "./handlers/links.js";
 import { getMindMap } from "./handlers/map.js";
 import { getMindPeople, postMindPeople, postMindPersonArchive } from "./handlers/people.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
@@ -341,6 +342,8 @@ const router = new Router()
   .on("POST", "/mind/notes/demote",            (request, env) => postMindNotesDemote(request, env))
   .on("POST", "/mind/pin",                     (request, env) => postMindPin(request, env))
   .on("GET",  "/mind/pins/:companion_id",       (request, env, params) => getMindPins(request, env, params ?? {}))
+  .on("POST", "/mind/link",                    (request, env) => postMindLink(request, env))
+  .on("GET",  "/mind/links/:writer",            (request, env, params) => getMindLinks(request, env, params ?? {}))
   .on("GET",  "/mind/map",                     (request, env) => getMindMap(request, env))
   .on("GET",  "/mind/people",                  (request, env) => getMindPeople(request, env))
   .on("POST", "/mind/people",                  (request, env) => postMindPeople(request, env))
