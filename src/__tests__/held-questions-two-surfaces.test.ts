@@ -35,7 +35,7 @@ function stateWith(questions: Array<{ id: string; question: string; voiced: bool
     growth: { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [], projects: [], budget: null },
     oversight: { pressure_flags: [], growth_confirmed: [], guardian_cards: [], tripwires: [], questions, answered_questions: [], growth_unconfirmed: [] },
     world: { home_recent: [], club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [], raziel_state: null },
-    graph: { neighborhoods: [] },
+    graph: { neighborhoods: [], seeds: [] },
     ledger: { open: [] },
     meta: { datetime_iso: "2026-08-01T00:00:00Z", datetime_local: "2026-08-01", not_yet_loaded: [], degraded: [] },
   } as MindState;
@@ -93,5 +93,18 @@ describe("held questions -- Discord filters voiced, Claude.ai does not", () => {
     expect(voicedButUnanswered.open_questions).toEqual([]);        // Discord: quiet
     // ...but the row is still in oversight.questions, which is what Claude.ai renders from.
     expect(stateWith([q("a", "voiced, still waiting", true)]).oversight.questions).toHaveLength(1);
+  });
+});
+
+// M6 (0.22.0): the [Linked] block rides the bot wire pre-rendered; absent extras mean an empty string,
+// never undefined, so the bot's "nothing linked -> render nothing" check is one comparison.
+describe("graph_linked on the bot wire", () => {
+  const extras = { synthesis_summary: null, rag_excerpts: [], history_excerpts: [], continuity_notes: [], owner: "Raziel" };
+  it("carries the rendered block, trimmed", () => {
+    const out = botWireFromMindState(stateWith([]), { ...extras, graph_linked: "\n[Linked]\n• Fargo -- mentioned in \"x\" (drevan 09-24)" }, "cypher");
+    expect(out.graph_linked).toBe("[Linked]\n• Fargo -- mentioned in \"x\" (drevan 09-24)");
+  });
+  it("is an empty string when nothing was rendered", () => {
+    expect(botWireFromMindState(stateWith([]), extras, "cypher").graph_linked).toBe("");
   });
 });

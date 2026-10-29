@@ -37,9 +37,16 @@ export interface GraphNeighborhoodEdge {
 
 export interface GraphBlocks {
   neighborhoods: GraphNeighborhoodEdge[];
+  /** 0.22.0 (M6): the seeds the traverse walked from, as `table/id` keys, in seed order. The renderer
+   *  needs them to read each line FROM the thing this boot surfaced outward ("Fargo -- mentioned in
+   *  ..."), not from whichever end of an edge happens to be its dst. */
+  seeds: string[];
 }
 
-export const EMPTY_GRAPH: GraphBlocks = { neighborhoods: [] };
+export const EMPTY_GRAPH: GraphBlocks = { neighborhoods: [], seeds: [] };
+
+/** M6 fair share: at most this many edges per seed, so one busy seed cannot spend the whole cap. */
+export const GRAPH_PER_SEED_EDGES = 4;
 
 function stripHeat(e: TraverseEdge): GraphNeighborhoodEdge {
   return {
@@ -67,8 +74,8 @@ export async function loadGraphBlocks(
 ): Promise<GraphBlocks> {
   if (seeds.length === 0) return EMPTY_GRAPH;
   try {
-    const edges = await neighborhood(env, seeds, { hops: 1, limit: 30 });
-    return { neighborhoods: edges.map(stripHeat) };
+    const edges = await neighborhood(env, seeds, { hops: 1, limit: 30, perNodeLimit: GRAPH_PER_SEED_EDGES });
+    return { neighborhoods: edges.map(stripHeat), seeds: seeds.map((s) => `${s.table}/${s.id}`) };
   } catch (err) {
     console.warn("[mind/graph] neighborhood load failed", { companionId, error: String(err) });
     return EMPTY_GRAPH;

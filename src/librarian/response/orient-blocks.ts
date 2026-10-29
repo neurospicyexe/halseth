@@ -668,6 +668,13 @@ export interface NeighborhoodBlockOpts {
    *  of an edge has a label, its group is keyed per node and rendered by NAME ("mentions: Fargo -- 14
    *  notes from drevan") instead of by table; unlabeled edges keep the table-level grouping. */
   labels?: ReadonlyMap<string, string>;
+  /** M6: the seeds the traverse walked from (`table/id`, seed order). When present the block is read
+   *  FROM each seed outward (anchoredNeighborhoodBlock below), named by `nodes` instead of `labels`. */
+  seeds?: readonly string[];
+  /** M6: map-labeler names for nodes, keyed `table/id` (src/graph/labels.ts loadNeighborhoodNodes). */
+  nodes?: ReadonlyMap<string, NeighborhoodNodeLabel>;
+  /** M6: true for a table the labeler knows -- a node there that is absent from `nodes` was hidden. */
+  isLabeledTable?: (table: string) => boolean;
 }
 
 const NEIGHBORHOOD_MAX_LINES_DEFAULT = 6;
@@ -760,6 +767,7 @@ export function neighborhoodBlock(
   opts: NeighborhoodBlockOpts = {},
 ): string {
   if (neighborhoods.length === 0) return "";
+  if (opts.seeds && opts.seeds.length > 0) return anchoredNeighborhoodBlock(neighborhoods, opts.seeds, opts);
   const maxLines = opts.maxLines ?? NEIGHBORHOOD_MAX_LINES_DEFAULT;
 
   const groups = new Map<string, NeighborhoodGroup>();
@@ -803,6 +811,113 @@ export function neighborhoodBlock(
   }
 
   return lines.length > 0 ? "\n[Linked]\n" + lines.map(l => `• ${l}`).join("\n") : "";
+}
+
+// ── M6 (2026-10-28): the neighborhood, read from what this boot surfaced outward ─────────────────
+//
+// Measured on the 10-27 backup before this change: every companion's [Linked] block was three
+// "mentions: Fargo (show) -- N notes from <writer>" lines (one per writer) plus "linked session
+// c7537d2a" and "alongside: 3 notes" -- a fresh 60k-edge graph reaching us as one show and some
+// nouns. Now, when the caller passes the seeds (MindState graph.seeds, contract 0.22.0):
+//   * each line STARTS at a seed -- the conclusion, journal entry or show this boot already showed --
+//     and names what it links to, with the edge read in the right direction ("mentioned in", not
+//     "mentions", when the seed is the edge's dst);
+//   * nodes are NAMED by the map's labeler (src/graph/labels.ts loadNeighborhoodNodes), so a journal
+//     neighbor reads as its first words, not "notes"; a node the labeler hid (archived, superseded,
+//     not kept) is DROPPED, never shown by id;
+//   * a seed shows at most two neighbors, content first (a journal entry before a session row), with
+//     "+N more" for the rest, so one busy seed is one line, not the block.
+// This reverses the old "no content, ever" rule above on purpose (Raziel's M6, 2026-10-28): a label is
+// at most a 72-char opening of a row the companion can already read, under the same visibility rule
+// Hearth's map uses, and the whole ready_prompt still passes neutralizeRecalled.
+
+export interface NeighborhoodNodeLabel { label: string; owner?: string | null }
+
+const NEIGHBORHOOD_ANCHORED_LINE_CHARS = 200;
+const NEIGHBORHOOD_PER_ANCHOR = 2;
+/** Two neighbors plus the seed have to fit one line; the map labeler clips at 72, this view at 56. */
+const NEIGHBORHOOD_ANCHORED_LABEL_CHARS = 56;
+
+/** Edge verbs read from the dst side (the seed is the edge's dst). */
+const NEIGHBORHOOD_PASSIVE_VERBS: Record<string, string> = {
+  logged_in: "has",
+  supersedes: "superseded by",
+  sent_to: "received",
+  references: "referenced by",
+  holds_tension: "held by",
+  closed_with: "closed",
+  mentions: "mentioned in",
+  moved_by: "moved",
+  follows: "followed by",
+  alongside: "alongside",
+  resumed_from: "resumed by",
+};
+
+/** Neighbors that say little on their own; shown only after content-bearing ones. */
+const NEIGHBORHOOD_THIN_TABLES = new Set(["sessions", "autonomy_runs", "handover_packets", "companions"]);
+/** Tables whose label is the row's own words -- quoted so they read as an excerpt, not a title. */
+const NEIGHBORHOOD_QUOTED_TABLES = new Set([
+  "companion_journal", "companion_conclusions", "wm_continuity_notes", "commons_posts",
+  "autonomy_reflections", "relational_deltas", "companion_tensions", "companion_questions", "inter_companion_notes",
+]);
+
+function nodeText(key: string, table: string, id: string, nodes: ReadonlyMap<string, NeighborhoodNodeLabel> | undefined): string {
+  const n = nodes?.get(key);
+  if (!n) return `${NEIGHBORHOOD_TABLE_LABELS[table] ?? table} ${shortNeighborId(id)}`;
+  const label = n.label.length > NEIGHBORHOOD_ANCHORED_LABEL_CHARS
+    ? n.label.slice(0, NEIGHBORHOOD_ANCHORED_LABEL_CHARS - 1).trimEnd() + "…"
+    : n.label;
+  return NEIGHBORHOOD_QUOTED_TABLES.has(table) ? `"${label}"` : label;
+}
+
+function anchoredNeighborhoodBlock(
+  neighborhoods: readonly NeighborhoodEdgeRow[],
+  seeds: readonly string[],
+  opts: NeighborhoodBlockOpts,
+): string {
+  const maxLines = opts.maxLines ?? NEIGHBORHOOD_MAX_LINES_DEFAULT;
+  const seedIndex = new Map(seeds.map((k, i) => [k, i] as const));
+  const nodes = opts.nodes;
+  const hidden = (key: string, table: string) => !!opts.isLabeledTable?.(table) && !!nodes && !nodes.has(key);
+
+  interface Item { verb: string; key: string; table: string; id: string; writer: string; created_at: string }
+  const anchors = new Map<string, { table: string; id: string; items: Item[]; seen: Set<string> }>();
+  for (const e of neighborhoods) {
+    const srcKey = `${e.src_table}/${e.src_id}`;
+    const dstKey = `${e.dst_table}/${e.dst_id}`;
+    const si = seedIndex.get(srcKey);
+    const di = seedIndex.get(dstKey);
+    if (si === undefined && di === undefined) continue; // hop-2 edge: not read from a seed
+    const anchorIsSrc = di === undefined || (si !== undefined && si <= di);
+    const [aKey, aTable, aId] = anchorIsSrc ? [srcKey, e.src_table, e.src_id] : [dstKey, e.dst_table, e.dst_id];
+    const [nKey, nTable, nId] = anchorIsSrc ? [dstKey, e.dst_table, e.dst_id] : [srcKey, e.src_table, e.src_id];
+    if (hidden(nKey, nTable) || hidden(aKey, aTable)) continue;
+    const verb = anchorIsSrc
+      ? (NEIGHBORHOOD_EDGE_VERBS[e.edge_type] ?? e.edge_type)
+      : (NEIGHBORHOOD_PASSIVE_VERBS[e.edge_type] ?? e.edge_type);
+    const a = anchors.get(aKey) ?? anchors.set(aKey, { table: aTable, id: aId, items: [], seen: new Set() }).get(aKey)!;
+    if (a.seen.has(nKey)) continue;
+    a.seen.add(nKey);
+    a.items.push({ verb, key: nKey, table: nTable, id: nId, writer: e.writer, created_at: e.created_at });
+  }
+
+  const ordered = [...anchors.entries()].sort((x, y) => (seedIndex.get(x[0]) ?? 0) - (seedIndex.get(y[0]) ?? 0));
+  const lines: string[] = [];
+  for (const [aKey, a] of ordered) {
+    if (lines.length >= maxLines) break;
+    const items = [...a.items].sort((x, y) => {
+      const tx = NEIGHBORHOOD_THIN_TABLES.has(x.table) ? 1 : 0;
+      const ty = NEIGHBORHOOD_THIN_TABLES.has(y.table) ? 1 : 0;
+      if (tx !== ty) return tx - ty;
+      return x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0;
+    });
+    const shown = items.slice(0, NEIGHBORHOOD_PER_ANCHOR).map((it) =>
+      `${it.verb} ${nodeText(it.key, it.table, it.id, nodes)} (${it.writer} ${it.created_at.slice(5, 10)})`);
+    const more = items.length - shown.length;
+    const line = `${nodeText(aKey, a.table, a.id, nodes)} -- ${shown.join("; ")}${more > 0 ? `; +${more} more` : ""}`;
+    lines.push(line.length > NEIGHBORHOOD_ANCHORED_LINE_CHARS ? line.slice(0, NEIGHBORHOOD_ANCHORED_LINE_CHARS - 1) + "…" : line);
+  }
+  return lines.length > 0 ? "\n[Linked]\n" + lines.map((l) => `• ${l}`).join("\n") : "";
 }
 
 // ── Graph memory Phase 2, tranche 1 (docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md) ──

@@ -72,6 +72,10 @@ export interface TraverseOptions {
   /** When true, attach effective heat (nullable) for the newly-discovered endpoint of each edge,
    *  where that endpoint lives in a heat-bearing table. Read-only -- never warms the row. */
   withHeat?: boolean;
+  /** Fair share (M6, 2026-10-28): at most this many edges per frontier node per hop. Without it one
+   *  busy seed spends the whole per-hop cap -- on the 10-27 backup Fargo's ~25 `mentions` filled
+   *  26 of every companion's 30 orient edges. Omitted = no per-node cap (the old behavior). */
+  perNodeLimit?: number;
 }
 
 export interface TraverseEdge {
@@ -238,7 +242,22 @@ export async function neighborhood(
     const raw = await fetchEdgesTouching(db, frontier, edgeTypes);
     const fresh = raw.filter((e) => !seenEdgeIds.has(e.id));
     fresh.sort(compareEdges);
-    const capped = fresh.slice(0, limit);
+    let capped = fresh.slice(0, limit);
+    if (opts.perNodeLimit && opts.perNodeLimit > 0) {
+      // Charge each edge to the frontier node(s) it touches; skip it once every such node is full.
+      // Second pass hands unused budget back in the same order, so a quiet seed set does not leave the
+      // cap half-spent and a busy seed's count stays near true.
+      const per = new Map<string, number>();
+      const fair: RawEdgeRow[] = [];
+      const deferred: RawEdgeRow[] = [];
+      for (const e of fresh) {
+        const ends = [nodeKey(e.src_table, e.src_id), nodeKey(e.dst_table, e.dst_id)].filter((k) => frontierKeys.has(k));
+        if (fair.length >= limit || ends.every((k) => (per.get(k) ?? 0) >= opts.perNodeLimit!)) { deferred.push(e); continue; }
+        for (const k of ends) per.set(k, (per.get(k) ?? 0) + 1);
+        fair.push(e);
+      }
+      capped = [...fair, ...deferred.slice(0, Math.max(0, limit - fair.length))].sort(compareEdges);
+    }
 
     const nextFrontierMap = new Map<string, GraphSeed>();
 

@@ -20,7 +20,8 @@ const sessionSrc = readFileSync(resolve(here, "../librarian/executors/session.ts
 
 describe("execSessionOrient ready_prompt block order (graph memory Tranche 5)", () => {
   it("computes neighborhoodBlock via the loader's graph.neighborhoods, not a fresh query", () => {
-    expect(sessionSrc).toMatch(/const neighborhoodBlock = B\.neighborhoodBlock\(mindState\.graph\.neighborhoods(, \{ labels: graphLabels \})?\)/);
+    // M6 (0.22.0): the opts now carry seeds + map-labeler nodes, still from mindState, still no query.
+    expect(sessionSrc).toMatch(/const neighborhoodBlock = B\.neighborhoodBlock\(mindState\.graph\.neighborhoods, \{\s*seeds: mindState\.graph\.seeds, nodes: graphNodes, isLabeledTable,\s*\}\)/);
   });
 
   it("places neighborhoodBlock after continuityBlock and before narrativeBlock in the concatenation", () => {

@@ -39,6 +39,13 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.22.0 -- the neighborhood, named (M6, 2026-10-28, docs/PLAN-memory-map-2026-10-28.md): `graph.seeds`
+ *  -- the `table/id` keys the traverse walked from, in seed order, so the renderer reads each [Linked]
+ *  line FROM what this boot surfaced outward. The traverse now gives each seed a fair share (4 per
+ *  seed, leftover budget handed back) so one busy seed cannot spend the whole cap, and the block names
+ *  nodes with the map's labeler (hidden rows dropped, never shown by id). The Discord bot wire gains
+ *  `graph_linked` (the same block, rendered on the Worker) -- the bots had no graph at all before.
+ *  MINOR: additive only. */
 /** 0.20.0 -- pattern materials (R18, 2026-10-22, mig 0147): `growth.patterns[]` gains `materials`
  *  (the distinct materials the pattern has been seen in, first-seen order). Strength is earned by a
  *  new material, not by restating; `growth.patterns` is now the top two LIVE patterns that have not
@@ -133,7 +140,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.21.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.22.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

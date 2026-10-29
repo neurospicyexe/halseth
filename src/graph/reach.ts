@@ -17,7 +17,10 @@
 import type { Env } from "../types.js";
 
 export const GRAPH_REACH_COMPANION_ID = "_system";
-export const graphReachKey = (companionId: string) => `graph_reach:${companionId}`;
+/** Claude.ai orient records under the bare companion id; another surface appends `@<surface>`
+ *  ("cypher@discord"), so one surface's frequent boots never overwrite another's reading. */
+export const graphReachKey = (companionId: string, surface?: string) =>
+  `graph_reach:${companionId}${surface ? `@${surface}` : ""}`;
 
 export interface GraphReachRecord {
   at: string;
@@ -62,9 +65,10 @@ export async function recordGraphReach(
   companionId: string,
   edges: readonly ReachEdge[],
   renderedText: string,
+  surface?: string,
 ): Promise<void> {
   try {
-    const key = graphReachKey(companionId);
+    const key = graphReachKey(companionId, surface);
     const row = await env.DB.prepare(
       "SELECT value FROM companion_settings WHERE companion_id = ? AND key = ?",
     ).bind(GRAPH_REACH_COMPANION_ID, key).first<{ value: string }>();

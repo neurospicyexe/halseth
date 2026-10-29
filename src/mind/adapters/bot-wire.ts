@@ -21,9 +21,9 @@
 // the bot payload has never had any of them, so this adapter drops them. The bots are the highest-frequency
 // presence in the house and the only surface with no emotional register at all -- worth fixing, and worth
 // fixing as a decision rather than inheriting as a side effect of a refactor.
-// `graph.neighborhoods` (0.11.0, graph memory Phase 1.5 Tranche 4) is deliberately deferred from the bot
-// wire this phase too -- putting it on the wire is a two-repo change (nullsafe-discord needs its own
-// renderer for the flat payload), tracked separately from landing the field on the contract.
+// `graph.neighborhoods` (0.11.0) stayed off the bot wire until M6 (0.22.0); it now rides as `graph_linked`,
+// the block pre-rendered on the Worker (extras, because naming nodes needs D1), so the bot needs no
+// renderer of its own and both surfaces read identical lines.
 //
 // WHAT STAYS OUTSIDE. Three inputs arrive via `extras` rather than from MindState, because all three need the
 // network: the two Second Brain semantic searches, and the `sbRead` that hydrates the session narrative.
@@ -66,6 +66,10 @@ export interface BotWireExtras {
   /** `env.SYSTEM_OWNER`. An input, not derivable from MindState -- and load-bearing; see
    *  `relational_state_owner` below. */
   owner: string;
+  /** M6 (0.22.0): the [Linked] block, rendered on the Worker exactly as Claude.ai's orient renders it
+   *  (orient-blocks.ts neighborhoodBlock, map-labeler names). It needs a D1 node lookup, so it is an
+   *  input, not a projection. Empty string = nothing linked; the bot renders nothing. */
+  graph_linked?: string;
 }
 
 /** The flat wire payload. Deliberately `Record<string, unknown>`-shaped at the boundary: the authority on
@@ -126,6 +130,7 @@ export function botWireFromMindState(
       landed_by: c.landed_by, turn_count: c.turn_count,
     })),
     rag_excerpts: extras.rag_excerpts,
+    graph_linked: (extras.graph_linked ?? "").trim(),
     history_excerpts: extras.history_excerpts,
 
     identity_anchor: ms.identity.anchor?.anchor_summary ? text(ms.identity.anchor.anchor_summary, 300) : null,

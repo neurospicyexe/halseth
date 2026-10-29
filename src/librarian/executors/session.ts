@@ -1,4 +1,4 @@
-import { loadTitleLabels } from "../../graph/labels.js";
+import { isLabeledTable, loadNeighborhoodNodes } from "../../graph/labels.js";
 import { recordGraphReach } from "../../graph/reach.js";
 import { SOMA_AXIS_KEYS, translateSomaVocab } from "../../soma/vocab.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
@@ -314,8 +314,11 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // (what connects to what), just structural rather than narrative.
   // Fargo first light (2026-09-05): name the titled nodes (watch_shelf / obsession_shelf) so a
   // `mentions` group reads "Fargo", not "watch_shelf". Best-effort lookup, degrades to id labels.
-  const graphLabels = await loadTitleLabels(ctx.env, mindState.graph.neighborhoods);
-  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, { labels: graphLabels });
+  // M6 (2026-10-28): named by the map labeler and read from each seed outward; hidden rows dropped.
+  const graphNodes = await loadNeighborhoodNodes(ctx.env, mindState.graph.neighborhoods);
+  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, {
+    seeds: mindState.graph.seeds, nodes: graphNodes, isLabeledTable,
+  });
   // M7: what the graph actually reached this boot, for the zero-reach alarm (src/graph/reach.ts).
   await recordGraphReach(ctx.env, agentId, mindState.graph.neighborhoods, neighborhoodBlock);
 
@@ -1283,6 +1286,13 @@ export async function execBotOrient(
     } catch { return [raw.slice(0, n)]; }
   };
 
+  // M6 (0.22.0): the bots get the same [Linked] block Claude.ai does. Until now the bot wire carried
+  // no graph at all, so every Discord boot reached nothing from 60k edges. Reach is recorded under the
+  // discord surface key so the bots' frequent boots never mask what Claude.ai boots see.
+  const botNodes = await loadNeighborhoodNodes(ctx.env, ms.graph.neighborhoods);
+  const botLinked = B.neighborhoodBlock(ms.graph.neighborhoods, { seeds: ms.graph.seeds, nodes: botNodes, isLabeledTable });
+  await recordGraphReach(ctx.env, agentId, ms.graph.neighborhoods, botLinked, "discord");
+
   const data = botWireFromMindState(
     ms,
     {
@@ -1291,6 +1301,7 @@ export async function execBotOrient(
       history_excerpts: parseExcerpts(historyRaw, 250),
       continuity_notes,
       owner: ctx.env.SYSTEM_OWNER,
+      graph_linked: botLinked,
     },
     agentId,
   );

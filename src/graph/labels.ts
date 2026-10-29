@@ -7,6 +7,9 @@
 // Shared by the director neighborhood endpoint (handlers/director.ts) and the Claude.ai orient
 // (executors/session.ts) so both surfaces name the same node the same way.
 import type { Env } from "../types.js";
+import { loadMapNodes, MAP_TABLES } from "./map.js";
+
+const MAP_TABLE_SET = new Set(MAP_TABLES);
 
 export interface EdgeEndpoints { src_table: string; src_id: string; dst_table: string; dst_id: string }
 
@@ -40,4 +43,37 @@ export async function loadTitleLabels(
     }
   }
   return labels;
+}
+
+// ── M6 (2026-10-28): every node, named the way the map names it ─────────────────────────────────
+// The orient neighborhood used to name only shelf titles and render everything else as a table noun
+// or an 8-char id ("linked session c7537d2a", "alongside: 3 notes"). It now borrows the map's labeler
+// (src/graph/map.ts loadMapNodes), so Hearth and orient name a node identically AND hide the same
+// things: a row that fails its table's visibility rule (archived, superseded, not kept, an [auto]
+// handover) comes back absent and the renderer drops it rather than surfacing it by id. The sealed
+// lane is refused inside loadMapNodes. Best-effort like the shelf lookup: a failure yields an empty
+// map, and every node then renders by noun.
+export interface NeighborhoodNode { label: string; owner: string | null }
+
+export async function loadNeighborhoodNodes(
+  env: Env,
+  edges: ReadonlyArray<EdgeEndpoints>,
+): Promise<Map<string, NeighborhoodNode>> {
+  const refs = new Map<string, { table: string; id: string }>();
+  for (const e of edges) {
+    refs.set(`${e.src_table}/${e.src_id}`, { table: e.src_table, id: e.src_id });
+    refs.set(`${e.dst_table}/${e.dst_id}`, { table: e.dst_table, id: e.dst_id });
+  }
+  const out = new Map<string, NeighborhoodNode>();
+  try {
+    for (const [k, n] of await loadMapNodes(env, [...refs.values()])) out.set(k, { label: n.label, owner: n.owner });
+  } catch (err) {
+    console.warn("[graph/labels] neighborhood node lookup failed, falling back to nouns", { error: String(err) });
+  }
+  return out;
+}
+
+/** Tables the labeler knows. A node in one of these that comes back absent was HIDDEN, not unknown. */
+export function isLabeledTable(table: string): boolean {
+  return MAP_TABLE_SET.has(table);
 }
