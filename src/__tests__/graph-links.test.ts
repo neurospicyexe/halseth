@@ -94,6 +94,21 @@ describe("routing", () => {
     expect(matchFastPath("pin note: link to the song")?.key).toBe("memory_pin");
     expect(matchFastPath("note to Drevan: link this to that?")?.key).not.toBe("graph_link");
     expect(matchFastPath("link to the forage find")?.key).not.toBe("graph_link");
+    expect(matchFastPath("link up with drevan to plan the ritual")?.key).not.toBe("graph_link");
+    expect(matchFastPath("Unlink yourself from the loop")?.key).not.toBe("graph_unlink");
+    expect(matchFastPath("save my links to the vault")?.key).not.toBe("graph_links_read");
+  });
+
+  it("unlink by the id the witness prints", () => {
+    expect(matchFastPath("unlink link 3f59316a-0a71-40e5")?.key).toBe("graph_unlink");
+    expect(parseLinkRequest("unlink link 3f59316a-0a71-40e5")).toEqual({ src: {}, dst: {}, linkId: "3f59316a-0a71-40e5" });
+  });
+
+  it("a quoted first end keeps its own ' to <kind>:'", () => {
+    const p = parseLinkRequest(`link conclusion: "the move to journal: never" to journal: the night it clicked: why`);
+    expect(p!.src.quote).toBe("the move to journal: never");
+    expect(p!.dst.quote).toBe("the night it clicked");
+    expect(p!.why).toBe("why");
   });
 });
 
@@ -154,6 +169,45 @@ describe("making a link", () => {
     journal(db, "j1", "one entry");
     expect((await makeLink(env, { writer: "drevan", src: { kind: "conclusion", id: "c1" }, dst: { kind: "conclusion", quote: "one belief" }, ...bot })).ok).toBe(false);
     expect((await makeLink(env, { writer: "drevan", src: { kind: "conclusion", id: "c1" }, dst: { kind: "journal", id: "j1" }, why: "x".repeat(161), ...bot })).ok).toBe(false);
+  });
+
+  it("a short quote must be the whole name; a long one any part", async () => {
+    const { db, env } = setup();
+    db.prepare("INSERT INTO watch_shelf (id, title, kind, status) VALUES ('w1', 'Ash', 'show', 'watching')").run();
+    db.prepare("INSERT INTO watch_shelf (id, title, kind, status) VALUES ('w2', 'Ashes of Time', 'show', 'watching')").run();
+    conclusion(db, "c1", "one belief");
+    const r: any = await makeLink(env, { writer: "raziel", src: { kind: "show", quote: "ash" }, dst: { kind: "conclusion", id: "c1" }, via: "hearth" });
+    expect(r.ok && r.src.id).toBe("w1");
+  });
+
+  it("a refusal mentions hidden matches only when they are the writer's own", async () => {
+    const { db, env } = setup();
+    journal(db, "d1", "a sibling's unkept line about the kiln", "gaia", "draft");
+    journal(db, "d2", "my own unkept line about the kiln", "drevan", "draft");
+    conclusion(db, "c1", "one belief");
+    const mine: any = await makeLink(env, { writer: "drevan", src: { kind: "journal", quote: "about the kiln" }, dst: { kind: "conclusion", id: "c1" }, ...bot });
+    expect(mine.reason).toMatch(/1 of yours match/);
+    const theirs: any = await makeLink(env, { writer: "cypher", src: { kind: "journal", quote: "about the kiln" }, dst: { kind: "conclusion", id: "c1" }, ...claudeAi });
+    expect(theirs.reason).not.toMatch(/match but/);
+  });
+
+  it("two identical links racing: the second says already linked, nothing throws", async () => {
+    const { db, env } = setup();
+    conclusion(db, "c1", "one belief");
+    journal(db, "j1", "one entry");
+    const args = { writer: "drevan" as const, src: { kind: "conclusion", id: "c1" }, dst: { kind: "journal", id: "j1" }, ...bot };
+    // Simulate the race: the second call's existence check runs before the first call's batch lands.
+    // Calls 1 and 2 are the two existence checks; call 3 is the re-select after the refused insert.
+    const realPrepare = env.DB.prepare;
+    let checks = 0;
+    env.DB.prepare = (sql: string) =>
+      sql.startsWith("SELECT * FROM graph_links WHERE writer = ?") && ++checks <= 2 ? { bind: () => ({ first: async () => null }) } : realPrepare(sql);
+    await makeLink(env, args);
+    const second: any = await makeLink(env, args);
+    env.DB.prepare = realPrepare;
+    expect(second).toMatchObject({ ok: true, changed: false });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM graph_links").get().n).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM graph_edges").get().n).toBe(1);
   });
 
   it("refuses a table the map does not know (the sealed lane cannot even be named)", async () => {
@@ -251,6 +305,21 @@ describe("Raziel's door", () => {
     const own = await (await post(env, { unlink: true, link_id: made.link.id })).json() as any;
     expect(own.changed).toBe(true);
     expect(db.prepare("SELECT edge_type FROM graph_edges").all()).toEqual([{ edge_type: "linked:drevan" }]);
+  });
+
+  it("a companion token or the static MCP secret passes authGuard but not this door", async () => {
+    const { db, env } = setup();
+    env.DREVAN_MCP_SECRET = "dre-tok";
+    conclusion(db, "c1", "a belief");
+    journal(db, "j1", "an entry");
+    for (const tok of ["dre-tok", "m"]) {
+      const res = await postMindLink(new Request("https://h/mind/link", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+        body: JSON.stringify({ src: { table: "companion_conclusions", id: "c1" }, dst: { table: "companion_journal", id: "j1" } }),
+      }), env);
+      expect(res.status).toBe(403);
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM graph_links").get().n).toBe(0);
   });
 });
 

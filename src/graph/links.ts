@@ -19,7 +19,11 @@
 //     is human-present is Claude.ai (OAuth transport + a 'claude-ai:' surface, the same definition
 //     ledger/door.ts uses) -- plus Raziel through the authGuarded HTTP route. A link can be MADE from
 //     any door; adding testimony needs no witness. An unlink stamps the ledger; nothing is deleted
-//     from graph_links.
+//     from graph_links. TRUST BOUNDARY, stated plainly: "Claude.ai" here means "holds an OAuth token
+//     and sends a claude-ai: surface". A scheduled Claude.ai routine, or another client on the OAuth
+//     connector, passes the same test; writer-only rests on the claimed companion_id for an unbound
+//     token. That is the trust model every OAuth write already has; this lane does not widen it.
+//     The bots' HTTP door cannot set `via` (src/librarian/index.ts builds it from transport facts).
 //   - NO HEAT. A link writes graph_links and graph_edges, nothing else.
 
 import type { Env } from "../types.js";
@@ -38,7 +42,9 @@ export const linkEdgeType = (writer: LinkWriter) => `${LINK_EDGE_PREFIX}${writer
 export const isLinkEdgeType = (t: string) => t.startsWith(LINK_EDGE_PREFIX);
 
 /** What a quote may name. `search` is the words a quote is matched against; `owner` whose row it is;
- *  `where` the visibility predicate, the SAME one graph/map.ts applies (a test holds them together). */
+ *  `where` narrows the search to visible rows. The map stays the only authority: a row the quote
+ *  finds is confirmed through loadMapNodes before it is linked, so a drifted `where` here can only
+ *  refuse a link, never let a hidden row through. */
 interface Linkable { table: string; from: string; idCol: string; search: string; owner: string; where?: string; created: string }
 
 const LINKABLE: Record<string, Linkable> = {
@@ -81,6 +87,15 @@ export function parseLinkKind(s: unknown): string | null {
 export const LINK_KIND_WORDS: readonly string[] = [...Object.keys(LINKABLE), ...Object.keys(KIND_ALIASES)]
   .sort((a, b) => b.length - a.length);
 
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** One end's head in the grammar: an optional owner, then a kind word and a colon. Shared by the
+ *  router's anchored guards and the executor's parser, so routing and parsing can never disagree. */
+export const LINK_KIND_RE = `(${LINK_KIND_WORDS.map(esc).join("|")})`;
+export const LINK_OWNER_RE = "(?:(my|mine|cypher'?s|drevan'?s|gaia'?s|raziel'?s|crash'?s)\\s+)?";
+const HEAD = `${LINK_OWNER_RE}(?:the\\s+)?${LINK_KIND_RE}\\s*:`;
+export const LINK_GUARD_RE = new RegExp(`^(?:please\\s+)?link\\s+${HEAD}`, "i");
+export const UNLINK_GUARD_RE = new RegExp(`^(?:please\\s+)?unlink\\s+(?:${HEAD}|link\\s+[0-9a-f-]{8,})`, "i");
+
 export const LINKABLE_TABLES: readonly string[] = Object.values(LINKABLE).map((l) => l.table);
 const TABLE_TO_KIND = new Map(Object.entries(LINKABLE).map(([k, l]) => [l.table, k] as const));
 
@@ -114,9 +129,11 @@ export async function resolveEnd(env: Env, end: LinkEnd, writer: LinkWriter): Pr
   const quote = String(end.quote ?? "").trim();
   // `!` is the LIKE escape: a quoted % or _ matches itself, not "anything".
   const needle = quote.toLowerCase().replace(/[!%_]/g, (c) => "!" + c);
-  if (quote.length < MIN_QUOTE) return { ok: false, reason: `quote at least ${MIN_QUOTE} characters of the ${kind}'s words` };
-  const conds = [`lower(${spec.search}) LIKE ? ESCAPE '!'`];
-  const binds: unknown[] = [`%${needle}%`];
+  if (!quote) return { ok: false, reason: `quote some of the ${kind}'s words` };
+  // A short quote ("Ash", "Kai") must be the WHOLE name; four characters or more may be any part.
+  const exact = quote.length < MIN_QUOTE;
+  const conds = [exact ? `lower(trim(${spec.search})) = ?` : `lower(${spec.search}) LIKE ? ESCAPE '!'`];
+  const binds: unknown[] = [exact ? quote.toLowerCase() : `%${needle}%`];
   if (spec.where) conds.push(spec.where);
   if (owner) { conds.push(`${spec.owner} = ?`); binds.push(owner); }
   const rows = (await env.DB.prepare(
@@ -126,12 +143,14 @@ export async function resolveEnd(env: Env, end: LinkEnd, writer: LinkWriter): Pr
   const whose = owner ? `${owner === writer ? "your" : `${owner}'s`} ` : "";
   if (rows.length === 0) {
     // Say whether the words exist on a row the map does not show, so a refusal is never a mystery.
+    // Only ever about the writer's OWN hidden rows: a sibling's unkept draft is not the writer's to
+    // learn about, even as a count.
     let hiddenNote = "";
-    if (spec.where) {
+    if (spec.where && (!owner || owner === writer)) {
       const hidden = await env.DB.prepare(
-        `SELECT COUNT(*) AS n FROM ${spec.from} WHERE lower(${spec.search}) LIKE ? ESCAPE '!'${owner ? ` AND ${spec.owner} = ?` : ""}`,
-      ).bind(...[`%${needle}%`, ...(owner ? [owner] : [])]).first<{ n: number }>();
-      if (hidden && hidden.n > 0) hiddenNote = ` (${hidden.n} match but are not on the map: a draft not yet kept, archived, or superseded; keep it first)`;
+        `SELECT COUNT(*) AS n FROM ${spec.from} WHERE ${conds[0]} AND ${spec.owner} = ?`,
+      ).bind(binds[0], writer).first<{ n: number }>();
+      if (hidden && hidden.n > 0) hiddenNote = ` (${hidden.n} of yours match but are not on the map: a draft not yet kept, archived, or superseded; keep it first)`;
     }
     return { ok: false, reason: `none of ${whose ? whose : "the "}${kind}s contain "${quote.slice(0, 60)}"${hiddenNote}` };
   }
@@ -142,7 +161,10 @@ export async function resolveEnd(env: Env, end: LinkEnd, writer: LinkWriter): Pr
     };
   }
   const r = rows[0]!;
-  return { ok: true, end: { table: spec.table, id: String(r.id), kind, text: clip(r.text, 72), owner: r.owner } };
+  const seen = await loadMapNodes(env, [{ table: spec.table, id: String(r.id) }]);
+  const node = seen.get(`${spec.table}/${r.id}`);
+  if (!node) return { ok: false, reason: `that ${kind} is not on the map (not kept, archived, or superseded)` };
+  return { ok: true, end: { table: spec.table, id: String(r.id), kind, text: node.label, owner: node.owner } };
 }
 
 const clip = (s: unknown, n: number) => {
@@ -197,19 +219,30 @@ export async function makeLink(env: Env, args: {
   const linkId = crypto.randomUUID();
   const edgeId = crypto.randomUUID().replace(/-/g, "");
   const type = linkEdgeType(args.writer);
-  await env.DB.batch([
-    env.DB.prepare(
-      `INSERT INTO graph_edges (id, src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(src_table, src_id, dst_table, dst_id, edge_type) DO NOTHING`,
-    ).bind(edgeId, s.table, s.id, d.table, d.id, type, args.writer, ASSERTED, now),
-    env.DB.prepare(
-      `INSERT INTO graph_links (id, writer, src_table, src_id, dst_table, dst_id, why, edge_id, made_via, made_surface, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?,
-               (SELECT id FROM graph_edges WHERE src_table = ? AND src_id = ? AND dst_table = ? AND dst_id = ? AND edge_type = ?),
-               ?, ?, ?)`,
-    ).bind(linkId, args.writer, s.table, s.id, d.table, d.id, why || null, s.table, s.id, d.table, d.id, type, args.via, args.surface ?? null, now),
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO graph_edges (id, src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(src_table, src_id, dst_table, dst_id, edge_type) DO NOTHING`,
+      ).bind(edgeId, s.table, s.id, d.table, d.id, type, args.writer, ASSERTED, now),
+      env.DB.prepare(
+        `INSERT INTO graph_links (id, writer, src_table, src_id, dst_table, dst_id, why, edge_id, made_via, made_surface, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?,
+                 (SELECT id FROM graph_edges WHERE src_table = ? AND src_id = ? AND dst_table = ? AND dst_id = ? AND edge_type = ?),
+                 ?, ?, ?)`,
+      ).bind(linkId, args.writer, s.table, s.id, d.table, d.id, why || null, s.table, s.id, d.table, d.id, type, args.via, args.surface ?? null, now),
+    ]);
+  } catch (err) {
+    // Two identical links at once (a retry racing itself): the live-pair index refuses the second and
+    // D1 rolls its batch back. The first one stands; say so instead of failing.
+    if (!/UNIQUE constraint failed: graph_links/i.test(String(err))) throw err;
+    const won = await env.DB.prepare(
+      "SELECT * FROM graph_links WHERE writer = ? AND src_table = ? AND src_id = ? AND dst_table = ? AND dst_id = ? AND unlinked_at IS NULL",
+    ).bind(args.writer, s.table, s.id, d.table, d.id).first<LinkRow>();
+    if (!won) throw err;
+    return { ok: true, changed: false, link: won, src: a.end, dst: b.end };
+  }
   const link = await env.DB.prepare("SELECT * FROM graph_links WHERE id = ?").bind(linkId).first<LinkRow>();
   return { ok: true, changed: true, link: link!, src: a.end, dst: b.end };
 }

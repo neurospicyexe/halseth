@@ -9,15 +9,14 @@
 
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import {
-  LINK_KIND_WORDS, LINK_WRITERS, WHY_CHARS, librarianVia, listLinks, makeLink, removeLink,
+  LINK_KIND_RE, LINK_OWNER_RE, LINK_WRITERS, WHY_CHARS, librarianVia, listLinks, makeLink, removeLink,
   type LinkEnd, type LinkWriter,
 } from "../../graph/links.js";
 
 const NEED = 'need "link <kind>: <a few words> to <kind>: <a few words>: why" (kinds: conclusion, note, journal, tension, letter, question, project, thread, watching, person, ...), or context { src: { kind, quote | id }, dst: { kind, quote | id }, why }';
 
-const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const KIND_RE = `(${LINK_KIND_WORDS.map(esc).join("|")})`;
-const OWNER_RE = "(?:(my|mine|cypher'?s|drevan'?s|gaia'?s|raziel'?s|crash'?s)\\s+)?";
+const KIND_RE = LINK_KIND_RE;
+const OWNER_RE = LINK_OWNER_RE;
 // An end: optional owner, a kind word, a colon, then the words (to the next end / why).
 const END_HEAD = new RegExp(`^${OWNER_RE}(?:the\\s+)?${KIND_RE}\\s*:\\s*`, "i");
 const SPLIT = new RegExp(`\\s+to\\s+(?=${OWNER_RE}(?:the\\s+)?${KIND_RE}\\s*:)`, "i");
@@ -56,12 +55,23 @@ export function parseLinkRequest(request: string, context?: string): ParsedLink 
   if (p?.link_id) return { src: {}, dst: {}, linkId: p.link_id };
   if (p?.src && p?.dst) return { src: p.src, dst: p.dst, why: p.why };
   const text = String(request ?? "").trim().replace(/^(?:please\s+)?(?:un)?link\s+/i, "");
-  // The FIRST " to <kind>:" splits the ends, so a first quote holding " to " still parses as long as
-  // no kind word and colon follow it; quote marks cover the rest.
-  const m = SPLIT.exec(text);
+  // "unlink link <id>": the id the witness and "my links" print.
+  const byId = /^link\s+([0-9a-f-]{8,})\s*$/i.exec(text);
+  if (byId) return { src: {}, dst: {}, linkId: byId[1] };
+  // The FIRST " to <kind>:" after the first end's words splits the ends. When those words sit in
+  // quote marks, the split is looked for only after the closing mark, so a quoted " to journal:"
+  // stays inside the quote.
+  const head = END_HEAD.exec(text);
+  let from = 0;
+  if (head && /^["“”']/.test(text.slice(head[0].length))) {
+    const close = text.slice(head[0].length + 1).search(/["“”']/);
+    if (close >= 0) from = head[0].length + 1 + close + 1;
+  }
+  const tail = text.slice(from);
+  const m = SPLIT.exec(tail);
   if (!m) return null;
-  const left = text.slice(0, m.index);
-  const right = text.slice(m.index + m[0].length);
+  const left = text.slice(0, from + m.index);
+  const right = tail.slice(m.index + m[0].length);
   const a = parseEnd(left, false);
   const b = parseEnd(right, true);
   if (!a || !b || !a.end.quote || !b.end.quote) return null;
