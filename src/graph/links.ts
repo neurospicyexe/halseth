@@ -45,7 +45,12 @@ export const isLinkEdgeType = (t: string) => t.startsWith(LINK_EDGE_PREFIX);
  *  `where` narrows the search to visible rows. The map stays the only authority: a row the quote
  *  finds is confirmed through loadMapNodes before it is linked, so a drifted `where` here can only
  *  refuse a link, never let a hidden row through. */
-interface Linkable { table: string; from: string; idCol: string; search: string; owner: string; where?: string; created: string }
+interface Linkable { table: string; from: string; idCol: string; search?: string; owner: string; where?: string; created: string }
+
+/** Map kinds with no words of their own (a session, a felt move ...): linkable by id only -- from the
+ *  map panel, or the id a witness printed. Every map kind is linkable one way or the other; the
+ *  plan says "any node kind on both ends" and Hearth offers "Link from this" on every node. */
+const idOnly = (table: string): Linkable => ({ table, from: `${table} t`, idCol: "t.id", owner: "NULL", created: "t.created_at" });
 
 const LINKABLE: Record<string, Linkable> = {
   conclusion: { table: "companion_conclusions", from: "companion_conclusions t", idCol: "t.id", search: "t.conclusion_text", owner: "t.companion_id", where: "t.superseded_by IS NULL AND t.archived = 0", created: "t.created_at" },
@@ -66,6 +71,12 @@ const LINKABLE: Record<string, Linkable> = {
   fact: { table: "architect_facts", from: "architect_facts t", idCol: "t.id", search: "t.fact", owner: "COALESCE(t.companion_id, 'house')", where: "t.status = 'active'", created: "t.created_at" },
   moment: { table: "relational_deltas", from: "relational_deltas t", idCol: "t.id", search: "t.delta_text", owner: "COALESCE(NULLIF(t.companion_id, ''), t.agent)", created: "t.created_at" },
   stance: { table: "companion_relational_state", from: "companion_relational_state t", idCol: "t.id", search: "t.state_text", owner: "t.companion_id", created: "t.noted_at" },
+  session: idOnly("sessions"),
+  "felt move": idOnly("companion_soma_events"),
+  ferment: idOnly("companion_ferment_events"),
+  "drift shift": idOnly("companion_soma_shifts"),
+  companion: idOnly("companions"),
+  "own time": idOnly("autonomy_runs"),
   handover: { table: "handover_packets", from: "handover_packets t LEFT JOIN sessions s ON s.id = t.session_id", idCol: "t.id", search: "(COALESCE(t.last_real_thing, '') || ' ' || COALESCE(t.spine, ''))", owner: "s.companion_id", where: "COALESCE(t.spine, '') NOT LIKE '[auto]%'", created: "t.created_at" },
 };
 
@@ -126,18 +137,20 @@ export async function resolveEnd(env: Env, end: LinkEnd, writer: LinkWriter): Pr
     return { ok: true, end: { table: spec.table, id: end.id, kind, text: n.label, owner: n.owner } };
   }
 
+  if (!spec.search) return { ok: false, reason: `a ${kind} has no words to quote; link it by id (tap it on the map, or use the id a witness printed)` };
+  const search = spec.search;
   const quote = String(end.quote ?? "").trim();
   // `!` is the LIKE escape: a quoted % or _ matches itself, not "anything".
   const needle = quote.toLowerCase().replace(/[!%_]/g, (c) => "!" + c);
   if (!quote) return { ok: false, reason: `quote some of the ${kind}'s words` };
   // A short quote ("Ash", "Kai") must be the WHOLE name; four characters or more may be any part.
   const exact = quote.length < MIN_QUOTE;
-  const conds = [exact ? `lower(trim(${spec.search})) = ?` : `lower(${spec.search}) LIKE ? ESCAPE '!'`];
+  const conds = [exact ? `lower(trim(${search})) = ?` : `lower(${search}) LIKE ? ESCAPE '!'`];
   const binds: unknown[] = [exact ? quote.toLowerCase() : `%${needle}%`];
   if (spec.where) conds.push(spec.where);
   if (owner) { conds.push(`${spec.owner} = ?`); binds.push(owner); }
   const rows = (await env.DB.prepare(
-    `SELECT ${spec.idCol} AS id, ${spec.search} AS text, ${spec.owner} AS owner FROM ${spec.from}
+    `SELECT ${spec.idCol} AS id, ${search} AS text, ${spec.owner} AS owner FROM ${spec.from}
       WHERE ${conds.join(" AND ")} ORDER BY ${spec.created} DESC LIMIT 6`,
   ).bind(...binds).all<{ id: string; text: string; owner: string | null }>()).results ?? [];
   const whose = owner ? `${owner === writer ? "your" : `${owner}'s`} ` : "";

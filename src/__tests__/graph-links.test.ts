@@ -14,12 +14,12 @@
 //     note or a tension never falls to that write.
 
 import { describe, it, expect } from "vitest";
-import { makeSqliteD1, seedNote } from "./helpers/sqlite-d1.js";
-import { makeLink, removeLink, listLinks, librarianVia } from "../graph/links.js";
+import { makeSqliteD1, seedNote, seedSession } from "./helpers/sqlite-d1.js";
+import { makeLink, removeLink, listLinks, librarianVia, LINKABLE_TABLES } from "../graph/links.js";
 import { parseLinkRequest, execGraphLink, execGraphUnlink, execGraphLinksRead } from "../librarian/executors/links.js";
 import { matchFastPath } from "../librarian/router.js";
 import { rebuildGraphDetailed } from "../graph/rebuild.js";
-import { buildMap } from "../graph/map.js";
+import { buildMap, MAP_TABLES } from "../graph/map.js";
 import { postMindLink } from "../handlers/links.js";
 
 function setup() {
@@ -169,6 +169,20 @@ describe("making a link", () => {
     journal(db, "j1", "one entry");
     expect((await makeLink(env, { writer: "drevan", src: { kind: "conclusion", id: "c1" }, dst: { kind: "conclusion", quote: "one belief" }, ...bot })).ok).toBe(false);
     expect((await makeLink(env, { writer: "drevan", src: { kind: "conclusion", id: "c1" }, dst: { kind: "journal", id: "j1" }, why: "x".repeat(161), ...bot })).ok).toBe(false);
+  });
+
+  it("every kind the map draws can be linked (Hearth offers 'Link from this' on every node)", () => {
+    for (const t of MAP_TABLES) expect(LINKABLE_TABLES).toContain(t);
+  });
+
+  it("a wordless kind (a session) links by id and refuses a quote with how to do it", async () => {
+    const { db, env } = setup();
+    seedSession(db, { id: "s1", companion_id: "drevan", created_at: "2026-07-14T03:00:00Z" });
+    journal(db, "j1", "the night Crash asked for Calethian");
+    const byId: any = await makeLink(env, { writer: "raziel", src: { table: "sessions", id: "s1" }, dst: { kind: "journal", id: "j1" }, via: "hearth" });
+    expect(byId.ok && byId.changed).toBe(true);
+    const byQuote: any = await makeLink(env, { writer: "drevan", src: { kind: "session", quote: "the night" }, dst: { kind: "journal", id: "j1" }, ...bot });
+    expect(byQuote.reason).toMatch(/link it by id/);
   });
 
   it("a short quote must be the whole name; a long one any part", async () => {

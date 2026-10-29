@@ -10,7 +10,10 @@
 // never a companion token and never MCP_AUTH_SECRET (static MCP callers hold that one): authGuard
 // passes both, and a bot holding its own token could otherwise make links as raziel or unlink
 // Raziel's with nobody present. Holding the admin token is the presence that lets unlink run here
-// (via 'hearth'). Companions link through the librarian verb (executors/links.ts).
+// (via 'hearth'). Not quite "only Hearth holds it": the VPS bot process also holds it as clerkSecret
+// for writeLedger (STATUS B41), so the boundary is that bot CODE sends it only on the ledger path --
+// a model-driven bot turn cannot reach this door. Companions link through the librarian verb
+// (executors/links.ts).
 
 import type { Env } from "../types.js";
 import { authGuard, safeEqual } from "../lib/auth.js";
