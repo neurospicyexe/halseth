@@ -140,10 +140,13 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     regex: /^(?:please\s+)?unpin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
     note: "Pins (mig 0148): anchored so 'unpin the note about X' can never be read as a note write." },
   { pattern_key: "graph_unlink",
-    regex: /^(?:please\s+)?unlink\s+\S/i,
-    note: "M4 our links (mig 0151): anchored so the quoted words after 'unlink' can never be routed by a trigger they contain." },
+    regex: UNLINK_GUARD_RE,
+    note: "M4 our links (mig 0151): 'unlink <kind>: ...' or 'unlink link <id>'. Built from the grammar's own kind words (graph/links.ts), so 'unlink yourself from the loop' still goes to the classifier." },
+  { pattern_key: "graph_links_read",
+    regex: /^(?:please\s+)?(?:show\s+)?my\s+links\s*[.?!]?$/i,
+    note: "M4: the bare 'my links' the witness teaches, anchored whole so 'save my links to the vault' is not read as this." },
   { pattern_key: "graph_link",
-    regex: /^(?:please\s+)?link\s+(?!to\b)\S[\s\S]*?\s+to\s+\S/i,
+    regex: LINK_GUARD_RE,
     note: "M4 our links (mig 0151): 'link <kind>: <words> to <kind>: <words>: why'. Anchored so a quote mentioning a note, a tension or a journal can never fall to that write's trigger." },
   { pattern_key: "memory_pin",
     regex: /^(?:please\s+)?pin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
@@ -405,6 +408,7 @@ import {
 } from "./executors/forgetting.js";
 import { execMemoryPin, execMemoryUnpin, execMemoryPinsRead } from "./executors/pinning.js";
 import { execGraphLink, execGraphUnlink, execGraphLinksRead } from "./executors/links.js";
+import { LINK_GUARD_RE, UNLINK_GUARD_RE } from "../graph/links.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";

@@ -1596,7 +1596,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   graph_links_read: {
-    triggers: ["my links", "what have i linked", "show my links", "list my links", "my connections on the map"],
+    triggers: ["show my links", "list my links", "what have i linked", "my links on the map", "my connections on the map"],
     tools: ["graph_links_read"],
     response_key: "data",
   },

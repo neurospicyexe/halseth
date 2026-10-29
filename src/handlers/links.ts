@@ -6,11 +6,14 @@
 //
 // Raziel's door (Hearth's map panel). writer is ALWAYS 'raziel' here: this route can neither make
 // nor remove a companion's link -- theirs are theirs (Drevan, 10-28: "his graph is his"; the same
-// holds the other way). The authGuard is the presence: only Raziel's session reaches it, so unlink
-// is allowed here (via 'hearth'). Companions link through the librarian verb (executors/links.ts).
+// holds the other way). POST takes ADMIN_SECRET ONLY -- the token Hearth holds as HALSETH_SECRET --
+// never a companion token and never MCP_AUTH_SECRET (static MCP callers hold that one): authGuard
+// passes both, and a bot holding its own token could otherwise make links as raziel or unlink
+// Raziel's with nobody present. Holding the admin token is the presence that lets unlink run here
+// (via 'hearth'). Companions link through the librarian verb (executors/links.ts).
 
 import type { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, safeEqual } from "../lib/auth.js";
 import { LINK_WRITERS, listLinks, makeLink, removeLink, type LinkEnd, type LinkWriter } from "../graph/links.js";
 
 function json(body: unknown, status = 200): Response {
@@ -25,9 +28,15 @@ function end(v: unknown): LinkEnd | null {
   return (e.table || e.kind) && (e.id || e.quote) ? e : null;
 }
 
+/** Raziel's own token, exactly. */
+function isRazielDoor(request: Request, env: Env): boolean {
+  return !!env.ADMIN_SECRET && safeEqual(request.headers.get("Authorization") ?? "", `Bearer ${env.ADMIN_SECRET}`);
+}
+
 export async function postMindLink(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
+  if (!isRazielDoor(request, env)) return json({ error: "this door writes as Raziel; companions link through the librarian verb" }, 403);
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const surface = typeof body.surface === "string" ? body.surface : "hearth";
