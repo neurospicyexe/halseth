@@ -448,6 +448,7 @@ describe("rebuildGraph", () => {
         "wm_continuity_notes.thread_key",
         "project_log.project_id",
         "graph_people~name",
+        "graph_people.centre",
         "notes+conclusions+journal~title",
       ].sort(),
     );

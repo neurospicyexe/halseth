@@ -31,6 +31,8 @@ export interface GraphNeighborhoodEdge {
   dst_id: string;
   edge_type: string;
   writer: string;
+  /** 0.23.0: 'mechanical:front:<name>' on a system-name link to Raziel's centre node. */
+  provenance?: string;
   created_at: string;
   hop: number;
 }
@@ -56,6 +58,7 @@ function stripHeat(e: TraverseEdge): GraphNeighborhoodEdge {
     dst_id: e.dst_id,
     edge_type: e.edge_type,
     writer: e.writer,
+    provenance: e.provenance,
     created_at: e.created_at,
     hop: e.hop,
   };

@@ -25,6 +25,7 @@
 // A renderer that can fail is a boot that can fail.
 
 import { relativeTime } from "../../webmind/relative-time.js";
+import { frontsOf } from "../../graph/people.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, FACT_ID_PREFIX_LEN } from "../../lib/open-facts-gate.js";
 import { formatMaterials, type Material } from "../../lib/pattern-materials.js";
 import { excerptWithProvenance, type HistoryChunk } from "./blocks.js";
@@ -656,6 +657,8 @@ export interface NeighborhoodEdgeRow {
   dst_id: string;
   edge_type: string;
   writer: string;
+  /** 0.23.0: a system-name link to Raziel's centre carries 'mechanical:front:<name>'. */
+  provenance?: string;
   created_at: string;
   hop: number;
 }
@@ -708,6 +711,8 @@ const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
   wm_mind_threads: "thread",
   wm_continuity_notes: "note",
   graph_people: "person",
+  architect_facts: "fact",
+  companion_relational_state: "stance",
 };
 
 const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
@@ -729,6 +734,8 @@ const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
   concluded_in: "concluded in",
   in_thread: "in thread",
   logged_on: "log for",
+  about: "about",
+  toward: "toward",
 };
 
 /** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
@@ -864,6 +871,8 @@ const NEIGHBORHOOD_PASSIVE_VERBS: Record<string, string> = {
   concluded_in: "produced",
   in_thread: "holds",
   logged_on: "logged",
+  about: "held in",
+  toward: "held in",
 };
 
 /** Neighbors that say little on their own; shown only after content-bearing ones. */
@@ -893,7 +902,7 @@ function anchoredNeighborhoodBlock(
   const nodes = opts.nodes;
   const hidden = (key: string, table: string) => !!opts.isLabeledTable?.(table) && !!nodes && !nodes.has(key);
 
-  interface Item { verb: string; key: string; table: string; id: string; writer: string; created_at: string }
+  interface Item { verb: string; key: string; table: string; id: string; writer: string; created_at: string; suffix?: string }
   const anchors = new Map<string, { table: string; id: string; items: Item[]; seen: Set<string> }>();
   for (const e of neighborhoods) {
     const srcKey = `${e.src_table}/${e.src_id}`;
@@ -905,13 +914,22 @@ function anchoredNeighborhoodBlock(
     const [aKey, aTable, aId] = anchorIsSrc ? [srcKey, e.src_table, e.src_id] : [dstKey, e.dst_table, e.dst_id];
     const [nKey, nTable, nId] = anchorIsSrc ? [dstKey, e.dst_table, e.dst_id] : [srcKey, e.src_table, e.src_id];
     if (hidden(nKey, nTable) || hidden(aKey, aTable)) continue;
-    const verb = anchorIsSrc
+    // ONE CENTRE (contract 0.23.0): a system name mentioned in a row is Raziel fronting, never a
+    // separate person. The front rides on the link and is SAID, every time, in words a literal model
+    // cannot misread: 'with Raziel, fronting as Magpie' -- never 'mentions: Magpie'.
+    const fronts = frontsOf(e.provenance);
+    let verb = anchorIsSrc
       ? (NEIGHBORHOOD_EDGE_VERBS[e.edge_type] ?? e.edge_type)
       : (NEIGHBORHOOD_PASSIVE_VERBS[e.edge_type] ?? e.edge_type);
+    let suffix: string | undefined;
+    if (fronts.length > 0) {
+      verb = anchorIsSrc ? "with" : "fronting as " + fronts.join(" and ") + " in";
+      if (anchorIsSrc) suffix = `, fronting as ${fronts.join(" and ")}`;
+    }
     const a = anchors.get(aKey) ?? anchors.set(aKey, { table: aTable, id: aId, items: [], seen: new Set() }).get(aKey)!;
     if (a.seen.has(nKey)) continue;
     a.seen.add(nKey);
-    a.items.push({ verb, key: nKey, table: nTable, id: nId, writer: e.writer, created_at: e.created_at });
+    a.items.push({ verb, key: nKey, table: nTable, id: nId, writer: e.writer, created_at: e.created_at, suffix });
   }
 
   const ordered = [...anchors.entries()].sort((x, y) => (seedIndex.get(x[0]) ?? 0) - (seedIndex.get(y[0]) ?? 0));
@@ -925,7 +943,7 @@ function anchoredNeighborhoodBlock(
       return x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0;
     });
     const shown = items.slice(0, NEIGHBORHOOD_PER_ANCHOR).map((it) =>
-      `${it.verb} ${nodeText(it.key, it.table, it.id, nodes)} (${it.writer} ${it.created_at.slice(5, 10)})`);
+      `${it.verb} ${nodeText(it.key, it.table, it.id, nodes)}${it.suffix ?? ""} (${it.writer} ${it.created_at.slice(5, 10)})`);
     const more = items.length - shown.length;
     const line = `${nodeText(aKey, a.table, a.id, nodes)} -- ${shown.join("; ")}${more > 0 ? `; +${more} more` : ""}`;
     lines.push(line.length > NEIGHBORHOOD_ANCHORED_LINE_CHARS ? line.slice(0, NEIGHBORHOOD_ANCHORED_LINE_CHARS - 1) + "…" : line);

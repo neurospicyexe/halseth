@@ -85,6 +85,9 @@ export interface TraverseEdge {
   dst_id: string;
   edge_type: string;
   writer: string;
+  /** mig 0150: carries the front on a system-name link ('mechanical:front:Magpie'). Always set by
+   *  neighborhood(); optional so callers that build edges by hand need not invent one. */
+  provenance?: string;
   created_at: string;
   hop: number;
   /**
@@ -107,6 +110,7 @@ interface RawEdgeRow {
   dst_id: string;
   edge_type: string;
   writer: string;
+  provenance: string;
   created_at: string;
 }
 
@@ -145,7 +149,7 @@ function buildEdgeQuery(
   const idPlaceholders = idChunk.map(() => "?").join(", ");
   const bindings: unknown[] = [table, ...idChunk, table, ...idChunk, SEALED_TABLE, SEALED_TABLE];
 
-  let sql = `SELECT id, src_table, src_id, dst_table, dst_id, edge_type, writer, created_at
+  let sql = `SELECT id, src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at
     FROM graph_edges
     WHERE ((src_table = ? AND src_id IN (${idPlaceholders})) OR (dst_table = ? AND dst_id IN (${idPlaceholders})))
       AND src_table != ? AND dst_table != ?`;
@@ -277,6 +281,7 @@ export async function neighborhood(
         dst_id: e.dst_id,
         edge_type: e.edge_type,
         writer: e.writer,
+        provenance: e.provenance,
         created_at: e.created_at,
         hop,
         node_heat: null,

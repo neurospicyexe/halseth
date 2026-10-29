@@ -187,6 +187,18 @@ const SPECS: Record<string, Spec> = {
     select: "(t.agent_id || ':' || t.thread_key) AS id, t.agent_id AS owner, t.created_at, t.title, t.status",
     label: (r) => `${r.title}${r.status && r.status !== "open" ? ` (${r.status})` : ""}`,
   },
+  // mig 0150: what the centre's links come from (rebuild lane m).
+  architect_facts: {
+    kind: "fact", from: "architect_facts t",
+    select: "t.id, COALESCE(t.companion_id, 'house') AS owner, t.created_at, t.fact AS body",
+    where: "t.status = 'active'",
+    label: (r) => clip(r.body, LABEL_CHARS), text: (r) => clip(r.body, TEXT_CHARS),
+  },
+  companion_relational_state: {
+    kind: "how I stand", from: "companion_relational_state t",
+    select: "t.id, t.companion_id AS owner, t.noted_at AS created_at, t.state_text AS body",
+    label: (r) => clip(r.body, LABEL_CHARS), text: (r) => clip(r.body, TEXT_CHARS),
+  },
   graph_people: {
     kind: "person", from: "graph_people t",
     select: "t.id, 'raziel' AS owner, t.created_at, t.label, t.kind AS person_kind, t.note",

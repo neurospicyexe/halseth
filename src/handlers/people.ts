@@ -9,19 +9,22 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { addPerson, archivePerson, listPeople } from "../graph/people.js";
+import { addPerson, archivePerson, frontsOf, listPeople } from "../graph/people.js";
 import { KEPT_SQL } from "../webmind/review-state.js";
 
 // Counted the way the map shows them: only links whose source row is visible (kept, not archived,
-// not superseded). The rebuild derives from every row, drafts included, so a raw edge count would
-// promise links the map then hides when Raziel taps through.
+// not superseded, an active fact). The rebuild derives from every row, drafts included, so a raw
+// edge count would promise links the map then hides when Raziel taps through. Returned per edge
+// (dst + provenance) so a system name can be credited with the fronts it rode in on.
 const VISIBLE_MENTIONS_SQL = `
-  SELECT g.dst_id, COUNT(*) AS n FROM graph_edges g
+  SELECT g.dst_id, g.provenance FROM graph_edges g
    WHERE g.dst_table = 'graph_people' AND (
+     g.src_table = 'companion_relational_state'
+  OR (g.src_table = 'architect_facts' AND EXISTS (SELECT 1 FROM architect_facts f WHERE f.id = g.src_id AND f.status = 'active'))
+  OR
      (g.src_table = 'companion_journal' AND EXISTS (SELECT 1 FROM companion_journal j WHERE j.id = g.src_id AND j.archived = 0 AND j.${KEPT_SQL}))
   OR (g.src_table = 'wm_continuity_notes' AND EXISTS (SELECT 1 FROM wm_continuity_notes n WHERE n.note_id = g.src_id AND n.archived = 0 AND n.${KEPT_SQL}))
-  OR (g.src_table = 'companion_conclusions' AND EXISTS (SELECT 1 FROM companion_conclusions c WHERE c.id = g.src_id AND c.archived = 0 AND c.superseded_by IS NULL)))
-   GROUP BY g.dst_id`;
+  OR (g.src_table = 'companion_conclusions' AND EXISTS (SELECT 1 FROM companion_conclusions c WHERE c.id = g.src_id AND c.archived = 0 AND c.superseded_by IS NULL)))`;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -30,12 +33,19 @@ function json(body: unknown, status = 200): Response {
 export async function getMindPeople(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
-  const [people, counts] = await Promise.all([
+  const [people, rows] = await Promise.all([
     listPeople(env),
-    env.DB.prepare(VISIBLE_MENTIONS_SQL)
-      .all<{ dst_id: string; n: number }>().then((r) => new Map((r.results ?? []).map((x) => [x.dst_id, Number(x.n)]))),
+    env.DB.prepare(VISIBLE_MENTIONS_SQL).all<{ dst_id: string; provenance: string }>().then((r) => r.results ?? []),
   ]);
-  return json({ people: people.map((p) => ({ ...p, mentions: counts.get(p.id) ?? 0 })) });
+  // A node's count is its links; a system name's count is the links that carry it as the front
+  // (they all point at the centre, which counts every one of them as its own).
+  const byNode = new Map<string, number>();
+  const byFront = new Map<string, number>();
+  for (const r of rows) {
+    byNode.set(r.dst_id, (byNode.get(r.dst_id) ?? 0) + 1);
+    for (const f of frontsOf(r.provenance)) byFront.set(f, (byFront.get(f) ?? 0) + 1);
+  }
+  return json({ people: people.map((p) => ({ ...p, mentions: p.kind === "self" ? (byFront.get(p.label) ?? 0) : (byNode.get(p.id) ?? 0) })) });
 }
 
 export async function postMindPeople(request: Request, env: Env): Promise<Response> {

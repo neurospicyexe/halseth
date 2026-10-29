@@ -37,7 +37,7 @@
 import type { Env } from "../types.js";
 import { COMPANION_IDS } from "../companions.js";
 import { NOTE_REF_TABLES, type NoteRefType } from "../librarian/backends/halseth.js";
-import { ambiguousSpellings, parseMatchNames, spellingsOf } from "./people.js";
+import { ambiguousSpellings, CENTRE_ID, FRONT_PROVENANCE_PREFIX, isCentreName, parseMatchNames, spellingsOf } from "./people.js";
 
 export const MECHANICAL_PROVENANCE_LIKE = "mechanical%";
 
@@ -504,20 +504,26 @@ export function buildTextMentionsEdges(textRows: MentionTextRow[], titleRows: Me
   return out;
 }
 
-// ── l. M5 people (mig 0149) ───────────────────────────────────────────────────────────────────────
-// Journal, notes and conclusions that NAME a person on Raziel's list -> graph_people (derived from
-// every row like the other lanes; the map and orient hide what isn't visible). Unlike the title lane
-// this match is CASE-SENSITIVE: "Blue" never matches "blue", though a sentence-initial "Blue" still
-// matches (measured 54 of 301 rows on the 10-27 backup, every sampled one the person), and a list
-// spelling is matched exactly as written. A spelling two live people share is skipped for both
-// (src/graph/people.ts ambiguousSpellings): the graph never resolves an ambiguity by picking one.
-// One edge per (row, person) however many spellings hit.
-export interface PersonMatchRow { id: string; label: string; match_names: string[] }
+// ── l. M5 people (mig 0149, 0150) ─────────────────────────────────────────────────────────────────
+// Journal, notes and conclusions that NAME someone on Raziel's list -> graph_people (derived from
+// every row like the other lanes; the map and orient hide what isn't visible). CASE-SENSITIVE:
+// "Blue" never matches "blue", though a sentence-initial "Blue" still matches (measured 54 of 301
+// rows on the 10-27 backup, every sampled one the person), and a list spelling is matched exactly as
+// written. A spelling two live entries share is skipped for both (people.ts ambiguousSpellings): the
+// graph never resolves an ambiguity by picking one.
+//
+// ONE CENTRE (mig 0150, Raziel 2026-10-29). A 'self' entry is a system name, and system members are
+// Raziel: its mentions link to the CENTRE node (graph_people/raziel), with the name(s) kept in the
+// provenance as the front ('mechanical:front:Magpie' or 'mechanical:front:Jude,Magpie'), never to a
+// node of its own. The 'centre' entry itself is never name-matched (lane m gives it its links).
+// One edge per (row, target) however many spellings hit.
+export interface PersonMatchRow { id: string; label: string; match_names: string[]; kind?: string }
 
 export function buildPeopleMentionsEdges(textRows: MentionTextRow[], people: PersonMatchRow[]): GraphEdgeRow[] {
-  const ambiguous = ambiguousSpellings(people);
-  const matchers = people.slice().sort((a, b) => a.id.localeCompare(b.id)).map((p) => ({
-    id: p.id,
+  const live = people.filter((p) => p.kind !== "centre");
+  const ambiguous = ambiguousSpellings(live);
+  const matchers = live.slice().sort((a, b) => a.id.localeCompare(b.id)).map((p) => ({
+    id: p.id, label: p.label.trim(), self: p.kind === "self",
     res: spellingsOf(p).filter((s) => !ambiguous.has(s))
       .map((s) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(s)}(?![\\p{L}\\p{N}])`, "u")),
   })).filter((m) => m.res.length > 0);
@@ -525,13 +531,50 @@ export function buildPeopleMentionsEdges(textRows: MentionTextRow[], people: Per
   const out: GraphEdgeRow[] = [];
   for (const r of rows) {
     if (!r.text) continue;
+    const fronts: string[] = [];
     for (const m of matchers) {
       if (!m.res.some((re) => re.test(r.text!))) continue;
+      if (m.self) { fronts.push(m.label); continue; }
       out.push({
         src_table: r.table, src_id: r.id, dst_table: "graph_people", dst_id: m.id,
         edge_type: "mentions", writer: r.writer, provenance: "mechanical:person", created_at: r.created_at,
       });
     }
+    if (fronts.length > 0) {
+      out.push({
+        src_table: r.table, src_id: r.id, dst_table: "graph_people", dst_id: CENTRE_ID,
+        edge_type: "mentions", writer: r.writer, provenance: FRONT_PROVENANCE_PREFIX + [...new Set(fronts)].sort().join(","),
+        created_at: r.created_at,
+      });
+    }
+  }
+  return out;
+}
+
+// ── m. the centre's own links (mig 0150) ───────────────────────────────────────────────────────────
+// Raziel is in nearly every row, so the centre is NOT linked by name. It is linked from rows that are
+// ABOUT Raziel, each by whoever holds it, so tapping the centre shows what each of us holds:
+//   about    -- architect_facts, status 'active' (facts the triad keeps about Raziel)
+//   toward   -- companion_relational_state rows toward 'raziel' or 'crash' (how one of us stands)
+// Relational deltas are not here: they are shifts in a session, already linked to it (source b).
+export interface ArchitectFactGraphRow { id: string; companion_id: string | null; status: string; created_at: string }
+export interface RelationalStateGraphRow { id: string; companion_id: string; toward: string | null; noted_at: string }
+
+export function buildCentreEdges(facts: ArchitectFactGraphRow[], states: RelationalStateGraphRow[]): GraphEdgeRow[] {
+  const out: GraphEdgeRow[] = [];
+  for (const f of facts.slice().sort((a, b) => a.id.localeCompare(b.id))) {
+    if (f.status !== "active") continue;
+    out.push({
+      src_table: "architect_facts", src_id: f.id, dst_table: "graph_people", dst_id: CENTRE_ID,
+      edge_type: "about", writer: f.companion_id ?? "house", provenance: "mechanical", created_at: f.created_at,
+    });
+  }
+  for (const s of states.slice().sort((a, b) => a.id.localeCompare(b.id))) {
+    if (!s.toward || !isCentreName(s.toward)) continue;
+    out.push({
+      src_table: "companion_relational_state", src_id: s.id, dst_table: "graph_people", dst_id: CENTRE_ID,
+      edge_type: "toward", writer: s.companion_id, provenance: "mechanical", created_at: s.noted_at,
+    });
   }
   return out;
 }
@@ -993,7 +1036,7 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     selectColumns<AutonomyRunGraphRow>(db, "autonomy_runs", ["id", "companion_id", "started_at", "completed_at", "created_at"]),
   ]);
   // M5 lanes (j, k). A separate await so the tuple above keeps its shape; same whole-table convention.
-  const [conclusionSources, threadNotes, threads, projectLogs, projects, people] = await Promise.all([
+  const [conclusionSources, threadNotes, threads, projectLogs, projects, people, facts, relStates] = await Promise.all([
     selectColumns<ConclusionSourceRow & { conclusion_text: string | null }>(db, "companion_conclusions", ["id", "companion_id", "source_sessions", "created_at", "conclusion_text"]),
     selectColumns<ThreadNoteRow & { content: string | null }>(db, "wm_continuity_notes", ["note_id", "agent_id", "thread_key", "created_at", "content"]),
     selectColumns<{ thread_key: string; agent_id: string }>(db, "wm_mind_threads", ["thread_key", "agent_id"]),
@@ -1001,9 +1044,11 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     selectColumns<{ id: string; title: string; status: string }>(db, "companion_projects", ["id", "title", "status"]),
     // mig 0149. Tolerates the table not existing yet (a Worker deployed ahead of its migration
     // derives no people lane rather than failing the whole rebuild).
-    db.prepare("SELECT id, label, match_names FROM graph_people WHERE archived = 0").all<{ id: string; label: string; match_names: string }>()
-      .then((r) => (r.results ?? []).map((p) => ({ id: p.id, label: p.label, match_names: parseMatchNames(p.match_names) })))
+    db.prepare("SELECT id, label, match_names, kind FROM graph_people WHERE archived = 0").all<{ id: string; label: string; match_names: string; kind: string }>()
+      .then((r) => (r.results ?? []).map((p) => ({ id: p.id, label: p.label, match_names: parseMatchNames(p.match_names), kind: p.kind })))
       .catch(() => [] as PersonMatchRow[]),
+    selectColumns<ArchitectFactGraphRow>(db, "architect_facts", ["id", "companion_id", "status", "created_at"]),
+    selectColumns<RelationalStateGraphRow>(db, "companion_relational_state", ["id", "companion_id", "toward", "noted_at"]),
   ]);
   const projectTitles: MentionTitleRow[] = projects
     .filter((p) => p.status === "open" || p.status === "paused")
@@ -1029,6 +1074,7 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     { source: "companion_conclusions.source_sessions", edges: buildConcludedInEdges(conclusionSources, sessionIds) },
     { source: "wm_continuity_notes.thread_key", edges: buildThreadEdges(threadNotes, threads) },
     { source: "project_log.project_id", edges: buildProjectLogEdges(projectLogs, new Set(projects.map((p) => p.id))) },
+    { source: "graph_people.centre", edges: buildCentreEdges(facts, relStates) },
     {
       source: "graph_people~name",
       edges: buildPeopleMentionsEdges([

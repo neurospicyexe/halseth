@@ -91,19 +91,20 @@ describe("people", () => {
     expect((await addPerson(env, { label: "Jo", added_by: "raziel" })).ok).toBe(false);
     await addPerson(env, { label: "Magpie", added_by: "raziel" });
     expect((await addPerson(env, { label: "Magpie", added_by: "raziel" })).ok).toBe(false);
-    expect((await listPeople(env)).map((p) => p.label)).toEqual(["Magpie"]);
+    // The centre (mig 0150) is always first; Magpie was added as a person here.
+    expect((await listPeople(env)).map((p) => p.label)).toEqual(["Raziel", "Magpie"]);
   });
 
   it("the endpoints add with added_by raziel and list with mention counts", async () => {
     const { db, env } = envWith();
     const auth = { Authorization: "Bearer s", "Content-Type": "application/json" };
-    const add = await postMindPeople(new Request("https://x/mind/people", { method: "POST", headers: auth, body: JSON.stringify({ label: "Magpie", kind: "headmate" }) }), env);
+    const add = await postMindPeople(new Request("https://x/mind/people", { method: "POST", headers: auth, body: JSON.stringify({ label: "Blue", kind: "person" }) }), env);
     expect(add.status).toBe(200);
-    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'gaia', 'Magpie fronted', ?)").run(at);
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'gaia', 'Blue came by', ?)").run(at);
     // A draft (bot speech is born one) is linked by the rebuild but hidden on the map: not counted.
-    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at, review_state) VALUES ('j2', 'gaia', 'Magpie again', ?, 'draft')").run(at);
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at, review_state) VALUES ('j2', 'gaia', 'Blue again', ?, 'draft')").run(at);
     await rebuildGraphDetailed(env);
     const list: any = await (await getMindPeople(new Request("https://x/mind/people", { headers: auth }), env)).json();
-    expect(list.people).toMatchObject([{ label: "Magpie", kind: "headmate", added_by: "raziel", mentions: 1 }]);
+    expect(list.people).toMatchObject([{ label: "Raziel", kind: "centre" }, { label: "Blue", kind: "person", added_by: "raziel", mentions: 1 }]);
   });
 });

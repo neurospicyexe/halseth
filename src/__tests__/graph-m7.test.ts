@@ -12,6 +12,9 @@ import { nextReachRecord, readGraphReach, recordGraphReach, summarizeReach } fro
 
 function envWith() {
   const { db, DB } = makeSqliteD1();
+  // mig 0040 seeds stances toward Raziel, which the centre lane (mig 0150) links; these tests count
+  // edges from their own rows only.
+  db.prepare("DELETE FROM companion_relational_state").run();
   return { db, env: { DB } as any };
 }
 
