@@ -134,6 +134,9 @@ export interface SessionLoadInput {
 // lane held 0 rows at the 10-27 audit), so when none was named, a NEW session resumes the packet it
 // was shown. A reused session already had its boot; a packet that closed this very session is not
 // something it resumes. Same writes as the explicit path: returned = 1 plus the live edge.
+// OWN CLOSES ONLY: the shown packet is newest-of-any-companion (the boot hook labels it so), and a
+// boot that shows Gaia's close orients from it but does not resume it -- a cypher session marked
+// as resuming Gaia's handover would be a live edge, surviving every rebuild, that says nothing true.
 async function resumeShownHandover(env: Env, args: {
   sessionId: string;
   isNew: boolean;
@@ -144,6 +147,9 @@ async function resumeShownHandover(env: Env, args: {
 }): Promise<void> {
   if (args.explicit || !args.isNew || !args.shown?.id || args.shown.session_id === args.sessionId) return;
   try {
+    const closer = await env.DB.prepare("SELECT companion_id FROM sessions WHERE id = ?")
+      .bind(args.shown.session_id).first<{ companion_id: string | null }>();
+    if (!closer?.companion_id || closer.companion_id !== args.companionId) return;
     await env.DB.batch([
       env.DB.prepare("UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL").bind(args.shown.id),
       ...insertEdgeStatements(env.DB, [edgeForResumedFrom({

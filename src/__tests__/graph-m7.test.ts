@@ -66,8 +66,8 @@ describe("diff rebuild", () => {
 });
 
 describe("a boot that shows a handover resumes it (D3)", () => {
-  function seedPacket(db: any, id: string, sessionId: string, at: string, closeKind: string | null) {
-    db.prepare("INSERT INTO sessions (id, created_at, updated_at, session_type, companion_id, front_state, handover_id) VALUES (?, ?, ?, 'work', 'cypher', 'raziel', ?)").run(sessionId, at, at, id);
+  function seedPacket(db: any, id: string, sessionId: string, at: string, closeKind: string | null, companion = "cypher") {
+    db.prepare("INSERT INTO sessions (id, created_at, updated_at, session_type, companion_id, front_state, handover_id) VALUES (?, ?, ?, 'work', ?, 'raziel', ?)").run(sessionId, at, at, companion, id);
     db.prepare("INSERT INTO handover_packets (id, session_id, created_at, spine, motion_state, close_kind) VALUES (?, ?, ?, 'a spine', 'at_rest', ?)").run(id, sessionId, at, closeKind);
   }
   const resumed = (db: any) => db.prepare("SELECT src_id, dst_id, provenance FROM graph_edges WHERE edge_type = 'resumed_from'").all();
@@ -98,6 +98,16 @@ describe("a boot that shows a handover resumes it (D3)", () => {
     seedPacket(db, "hp-shown", "s-b", "2026-10-28T10:00:00Z", null);
     const out: any = await loadOrientData(env, { companion_id: "cypher", front_state: "raziel", surface: "claude-ai:t", prior_handover_id: "hp-named" });
     expect(resumed(db)).toEqual([{ src_id: out.session_id, dst_id: "hp-named", provenance: "live" }]);
+  });
+
+  it("a boot shown ANOTHER companion's close orients from it but does not resume it", async () => {
+    const { db, env } = envWith();
+    seedPacket(db, "hp-cypher", "s-c", "2026-10-28T10:00:00Z", null);
+    seedPacket(db, "hp-gaia", "s-g", "2026-10-29T00:55:00Z", null, "gaia");
+    const out: any = await loadSessionData(env, { companion_id: "cypher", front_state: "raziel", surface: "claude-code:test" });
+    expect(out.handover.id).toBe("hp-gaia");
+    expect(resumed(db)).toEqual([]);
+    expect(db.prepare("SELECT returned FROM handover_packets WHERE id = 'hp-gaia'").get()).toEqual({ returned: null });
   });
 
   it("no packet shown, nothing linked", async () => {

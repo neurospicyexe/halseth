@@ -39,6 +39,9 @@ export const GRAPH_REBUILD_GATE_HOURS = 24;
 // minutes, and the cron fires every minute -- so every tick during a run saw "no stamp" and started
 // ANOTHER rebuild whose DELETE wiped the first one's progress mid-insert. Overlapping runs leave a
 // ragged graph (health check: 51269 -> 42130 edges, moved_by missing July, follows ending 09-21).
+// Since M7 (2026-10-28) the rebuild writes a diff, not a wipe, and an unchanged night takes about a
+// second, so overlap can no longer shred the graph; the lease still keeps two runs from racing the
+// same diff and doubling the writes.
 // The lease makes the run single-flight. It expires so a run killed mid-flight (CPU/wall limit)
 // retries after the TTL instead of wedging forever. Own key: never another job's anchor.
 export const GRAPH_REBUILD_LEASE_KEY = "graph_rebuild_lease_at";
