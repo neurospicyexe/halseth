@@ -28,6 +28,11 @@ $SbDir   = Join-Path $Root 'second-brain'
 $Log     = Join-Path $Root 'backup.log'
 New-Item -ItemType Directory -Force $D1Dir, $SbDir | Out-Null
 
+# Every ssh/scp fails fast instead of waiting on a prompt no one can see (2026-10-28: the scheduled
+# run hung 20+ minutes on the very first `ssh vps`, hidden window, nothing logged after "start").
+# BatchMode refuses any interactive auth or host-key question; the timeouts bound a dead link.
+$SshOpts = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4')
+
 function Log([string]$m) { $l = "$(Get-Date -Format s) $m"; Add-Content -Path $Log -Value $l; Write-Output $l }
 function Fail([string]$m) { Log "FAIL $m"; exit 1 }
 function Wrangler([string[]]$a) {
@@ -42,7 +47,7 @@ Log "start (weekly flag: $Weekly)"
 
 # ── previous marker: decides whether the weekly part is due, and carries its stamp forward ──
 $prev = @{}
-try { $prev = (ssh vps 'cat /app/logs/backup-last.json 2>/dev/null' | Out-String | ConvertFrom-Json -AsHashtable) ?? @{} } catch { $prev = @{} }
+try { $prev = (ssh -n @SshOpts vps 'cat /app/logs/backup-last.json 2>/dev/null' | Out-String | ConvertFrom-Json -AsHashtable) ?? @{} } catch { $prev = @{} }
 $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $sbDue = $Weekly -or ((Get-Date).DayOfWeek -eq 'Sunday') -or (-not $prev.sb_at) -or (($now - [double]$prev.sb_at) -gt 6 * 86400)
 
@@ -91,7 +96,7 @@ $mode = if ($sbDue) { 'weekly' } else { 'daily' }
 $script = (Get-Content -Raw (Join-Path $PSScriptRoot 'vps-snapshot.sh')) -replace "`r", ''
 # CRs stripped: Out-String on Windows ends lines with CRLF, and `$` in a multiline regex does not match
 # before a CR -- on 10-27 that made the SHA loop match NOTHING, download nothing, and still "succeed".
-$snap = ($script | ssh vps "bash -s -- $mode" 2>&1 | Out-String) -replace "`r", ''
+$snap = ($script | ssh @SshOpts vps "bash -s -- $mode" 2>&1 | Out-String) -replace "`r", ''
 if ($snap -notmatch '(?m)^OK\s*$') { Fail "vps snapshot ($mode): $($snap.Trim() -replace "`n", ' | ')" }
 $sbRows = if ($snap -match '(?m)^ROWS (\d+) (\d+)') { "$($Matches[1])/$($Matches[2])" } else { $null }
 $shas = [regex]::Matches($snap, '(?m)^SHA ([0-9a-f]{64}) (\S+)$')
@@ -103,14 +108,14 @@ foreach ($m in $shas) {
   $hash = $m.Groups[1].Value; $file = $m.Groups[2].Value
   $base = $file -replace '\.db\.zst$', ''
   $dest = Join-Path $SbDir "$base-$Stamp.db.zst"
-  scp -q "vps:/tmp/nsb-backup/$file" $dest
+  scp -q @SshOpts "vps:/tmp/nsb-backup/$file" $dest
   if ($LASTEXITCODE -ne 0) { Fail "download of $file failed" }
   $got = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLower()
   if ($got -ne $hash) { Remove-Item $dest; Fail "checksum mismatch on $file (vps $hash, here $got)" }
   $sbBytes += (Get-Item $dest).Length
   Log "second-brain $base ok: checksum matches, $([math]::Round((Get-Item $dest).Length / 1MB, 1)) MB$(if ($base -eq 'vector-store') { ", rows copy/live $sbRows" })"
 }
-ssh vps 'rm -f /tmp/nsb-backup/*.zst' | Out-Null
+ssh -n @SshOpts vps 'rm -f /tmp/nsb-backup/*.zst' | Out-Null
 foreach ($f in $want) {
   $local = Join-Path $SbDir (($f -replace '\.db\.zst$', '') + "-$Stamp.db.zst")
   if (-not (Test-Path $local)) { Fail "$f is not on disk after the download step" }
@@ -133,7 +138,7 @@ $marker = [ordered]@{
   vault_queue_at = $now
   host = $env:COMPUTERNAME; stamp = $Stamp
 } | ConvertTo-Json -Compress
-$marker | ssh vps 'cat > /app/logs/backup-last.json.tmp && mv /app/logs/backup-last.json.tmp /app/logs/backup-last.json'
+$marker | ssh @SshOpts vps 'cat > /app/logs/backup-last.json.tmp && mv /app/logs/backup-last.json.tmp /app/logs/backup-last.json'
 if ($LASTEXITCODE -ne 0) { Fail 'backups verified but the VPS marker could not be written (health-check will warn)' }
 Log "done ($mode)"
 exit 0
