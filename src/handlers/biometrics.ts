@@ -114,3 +114,66 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     headers: { "Content-Type": "application/json" },
   });
 }
+
+const jsonRes = (data: unknown, status = 200): Response =>
+  new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+
+// PATCH /biometrics/:id: amend a check-in after the fact (Hearth adds a mood word / energy later).
+// Strict ranges (unlike POST, which clamps): a bad value is a 400, never silently rewritten.
+export async function handleBiometricsPatch(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const id = params.id;
+  if (!id) return jsonRes({ error: "id required" }, 400);
+
+  let body: { spoons?: unknown; mood?: unknown; energy?: unknown };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return jsonRes({ error: "invalid JSON" }, 400);
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return jsonRes({ error: "body must be an object" }, 400);
+  }
+
+  const sets: string[] = [];
+  const bindings: unknown[] = [];
+  const intField = (name: "spoons" | "energy", hi: number): string | null => {
+    const v = body[name];
+    if (v === undefined) return null;
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > hi) return `${name} must be an integer 0..${hi}`;
+    sets.push(`${name} = ?`);
+    bindings.push(v);
+    return null;
+  };
+  const err = intField("spoons", 12) ?? intField("energy", 10);
+  if (err) return jsonRes({ error: err }, 400);
+  if (body.mood !== undefined) {
+    if (typeof body.mood !== "string" || body.mood.length > 80) return jsonRes({ error: "mood must be a string up to 80 chars" }, 400);
+    sets.push("mood = ?");
+    bindings.push(body.mood.trim() === "" ? null : body.mood.trim());
+  }
+  if (sets.length === 0) return jsonRes({ error: "no fields to update" }, 400);
+
+  const res = await env.DB.prepare(`UPDATE biometric_snapshots SET ${sets.join(", ")} WHERE id = ?`)
+    .bind(...bindings, id).run();
+  if (!res.meta?.changes) return jsonRes({ error: "not found" }, 404);
+  return jsonRes({ ok: true, id });
+}
+
+// DELETE /biometrics/:id: undo a check-in.
+export async function handleBiometricsDelete(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const id = params.id;
+  if (!id) return jsonRes({ error: "id required" }, 400);
+  const res = await env.DB.prepare("DELETE FROM biometric_snapshots WHERE id = ?").bind(id).run();
+  if (!res.meta?.changes) return jsonRes({ error: "not found" }, 404);
+  return jsonRes({ ok: true, id });
+}
