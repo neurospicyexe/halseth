@@ -12,6 +12,7 @@ import { postInteriority, getInteriority, getInteriorityMeta, patchInteriorityDi
 import { getRefusals, getPreferences, patchRefusalAck, postPreferenceHttp, postRefusalHttp } from "./handlers/agency.js";
 import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
+import { getRazielInbox, getRazielInboxItem, postRazielInboxRead } from "./handlers/raziel-inbox";
 import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost, handleBiometricsPatch, handleBiometricsDelete } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getRecallIneligible, getIngestContinuityNotes, getIngestContinuityIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
 import { logRoutine } from "./handlers/routines";
@@ -288,6 +289,9 @@ const router = new Router()
   .on("POST", "/biometrics",       (request, env) => handleBiometricsPost(request, env))
   .on("PATCH",  "/biometrics/:id", (request, env, params) => handleBiometricsPatch(request, env, params ?? {}))
   .on("DELETE", "/biometrics/:id", (request, env, params) => handleBiometricsDelete(request, env, params ?? {}))
+  .on("GET",  "/raziel/inbox",      (request, env, params) => getRazielInbox(request, env, params ?? {}))
+  .on("POST", "/raziel/inbox/read", (request, env, params) => postRazielInboxRead(request, env, params ?? {}))
+  .on("GET",  "/raziel/inbox/:id",  (request, env, params) => getRazielInboxItem(request, env, params ?? {}))
 
   // Inter-companion notes — Discord bot note delivery poll
   .on("GET", "/inter-companion-notes/unread/:companionId", (request, env, params) => getUnreadInterCompanionNotes(request, env, params ?? {}))

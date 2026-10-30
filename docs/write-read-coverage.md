@@ -31,6 +31,7 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 | `companion_open_loops` | `wm_loop_write`, `spiral_run`, session close | ✅ fixed 2026-07-26 | ✅ | ✅ | ✅ `wm_loops_read` | ✅ | HOLE 5 fixed: was absent from `mindOrient` |
 | `companion_tensions` | `tension_add` | ✅ simmering | ❌ | ✅ | ✅ | ✅ | covered |
 | `companion_relational_state` | `wm_relational_write`, `raziel_witness` | ✅ | ❌ | ✅ | ✅ | ✅ | covered |
+| `raziel_reads` | `POST /raziel/inbox/read` (Hearth marks letters read; `item_kind = 'letter'`) | n/a | n/a | n/a | ✅ `GET /raziel/inbox` (read flag + unread_count) | n/a | Raziel-facing marks only; companions never read them. Added with mig 0152 |
 | `relational_deltas` | `delta_log` | ✅ | ✅ | ❌ | ✅ | ✅ | append-only covenant; two row shapes |
 | `companion_preferences` / `companion_refusals` | `preference_set`, `refuse` | ✅ | ❌ | ✅ | ✅ | ❌ | D1-only by design |
 | `companion_drifts` | `drift_open`/`drift_witness`/etc. | ✅ | ❌ | ✅ | ✅ `drifts_read` | ❌ | D1-only |
