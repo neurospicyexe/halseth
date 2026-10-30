@@ -56,6 +56,24 @@ describe("raziel inbox", () => {
     expect(r.unread_count).toBe(1);
   });
 
+  it("a row whose tags are not JSON breaks neither the list, the count nor the item read", async () => {
+    const s = await seeded();
+    await s.env.DB.prepare(
+      "INSERT INTO companion_journal (id, created_at, agent, note_text, tags, review_state) VALUES ('bad', '2026-10-05 10:00:00', 'cypher', 'x', 'letter, not json', 'kept')",
+    ).run();
+    const r = await s.list();
+    expect(r.items.map((i: any) => i.id)).toEqual(["j2", "j1"]);
+    expect(r.unread_count).toBe(2);
+    const one = await getRazielInboxItem(s.req("GET", "/raziel/inbox/bad"), s.env, { id: "bad" });
+    expect(one.status).toBe(404);
+  });
+
+  it("migration 0153 adds the partial letters index", async () => {
+    const { env } = setup();
+    const idx = await env.DB.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_companion_journal_letters'").first();
+    expect(idx?.sql).toMatch(/WHERE tags LIKE '%letter%'/);
+  });
+
   it("unread_count ignores limit", async () => {
     const { list } = await seeded();
     const r = await list("?limit=1");

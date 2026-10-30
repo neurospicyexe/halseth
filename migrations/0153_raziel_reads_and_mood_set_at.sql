@@ -20,3 +20,8 @@ CREATE TABLE IF NOT EXISTS raziel_reads (
 ALTER TABLE companion_state ADD COLUMN mood_set_at TEXT;
 
 UPDATE companion_state SET mood_set_at = updated_at WHERE current_mood IS NOT NULL OR compound_state IS NOT NULL;
+
+-- The inbox reads only letter-tagged journal rows, newest first. A partial index on that slice keeps the
+-- list and the unread count off a full companion_journal scan (the vault mirror made it thousands of rows).
+-- The handler's WHERE carries the same `tags LIKE '%letter%'` term so the planner can pick it.
+CREATE INDEX IF NOT EXISTS idx_companion_journal_letters ON companion_journal(created_at DESC) WHERE tags LIKE '%letter%';
