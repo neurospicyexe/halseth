@@ -14,7 +14,7 @@ const LETTER_WHERE =
 
 const SELECT_ITEM =
   "SELECT j.id, j.agent, j.created_at, j.note_text, (r.item_id IS NOT NULL) AS is_read " +
-  "FROM companion_journal j " +
+  "FROM companion_journal AS j " +
   "LEFT JOIN raziel_reads r ON r.item_kind = 'letter' AND r.item_id = j.id ";
 
 interface InboxItem {
