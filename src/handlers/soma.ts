@@ -78,6 +78,22 @@ interface CompanionSomaRow {
   weight: string | null;
   updated_at: string;
   mood_set_at: string | null;
+  last_journal_at?: string | null;
+  last_close_at?: string | null;
+  seen_at?: string | null;
+}
+
+// D1 rows mix ISO ("...T...Z") and sqlite datetime ("YYYY-MM-DD HH:MM:SS", UTC) formats, so the
+// latest must be picked by instant, never by string compare. Returns ISO, or null if none parse.
+export function latestInstant(values: Array<string | null | undefined>): string | null {
+  let best: number | null = null;
+  for (const v of values) {
+    if (!v) continue;
+    const s = /[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v.replace(" ", "T") + "Z";
+    const t = Date.parse(s);
+    if (Number.isFinite(t) && (best === null || t > best)) best = t;
+  }
+  return best === null ? null : new Date(best).toISOString();
 }
 
 export async function getSoma(request: Request, env: Env): Promise<Response> {
@@ -92,14 +108,21 @@ export async function getSoma(request: Request, env: Env): Promise<Response> {
            surface_emotion, surface_intensity,
            undercurrent_emotion, undercurrent_intensity,
            heat, reach, weight,
-           updated_at, mood_set_at
-    FROM companion_state
+           updated_at, mood_set_at,
+           (SELECT MAX(j.created_at) FROM companion_journal j WHERE j.agent = cs.companion_id) AS last_journal_at,
+           (SELECT MAX(h.created_at) FROM handover_packets h
+              JOIN sessions s ON s.id = h.session_id
+             WHERE s.companion_id = cs.companion_id) AS last_close_at
+    FROM companion_state cs
     WHERE companion_id IN ('drevan', 'cypher', 'gaia')
   `).all<CompanionSomaRow>();
 
+  // seen_at: the last time the companion showed up by their OWN act (set a mood, wrote a journal
+  // entry, closed a session). Never updated_at: the ferment cron moves that every hour.
   const byId: Record<string, CompanionSomaRow> = {};
   for (const row of result.results ?? []) {
-    byId[row.companion_id] = row;
+    const { last_journal_at, last_close_at, ...rest } = row;
+    byId[row.companion_id] = { ...rest, seen_at: latestInstant([row.mood_set_at, last_journal_at, last_close_at]) };
   }
 
   return Response.json({
