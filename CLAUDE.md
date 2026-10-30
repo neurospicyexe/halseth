@@ -207,6 +207,7 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0148` | Memory Kit gap 4: PIN on a conclusion or continuity note; a pinned row takes an orient slot ahead of the heat-ranked fill and is never pruned/released automatically |
 | -- | `0149` | `graph_people`: the explicit list of people the memory graph may link to (M5, `docs/PLAN-memory-map-2026-10-28.md`); a list, not the roster, since roster names collide with show characters |
 | -- | `0150` | `graph_people` centre (M5 follow-up, Raziel 2026-10-29): Raziel is the centre of the map and system names resolve to Raziel; replaces the separate `headmate` kind from 0149 |
+| -- | `0152` | Hearth redesign P1: `raziel_reads` (what Raziel has opened; unread = no row) + `companion_state.mood_set_at` (when a companion last set their own mood, backfilled from `updated_at`) |
 
 **Migration gotcha:** SQLite cannot ALTER a CHECK constraint. Extending an enum-style CHECK (e.g. metronome action_type) requires a full table rebuild -- copy data, swap, recreate indexes (pattern established in 0065/0069/0072/0088/0090/0093).
 
