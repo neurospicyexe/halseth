@@ -1,4 +1,4 @@
-// mood_set_at (mig 0152) moves ONLY when a companion authors current_mood / compound_state.
+// mood_set_at (mig 0153) moves ONLY when a companion authors current_mood / compound_state.
 // Hearth's Home shows "last said: <word>, <age>" off it, so floats, ticks and legacy fields must not touch it.
 import { describe, it, expect } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";

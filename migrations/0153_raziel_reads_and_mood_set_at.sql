@@ -1,4 +1,4 @@
--- 0152_raziel_reads_and_mood_set_at.sql -- what Raziel has opened, and when a companion last set their own mood
+-- 0153_raziel_reads_and_mood_set_at.sql -- what Raziel has opened, and when a companion last set their own mood
 --
 -- Hearth redesign P1 (docs/superpowers/specs/2026-10-30-hearth-redesign-design.md in the parent BBH
 -- repo). Two small additions the new home and inbox read:

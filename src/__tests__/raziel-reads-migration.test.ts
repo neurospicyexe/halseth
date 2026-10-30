@@ -1,4 +1,4 @@
-// Migration 0152: raziel_reads (what Raziel has opened) + companion_state.mood_set_at.
+// Migration 0153: raziel_reads (what Raziel has opened) + companion_state.mood_set_at.
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,7 +7,7 @@ import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../../migrations/", import.meta.url).href);
 
-describe("migration 0152", () => {
+describe("migration 0153", () => {
   it("creates raziel_reads with the 3 columns and a composite PK", () => {
     const { db } = makeSqliteD1();
     const cols = db.prepare("PRAGMA table_info(raziel_reads)").all() as Array<{ name: string; pk: number }>;
@@ -31,10 +31,10 @@ describe("migration 0152", () => {
   });
 
   it("backfills mood_set_at from updated_at where a mood or compound state exists", () => {
-    const { db } = makeSqliteD1({ upTo: 151 });
+    const { db } = makeSqliteD1({ upTo: 152 });
     db.prepare("INSERT OR REPLACE INTO companion_state (companion_id, current_mood, compound_state, updated_at) VALUES ('cypher', 'steady', NULL, '2026-01-01T00:00:00Z')").run();
     db.prepare("INSERT OR REPLACE INTO companion_state (companion_id, current_mood, compound_state, updated_at) VALUES ('gaia', NULL, NULL, '2026-01-02T00:00:00Z')").run();
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, "0152_raziel_reads_and_mood_set_at.sql"), "utf8");
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, "0153_raziel_reads_and_mood_set_at.sql"), "utf8");
     db.exec(sql);
     const c = db.prepare("SELECT mood_set_at FROM companion_state WHERE companion_id='cypher'").get() as any;
     const g = db.prepare("SELECT mood_set_at FROM companion_state WHERE companion_id='gaia'").get() as any;

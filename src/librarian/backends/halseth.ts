@@ -495,7 +495,7 @@ export async function sessionClose(env: Env, params: {
       // authored close saw an unchanged version, believed nothing had moved, and overwrote the
       // floats the companion had just set. COALESCE because legacy rows can hold NULL.
       assignments.push("updated_at = datetime('now')", "version = COALESCE(version, 0) + 1");
-      // mood_set_at (mig 0152): Hearth's "last said" age. Same instant as updated_at, and ONLY when the
+      // mood_set_at (mig 0153): Hearth's "last said" age. Same instant as updated_at, and ONLY when the
       // companion authored a mood word / compound_state in this close (floats alone never move it).
       if (moodAuthored(assignments)) assignments.push("mood_set_at = datetime('now')");
       bindings.push(params.companionId);
@@ -1222,7 +1222,7 @@ export async function updateCompanionState(
   // COALESCE matches sessionClose's bump: a legacy row with a NULL version would otherwise stay
   // NULL forever on this path (NULL + 1 = NULL) and never become CAS-able.
   assignments.push("updated_at = datetime('now')", "version = COALESCE(version, 0) + 1");
-  // mood_set_at (mig 0152): stamped only when the companion authored current_mood / compound_state.
+  // mood_set_at (mig 0153): stamped only when the companion authored current_mood / compound_state.
   if (moodAuthored(assignments)) assignments.push("mood_set_at = datetime('now')");
   bindings.push(companionId);
 
