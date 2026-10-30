@@ -3,6 +3,9 @@ import { authGuard } from "../lib/auth.js";
 
 import { generateId } from "../db/queries.js";
 
+const jsonRes = (data: unknown, status = 200): Response =>
+  new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+
 export async function handleBiometricsLatest(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
   const row = await env.DB.prepare(
@@ -33,6 +36,7 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
   const denied = authGuard(request, env); if (denied) return denied;
 
   let body: {
+    id?: unknown;
     recorded_at?: string;
     hrv_resting?: number | null;
     resting_hr?: number | null;
@@ -55,6 +59,13 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     body = await request.json() as typeof body;
   } catch {
     return new Response("Invalid JSON", { status: 400 });
+  }
+
+  // Optional client id (Hearth generates it at tap time): a retried or re-flushed POST of the same
+  // check-in is then a no-op instead of a second row, and the client knows the row id before the
+  // response arrives (undo = DELETE that id, add-a-word = PATCH that id).
+  if (body.id !== undefined && (typeof body.id !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(body.id))) {
+    return jsonRes({ error: "id must be 8..64 chars of [A-Za-z0-9_-]" }, 400);
   }
 
   const recordedAt = body.recorded_at ?? new Date().toISOString();
@@ -80,11 +91,11 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     : body.meds_taken === false || body.meds_taken === 0 ? 0
     : null;
 
-  const id = generateId();
+  const id = typeof body.id === "string" ? body.id : generateId();
   const now = new Date().toISOString();
 
-  await env.DB.prepare(`
-    INSERT INTO biometric_snapshots
+  const res = await env.DB.prepare(`
+    INSERT OR IGNORE INTO biometric_snapshots
       (id, recorded_at, logged_at, source, hrv_resting, resting_hr,
        sleep_hours, sleep_quality, stress_score, steps, active_energy, notes,
        mood, pain, energy, focus, spoons, meds_taken)
@@ -109,14 +120,10 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     medsTaken,
   ).run();
 
-  return new Response(JSON.stringify({ id, logged_at: now }), {
-    status: 201,
-    headers: { "Content-Type": "application/json" },
-  });
+  // Same id already stored: the repeat is a no-op (the first write wins), answered 200 with that id.
+  if (!res.meta?.changes) return jsonRes({ id, duplicate: true }, 200);
+  return jsonRes({ id, logged_at: now }, 201);
 }
-
-const jsonRes = (data: unknown, status = 200): Response =>
-  new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
 // PATCH /biometrics/:id: amend a check-in after the fact (Hearth adds a mood word / energy later).
 // Strict ranges (unlike POST, which clamps): a bad value is a 400, never silently rewritten.

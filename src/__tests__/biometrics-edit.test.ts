@@ -71,6 +71,36 @@ describe("biometrics edit", () => {
     expect(again.status).toBe(404);
   });
 
+  it("POST keeps the client's recorded_at (a retried tap lands at tap time, not retry time)", async () => {
+    const { post, row } = setup();
+    const { id } = await post({ spoons: 4, recorded_at: "2026-10-30T03:12:00.000Z" });
+    expect((await row(id)).recorded_at).toBe("2026-10-30T03:12:00.000Z");
+  });
+
+  it("POST with a client id stores that id; a repeat POST is a no-op returning the same id", async () => {
+    const { env, req, row } = setup();
+    const cid = "a1b2c3d4-e5f6-4789-9abc-def012345678";
+    const first = await handleBiometricsPost(req("POST", { id: cid, spoons: 4 }), env);
+    expect(first.status).toBe(201);
+    expect(((await first.json()) as any).id).toBe(cid);
+    const again = await handleBiometricsPost(req("POST", { id: cid, spoons: 9 }), env);
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as any).id).toBe(cid);
+    expect((await row(cid)).spoons).toBe(4);
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM biometric_snapshots").first();
+    expect(n.n).toBe(1);
+  });
+
+  it("POST rejects a malformed client id", async () => {
+    const { env, req } = setup();
+    for (const id of ["short", "x".repeat(65), "has space here", "semi;colon-xx", 42]) {
+      const res = await handleBiometricsPost(req("POST", { id, spoons: 4 }), env);
+      expect(res.status, String(id)).toBe(400);
+    }
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM biometric_snapshots").first();
+    expect(n.n).toBe(0);
+  });
+
   it("no bearer is 401", async () => {
     const { env, req, post } = setup();
     const { id } = await post({ spoons: 5 });
