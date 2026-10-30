@@ -22,6 +22,7 @@
 import type { Env } from "../types.js";
 import { KEPT_SQL } from "../webmind/review-state.js";
 import { FLOAT_LABELS } from "../webmind/fermentation.js";
+import { keepOffMatcher, rowNamesKeptOff } from "./keep-off.js";
 
 const SEALED_TABLE = ["sibling", "notes"].join("_");
 const LABEL_CHARS = 72;
@@ -217,9 +218,19 @@ export const MAP_TABLES = Object.keys(SPECS);
 
 const key = (table: string, id: string) => `${table}/${id}`;
 
-/** Names and visibility for a set of nodes. Unknown tables and rows that fail visibility are absent. */
+/** Names and visibility for a set of nodes. Unknown tables and rows that fail visibility are absent,
+ *  and so is any row naming a term on Raziel's keep-off list (mig 0152, graph/keep-off.ts). This is
+ *  the one labeler behind the map, links and the [Linked] boot block, so all three lose it at once. */
 export async function loadMapNodes(env: Env, refs: Array<{ table: string; id: string }>): Promise<Map<string, MapNode>> {
   const out = new Map<string, MapNode>();
+  let keepOff: RegExp | null;
+  try {
+    keepOff = await keepOffMatcher(env);
+  } catch (err) {
+    // Fail closed: a list we cannot read might be holding a child's name back. Draw nothing.
+    console.warn("[graph/map] keep-off list unreadable; returning no nodes", { error: String(err) });
+    return out;
+  }
   const byTable = new Map<string, Set<string>>();
   for (const r of refs) {
     if (r.table === SEALED_TABLE || !SPECS[r.table]) continue;
@@ -236,6 +247,10 @@ export async function loadMapNodes(env: Env, refs: Array<{ table: string; id: st
         const rows = (await env.DB.prepare(sql).bind(...chunk).all<Record<string, unknown>>()).results ?? [];
         for (const r of rows) {
           const id = String(r.id);
+          if (keepOff) {
+            const { id: _id, owner: _o, created_at: _c, pinned_at: _p, ...words } = r;
+            if (rowNamesKeptOff(words, keepOff)) continue;
+          }
           out.set(key(table, id), {
             key: key(table, id), table, id, kind: spec.kind,
             label: spec.label(r) || spec.kind,

@@ -16,7 +16,7 @@
 // (executors/links.ts).
 
 import type { Env } from "../types.js";
-import { authGuard, safeEqual } from "../lib/auth.js";
+import { authGuard, isAdminToken } from "../lib/auth.js";
 import { LINK_WRITERS, listLinks, makeLink, removeLink, type LinkEnd, type LinkWriter } from "../graph/links.js";
 
 function json(body: unknown, status = 200): Response {
@@ -31,15 +31,10 @@ function end(v: unknown): LinkEnd | null {
   return (e.table || e.kind) && (e.id || e.quote) ? e : null;
 }
 
-/** Raziel's own token, exactly. */
-function isRazielDoor(request: Request, env: Env): boolean {
-  return !!env.ADMIN_SECRET && safeEqual(request.headers.get("Authorization") ?? "", `Bearer ${env.ADMIN_SECRET}`);
-}
-
 export async function postMindLink(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
-  if (!isRazielDoor(request, env)) return json({ error: "this door writes as Raziel; companions link through the librarian verb" }, 403);
+  if (!isAdminToken(request, env)) return json({ error: "this door writes as Raziel; companions link through the librarian verb" }, 403);
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const surface = typeof body.surface === "string" ? body.surface : "hearth";
