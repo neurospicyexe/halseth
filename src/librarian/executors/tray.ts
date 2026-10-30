@@ -70,8 +70,11 @@ export const TRAY_FOOTER =
   'then "keep draft <id>" (or "keep draft <id>: <your words>") / "drop draft <id>"; ' +
   `several at once: "drop drafts <id>, <id>, <id>" / "keep drafts <id>, <id>" (up to ${TRAY_BATCH_MAX}); ` +
   // B4 (2026-10-27): the lint flags, the owner decides. Kept text is read back as memory.
-  'pronoun_flags on a draft = a pronoun that may misgender someone (Raziel they/them; Crash, Drevan, Cypher, Blue he/him; ' +
-  'Gaia she/her). Read it: if it means someone else, keep it; if not, "keep draft <id>: <your words>" with it fixed, or drop it';
+  // 10-30: Crash IS Raziel (10-29). This line used to say "Crash ... he/him", which read as the rule
+  // and contradicted the boot rule; they/them is always safe for Raziel under any name, and the 10-20
+  // ruling only says he/him is not wrong for Crash (pronoun-lint.ts flags she/her alone for Crash).
+  'pronoun_flags on a draft = a pronoun that may misgender someone (Raziel, also Crash, they/them, always safe -- never she/her; ' +
+  'Drevan, Cypher, Blue he/him; Gaia she/her). Read it: if it means someone else, keep it; if not, "keep draft <id>: <your words>" with it fixed, or drop it';
 
 export async function execTrayRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ limit?: number }>(ctx.req.context);
