@@ -210,6 +210,7 @@ Migrations live in `migrations/` and are applied in order. The schema is tier-ba
 | -- | `0151` | `graph_links`: our own links on the memory map (M4, `docs/PLAN-memory-map-2026-10-28.md`), not only Raziel's connections |
 | -- | `0152` | Map keep-off list: names that never become a dot on the map (Drevan's FERPA point, 2026-10-29) |
 | -- | `0153` | Hearth redesign P1: `raziel_reads` (what Raziel has opened; unread = no row) + `companion_state.mood_set_at` (when a companion last set their own mood, backfilled from `updated_at`) |
+| -- | `0154` | Hearth redesign P2: `idx_growth_journal_review_pending`, partial on `growth_journal(created_at DESC) WHERE review_status = 'pending'`, so the Needs-you badge count and list stop full-scanning the journal (0061's `idx_growth_journal_pending` is source-limited and the ratifiable OR cannot use it) |
 
 **Migration gotcha:** SQLite cannot ALTER a CHECK constraint. Extending an enum-style CHECK (e.g. metronome action_type) requires a full table rebuild -- copy data, swap, recreate indexes (pattern established in 0065/0069/0072/0088/0090/0093).
 
