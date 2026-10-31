@@ -11,7 +11,8 @@ const jsonRes = (data: unknown, status = 200): Response =>
 // The LIKE term matches the partial index idx_companion_journal_letters (mig 0153) word for word, so the
 // planner can use it. json_each gets '[]' for non-JSON tags: SQLite does not promise AND short-circuits,
 // so json_valid alone would not stop one malformed row from failing the whole list with "malformed JSON".
-const LETTER_WHERE =
+// Written against alias `j` (companion_journal); also used by raziel-companion.ts.
+export const LETTER_WHERE =
   "j.tags LIKE '%letter%' AND json_valid(j.tags) " +
   "AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(j.tags) THEN j.tags ELSE '[]' END) " +
   "WHERE value IN ('letter','letter_to_raziel')) " +

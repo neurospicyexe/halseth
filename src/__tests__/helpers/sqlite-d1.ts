@@ -92,9 +92,10 @@ export function makeSqliteD1(opts: { upTo?: number } = {}): SqliteD1 {
       prepared.push(sql);
       return stmt(sql);
     },
-    batch: async (stmts: Array<{ run: () => Promise<unknown> }>) => {
+    // D1's batch returns each statement's rows; node:sqlite's run() returns none, so reads go through all().
+    batch: async (stmts: Array<{ __sql?: string; run: () => Promise<unknown>; all: () => Promise<unknown> }>) => {
       const out: unknown[] = [];
-      for (const s of stmts) out.push(await s.run());
+      for (const s of stmts) out.push(await (/^\s*(SELECT|WITH)\b/i.test(s.__sql ?? "") ? s.all() : s.run()));
       return out;
     },
   };
