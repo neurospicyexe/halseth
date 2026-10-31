@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   getClubCurrent, getClubRounds, postClubRound, postClubRecommend,
-  postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss,
+  postClubVote, deleteClubVote, postClubAbstain, patchClubStatus, postClubDiscuss,
 } from "../handlers/club.js";
 import type { Env } from "../types.js";
 
@@ -38,6 +38,12 @@ class FakeStatement {
       if (existing >= 0) this.store.votes.splice(existing, 1);
       this.store.votes.push({ round_id, recommendation_id, voter, reason, created_at: new Date().toISOString() });
       return { meta: { changes: 1 } };
+    }
+    if (this.sql.startsWith("DELETE FROM club_votes")) {
+      const [round_id, voter] = this.bound;
+      const before = this.store.votes.length;
+      this.store.votes = this.store.votes.filter(v => !(v["round_id"] === round_id && v["voter"] === voter));
+      return { meta: { changes: before - this.store.votes.length } };
     }
     if (this.sql.startsWith("INSERT INTO club_rounds")) {
       const [id] = this.bound;
@@ -218,6 +224,62 @@ describe("postClubVote", () => {
     const store = votingStore();
     const res = await postClubVote(req("POST", { recommendation_id: "nope", voter: "gaia" }), makeEnv(store));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("deleteClubVote", () => {
+  function votingStore(): Store {
+    const store = emptyStore();
+    store.rounds.push({ id: "r1", status: "voting", opened_at: "2026-06-11" });
+    store.recs.push({ id: "rec1", round_id: "r1", title: "A", recommended_by: "cypher", created_at: "2026-06-11 01:00:00" });
+    store.recs.push({ id: "rec2", round_id: "r1", title: "B", recommended_by: "drevan", created_at: "2026-06-11 02:00:00" });
+    return store;
+  }
+
+  it("withdraws raziel's vote in a voting round", async () => {
+    const store = votingStore();
+    store.votes.push({ round_id: "r1", recommendation_id: "rec1", voter: "raziel" });
+    store.votes.push({ round_id: "r1", recommendation_id: "rec2", voter: "cypher" });
+    const res = await deleteClubVote(req("DELETE", { voter: "raziel" }), makeEnv(store));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ withdrawn: true, round_id: "r1" });
+    expect(store.votes.some(v => v["voter"] === "raziel")).toBe(false);
+    expect(store.votes.some(v => v["voter"] === "cypher")).toBe(true);
+  });
+
+  it("is idempotent when there is no vote", async () => {
+    const res = await deleteClubVote(req("DELETE", { voter: "raziel" }), makeEnv(votingStore()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ withdrawn: false, round_id: "r1" });
+  });
+
+  it("refuses when the round is active", async () => {
+    const store = votingStore();
+    store.rounds[0]!["status"] = "active";
+    store.votes.push({ round_id: "r1", recommendation_id: "rec1", voter: "raziel" });
+    const res = await deleteClubVote(req("DELETE", { voter: "raziel" }), makeEnv(store));
+    expect(res.status).toBe(409);
+    expect(store.votes).toHaveLength(1);
+  });
+
+  it("refuses when there is no open round", async () => {
+    const res = await deleteClubVote(req("DELETE", { voter: "raziel" }), makeEnv(emptyStore()));
+    expect(res.status).toBe(409);
+  });
+
+  it("rejects an unknown voter", async () => {
+    const res = await deleteClubVote(req("DELETE", { voter: "blue" }), makeEnv(votingStore()));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a non-JSON body", async () => {
+    const r = new Request("https://x/mind/club", { method: "DELETE", body: "nope", headers: AUTH_HEADERS });
+    expect((await deleteClubVote(r, makeEnv(votingStore()))).status).toBe(400);
+  });
+
+  it("rejects a request without auth", async () => {
+    const r = new Request("https://x/mind/club", { method: "DELETE", body: JSON.stringify({ voter: "raziel" }), headers: { "Content-Type": "application/json" } });
+    expect((await deleteClubVote(r, makeEnv(votingStore()))).status).toBe(401);
   });
 });
 

@@ -128,7 +128,7 @@ import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.j
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
 import { postWatchalong, patchWatchalong, getWatchalongActive } from "./handlers/watchalong.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
-import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
+import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, deleteClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { postBook, postUploadTicket, putBookUpload, optionsBookUpload, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
@@ -564,6 +564,7 @@ const router = new Router()
   .on("POST",  "/mind/club/round",                 (request, env)         => postClubRound(request, env))
   .on("POST",  "/mind/club/recommend",             (request, env)         => postClubRecommend(request, env))
   .on("POST",  "/mind/club/vote",                  (request, env)         => postClubVote(request, env))
+  .on("DELETE", "/mind/club/vote",                 (request, env)         => deleteClubVote(request, env))
   .on("POST",  "/mind/club/abstain",               (request, env)         => postClubAbstain(request, env))
   .on("PATCH", "/mind/club/:id/status",            (request, env, params) => patchClubStatus(request, env, params ?? {}))
   .on("POST",  "/mind/club/:id/discuss",           (request, env, params) => postClubDiscuss(request, env, params ?? {}))
