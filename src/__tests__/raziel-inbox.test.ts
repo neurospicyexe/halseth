@@ -104,4 +104,27 @@ describe("raziel inbox", () => {
     expect((await getRazielInboxItem(req("GET", "/raziel/inbox/nope"), env, { id: "nope" })).status).toBe(404);
     expect((await getRazielInboxItem(req("GET", "/raziel/inbox/j3"), env, { id: "j3" })).status).toBe(404);
   });
+
+  it("agent= scopes the list and the unread count to one companion", async () => {
+    const s = await seeded();
+    await s.seed("j5", "2026-10-05 10:00:00", "cypher", ["letter_to_raziel"], "drift letter");
+    await s.seed("j6", "2026-10-06 10:00:00", "cypher", ["letters"], "not exactly a letter tag");
+    const r = await s.list("?agent=cypher");
+    expect(r.items.map((i: any) => i.id)).toEqual(["j5", "j1"]);
+    expect(r.unread_count).toBe(2);
+    await s.mark({ ids: ["j1"] });
+    const r2 = await s.list("?agent=cypher");
+    expect(r2.items.find((i: any) => i.id === "j1").read).toBe(true);
+    expect(r2.unread_count).toBe(1);
+    expect((await s.list("?agent=gaia")).items).toEqual([]);
+  });
+
+  it("agent= rejects a non-member id with 400", async () => {
+    const { env, req } = setup();
+    for (const a of ["steward", "blue", "Cypher", "constructor"]) {
+      const res = await getRazielInbox(req("GET", `/raziel/inbox?agent=${a}`), env, {});
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "unknown companion" });
+    }
+  });
 });

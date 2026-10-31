@@ -9,6 +9,7 @@ import { authGuard } from "../lib/auth.js";
 import { generateId } from "../db/queries.js";
 import { COMPANION_ID_SET } from "../companions.js";
 import { isReviewState, KEPT_SQL } from "../webmind/review-state.js";
+import { SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
 import { completeTask } from "../lib/task-completion.js";
 import { applyTaskEdits, pickTaskEdits } from "../lib/task-edit.js";
 import { normalizeWitnessType } from "../lib/witness-type.js";
@@ -98,6 +99,13 @@ export async function getCompanionJournal(request: Request, env: Env): Promise<R
     } else {
       conditions.push(KEPT_SQL);
     }
+  }
+
+  // substantive=1 (Hearth companion Journal page, 2026-10-30): drop Discord speech transcripts and
+  // clerk rows, the same lane orient's recent_journal and the companion-page count read. Default off:
+  // the puller and other callers still get every lane.
+  if (url.searchParams.get("substantive") === "1") {
+    conditions.push(SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE);
   }
 
   if (agent && validAgents.has(agent)) {

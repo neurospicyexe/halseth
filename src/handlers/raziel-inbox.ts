@@ -1,5 +1,6 @@
 import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { COMPANION_ID_SET } from "../companions.js";
 
 // Raziel's inbox: every letter a companion or system writer (steward, guardian) left for him.
 // Source of truth is companion_journal rows tagged "letter" or "letter_to_raziel"; read marks live in
@@ -52,18 +53,25 @@ export async function getRazielInbox(
   _params: Record<string, string> = {},
 ): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
-  const raw = parseInt(new URL(request.url).searchParams.get("limit") ?? "20", 10);
+  const params = new URL(request.url).searchParams;
+  const raw = parseInt(params.get("limit") ?? "20", 10);
   const limit = Math.min(Math.max(1, isNaN(raw) ? 20 : raw), 100);
+  // agent= (2026-10-30, Hearth companion Letters door): one companion's letters, list AND unread count.
+  // Only the three companions; steward/guardian letters stay on the global inbox.
+  const agent = params.get("agent");
+  if (agent !== null && !COMPANION_ID_SET.has(agent)) return jsonRes({ error: "unknown companion" }, 400);
+  const agentSql = agent !== null ? " AND j.agent = ?" : "";
+  const agentBind = agent !== null ? [agent] : [];
 
   const rows = await env.DB.prepare(
-    `${SELECT_ITEM} WHERE ${LETTER_WHERE} ORDER BY j.created_at DESC, j.id DESC LIMIT ?`,
-  ).bind(limit).all();
+    `${SELECT_ITEM} WHERE ${LETTER_WHERE}${agentSql} ORDER BY j.created_at DESC, j.id DESC LIMIT ?`,
+  ).bind(...agentBind, limit).all();
   // Counted over ALL matching rows, not the page.
   const unread = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM companion_journal j " +
-    "WHERE " + LETTER_WHERE + " " +
+    "WHERE " + LETTER_WHERE + agentSql + " " +
     "AND NOT EXISTS (SELECT 1 FROM raziel_reads r WHERE r.item_kind = 'letter' AND r.item_id = j.id)",
-  ).first<{ n: number }>();
+  ).bind(...agentBind).first<{ n: number }>();
 
   return jsonRes({ items: (rows.results ?? []).map(toItem), unread_count: unread?.n ?? 0 });
 }

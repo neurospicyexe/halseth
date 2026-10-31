@@ -2,6 +2,7 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { COMPANION_ID_SET } from "../companions.js";
 import { LETTER_WHERE } from "./raziel-inbox.js";
+import { SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
 
 // A companion's page in Hearth: what changed since Raziel last looked at it, how much sits behind each
 // door, and a 7-day trace of the three SOMA floats. "Last looked" lives in raziel_reads
@@ -92,9 +93,13 @@ const AFTER_C = (col: string) => `julianday(${col}) > julianday(?2)`;
 
 // Counts bind ?1 = companion id, ?2 = cutoff C (letters_unread binds ?1 only).
 const COUNTS = {
+  // Substantive, non-clerk lane only (as orient's recent_journal): every bot reply lands here as
+  // discord_speech, and a count of chat Raziel already saw in Discord would bury the real entries.
+  // The Journal page asks GET /companion-journal with substantive=1, so pill and page agree.
   journal:
     "SELECT COUNT(*) AS n FROM companion_journal j WHERE j.agent = ?1 AND j.archived = 0 " +
-    `AND COALESCE(j.review_state,'') <> 'dropped' AND NOT (${LETTER_WHERE}) AND ${AFTER_C("j.created_at")}`,
+    `AND COALESCE(j.review_state,'') <> 'dropped' AND NOT (${LETTER_WHERE}) ` +
+    `AND ${SUBSTANTIVE_JOURNAL_CLAUSE} AND ${NOT_CLERK_JOURNAL_CLAUSE} AND ${AFTER_C("j.created_at")}`,
   letters:
     `SELECT COUNT(*) AS n FROM companion_journal j WHERE j.agent = ?1 AND ${LETTER_WHERE} AND ${AFTER_C("j.created_at")}`,
   // All time, not since C: the same unread rule as /raziel/inbox. Binds ?1 only.

@@ -87,6 +87,18 @@ describe("raziel companion rundown", () => {
     expect(body.since.letters).toBe(1);
   });
 
+  it("journal counts only the substantive, non-clerk lane", async () => {
+    const s = setup();
+    seedJournal(s.db, { id: "j_speech", agent: "cypher", created_at: ago(1), source: "discord_speech" } as any);
+    seedJournal(s.db, { id: "j_swarm", agent: "cypher", created_at: ago(1), source: "discord_swarm" } as any);
+    seedJournal(s.db, { id: "j_clerk", agent: "cypher", created_at: ago(1), source: "synthesis-gap-detector" } as any);
+    seedJournal(s.db, { id: "j_null", agent: "cypher", created_at: ago(1), source: null } as any);
+    seedJournal(s.db, { id: "j_close", agent: "cypher", created_at: ago(1), source: "session_close" } as any);
+    const { body } = await s.get("cypher");
+    expect(body.since.journal).toBe(2);
+    expect(body.doors.journal).toBe(2);
+  });
+
   it("last_real_thing skips archaeology closes and other companions", async () => {
     const s = setup();
     // One handover per session (UNIQUE session_id).
