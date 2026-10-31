@@ -24,7 +24,7 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 | `companion_journal_sits` | `note_sit` / `note_metabolize` | n/a | ✅ fixed 2026-07-26 | n/a | ✅ `sitting_read` | n/a | HOLE 1 fixed: ground.ts read the dead pre-0034 pair `companion_notes`/`companion_note_sits` |
 | `inter_companion_notes` | `companion_note_add` (addressed/broadcast), `inter_note_edit` | ✅ incoming + outgoing, auto-acks | ❌ | ✅ incoming | ✅ `companion_notes_read` (incl. broadcasts as of 2026-07-26) | ✅ | HOLE 6 fixed: read verb previously missed `to_id IS NULL` broadcasts. **Auto-ack race remains open (HOLE 8):** first loom to orient consumes unread notes |
 | `wm_continuity_notes` | `wm_note_add`, `wm_note_edit`, `state_update` (soma_arc), `spiral_run` | ⚠️ high salience only (3-pool) | ✅ any salience LIMIT 10 | ✅ | ✅ `continuity_notes_read`, `notes_recall_meaning` | ❌ **no ingest endpoint** | HOLE 7 OPEN: sub-high salience never reaches Claude.ai boot; nothing reaches the vault (4,202/4,441 never recalled pre-`notes_recall_meaning`) |
-| `growth_journal` | autonomous worker only (companions read-only) | ✅ | ❌ | ✅ | ✅ `journal_review`, `journal_read` | ✅ | covered |
+| `growth_journal` | autonomous worker only (companions read-only) | ✅ | ❌ | ✅ | ✅ `journal_review`, `journal_read` | ✅ | covered; pending rows also in `GET /raziel/needs` (2026-10-30) |
 | `companion_conclusions` | `conclusion_add`, session close | ✅ type-distributed cap 6 | ❌ | ✅ worldview | ✅ `conclusions_read` | ✅ | covered |
 | `companion_dreams` | `wm_dream_write`, `dream_log`, session close | ✅ unexamined | ❌ | ✅ | ✅ | ✅ | covered |
 | `feelings` | `feeling_log`, session close | ✅ fixed 2026-07-26 | ❌ | ❌ | ✅ `feelings_read`, `recent_recall` | ✅ | HOLE 5 fixed: was never in any boot orient |
@@ -35,7 +35,9 @@ state. `src/__tests__/write-read-coverage.test.ts` enforces the structural parts
 | `relational_deltas` | `delta_log` | ✅ | ✅ | ❌ | ✅ | ✅ | append-only covenant; two row shapes |
 | `companion_preferences` / `companion_refusals` | `preference_set`, `refuse` | ✅ | ❌ | ✅ | ✅ | ❌ | D1-only by design |
 | `companion_drifts` | `drift_open`/`drift_witness`/etc. | ✅ | ❌ | ✅ | ✅ `drifts_read` | ❌ | D1-only |
-| `companion_basin_history` | `pressure_drift_log` + evaluators | ✅ pressure/growth | ❌ | ✅ | ✅ `drift_check` | ✅ | 3 writers (2nd-brain evaluator, session close, worker) — consolidation is Phase 1 scope |
+| `companion_basin_history` | `pressure_drift_log` + evaluators | ✅ pressure/growth | ❌ | ✅ | ✅ `drift_check` | ✅ | 3 writers (2nd-brain evaluator, session close, worker) — consolidation is Phase 1 scope; untriaged pressure also in `GET /raziel/needs` (2026-10-30) |
+| `guardian_flags` | guardian pass (cron) | n/a | n/a | n/a | open/surfaced flags in `GET /raziel/needs` (2026-10-30) | n/a | Raziel-facing; not a companion read surface |
+| `companion_questions` | autonomous worker, session, dialectic | n/a | n/a | n/a | open questions in `GET /raziel/needs` (2026-10-30) | n/a | Raziel-facing inbox |
 | `autonomy_seeds` | `autonomy_claim`, worker | ✅ | ❌ | ✅ | ✅ | ❌ | covered |
 | `companion_self_model` | `self_model_set` | ✅ ready-status | ❌ | ✅ | ✅ | ❌ | covered |
 | `companion_interiority` | `interiority_write` | ❌ by design | ❌ | ❌ | ✅ `interiority_read` (+ disclose flow) | ❌ | sealed on purpose — NOT a hole |
