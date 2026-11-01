@@ -1,0 +1,12 @@
+-- 0158_architect_facts_trust.sql  (2026-11-01, memory gate add-ons item 3; Halseth task 538ab03b)
+--
+-- Trust on a fact about Raziel, set at WRITE time and DERIVED, never self-reported by the caller:
+--   Raziel-stated (source 'raziel', or no companion)  -> 1.0
+--   a companion's own inference                        -> 0.6
+--   status 'open' (not yet confirmed)                  -> capped at 0.5
+--   a supersede by a companion inherits the replaced row's trust; Raziel restating it -> 1.0
+-- NULL = legacy row, read as 1.0. No backfill: every fact written before today keeps NULL, the honest state
+-- (we do not know how each was sourced). Raziel adjusts any row with PATCH /identity/architect-facts/:id
+-- { "trust": 0..1 }. facts-pick (bots) reads it in SHADOW first (FACTS_TRUST): p_adj = p * trust is logged,
+-- picks unchanged, until the read-out shows it helps.
+ALTER TABLE architect_facts ADD COLUMN trust REAL;

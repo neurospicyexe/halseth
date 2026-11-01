@@ -68,7 +68,7 @@ describe("GET architect-facts shortlist", () => {
     const body = (await res.json()) as { items: Array<Record<string, unknown>>; model: string };
     expect(res.status).toBe(200);
     expect(body.items.map((i) => i.id)).toEqual(["b", "d", "a"]);
-    expect(body.items[0]!).toEqual({ id: "b", category: "people", status: "open", score: 0.9 });
+    expect(body.items[0]!).toEqual({ id: "b", category: "people", status: "open", score: 0.9, trust: null });
     expect(body.model).toBe("@cf/baai/bge-base-en-v1.5");
     expect(queries[0]!.filter).toEqual({ table: "architect_facts" });
     expect(queries[0]!.topK).toBe(48);

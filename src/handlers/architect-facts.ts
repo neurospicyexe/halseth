@@ -25,6 +25,7 @@ import { writeArchitectFact, MAX_FACT_CHARS } from "../lib/architect-fact-write.
 import type { Env } from "../types.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
+import { schemaGap } from "../care/schema-gap.js";
 import { embedText, EMBEDDING_MODEL } from "../mcp/embed.js";
 
 function json(data: unknown, status = 200): Response {
@@ -220,7 +221,11 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   const hasCategory = body.category !== undefined && body.category !== null;
   // core (B3, mig 0146): mark a fact always-on (true) or return it to the per-message lane (false).
   const hasCore = body.core !== undefined && body.core !== null;
-  if (!hasStatus && !hasWeight && !hasCategory && !hasCore) return json({ error: "send status, weight, category and/or core" }, 400);
+  // trust (mig 0158): Raziel's adjustment of a fact's derived trust, 0..1.
+  const hasTrust = body.trust !== undefined && body.trust !== null;
+  if (!hasStatus && !hasWeight && !hasCategory && !hasCore && !hasTrust) return json({ error: "send status, weight, category, core and/or trust" }, 400);
+  const trustVal = hasTrust ? Number(body.trust) : null;
+  if (hasTrust && (!Number.isFinite(trustVal) || trustVal! < 0 || trustVal! > 1)) return json({ error: "trust must be a number 0-1" }, 400);
   if (hasCore && typeof body.core !== "boolean") return json({ error: "core must be a boolean" }, 400);
   const core = body.core === true;
   let category = "";
@@ -253,9 +258,15 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   if (hasWeight) { sets.push("weight = ?"); binds.push(weight); }
   if (hasCategory) { sets.push("category = ?"); binds.push(category); }
   if (hasCore) { sets.push("core = ?"); binds.push(core ? 1 : 0); }
-  await env.DB.prepare(
-    `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
-  ).bind(...binds, id).run();
+  if (hasTrust) { sets.push("trust = ?"); binds.push(trustVal); }
+  try {
+    await env.DB.prepare(
+      `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
+    ).bind(...binds, id).run();
+  } catch (e) {
+    if (hasTrust && schemaGap(e)) return json({ error: "trust is not available until migration 0158 is applied" }, 409);
+    throw e;
+  }
 
   return json({
     ok: true, id,
@@ -263,6 +274,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
     ...(hasWeight ? { from_weight: prior.weight, weight } : {}),
     ...(hasCategory ? { from_category: prior.category, category } : {}),
     ...(hasCore ? { from_core: prior.core === 1, core } : {}),
+    ...(hasTrust ? { trust: trustVal } : {}),
   });
 }
 
@@ -427,15 +439,19 @@ export async function getArchitectFactsShortlist(request: Request, env: Env): Pr
   if (scored.size === 0) return json({ items: [], model: EMBEDDING_MODEL });
 
   const ids = [...scored.keys()];
-  type Row = { id: string; category: string; status: string; fact: string; created_at?: string | null; core?: number | null };
+  type Row = { id: string; category: string; status: string; fact: string; created_at?: string | null; core?: number | null; trust?: number | null };
   let rows: Row[];
   try {
     // Open rows are fetched in full (not just the matched ids) because the render's cap is over ALL
     // open facts: a held one must stay held even when it is the only open fact the query matched.
-    const res = await env.DB.prepare(
-      `SELECT id, category, status, fact, created_at, core FROM architect_facts
-        WHERE status IN ('active', 'open') AND (status = 'open' OR id IN (${ids.map(() => "?").join(",")}))`,
-    ).bind(...ids).all<Row>();
+    // `trust` (mig 0158) is read when the column exists; before the migration the pre-0158 select runs.
+    const shortlistSql = (cols: string) =>
+      `SELECT ${cols} FROM architect_facts
+        WHERE status IN ('active', 'open') AND (status = 'open' OR id IN (${ids.map(() => "?").join(",")}))`;
+    const res = await env.DB.prepare(shortlistSql("id, category, status, fact, created_at, core, trust")).bind(...ids).all<Row>()
+      .catch((e: unknown) => (schemaGap(e)
+        ? env.DB.prepare(shortlistSql("id, category, status, fact, created_at, core")).bind(...ids).all<Row>()
+        : Promise.reject(e)));
     const all = res.results ?? [];
     // Same open-fact gate as the render (lib/open-facts-gate.ts): 14-day age cap AND the 8-row cap,
     // newest first. A fact the render would hold is not live here either. Active facts are unaffected.
@@ -457,6 +473,8 @@ export async function getArchitectFactsShortlist(request: Request, env: Env): Pr
       category: r.category,
       status: r.status as "active" | "open",
       score: scored.get(r.id) ?? 0,
+      // NULL/absent = legacy row = full trust; the bots read null as 1.0.
+      trust: typeof r.trust === "number" ? r.trust : null,
       ...(withText ? { fact: r.fact } : {}),
     }))
     .sort((a, b) => b.score - a.score)
