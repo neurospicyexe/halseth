@@ -2,6 +2,7 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 
 import { generateId } from "../db/queries.js";
+import { voidFiringsOfUndoneSnapshot, type UndoneSnapshot } from "../care/undo.js";
 
 const jsonRes = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -171,7 +172,8 @@ export async function handleBiometricsPatch(
   return jsonRes({ ok: true, id });
 }
 
-// DELETE /biometrics/:id: undo a check-in.
+// DELETE /biometrics/:id: undo a check-in. A low_spoons firing only this reading justified goes with
+// it, so the care hold it started stops holding (care/undo.ts).
 export async function handleBiometricsDelete(
   request: Request,
   env: Env,
@@ -180,7 +182,18 @@ export async function handleBiometricsDelete(
   const denied = authGuard(request, env); if (denied) return denied;
   const id = params.id;
   if (!id) return jsonRes({ error: "id required" }, 400);
+  const snap = await env.DB.prepare(
+    "SELECT id, spoons, logged_at, recorded_at FROM biometric_snapshots WHERE id = ?",
+  ).bind(id).first<UndoneSnapshot>();
   const res = await env.DB.prepare("DELETE FROM biometric_snapshots WHERE id = ?").bind(id).run();
   if (!res.meta?.changes) return jsonRes({ error: "not found" }, 404);
-  return jsonRes({ ok: true, id });
+  // The row is gone either way; a failed cleanup is logged, never turned into a failed undo (Hearth
+  // would retry a DELETE that now answers 404 and drop it).
+  const voided = snap
+    ? await voidFiringsOfUndoneSnapshot(env.DB, snap).catch((e) => {
+        console.error(`[care] check-in ${id} undone, firing cleanup failed:`, String(e));
+        return [] as string[];
+      })
+    : [];
+  return jsonRes({ ok: true, id, care_firings_voided: voided.length });
 }

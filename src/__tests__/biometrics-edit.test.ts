@@ -65,7 +65,7 @@ describe("biometrics edit", () => {
     const { id } = await post({ spoons: 5 });
     const res = await handleBiometricsDelete(req("DELETE"), env, { id });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, id });
+    expect(await res.json()).toEqual({ ok: true, id, care_firings_voided: 0 });
     expect(await row(id)).toBeNull();
     const again = await handleBiometricsDelete(req("DELETE"), env, { id });
     expect(again.status).toBe(404);
