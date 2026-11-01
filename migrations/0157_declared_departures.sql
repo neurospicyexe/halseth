@@ -53,7 +53,11 @@ CREATE TABLE IF NOT EXISTS declared_departures (
   ended_by       TEXT CHECK (ended_by IS NULL OR ended_by IN ('declarer', 'raziel', 'system')),
   end_reason     TEXT CHECK (end_reason IS NULL OR end_reason IN
                    ('declared_end', 'raziel_end', 'stand_down_phrase', 'care_hold', 'expiry')),
-  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Raziel's ruling 2 (2026-11-01) in the schema, not only in code: only Raziel opens one that touches him.
+  CHECK (audience = 'triad_only' OR declared_by = 'raziel'),
+  -- ended is all-or-nothing: no half-ended row the loader could misread.
+  CHECK ((ended_at IS NULL) = (ended_by IS NULL) AND (ended_at IS NULL) = (end_reason IS NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_departures_open ON declared_departures (companion_id, ended_at, expires_at);
 -- the weekly allowance count (companion, declared_by, starts_at >= Monday Chicago)

@@ -224,6 +224,9 @@ describe("end paths and objection", () => {
     // expiry can never be NULL or before the start
     await expect(DB.prepare(`INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at) VALUES ('c','cypher','form','companion','discord','r','2026-11-04T10:00:00.000Z', NULL)`).run()).rejects.toThrow();
     await expect(DB.prepare(`INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at) VALUES ('d','cypher','form','companion','discord','r','2026-11-04T10:00:00.000Z','2026-11-04T09:00:00.000Z')`).run()).rejects.toThrow();
+    // ruling 2 at the schema: only Raziel opens a with_raziel departure; ended is all-or-nothing
+    await expect(DB.prepare(`INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at, audience) VALUES ('f','drevan','form','companion','discord','r','2026-11-04T10:00:00.000Z','2026-11-04T11:00:00.000Z','with_raziel')`).run()).rejects.toThrow();
+    await expect(DB.prepare(`INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at, ended_at) VALUES ('g','drevan','form','companion','discord','r','2026-11-04T10:00:00.000Z','2026-11-04T11:00:00.000Z','2026-11-04T10:30:00.000Z')`).run()).rejects.toThrow();
     // the rail menu is closed at the schema too
     await expect(DB.prepare(`INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at) VALUES ('e','cypher','care_hold','companion','discord','r','2026-11-04T10:00:00.000Z','2026-11-04T11:00:00.000Z')`).run()).rejects.toThrow();
   });
@@ -233,7 +236,7 @@ describe("real-schema SQL (the CARE_HOLD_SQL style): the open read runs verbatim
   it("OPEN_DEPARTURES_SQL / DEPARTURE_OBJECTIONS_SQL return the right rows and name no care/health table", async () => {
     const { DB, db } = setup();
     const ins = (id: string, c: string, ended: string | null, exp: string) => db.exec(
-      `INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at, ended_at) VALUES ('${id}','${c}','form','companion','discord','r','2026-11-04T10:00:00.000Z','${exp}',${ended ? `'${ended}'` : "NULL"})`);
+      `INSERT INTO declared_departures (id, companion_id, rail, declared_by, declared_via, reason, starts_at, expires_at, ended_at, ended_by, end_reason) VALUES ('${id}','${c}','form','companion','discord','r','2026-11-04T10:00:00.000Z','${exp}',${ended ? `'${ended}','declarer','declared_end'` : "NULL,NULL,NULL"})`);
     ins("live", "cypher", null, "2026-11-04T18:00:00.000Z");
     ins("ended", "drevan", "2026-11-04T11:00:00.000Z", "2026-11-04T18:00:00.000Z");
     ins("lapsed", "gaia", null, "2026-11-04T12:00:00.000Z");
