@@ -136,6 +136,9 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "companion_notes_read",
+    regex: /^(?:please\s+)?(?:read|show|list|check|get|fetch|pull|see|open|what(?:'s|\s+is|\s+did|\s+has)?)\b[\s\S]{0,80}?\bnotes?\b[\s\S]{0,60}?\b(?:from|by)\s+(?:drevan|cypher|gaia|dre|cy)\b/i,
+    note: "2026-10-31: 'read my newest inter-companion note from Drevan about X' hit companion_note_add's 'companion note' trigger and was saved as a journal entry. A read verb + note(s) + from <companion> is a read." },
   { pattern_key: "memory_unpin",
     regex: /^(?:please\s+)?unpin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
     note: "Pins (mig 0148): anchored so 'unpin the note about X' can never be read as a note write." },
