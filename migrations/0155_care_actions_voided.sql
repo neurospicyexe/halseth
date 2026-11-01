@@ -10,7 +10,7 @@
 -- reading that justified the firing was the one undone (src/care/undo.ts). Readers that decide
 -- anything (the hold, the tick's cooldown and pending block, the pending-gesture reads) filter
 -- voided_at IS NULL; the audit list (GET /care/recent) still shows the row with its stamp.
--- Additive only. Code deployed ahead of this migration falls back to the pre-0155 reads and the void
--- write logs and does nothing.
+-- Additive only. Code deployed ahead of this migration falls back to the pre-0155 reads (on the
+-- missing-column error only) and the void is skipped with a log line; the snapshot is still deleted.
 
 ALTER TABLE care_actions ADD COLUMN voided_at TEXT;

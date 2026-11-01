@@ -11,6 +11,7 @@
 import type { Env } from "../types.js";
 import { runCareTick } from "../care/tick.js";
 import { readPendingCare } from "../care/pending.js";
+import { missingVoidedAt, onlyIf } from "../care/schema-gap.js";
 import { readOwnerLastSeen, OWNER_ACTIVITY_SOURCES } from "../care/owner-activity.js";
 import { QUIET_OWNER_DAYS } from "../care/rules.js";
 import { hoursSinceIso } from "../webmind/drives.js";
@@ -131,7 +132,7 @@ export async function getCareRecent(request: Request, env: Env): Promise<Respons
     `SELECT id, rule, companion_id, detail, detected_at, gesture, gesture_note, acted_at${voided}
      FROM care_actions ORDER BY detected_at DESC LIMIT ?`,
   ).bind(limit).all();
-  const rows = await read(", voided_at").catch(() => read(""));
+  const rows = await read(", voided_at").catch(onlyIf(missingVoidedAt, () => read("")));
   return json({ care_actions: rows.results ?? [] });
 }
 

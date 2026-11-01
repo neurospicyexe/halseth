@@ -2,7 +2,7 @@ import { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 
 import { generateId } from "../db/queries.js";
-import { voidFiringsOfUndoneSnapshot, type UndoneSnapshot } from "../care/undo.js";
+import { undoCheckin } from "../care/undo.js";
 
 const jsonRes = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -182,18 +182,15 @@ export async function handleBiometricsDelete(
   const denied = authGuard(request, env); if (denied) return denied;
   const id = params.id;
   if (!id) return jsonRes({ error: "id required" }, 400);
-  const snap = await env.DB.prepare(
-    "SELECT id, spoons, logged_at, recorded_at FROM biometric_snapshots WHERE id = ?",
-  ).bind(id).first<UndoneSnapshot>();
-  const res = await env.DB.prepare("DELETE FROM biometric_snapshots WHERE id = ?").bind(id).run();
-  if (!res.meta?.changes) return jsonRes({ error: "not found" }, 404);
-  // The row is gone either way; a failed cleanup is logged, never turned into a failed undo (Hearth
-  // would retry a DELETE that now answers 404 and drop it).
-  const voided = snap
-    ? await voidFiringsOfUndoneSnapshot(env.DB, snap).catch((e) => {
-        console.error(`[care] check-in ${id} undone, firing cleanup failed:`, String(e));
-        return [] as string[];
-      })
-    : [];
-  return jsonRes({ ok: true, id, care_firings_voided: voided.length });
+  // The snapshot DELETE and its voids are one batch. A failure leaves both untouched and answers 500,
+  // which Hearth keeps and retries; answering 200 after a half-done undo would let the firing hold.
+  let result;
+  try {
+    result = await undoCheckin(env.DB, id);
+  } catch (e) {
+    console.error(`[care] check-in ${id} undo failed:`, String(e));
+    return jsonRes({ error: "undo failed" }, 500);
+  }
+  if (!result.found) return jsonRes({ error: "not found" }, 404);
+  return jsonRes({ ok: true, id, care_firings_voided: result.voided.length });
 }

@@ -25,6 +25,7 @@ import {
   type EscalationSignals,
   type EscalationRule,
 } from "./rules.js";
+import { missingVoidedAt, onlyIf } from "./schema-gap.js";
 
 const TICK_GATE_HOURS = 1;
 
@@ -123,16 +124,17 @@ export async function runCareTick(
     // detail line the rule table builds -- a silence claim must name what it checked.
     readOwnerLastSeen(env),
     // A voided firing (a check-in undo, mig 0155) neither holds the cooldown nor blocks as pending:
-    // the reading it came from is gone. Before 0155 nothing is voided, so the plain read is the same.
+    // the reading it came from is gone. Before 0155 nothing is voided, so the plain read is the same;
+    // only the missing column falls back (anything else fails the run and the next kick retries).
     env.DB.prepare(FIRED_SQL).all<{ rule: CareRule; at: string }>()
-      .catch(() => env.DB.prepare(FIRED_SQL_PRE_0155).all<{ rule: CareRule; at: string }>()),
+      .catch(onlyIf(missingVoidedAt, () => env.DB.prepare(FIRED_SQL_PRE_0155).all<{ rule: CareRule; at: string }>())),
     // Un-acted, un-decayed firings: while one exists for a rule, that rule must not fire again --
     // otherwise two pendings for one condition end up assigned to two companions and the
     // one-gesture rail breaks structurally.
     (() => {
       const cutoff = new Date(nowMs - PENDING_DECAY_HOURS * 3_600_000).toISOString();
       return env.DB.prepare(PENDING_RULES_SQL).bind(cutoff).all<{ rule: CareRule }>()
-        .catch(() => env.DB.prepare(PENDING_RULES_SQL_PRE_0155).bind(cutoff).all<{ rule: CareRule }>());
+        .catch(onlyIf(missingVoidedAt, () => env.DB.prepare(PENDING_RULES_SQL_PRE_0155).bind(cutoff).all<{ rule: CareRule }>()));
     })(),
   ]);
 

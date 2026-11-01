@@ -20,6 +20,7 @@
 
 import type { Env } from "../types.js";
 import { CARE_HOLD_HOURS, CARE_HOLD_RULES, CARE_HOLD_ACTION_RULES, type CareHoldRule } from "./rules.js";
+import { onlyIf, schemaGap } from "./schema-gap.js";
 
 export interface CareHoldState {
   care_hold: boolean;
@@ -76,16 +77,18 @@ export function holdFromRows(rows: ReadonlyArray<{ rule: string; since: string |
 
 /**
  * The hold, as of nowMs. Falls back through the pre-0155, pre-0143 and pre-0141 shapes (so a deploy ahead of
- * the migration loses only the parts the schema cannot hold yet), and throws only if care_actions
- * itself cannot be read: callers decide what an unreadable hold means for them.
+ * the migration loses only the parts the schema cannot hold yet), and throws on any other error, or if
+ * care_actions itself cannot be read: callers decide what an unreadable hold means for them.
  */
 export async function readCareHold(db: D1Database, nowMs = Date.now()): Promise<CareHoldState> {
   const cutoff = new Date(nowMs - CARE_HOLD_HOURS * 3_600_000).toISOString();
   const run = (sql: string) => db.prepare(sql).bind(cutoff).all<{ rule: string; since: string | null }>();
+  // Each step down only on a missing column or table. A transient error is rethrown: the pre-0155
+  // text would re-admit voided firings, so it must never stand in for a read that merely failed.
   const res = await run(CARE_HOLD_SQL)
-    .catch(() => run(CARE_HOLD_SQL_PRE_0155))
-    .catch(() => run(CARE_HOLD_SQL_PRE_0143))
-    .catch(() => run(CARE_HOLD_SQL_PRE_0141));
+    .catch(onlyIf(schemaGap, () => run(CARE_HOLD_SQL_PRE_0155)))
+    .catch(onlyIf(schemaGap, () => run(CARE_HOLD_SQL_PRE_0143)))
+    .catch(onlyIf(schemaGap, () => run(CARE_HOLD_SQL_PRE_0141)));
   return holdFromRows(res.results ?? []);
 }
 

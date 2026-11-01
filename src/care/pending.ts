@@ -5,7 +5,10 @@
 // worker's gesture poll (GET /care/pending/:companion_id, handlers/care.ts).
 //
 // A voided firing (mig 0155: a check-in undo took away the only reading behind it) asks nobody for a
-// gesture. Before 0155 nothing can be voided, so the pre-0155 text is the same read.
+// gesture. Before 0155 nothing can be voided, so the pre-0155 text is the same read. Only the missing
+// column falls back: on any other error the pre-0155 text would offer a voided firing, so it rethrows.
+
+import { missingVoidedAt, onlyIf } from "./schema-gap.js";
 
 export interface PendingCareRow {
   id: string;
@@ -24,5 +27,5 @@ const PENDING_CARE_SQL_PRE_0155 = `SELECT id, rule, detail, detected_at FROM car
 
 export async function readPendingCare(db: D1Database, companionId: string, decayCutoff: string): Promise<PendingCareRow | null> {
   const run = (sql: string) => db.prepare(sql).bind(companionId, decayCutoff).first<PendingCareRow>();
-  return (await run(PENDING_CARE_SQL).catch(() => run(PENDING_CARE_SQL_PRE_0155))) ?? null;
+  return (await run(PENDING_CARE_SQL).catch(onlyIf(missingVoidedAt, () => run(PENDING_CARE_SQL_PRE_0155)))) ?? null;
 }

@@ -6,18 +6,38 @@
 // deleted: a gesture_note stays); his "bad night" start, a stated missed dose and another low reading
 // keep holding. Never a blanket clear. A deploy ahead of 0155 changes nothing and breaks nothing.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import { readCareHold } from "../care/hold.js";
 import { runCareTick, FIRED_SQL, PENDING_RULES_SQL } from "../care/tick.js";
 import { readPendingCare, PENDING_CARE_SQL } from "../care/pending.js";
-import { lowSpoonsJustified, voidFiringsOfUndoneSnapshot, UNDO_CANDIDATES_SQL, VOID_FIRING_SQL } from "../care/undo.js";
+import { lowSpoonsJustified, firingsToVoid, undoCheckin, UNDO_CANDIDATES_SQL, VOID_FIRING_SQL } from "../care/undo.js";
 import { handleBiometricsDelete } from "../handlers/biometrics.js";
 import { getCarePending, getCareRecent } from "../handlers/care.js";
 
 const NOW = Date.parse("2026-10-31T07:00:00.000Z"); // 02:00 CDT
 const ago = (h: number, from = NOW) => new Date(from - h * 3_600_000).toISOString();
 const H = 3_600_000;
+
+// The DELETE handler and the pending route read the server clock; pin it to NOW so "as of now" is fixed.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+afterEach(() => { vi.useRealTimers(); });
+
+/** A D1 whose 0155 reads (or one chosen statement) fail with a non-schema error, recording what ran. */
+function flaky(DB: any, fails: (sql: string) => boolean): { prepared: string[]; DB: any } {
+  const prepared: string[] = [];
+  const boom = () => Promise.reject(new Error("D1_ERROR: Network connection lost."));
+  const wrap = (sql: string, st: any): any => fails(sql)
+    ? { __sql: sql, bind: (..._a: unknown[]) => wrap(sql, st), first: boom, all: boom, run: boom }
+    : { ...st, __sql: sql, bind: (...a: unknown[]) => wrap(sql, st.bind(...a)) };
+  return {
+    prepared,
+    DB: {
+      prepare: (sql: string) => { prepared.push(sql); return wrap(sql, DB.prepare(sql)); },
+      batch: async (stmts: any[]) => { const out = []; for (const st of stmts) out.push(await st.run()); return out; },
+    },
+  };
+}
 
 function setup(opts: { upTo?: number } = {}) {
   const { DB } = makeSqliteD1(opts) as { DB: any };
@@ -73,7 +93,7 @@ describe("undoing a check-in clears the hold it started", () => {
 
   it("a voided firing asks nobody for a gesture: the pending read (orient and the worker poll) skips it", async () => {
     const { DB, env, undo, snapshot, tick } = setup();
-    const now = Date.now(); // the pending route decays against the real clock
+    const now = Date.now(); // the pending route decays against the server clock (pinned to NOW)
     await snapshot("chk_low_0001", 1, ago(0.1, now));
     await tick(now - 60_000);
     const companion = (await DB.prepare(`SELECT companion_id FROM care_actions`).first()).companion_id;
@@ -84,15 +104,49 @@ describe("undoing a check-in clears the hold it started", () => {
     expect(await res.json()).toEqual({ pending: null });
   });
 
-  it("undoing twice voids once (the stamp is never rewritten)", async () => {
+  it("a voided firing is never a candidate again and its stamp is never rewritten", async () => {
     const { DB, snapshot, tick, allRows } = setup();
     await snapshot("chk_low_0001", 1, ago(0.5));
     await tick(NOW - 0.25 * H);
-    await DB.prepare(`DELETE FROM biometric_snapshots WHERE id = 'chk_low_0001'`).run();
+    expect(await undoCheckin(DB, "chk_low_0001", NOW)).toEqual({ found: true, voided: [expect.any(String)] });
+    const [row] = await allRows();
     const snap = { id: "chk_low_0001", spoons: 1, recorded_at: ago(0.5), logged_at: ago(0.5) };
-    expect((await voidFiringsOfUndoneSnapshot(DB, snap, NOW)).length).toBe(1);
-    expect(await voidFiringsOfUndoneSnapshot(DB, snap, NOW + H)).toEqual([]);
+    expect(await firingsToVoid(DB, snap, NOW + H)).toEqual([]);
+    expect((await DB.prepare(VOID_FIRING_SQL).bind(ago(-1), row.id).run()).meta.changes).toBe(0);
     expect((await allRows())[0].voided_at).toBe(new Date(NOW).toISOString());
+  });
+
+  it("a real low reading logged AFTER the firing (held off by its cooldown) keeps the firing live", async () => {
+    const { DB, undo, snapshot, tick, firings } = setup();
+    await snapshot("chk_low_oops", 1, ago(2));
+    await tick(NOW - 1.75 * H);
+    await snapshot("chk_low_real", 2, ago(1));
+    await tick(NOW - 0.75 * H); // cooldown: no second firing
+    expect((await firings()).length).toBe(1);
+    const res = await undo("chk_low_oops");
+    expect(await res.json()).toEqual({ ok: true, id: "chk_low_oops", care_firings_voided: 0 });
+    expect((await firings()).length).toBe(1);
+    expect((await readCareHold(DB, NOW)).care_hold_reason).toEqual(["low_spoons"]);
+  });
+
+  it("the same when the real reading was tapped before the undone one but landed after the firing", async () => {
+    const { DB, undo, snapshot, tick, firings } = setup();
+    await snapshot("chk_low_oops", 1, ago(2));
+    await tick(NOW - 1.75 * H);
+    await snapshot("chk_low_real", 2, ago(2.5), ago(1)); // offline retry
+    await undo("chk_low_oops");
+    expect((await firings()).length).toBe(1);
+    expect((await readCareHold(DB, NOW)).care_hold).toBe(true);
+  });
+
+  it("a reading above the line standing now does not keep the firing", async () => {
+    const { DB, undo, snapshot, tick, firings } = setup();
+    await snapshot("chk_low_oops", 1, ago(2));
+    await tick(NOW - 1.75 * H);
+    await snapshot("chk_ok_later", 8, ago(1));
+    await undo("chk_low_oops");
+    expect(await firings()).toEqual([]);
+    expect((await readCareHold(DB, NOW)).care_hold).toBe(false);
   });
 
   it("the voided firing no longer holds the 24h cooldown: a real low reading later fires again", async () => {
@@ -176,9 +230,8 @@ describe("undoing a check-in clears the hold it started", () => {
     await tick(NOW - 1.5 * H);
     // Recorded earlier but inserted after the tick ran; deleting it must not re-judge that firing as its.
     await snapshot("chk_low_late", 0, ago(1.75), ago(1));
-    await DB.prepare(`DELETE FROM biometric_snapshots WHERE id = 'chk_low_late'`).run();
-    const voided = await voidFiringsOfUndoneSnapshot(DB, { id: "chk_low_late", spoons: 0, recorded_at: ago(1.75), logged_at: ago(1) });
-    expect(voided).toEqual([]);
+    await DB.prepare(`UPDATE biometric_snapshots SET spoons = 9 WHERE id = 'chk_low_real'`).run(); // nothing else justifies it now
+    expect(await firingsToVoid(DB, { id: "chk_low_late", spoons: 0, recorded_at: ago(1.75), logged_at: ago(1) }, NOW)).toEqual([]);
     expect((await firings()).length).toBe(1);
   });
 
@@ -198,6 +251,11 @@ describe("lowSpoonsJustified mirrors the tick's low_spoons condition", () => {
     expect(lowSpoonsJustified({ spoons: null, recorded_at: "2026-10-31T06:00:00.000Z" }, at)).toBe(false);
     expect(lowSpoonsJustified({ spoons: 0, recorded_at: "2026-10-30T06:59:00.000Z" }, at)).toBe(false);
     expect(lowSpoonsJustified(null, at)).toBe(false);
+    // The tick's own arithmetic (hoursSinceIso): an unparseable time reads as fresh there, so here too,
+    // and a space-separated D1 time parses as UTC.
+    expect(lowSpoonsJustified({ spoons: 1, recorded_at: "not a time" }, at)).toBe(true);
+    expect(lowSpoonsJustified({ spoons: 1, recorded_at: "2026-10-30 07:00:00" }, at)).toBe(true);
+    expect(lowSpoonsJustified({ spoons: 1, recorded_at: "2026-10-30 06:59:00" }, at)).toBe(false);
   });
 });
 
@@ -243,5 +301,52 @@ describe("deployed before 0155 is applied (no voided_at column)", () => {
       await expect(old.prepare(sql).bind(...binds).run()).rejects.toThrow(/voided_at/);
       await expect(cur.prepare(sql).bind(...binds).run()).resolves.toBeDefined();
     }
+  });
+});
+
+describe("a failed read or write is not a schema gap: no fallback, no half-done undo", () => {
+  const is0155 = (sql: string) => /voided_at/.test(sql);
+
+  async function firedState() {
+    const t = setup();
+    await t.snapshot("chk_low_0001", 1, ago(0.5));
+    await t.tick(NOW - 0.25 * H);
+    return t;
+  }
+
+  it("the hold read rethrows instead of running the pre-0155 text (which would count a voided firing)", async () => {
+    const { DB } = await firedState();
+    const f = flaky(DB, is0155);
+    await expect(readCareHold(f.DB, NOW)).rejects.toThrow(/Network/);
+    expect(f.prepared.length).toBe(1);
+  });
+
+  it("the pending read, the tick and the audit list rethrow too", async () => {
+    const { DB, env } = await firedState();
+    const f = flaky(DB, is0155);
+    await expect(readPendingCare(f.DB, "cypher", ago(48))).rejects.toThrow(/Network/);
+    expect(f.prepared.some(s => /care_actions/.test(s) && !/voided_at/.test(s))).toBe(false);
+    await expect(runCareTick({ ...env, DB: f.DB }, NOW, { force: true })).rejects.toThrow(/Network/);
+    await expect(getCareRecent(new Request("http://x/care/recent"), { ...env, DB: f.DB })).rejects.toThrow(/Network/);
+  });
+
+  it("the undo answers 500 and changes nothing when the candidate read fails", async () => {
+    const { DB, env, firings } = await firedState();
+    const f = flaky(DB, is0155);
+    const res = await handleBiometricsDelete(new Request("http://x", { method: "DELETE", headers: { Authorization: "Bearer s" } }), { ...env, DB: f.DB }, { id: "chk_low_0001" });
+    expect(res.status).toBe(500);
+    expect((await DB.prepare(`SELECT COUNT(*) AS n FROM biometric_snapshots`).first()).n).toBe(1);
+    expect((await firings()).length).toBe(1);
+  });
+
+  it("the undo answers 500 and keeps the snapshot when the void write fails, so Hearth's retry redoes both", async () => {
+    const { DB, env, undo, firings } = await firedState();
+    const f = flaky(DB, sql => /^\s*UPDATE care_actions SET voided_at/.test(sql));
+    const res = await handleBiometricsDelete(new Request("http://x", { method: "DELETE", headers: { Authorization: "Bearer s" } }), { ...env, DB: f.DB }, { id: "chk_low_0001" });
+    expect(res.status).toBe(500);
+    expect((await DB.prepare(`SELECT COUNT(*) AS n FROM biometric_snapshots`).first()).n).toBe(1);
+    // The retry against a healthy D1 does the whole undo.
+    expect(await (await undo("chk_low_0001")).json()).toEqual({ ok: true, id: "chk_low_0001", care_firings_voided: 1 });
+    expect(await firings()).toEqual([]);
   });
 });
