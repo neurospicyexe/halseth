@@ -95,6 +95,8 @@ the traps below exist because names lie.
 | `departure_end` | execDepartureEnd | departure.ts | declared_departures | UPDATE ended_at/ended_by `declarer`/end_reason `declared_end` on the caller's own open row |
 | `departure_object` | execDepartureObject | departure.ts | departure_objections | INSERT only; recorded and named to the declarer, never narrows or ends the departure |
 | `departure_list` | execDepartureList | departure.ts | declared_departures (read) | read-only; also sweeps expired rows and ends all under care hold before answering |
+| `voice_lessons_list` | execVoiceLessonsList | voice-lessons.ts | voice_lessons (read) | read-only list of staged lessons; expires staged rows older than 7 days first |
+| `voice_lesson_decide` | execVoiceLessonDecide | voice-lessons.ts | voice_lessons | UPDATE status approved/rejected (reject needs a reason); Raziel's word relayed by the companion; applies nothing else |
 | `departure_stand_down` | execDepartureStandDown | departure.ts | declared_departures | UPDATE end_reason `stand_down_phrase` on every open row; Raziel's whole-sentence "back inside the line" relayed by the companion he is talking to |
 | `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes OR companion_journal | THREE-WAY ROUTE: addressed peer → inter_companion_notes (to_id set); broadcast → inter_companion_notes (to_id=NULL); unaddressed/no broadcast intent → **companion_journal** (self-reflection; ack carries `routed_to: "journal"`). Trap cluster 2. Until 2026-07-26 this row claimed inter_companion_notes only — the journal fallback was undocumented, so unaddressed notes looked lost. |
 | `halseth_feeling_log` | execFeelingLog | writes.ts | feelings | |
