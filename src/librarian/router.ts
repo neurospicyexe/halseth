@@ -136,6 +136,12 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "voice_lesson_decide",
+    regex: /^(?:please\s+)?(?:approve|reject)\s+(?:the\s+)?voice\s+lesson\s+[0-9a-f-]{6,}\b/i,
+    note: "Voice lessons (mig 0159): Raziel's approve/reject of a staged lesson, by id." },
+  { pattern_key: "voice_lessons_list",
+    regex: /^(?:please\s+)?(?:(?:list|show)\s+(?:the\s+|my\s+|staged\s+)?voice\s+lessons|(?:staged\s+)?voice\s+lessons)\s*[?.!]?$/i,
+    note: "Voice lessons: read-only list of the staged queue." },
   { pattern_key: "companion_notes_read",
     regex: /^(?:please\s+)?(?:read|show|list|check|get|fetch|pull|see|open|what(?:'s|\s+is|\s+did|\s+has)?)\b[\s\S]{0,80}?\bnotes?\b[\s\S]{0,60}?\b(?:from|by)\s+(?:drevan|cypher|gaia|dre|cy)\b/i,
     note: "2026-10-31: 'read my newest inter-companion note from Drevan about X' hit companion_note_add's 'companion note' trigger and was saved as a journal entry. A read verb + note(s) + from <companion> is a read." },
@@ -431,6 +437,7 @@ import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayRe
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
+import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -544,6 +551,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   departure_end: execDepartureEnd,
   departure_object: execDepartureObject,
   departure_list: execDepartureList,
+  voice_lessons_list: execVoiceLessonsList,
+  voice_lesson_decide: execVoiceLessonDecide,
   departure_stand_down: execDepartureStandDown,
 
   // Weekly budget (consequence layer C3, mig 0124).

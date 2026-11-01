@@ -124,6 +124,7 @@ import { getMedDue, postMedClaim, postMedDelivered, postMedRelease, postMedAnswe
 import { postReachReserve, postReachDelivered, postReachRelease, getReachToday } from "./handlers/reach-cap.js";
 import { postCareHold, getCareHold } from "./handlers/care-hold.js";
 import { postDepartureDeclare, postDepartureEnd, postDepartureObject, postDepartureStandDown, getDepartures } from "./handlers/departures.js";
+import { postVoiceLesson, getVoiceLessons, postVoiceLessonDecide } from "./handlers/voice-lessons.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
@@ -533,6 +534,10 @@ const router = new Router()
   .on("POST",  "/mind/care/hold",              (request, env)         => postCareHold(request, env))
   .on("GET",   "/mind/care/hold",              (request, env)         => getCareHold(request, env))
   // Declared departures (0157, T4a): a companion lifts one form rail for itself, bounded; src/departures/core.ts
+  // Voice lessons (0159): staged by the voice drift job, decided by Raziel, never auto-applied.
+  .on("POST",  "/mind/voice-lessons",              (request, env)         => postVoiceLesson(request, env))
+  .on("GET",   "/mind/voice-lessons",              (request, env)         => getVoiceLessons(request, env))
+  .on("POST",  "/mind/voice-lessons/:id/decide",   (request, env, params) => postVoiceLessonDecide(request, env, params ?? {}))
   .on("POST",  "/mind/departures/declare",     (request, env)         => postDepartureDeclare(request, env))
   .on("POST",  "/mind/departures/end",         (request, env)         => postDepartureEnd(request, env))
   .on("POST",  "/mind/departures/object",      (request, env)         => postDepartureObject(request, env))

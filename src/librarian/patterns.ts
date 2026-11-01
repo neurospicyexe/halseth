@@ -1721,6 +1721,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["departure_stand_down"],
     response_key: "witness",
   },
+  // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
+  voice_lessons_list: {
+    triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],
+    tools: ["voice_lessons_list"],
+    response_key: "data",
+  },
+  voice_lesson_decide: {
+    // The real match is the anchored guard in router.ts (id + optional reason).
+    triggers: ["approve voice lesson", "reject voice lesson"],
+    tools: ["voice_lesson_decide"],
+    response_key: "witness",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [
