@@ -1,8 +1,7 @@
 -- B34 step 2 shadow readout (2026-11-01): how many tray drafts belong to ONE moment (one human line).
 -- READ-ONLY. Run from the main halseth checkout (wrangler.prod.toml is gitignored). Use --command, not
 -- --file: --file goes through the D1 import endpoint, which the deploy token refuses (auth 10000):
---   SQL="$(grep -v '^\s*--' scripts/tray-moments-readout.sql | sed 's/--.*$//' | tr '
-' ' ')"
+--   SQL="$(grep -v '^\s*--' scripts/tray-moments-readout.sql | sed 's/--.*$//' | tr '\n' ' ')"
 --   npx wrangler d1 execute halseth --remote --config wrangler.prod.toml --command "$SQL" --json
 -- Baseline 2026-11-01 (before the speech tag): Drevan 416 drafts / 329 unkeyed / 76 moments / 11 multi;
 -- Cypher 35 / 25 / 8 / 2; Gaia 28 / 17 / 8 / 3. Every multi was judge + observation.
