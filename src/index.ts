@@ -89,7 +89,7 @@ import { getArchitectFacts, getArchitectFactsRender, getArchitectFactsShortlist,
 import { getRosterWho, getRosterStats, postRosterRefresh } from "./handlers/roster.js";
 import { runRosterRefresh } from "./roster/pk-roster.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
-import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
+import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores, getVoiceScoreRows } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
 import { postBriefingRun, getBriefingPreview } from "./handlers/briefing.js";
 import { postVibeCheckRun, getVibeCheckPreview } from "./handlers/vibecheck.js";
@@ -428,6 +428,7 @@ const router = new Router()
   .on("GET",   "/mind/self-model/:companion_id",   (request, env, params) => getSelfModel(request, env, params ?? {}))
   .on("PATCH", "/mind/self-model/:id",             (request, env, params) => patchSelfModel(request, env, params ?? {}))
   .on("POST",  "/mind/voice-scores",               (request, env)         => postVoiceScore(request, env))
+  .on("GET",   "/mind/voice-scores/:companion_id/rows", (request, env, params) => getVoiceScoreRows(request, env, params ?? {}))
   .on("GET",   "/mind/voice-scores/:companion_id", (request, env, params) => getVoiceScores(request, env, params ?? {}))
 
   // Unified Guardian (0073) -- meta-observer over the self-monitoring feeds
