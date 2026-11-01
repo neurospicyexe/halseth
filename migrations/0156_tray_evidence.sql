@@ -35,4 +35,4 @@ CREATE TABLE IF NOT EXISTS tray_evidence (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tray_evidence_moment  ON tray_evidence (agent, moment_key);
-CREATE INDEX IF NOT EXISTS idx_tray_evidence_primary ON tray_evidence (primary_table, primary_id);
+CREATE INDEX IF NOT EXISTS idx_tray_evidence_primary ON tray_evidence (primary_id, primary_table);  -- primary_id leads: attachEvidenceCounts filters primary_id IN (...) without the table

@@ -17,7 +17,7 @@ export const LETTER_WHERE =
   "j.tags LIKE '%letter%' AND json_valid(j.tags) " +
   "AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(j.tags) THEN j.tags ELSE '[]' END) " +
   "WHERE value IN ('letter','letter_to_raziel')) " +
-  "AND COALESCE(j.review_state,'') <> 'dropped'";
+  "AND COALESCE(j.review_state,'') NOT IN ('dropped','merged')";
 
 const SELECT_ITEM =
   "SELECT j.id, j.agent, j.created_at, j.note_text, (r.item_id IS NOT NULL) AS is_read " +
