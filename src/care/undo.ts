@@ -11,8 +11,13 @@
 // re-judged against what is left: the tick's own rule, as of the firing's detected_at, over the
 // snapshots that existed then (logged_at <= detected_at; a row cannot have been read before it was
 // inserted, and logged_at is the server clock while recorded_at is the client's tap time). A firing
-// another reading still justifies stays. One only the undone reading justified is deleted, which also
-// frees the 24h cooldown for a real reading later.
+// another reading still justifies stays. One only the undone reading justified is VOIDED (mig 0155,
+// voided_at = server now), never deleted: a companion's gesture_note on it stays in the record. Every
+// reader that decides something skips voided rows (hold, the tick's cooldown and pending block, the
+// pending-gesture read), so the hold stops and the 24h cooldown is free for a real reading later.
+//
+// Before 0155 there is no column to stamp: the void logs and does nothing (it never falls back to a
+// delete), and the hold behaves as it did before this change until the migration lands.
 //
 // Never a care_hold_events 'clear': a clear would also silence his "bad night" start, a stated missed
 // dose, and any other low reading. Only the undone reading's own firing goes.
@@ -26,10 +31,15 @@ export interface UndoneSnapshot {
   recorded_at: string;
 }
 
-/** Candidates: low_spoons firings detected after the undone row landed and while it could still be
- *  fresh. ?1 = the undone row's logged_at, ?2 = its recorded_at + BIOMETRICS_FRESH_HOURS. */
+/** Candidates: live low_spoons firings detected after the undone row landed and while it could still
+ *  be fresh. ?1 = the undone row's logged_at, ?2 = its recorded_at + BIOMETRICS_FRESH_HOURS. Fails on a
+ *  DB before 0155 (no voided_at), which is the signal to skip. */
 export const UNDO_CANDIDATES_SQL =
-  `SELECT id, detected_at FROM care_actions WHERE rule = 'low_spoons' AND detected_at >= ?1 AND detected_at <= ?2`;
+  `SELECT id, detected_at FROM care_actions
+   WHERE rule = 'low_spoons' AND voided_at IS NULL AND detected_at >= ?1 AND detected_at <= ?2`;
+
+export const VOID_FIRING_SQL =
+  `UPDATE care_actions SET voided_at = ?1 WHERE id = ?2 AND rule = 'low_spoons' AND voided_at IS NULL`;
 
 /** What the tick would have read at ?1 (a firing's detected_at), with the undone row already gone. */
 export const UNDO_LATEST_AT_SQL =
@@ -47,24 +57,35 @@ export function lowSpoonsJustified(
 }
 
 /**
- * Delete the low_spoons firings that only the undone snapshot justified. Call AFTER the snapshot row
- * is deleted. Returns the ids removed. A reading above the line (or with no spoons) caused nothing.
+ * Void the low_spoons firings that only the undone snapshot justified. Call AFTER the snapshot row is
+ * deleted. Returns the ids voided. A reading above the line (or with no spoons) caused nothing.
  */
-export async function voidFiringsOfUndoneSnapshot(db: D1Database, snap: UndoneSnapshot): Promise<string[]> {
+export async function voidFiringsOfUndoneSnapshot(
+  db: D1Database,
+  snap: UndoneSnapshot,
+  nowMs = Date.now(),
+): Promise<string[]> {
   if (snap.spoons === null || snap.spoons > LOW_SPOONS_MAX) return [];
   const recordedMs = Date.parse(snap.recorded_at);
   if (!Number.isFinite(recordedMs)) return [];
   const freshUntil = new Date(recordedMs + BIOMETRICS_FRESH_HOURS * 3_600_000).toISOString();
 
-  const candidates = await db.prepare(UNDO_CANDIDATES_SQL)
-    .bind(snap.logged_at, freshUntil).all<{ id: string; detected_at: string }>();
+  let candidates: D1Result<{ id: string; detected_at: string }>;
+  try {
+    candidates = await db.prepare(UNDO_CANDIDATES_SQL)
+      .bind(snap.logged_at, freshUntil).all<{ id: string; detected_at: string }>();
+  } catch (e) {
+    console.warn(`[care] check-in ${snap.id} undone, firings not voided (0155 not applied?):`, String(e));
+    return [];
+  }
+  const voidedAt = new Date(nowMs).toISOString();
   const voided: string[] = [];
   for (const c of candidates.results ?? []) {
     const latest = await db.prepare(UNDO_LATEST_AT_SQL)
       .bind(c.detected_at).first<{ spoons: number | null; recorded_at: string }>();
     if (lowSpoonsJustified(latest ?? null, c.detected_at)) continue;
-    await db.prepare(`DELETE FROM care_actions WHERE id = ? AND rule = 'low_spoons'`).bind(c.id).run();
-    voided.push(c.id);
+    const res = await db.prepare(VOID_FIRING_SQL).bind(voidedAt, c.id).run();
+    if (res.meta?.changes) voided.push(c.id);
   }
   if (voided.length) {
     console.log(`[care] check-in ${snap.id} undone: voided ${voided.length} low_spoons firing(s) ${voided.join(",")}`);

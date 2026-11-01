@@ -10,6 +10,7 @@
 
 import type { Env } from "../types.js";
 import { runCareTick } from "../care/tick.js";
+import { readPendingCare } from "../care/pending.js";
 import { readOwnerLastSeen, OWNER_ACTIVITY_SOURCES } from "../care/owner-activity.js";
 import { QUIET_OWNER_DAYS } from "../care/rules.js";
 import { hoursSinceIso } from "../webmind/drives.js";
@@ -111,27 +112,26 @@ export async function postCareEscalationAttempt(request: Request, env: Env, para
 }
 
 /** The newest un-acted, un-decayed firing assigned to this companion -- the worker's gesture
- *  tick polls this. Same predicate as the loader block (mind/blocks/care.ts), one lane one filter. */
+ *  tick polls this. Same read as the loader block (care/pending.ts), one lane one filter. */
 export async function getCarePending(_request: Request, env: Env, params: Record<string, string>): Promise<Response> {
   const companionId = params.companion_id ?? "";
   if (!VALID_COMPANIONS.has(companionId)) return json({ error: "invalid companion_id" }, 400);
   const { PENDING_DECAY_HOURS } = await import("../care/rules.js");
   const decayCutoff = new Date(Date.now() - PENDING_DECAY_HOURS * 3_600_000).toISOString();
-  const row = await env.DB.prepare(
-    `SELECT id, rule, detail, detected_at FROM care_actions
-     WHERE companion_id = ? AND acted_at IS NULL AND detected_at > ?
-     ORDER BY detected_at DESC LIMIT 1`,
-  ).bind(companionId, decayCutoff).first();
-  return json({ pending: row ?? null });
+  const row = await readPendingCare(env.DB, companionId, decayCutoff);
+  return json({ pending: row });
 }
 
 export async function getCareRecent(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 20) || 20, 1), 100);
-  const rows = await env.DB.prepare(
-    `SELECT id, rule, companion_id, detail, detected_at, gesture, gesture_note, acted_at
+  // The audit list keeps voided rows (the undo is part of the record) and shows the stamp; before
+  // 0155 there is no stamp to show.
+  const read = (voided: string) => env.DB.prepare(
+    `SELECT id, rule, companion_id, detail, detected_at, gesture, gesture_note, acted_at${voided}
      FROM care_actions ORDER BY detected_at DESC LIMIT ?`,
   ).bind(limit).all();
+  const rows = await read(", voided_at").catch(() => read(""));
   return json({ care_actions: rows.results ?? [] });
 }
 
