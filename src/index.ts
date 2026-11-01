@@ -123,6 +123,7 @@ import { postSkillProposal, listSkillProposals, decideSkillProposal } from "./ha
 import { getMedDue, postMedClaim, postMedDelivered, postMedRelease, postMedAnswer, getMedToday } from "./handlers/med-reminder.js";
 import { postReachReserve, postReachDelivered, postReachRelease, getReachToday } from "./handlers/reach-cap.js";
 import { postCareHold, getCareHold } from "./handlers/care-hold.js";
+import { postDepartureDeclare, postDepartureEnd, postDepartureObject, postDepartureStandDown, getDepartures } from "./handlers/departures.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
@@ -530,6 +531,12 @@ const router = new Router()
   // B32 bad-night presence (0143): his word starts and clears care_hold (src/care/hold.ts)
   .on("POST",  "/mind/care/hold",              (request, env)         => postCareHold(request, env))
   .on("GET",   "/mind/care/hold",              (request, env)         => getCareHold(request, env))
+  // Declared departures (0157, T4a): a companion lifts one form rail for itself, bounded; src/departures/core.ts
+  .on("POST",  "/mind/departures/declare",     (request, env)         => postDepartureDeclare(request, env))
+  .on("POST",  "/mind/departures/end",         (request, env)         => postDepartureEnd(request, env))
+  .on("POST",  "/mind/departures/object",      (request, env)         => postDepartureObject(request, env))
+  .on("POST",  "/mind/departures/stand-down",  (request, env)         => postDepartureStandDown(request, env))
+  .on("GET",   "/mind/departures",             (request, env)         => getDepartures(request, env))
 
   // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))

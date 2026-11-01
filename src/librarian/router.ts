@@ -163,6 +163,21 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "care_hold_clear",
     regex: /^(?:please\s+)?(?:(?:clear|end|lift|turn\s+off)\s+(?:the\s+)?care\s+hold|care\s+hold\s+(?:clear|off|end))\b/i,
     note: "B32: his 'good now' relayed by the companion clears care_hold; anchored like care_hold_start." },
+  { pattern_key: "departure_declare",
+    regex: /^(?:please\s+)?declare\s+(?:a\s+|my\s+)?departure\b/i,
+    note: "Declared departures (mig 0157): anchored so the declarer's reason text can never be routed by a trigger it happens to contain." },
+  { pattern_key: "departure_end",
+    regex: /^(?:please\s+)?(?:end|close)\s+(?:my\s+|the\s+)?departure\s*[.!]?$/i,
+    note: "Declared departures: the declarer ends their own. Whole request, so 'end the departure debate' is not this." },
+  { pattern_key: "departure_object",
+    regex: /^(?:please\s+)?object\s+to\s+[A-Za-z]+?(?:'s|s')?\s+departure\b/i,
+    note: "Declared departures: a sibling's objection is recorded and named, never a gate." },
+  { pattern_key: "departure_list",
+    regex: /^(?:please\s+)?(?:what\s+departures\s+are\s+open|(?:list|show)\s+(?:the\s+|my\s+|open\s+)?departures|open\s+departures|departures\s+open)\s*[?.!]?$/i,
+    note: "Declared departures: read-only list." },
+  { pattern_key: "departure_stand_down",
+    regex: /^["'`*_\s]*back\s+inside\s+the\s+line[\s"'`*_.!]*$/i,
+    note: "Raziel's end-all phrase, whole sentence only (ruling 2026-11-01); a longer sentence containing it is not the phrase." },
   { pattern_key: "ledger_keep",
     regex: new RegExp(`^keep\\s+(?:the\\s+|this\\s+)?ledger(?:\\s+entry)?\\s+${LEDGER_ID_TOKEN}(?![A-Za-z0-9_-])\\s*(?::|$)`, "i"),
     note: "Ledger lane (mig 0134): 'keep ledger <id>' / 'keep ledger <id>: <my words>' -- anchored so the companion's own words after the colon can never be routed by a trigger they happen to contain." },
@@ -415,6 +430,7 @@ import { LINK_GUARD_RE, UNLINK_GUARD_RE } from "../graph/links.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
+import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -522,6 +538,13 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // B32 bad-night presence (mig 0143): the companion sets / clears care_hold on his word.
   care_hold_start: execCareHoldStart,
   care_hold_clear: execCareHoldClear,
+
+  // Declared departures (T4a, mig 0157).
+  departure_declare: execDepartureDeclare,
+  departure_end: execDepartureEnd,
+  departure_object: execDepartureObject,
+  departure_list: execDepartureList,
+  departure_stand_down: execDepartureStandDown,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,

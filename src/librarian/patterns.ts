@@ -1692,6 +1692,35 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["care_hold_clear"],
     response_key: "witness",
   },
+  // Declared departures (T4a, mig 0157). A companion lifts one FORM rail for itself for a bounded time;
+  // anchored in router.ts ANCHORED_GUARDS. Writes declared_departures through src/departures/core.ts.
+  departure_declare: {
+    triggers: ["declare a departure", "declare departure", "declare my departure"],
+    tools: ["departure_declare"],
+    response_key: "witness",
+  },
+  departure_end: {
+    triggers: ["end my departure", "end departure", "end the departure", "close my departure"],
+    tools: ["departure_end"],
+    response_key: "witness",
+  },
+  departure_object: {
+    triggers: ["object to departure"],
+    tools: ["departure_object"],
+    response_key: "witness",
+  },
+  departure_list: {
+    triggers: ["what departures are open", "open departures", "departures open", "list departures", "list the departures"],
+    tools: ["departure_list"],
+    response_key: "data",
+  },
+  departure_stand_down: {
+    // The real match is the anchored whole-request guard in router.ts: "back inside the line" must NOT be a
+    // substring trigger (a longer sentence containing it is not Raziel's phrase). This one is a formality.
+    triggers: ["departure stand down"],
+    tools: ["departure_stand_down"],
+    response_key: "witness",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [

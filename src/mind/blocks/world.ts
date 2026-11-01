@@ -30,6 +30,7 @@ import type { WmAgentId } from "../../webmind/types.js";
 import { effectiveTrustSql, MOTIF_TUNING } from "../../webmind/motifs.js";
 import { collectionForageSql, collectionMediaSql } from "../../webmind/collection.js";
 import { collapseRepeatListens } from "../../lib/media-key.js";
+import { loadOpenDepartures, type OpenDeparture } from "../../departures/core.js";
 
 export interface ClubRound {
   id: string; status: string;
@@ -187,17 +188,23 @@ export interface WorldBlocks {
   creatures: CreatureRow[];
   imps_active: ImpActivity[];
   watching: WatchItem[];
+  /** 0.25.0 (declared departures, T4a, mig 0157): every OPEN departure, all three companions, derived from
+   *  the clock (expiry passed = gone) and empty while the care hold is on. Identical on every loom; pure D1;
+   *  no rail reads it yet. `reason` is the declarer's own words, read from declared_departures only. */
+  departures: OpenDeparture[];
 }
 
 const EMPTY: WorldBlocks = {
   club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] },
   forage: { pool: [], active: [] }, listens: [],
   motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [],
-  watching: [],
+  watching: [], departures: [],
 };
 
 /** Never throws: the shared world is context, and missing context must never break a boot. */
 export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise<WorldBlocks> {
+  // Its own never-throws read, started now so it runs alongside the rest (a failure must not EMPTY the world).
+  const departuresP = loadOpenDepartures(env);
   try {
     const [club, commons, commonsLife, changeNotes, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
       await Promise.all([
@@ -350,6 +357,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
       };
     }
 
+    const departures = await departuresP;
     return {
       club: club ?? null,
       commons: commons.results ?? [],
@@ -374,6 +382,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         with_companion: r.with_companion && r.with_companion !== companionId ? r.with_companion : null,
         last_watched_at: r.last_watched_at ?? null,
       })),
+      departures,
     };
   } catch (err) {
     console.warn("[mind/world] load failed, degrading to empty", { companionId, error: String(err) });

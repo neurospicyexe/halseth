@@ -39,6 +39,11 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.25.0 -- declared departures (T4a, 2026-11-01, mig 0157): `world.departures` -- every open departure
+ *  across the triad ({id, companion, rail, scope_channel, audience, declared_by, starts_at, expires_at,
+ *  reason, objections[]}), derived from the clock, empty under the care hold, pure D1. Form, not floor: a
+ *  companion lifts one form rail for itself, up to 3 hours, announced first. Nothing reads it yet.
+ *  MINOR: additive only. */
 /** 0.24.0 -- our own links (M4, mig 0151, 2026-10-29): any mind can link any two visible rows
  *  ('link <kind>: <words> to <kind>: <words>: why'). `graph.neighborhoods` may now carry edge_type
  *  'linked:<writer>' (provenance 'asserted'), rendered "linked by <Writer>". MINOR: additive only. */
@@ -146,7 +151,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.24.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.25.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -332,6 +337,8 @@ export interface MindState {
     /** Wave 6. Where Raziel actually is in what they are watching. A progress fact is a FIELD -- the
      *  stale-Fargo answer came from ranking prose because no field existed. */
     watching: WorldBlocks["watching"];
+    /** 0.25.0: open declared departures (all three companions, with expiry). Read-only in T4a. */
+    departures: WorldBlocks["departures"];
     /** 0.6.0, consequence layer C1: the care register. Raziel's readable state, derived from the
      *  latest biometrics row + front state + the care loop (mig 0121). The signals flowed IN since
      *  0009/0081 and were read at orient as a raw row; this is the first field that makes them a
