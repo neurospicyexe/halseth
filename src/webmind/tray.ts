@@ -72,6 +72,8 @@ export interface TrayDraft {
    * mother's "her". Nothing rewrites the row.
    */
   pronoun_flags?: string[];
+  /** B34 step 2: how many merged duplicates of this moment back this draft ("read draft <id>" shows them). Additive. */
+  evidence_count?: number;
 }
 
 export interface TrayStats {
@@ -85,6 +87,11 @@ export interface TrayStats {
   window_days: number;
   /** B4: live drafts the pronoun lint flags (scan of up to TRAY_FLAG_SCAN named drafts per store). */
   pronoun_flagged: number;
+  /**
+   * B34 step 2 (mig 0156): live rows set `merged` into another draft of the same moment. Neither kept nor
+   * dropped (never in the keep rate), not in the tray; reported so a falling draft count is explainable.
+   */
+  merged?: number;
 }
 
 export interface TrayView {
@@ -168,16 +175,55 @@ export async function listTray(env: Env, agent: string, limit = TRAY_LIST_LIMIT)
   const dropped = num(jStats?.dropped) + num(nStats?.dropped);
   const reviewed = kept + dropped;
   const keep_rate_pct = reviewed > 0 ? Math.round((kept / reviewed) * 100) : null;
+  const merged = num(jStats?.merged) + num(nStats?.merged);
   const stats: TrayStats = { draft, kept, dropped, keep_rate_pct, window_days: TRAY_STATS_DAYS, pronoun_flagged: flagged.length };
+  if (merged > 0) stats.merged = merged;
+  await attachEvidenceCounts(env, agent, drafts);
   const stats_line = (keep_rate_pct === null
     ? `${draft} in the tray; nothing reviewed in ${TRAY_STATS_DAYS}d (keep rate: no denominator yet)`
     : `${draft} in the tray; ${TRAY_STATS_DAYS}d: ${kept} kept / ${dropped} dropped = keep rate ${keep_rate_pct}%` +
-      (keep_rate_pct === 100 ? " (100% means nobody is reviewing)" : "")) + pronounLine;
+      (keep_rate_pct === 100 ? " (100% means nobody is reviewing)" : "")) + pronounLine +
+    (merged > 0 ? `; ${merged} merged into other drafts of the same moment` : "");
 
   return { agent, drafts, stats, stats_line };
 }
 
-interface StatsRow { draft: number | null; kept: number | null; dropped: number | null }
+/** Additive `evidence_count` per draft from tray_evidence (mode 'on'). Missing table (pre-0156) = no field. */
+async function attachEvidenceCounts(env: Env, agent: string, drafts: TrayDraft[]): Promise<void> {
+  if (drafts.length === 0) return;
+  try {
+    const ids = drafts.map((d) => d.id);
+    const rows = await env.DB.prepare(
+      `SELECT primary_id, COUNT(*) AS n FROM tray_evidence
+        WHERE agent = ? AND mode = 'on' AND primary_id IN (${ids.map(() => "?").join(",")}) GROUP BY primary_id`,
+    ).bind(agent, ...ids).all<{ primary_id: string; n: number }>();
+    const counts = new Map((rows.results ?? []).map((r) => [r.primary_id, num(r.n)]));
+    for (const d of drafts) d.evidence_count = counts.get(d.id) ?? 0;
+  } catch { /* tray_evidence not applied yet: the listing is unchanged */ }
+}
+
+export interface TrayEvidence { table: string; id: string; writer: string; created_at: string; excerpt: string }
+
+/** The merged duplicates behind a PRIMARY (on-mode rows only), so "read draft" still shows what was said. */
+async function readEvidence(env: Env, agent: string, table: "companion_journal" | "wm_continuity_notes", id: string): Promise<TrayEvidence[]> {
+  try {
+    const ev = await env.DB.prepare(
+      `SELECT evidence_table, evidence_id, writer, created_at FROM tray_evidence
+        WHERE agent = ? AND mode = 'on' AND primary_table = ? AND primary_id = ? ORDER BY created_at, id`,
+    ).bind(agent, table, id).all<{ evidence_table: string; evidence_id: string; writer: string; created_at: string }>();
+    const out: TrayEvidence[] = [];
+    for (const e of ev.results ?? []) {
+      const q = e.evidence_table === "companion_journal"
+        ? `SELECT substr(note_text, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt FROM companion_journal WHERE id = ? AND agent = ? AND review_state = 'merged'`
+        : `SELECT substr(content, 1, ${TRAY_EXCERPT_CHARS}) AS excerpt FROM wm_continuity_notes WHERE note_id = ? AND agent_id = ? AND review_state = 'merged'`;
+      const row = await env.DB.prepare(q).bind(e.evidence_id, agent).first<{ excerpt: string | null }>();
+      out.push({ table: e.evidence_table, id: e.evidence_id, writer: e.writer, created_at: e.created_at, excerpt: row?.excerpt ?? "" });
+    }
+    return out;
+  } catch { return []; }
+}
+
+interface StatsRow { draft: number | null; merged?: number | null; kept: number | null; dropped: number | null }
 interface TrayListRow { id: string; source: string | null; created_at: string; sort_at: string | null; excerpt: string; body: string | null }
 
 /** One ISO shape for any stored stamp; falls back to the raw value if SQLite cannot parse it. */
@@ -190,6 +236,7 @@ function statsSql(table: string, ownerCol: string): string {
   // 'T...Z' and datetime('now') is space-form, so a raw compare miscounts the boundary day.
   return `SELECT
             SUM(CASE WHEN review_state = 'draft' AND archived = 0 THEN 1 ELSE 0 END) AS draft,
+            SUM(CASE WHEN review_state = 'merged' AND archived = 0 THEN 1 ELSE 0 END) AS merged,
             SUM(CASE WHEN review_state = 'kept' AND datetime(reviewed_at) >= datetime('now', '-${TRAY_STATS_DAYS} days') THEN 1 ELSE 0 END) AS kept,
             SUM(CASE WHEN review_state = 'dropped' AND datetime(reviewed_at) >= datetime('now', '-${TRAY_STATS_DAYS} days') THEN 1 ELSE 0 END) AS dropped
           FROM ${table} WHERE ${ownerCol} = ?`;
@@ -396,6 +443,8 @@ export interface TrayDraftFull {
   text: string;
   /** B4 pronoun lint on `text`; empty when nothing was flagged. See TrayDraft.pronoun_flags. */
   pronoun_flags: string[];
+  /** B34 step 2: merged duplicates of this moment (on-mode evidence rows). Empty when none. Additive. */
+  evidence: TrayEvidence[];
 }
 
 export type ReadDraftResult =
@@ -431,6 +480,7 @@ export async function readDraft(env: Env, input: { agent: string; id: string; ki
     const text = String(r["note_text"] ?? "");
     const tags = parseTags(r["tags"]);
     const channelTag = tags?.find((t) => t.startsWith("channel:"));
+    const evidence = await readEvidence(env, input.agent, "companion_journal", String(r["id"]));
     return { ok: true, draft: {
       kind: "journal", table: "companion_journal", id: String(r["id"]), owner: String(r["agent"]),
       review_state: String(r["review_state"] ?? "kept"), reviewed_at: str(r["reviewed_at"]),
@@ -439,7 +489,7 @@ export async function readDraft(env: Env, input: { agent: string; id: string; ki
       channel: channelTag ? channelTag.slice("channel:".length) : null,
       external_id: str(r["external_id"]), session_id: str(r["session_id"]), tags,
       thread_key: null, note_type: null, salience: null, actor: null, correlation_id: null,
-      text, pronoun_flags: formatPronounFlags(lintPronouns(text)),
+      text, pronoun_flags: formatPronounFlags(lintPronouns(text)), evidence,
     } };
   }
 
@@ -451,6 +501,7 @@ export async function readDraft(env: Env, input: { agent: string; id: string; ki
   if (!r) return { ok: false, reason: "not_found" };
   const text = String(r["content"] ?? "");
   const threadKey = str(r["thread_key"]);
+  const evidence = await readEvidence(env, input.agent, "wm_continuity_notes", String(r["note_id"]));
   return { ok: true, draft: {
     kind: "note", table: "wm_continuity_notes", id: String(r["note_id"]), owner: String(r["agent_id"]),
     review_state: String(r["review_state"] ?? "kept"), reviewed_at: str(r["reviewed_at"]),
@@ -460,7 +511,7 @@ export async function readDraft(env: Env, input: { agent: string; id: string; ki
     external_id: null, session_id: null, tags: null,
     thread_key: threadKey, note_type: str(r["note_type"]), salience: str(r["salience"]), actor: str(r["actor"]),
     correlation_id: str(r["correlation_id"]),
-    text, pronoun_flags: formatPronounFlags(lintPronouns(text)),
+    text, pronoun_flags: formatPronounFlags(lintPronouns(text)), evidence,
   } };
 }
 

@@ -10,7 +10,7 @@ import { embedText, embedAndStoreAsync, composeHandoverText } from "../mcp/embed
 import { neighborhood } from "../graph/traverse.js";
 import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
 import { KEPT_SQL, TRAY_REWRITE_SOURCE } from "./review-state.js";
-import { noteInsert, noteBirthState } from "./tray-insert.js";
+import { trayAwareNoteInsert } from "./tray-insert.js";
 
 // Active-note cap for the evictable (non-high) tier, enforced lazily on write.
 const NOTE_CAP = 100;
@@ -88,8 +88,8 @@ export async function addNote(env: Env, input: WmNoteInput): Promise<WmContinuit
     salience: input.salience ?? "normal", actor: input.actor ?? "agent", source: input.source ?? "system",
     correlation_id: input.correlation_id ?? null,
   };
-  const reviewState = noteBirthState(noteRow);
-  await noteInsert(env.DB, noteRow).run();
+  // B34 step 2: a keyed observation joins its moment's primary draft (tray-insert.ts). reviewState is the FINAL state.
+  const reviewState = (await trayAwareNoteInsert(env as any, noteRow)).review_state;
 
   // Reachable by meaning from the moment it exists (2026-07-09). Awaited, not fire-and-forget:
   // a floating promise here dies under write pressure exactly as it did on companion_journal,

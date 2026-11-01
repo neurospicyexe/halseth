@@ -68,6 +68,13 @@ export interface Env {
   DREVAN_MCP_SECRET?: string;
   GAIA_MCP_SECRET?:   string;
 
+  // B34 step 2 (mig 0156): collapse one moment's duplicate tray drafts. off | shadow | on, default shadow.
+  // TRAY_MERGE_MODE_<AGENT> (e.g. TRAY_MERGE_MODE_DREVAN) overrides it per companion.
+  TRAY_MERGE_MODE?: string;
+  TRAY_MERGE_MODE_DREVAN?: string;
+  TRAY_MERGE_MODE_CYPHER?: string;
+  TRAY_MERGE_MODE_GAIA?: string;
+
   // Off-VPS dead-man's switch (src/deadman.ts). Both secrets unset = detector disabled.
   DEADMAN_TELEGRAM_BOT_TOKEN?: string;  // wrangler secret
   DEADMAN_TELEGRAM_CHAT_ID?:   string;  // wrangler secret

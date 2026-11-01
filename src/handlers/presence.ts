@@ -82,7 +82,7 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
     // Raziel seeing a draft on his own dashboard is review, not recall; review_state rides along so the
     // page can badge it. If a companion surface ever reads /presence, gate this with KEPT_LIVE_SQL.
     env.DB.prepare(
-      "SELECT id, agent, note_text, tags, created_at, review_state FROM companion_journal ORDER BY created_at DESC LIMIT 6"
+      "SELECT id, agent, note_text, tags, created_at, review_state FROM companion_journal WHERE COALESCE(review_state,'') <> 'merged' ORDER BY created_at DESC LIMIT 6"
     ).all<{ id: string; agent: string; note_text: string; tags: string | null; created_at: string; review_state: string }>(),
   ]);
 

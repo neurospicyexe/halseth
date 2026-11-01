@@ -41,6 +41,14 @@ QUIET_HOURS_TZ       = "America/Chicago"
 # (the loader returns silence on a missing table, so either order is safe).
 FEELING_LINE_MODE    = "live"
 
+# One moment, one tray draft (mig 0156, STATUS B34 step 2).
+#   off    -- today's behaviour exactly
+#   shadow -- every row born as today, PLUS tray_evidence rows (mode='shadow') recording what `on` would do  <- default
+#   on     -- a keyed duplicate draft of a moment is set 'merged' (not in the tray, not recall) and points at its primary
+# Per-companion override wins: TRAY_MERGE_MODE_DREVAN / _CYPHER / _GAIA. Junk = shadow. Apply mig 0156 first.
+# (Commented: unset means the code default, shadow.)
+# TRAY_MERGE_MODE    = "shadow"
+
 # PluralKit system id for the roster lookup (mig 0117). Public, unauthenticated -- not a secret.
 # Leave blank to disable: lookups then answer "unavailable", never "not found".
 # 2026-08-29: value belongs HERE, not the dashboard -- [vars] ships on every deploy, so a

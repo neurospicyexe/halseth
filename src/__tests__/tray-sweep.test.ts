@@ -77,7 +77,7 @@ const ALLOW: Allow[] = [
   { file: "mind/note-provenance.ts", match: "SELECT note_id, thread_key, created_at FROM wm_continuity_notes WHERE note_id IN", reason: "provenance of note ids ALREADY selected by a gated read; reads no text" },
 
   // ── Human (Raziel) display / signal plumbing ──
-  { file: "handlers/presence.ts", match: "FROM companion_journal ORDER BY created_at DESC LIMIT 6", reason: "Hearth /halseth + /house display only (see comment at the call site); no companion prompt reads /presence" },
+  { file: "handlers/presence.ts", match: "FROM companion_journal WHERE COALESCE(review_state,'') <> 'merged' ORDER BY created_at DESC LIMIT 6", reason: "Hearth /halseth + /house display only (see comment at the call site); no companion prompt reads /presence. Drafts show (review, not recall); B34 merged duplicates do not" },
   { file: "librarian/backends/halseth.ts", match: "WHERE agent = ? AND tags LIKE '%signal_audit%'", reason: "signal-audit rows are Cypher's own authored audits (source NULL, born kept); tag-scoped" },
   { file: "mcp/tools/session_load.ts", match: "WHERE agent = ? AND tags LIKE '%signal_audit%'", reason: "signal-audit presence flag (id + date only)" },
 ];

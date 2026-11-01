@@ -98,7 +98,7 @@ const COUNTS = {
   // The Journal page asks GET /companion-journal with substantive=1, so pill and page agree.
   journal:
     "SELECT COUNT(*) AS n FROM companion_journal j WHERE j.agent = ?1 AND j.archived = 0 " +
-    `AND COALESCE(j.review_state,'') <> 'dropped' AND NOT (${LETTER_WHERE}) ` +
+    `AND COALESCE(j.review_state,'') NOT IN ('dropped','merged') AND NOT (${LETTER_WHERE}) ` +
     `AND ${SUBSTANTIVE_JOURNAL_CLAUSE} AND ${NOT_CLERK_JOURNAL_CLAUSE} AND ${AFTER_C("j.created_at")}`,
   letters:
     `SELECT COUNT(*) AS n FROM companion_journal j WHERE j.agent = ?1 AND ${LETTER_WHERE} AND ${AFTER_C("j.created_at")}`,

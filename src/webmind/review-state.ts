@@ -17,9 +17,15 @@
 // memorialised his reply, and his own recall returned the fabrication ranked first, outrunning hand
 // retraction (src/handlers/retract.ts header).
 
-export type ReviewState = "draft" | "kept" | "dropped";
+/**
+ * `merged` (mig 0156, B34 step 2): a duplicate draft of a moment that already has a primary draft. The
+ * row is still inserted (retract, external_id idempotency and writer liveness keep working) and a
+ * tray_evidence row points it at its primary, but it is neither a draft (not in the tray) nor kept
+ * (not recall). Only the merge path in tray-insert.ts sets it; the owner never decides a merged row.
+ */
+export type ReviewState = "draft" | "kept" | "dropped" | "merged";
 
-export const REVIEW_STATES: ReadonlySet<string> = new Set<ReviewState>(["draft", "kept", "dropped"]);
+export const REVIEW_STATES: ReadonlySet<string> = new Set<ReviewState>(["draft", "kept", "dropped", "merged"]);
 
 /** companion_journal sources that are the companion's own speech (or a clerk's note in its voice). */
 export const COMPANION_SPEECH_JOURNAL_SOURCES: ReadonlySet<string> = new Set([
