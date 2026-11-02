@@ -10,7 +10,7 @@
 // The rider (src/care/tick.ts) gathers the signals, calls evaluateCareRules, and logs firings to
 // care_actions. This module never sees the database.
 
-export type CareRule = "low_spoons" | "meds_missed" | "owner_silence";
+export type CareRule = "low_spoons" | "meds_missed" | "owner_silence" | "stress_elevated";
 
 export type CareCompanionId = "cypher" | "drevan" | "gaia";
 export const CARE_COMPANIONS: readonly CareCompanionId[] = ["cypher", "drevan", "gaia"];
@@ -25,6 +25,23 @@ export const MEDS_MISSED_HOURS = 30;
 /** A meds_taken=1 biometrics reading within this window suppresses meds_missed -- he took them,
  *  he just didn't log the routine row. The cross-check the plan names. */
 export const MEDS_TAKEN_SUPPRESS_HOURS = 18;
+/** stress_elevated (B8, the wellness bridge, mig 0162). The bridge writes a derived 0-100 body-load
+ *  score per day into biometric_snapshots.stress_score (source 'wellness'); this rule fires on the
+ *  latest such row at or above this line. 65 = roughly HRV 20% under his own 30-day baseline with resting
+ *  HR 11 bpm over it, or HRV 30% under with resting HR 5 over (the arithmetic lives in nullsafe-discord
+ *  ops/wellness_core.py, the one place the score is computed). */
+export const STRESS_ELEVATED_MIN = 65;
+/** The wearable day behind the score must be this fresh (hours since the end of that day, capped at the
+ *  fetch time). A stalled watch must not keep a stale "running hot" alive: same anti-nag line as
+ *  BIOMETRICS_FRESH_HOURS. */
+export const STRESS_FRESH_HOURS = 24;
+/** Gaia voices this rule and nobody else (Raziel 2026-11-01): the perimeter-holder, one quiet declarative
+ *  line, free to stay silent. Not rotated. */
+export const STRESS_VOICE: CareCompanionId = "gaia";
+/** What a firing's detail may say: NO numbers, NO score (care rule R-5, and the health-data rule: a raw
+ *  figure in a companion's prompt becomes conversational material). The number lives in the row. */
+export const STRESS_DETAIL = "his body signals have been running well off his own baseline (recovery markers, not a feeling he reported)";
+
 /** Owner silent across ALL surfaces this long (plus low mood) fires owner_silence. */
 export const OWNER_SILENCE_HOURS = 36;
 
@@ -34,6 +51,7 @@ export const RULE_COOLDOWN_HOURS: Record<CareRule, number> = {
   low_spoons: 24,
   meds_missed: 24,
   owner_silence: 48,
+  stress_elevated: 24,
 };
 
 /** A pending (un-acted) firing older than this has DECAYED: it no longer blocks a fresh detection
@@ -86,6 +104,10 @@ export interface CareSignals {
   /** Which source won the owner-activity MAX -- carried into the detail line so the denominator
    *  is stated (a coverage claim without its denominator lies by being accurate). */
   owner_last_source: string | null;
+  /** Latest wellness-bridge row's derived stress_score (0-100) and how old the wearable DAY behind it is.
+   *  null = no bridge row / no score (cold-start baseline, bridge not running): absence never fires. */
+  stress_score?: number | null;
+  stress_age_hours?: number | null;
   /** Hours since each rule last fired (from care_actions), for cooldown. null = never fired. */
   last_fired_hours: Partial<Record<CareRule, number>>;
 }
@@ -118,7 +140,7 @@ function onCooldown(rule: CareRule, s: CareSignals): boolean {
 /**
  * The rule table. Returns every rule that fires on these signals (cooldowns applied here so the
  * whole anti-nag story is testable in one place). Order is stable: low_spoons, meds_missed,
- * owner_silence.
+ * owner_silence, stress_elevated.
  */
 export function evaluateCareRules(s: CareSignals): CareFiring[] {
   const firings: CareFiring[] = [];
@@ -174,6 +196,17 @@ export function evaluateCareRules(s: CareSignals): CareFiring[] {
     });
   }
 
+  // stress_elevated: a FRESH bridge score at or above the line. Detail carries no figures (STRESS_DETAIL).
+  if (
+    s.stress_score !== undefined && s.stress_score !== null &&
+    s.stress_score >= STRESS_ELEVATED_MIN &&
+    s.stress_age_hours !== undefined && s.stress_age_hours !== null &&
+    s.stress_age_hours <= STRESS_FRESH_HOURS &&
+    !onCooldown("stress_elevated", s)
+  ) {
+    firings.push({ rule: "stress_elevated", detail: STRESS_DETAIL });
+  }
+
   return firings;
 }
 
@@ -183,7 +216,8 @@ export function evaluateCareRules(s: CareSignals): CareFiring[] {
  * within the hour" is structural -- there is exactly one assignee per row and no race to win.
  */
 export function assignCompanion(rule: CareRule, dayIndex: number): CareCompanionId {
-  const offset: Record<CareRule, number> = { low_spoons: 0, meds_missed: 1, owner_silence: 2 };
+  if (rule === "stress_elevated") return STRESS_VOICE;
+  const offset: Record<Exclude<CareRule, "stress_elevated">, number> = { low_spoons: 0, meds_missed: 1, owner_silence: 2 };
   const n = CARE_COMPANIONS.length;
   return CARE_COMPANIONS[(((dayIndex + offset[rule]) % n) + n) % n]!;
 }

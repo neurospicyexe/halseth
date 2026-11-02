@@ -34,7 +34,7 @@ export async function readOwnerLastSeen(env: Env): Promise<OwnerLastSeen | null>
     `SELECT source, at FROM (
        SELECT 'sessions' AS source, MAX(created_at) AS at FROM sessions WHERE surface >= 'claude' AND surface < 'claudf'
        UNION ALL SELECT 'commons', MAX(created_at) FROM commons_posts WHERE author = 'raziel'
-       UNION ALL SELECT 'biometrics', MAX(logged_at) FROM biometric_snapshots
+       UNION ALL SELECT 'biometrics', MAX(logged_at) FROM biometric_snapshots WHERE source IS NOT 'wellness'
        UNION ALL SELECT 'notes', MAX(created_at) FROM companion_notes WHERE author = 'human'
        UNION ALL SELECT 'contact-drive', MAX(last_event_at) FROM companion_drives WHERE drive_key = 'relational_need'
      ) WHERE at IS NOT NULL ORDER BY at DESC LIMIT 1`,

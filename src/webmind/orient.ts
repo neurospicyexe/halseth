@@ -342,7 +342,7 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     ).bind(agentId).all(),
     readRecentSpiralTurn(env, agentId),
     env.DB.prepare(
-      "SELECT id, recorded_at, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
+      "SELECT id, recorded_at, hrv_resting, resting_hr, sleep_hours, sleep_quality, stress_score, steps, active_energy, notes, mood, pain, energy, focus, spoons, meds_taken FROM biometric_snapshots WHERE source IS NOT 'wellness' ORDER BY recorded_at DESC LIMIT 1"
     ).first<WmBiometricSnapshot>(),
     env.DB.prepare(
       // id = 'main', not LIMIT 1 (coherence review D14): every other house_state read pins the row

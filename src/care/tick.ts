@@ -60,6 +60,13 @@ export const PENDING_RULES_SQL =
 export const PENDING_RULES_SQL_PRE_0155 =
   `SELECT DISTINCT rule FROM care_actions WHERE acted_at IS NULL AND detected_at > ?`;
 
+/** The newest wellness-bridge row that carries a derived score (B8). recorded_at is the end of the
+ *  wearable DAY (capped at fetch time), so its age is the age of the data, not of the bridge run.
+ *  Exported so a real-schema test runs this exact text. */
+export const STRESS_ROW_SQL =
+  `SELECT recorded_at, stress_score FROM biometric_snapshots
+   WHERE source = 'wellness' AND stress_score IS NOT NULL ORDER BY recorded_at DESC LIMIT 1`;
+
 /** The fresher of two ages; null only when both are null ("never confirmed" stays absent). */
 export function newestAge(a: number | null, b: number | null): number | null {
   if (a === null) return b;
@@ -96,11 +103,11 @@ export async function runCareTick(
   }
 
   // ── Gather signals (reads only) ──────────────────────────────────────────────
-  const [bio, meds, medsDm, ownerLast, firedRows, pendingRows] = await Promise.all([
+  const [bio, meds, medsDm, ownerLast, firedRows, pendingRows, stressRow] = await Promise.all([
     // Latest reading by recorded_at, matching orient's ordering (webmind/orient.ts) so the
     // register tier and the rule table never disagree about which row is "latest".
     env.DB.prepare(
-      `SELECT recorded_at, mood, spoons, meds_taken FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1`,
+      `SELECT recorded_at, mood, spoons, meds_taken FROM biometric_snapshots WHERE source IS NOT 'wellness' ORDER BY recorded_at DESC LIMIT 1`,
     ).first<{ recorded_at: string; mood: string | null; spoons: number | null; meds_taken: number | null }>(),
     env.DB.prepare(
       `SELECT MAX(logged_at) AS at FROM routines WHERE lower(routine_name) LIKE '%med%'`,
@@ -136,6 +143,8 @@ export async function runCareTick(
       return env.DB.prepare(PENDING_RULES_SQL).bind(cutoff).all<{ rule: CareRule }>()
         .catch(onlyIf(missingVoidedAt, () => env.DB.prepare(PENDING_RULES_SQL_PRE_0155).bind(cutoff).all<{ rule: CareRule }>()));
     })(),
+    // B8: the wellness bridge's newest scored day. A failed read is "no signal", never a firing.
+    env.DB.prepare(STRESS_ROW_SQL).first<{ recorded_at: string; stress_score: number }>().catch(() => null),
   ]);
 
   const lastFired: Partial<Record<CareRule, number>> = {};
@@ -153,6 +162,8 @@ export async function runCareTick(
     owner_silence_hours: ageHoursOrNull(ownerLast?.at, nowMs),
     owner_last_source: ownerLast?.source ?? null,
     last_fired_hours: lastFired,
+    stress_score: stressRow?.stress_score ?? null,
+    stress_age_hours: ageHoursOrNull(stressRow?.recorded_at, nowMs),
   };
 
   const firings = evaluateCareRules(signals).filter(f => !pendingRules.has(f.rule));
@@ -161,9 +172,19 @@ export async function runCareTick(
   const detectedAt = new Date(nowMs).toISOString();
   for (const f of firings) {
     const companion = assignCompanion(f.rule, dayIndex);
-    await env.DB.prepare(
-      `INSERT INTO care_actions (id, rule, companion_id, detail, detected_at) VALUES (?, ?, ?, ?, ?)`,
-    ).bind(newId(), f.rule, companion, f.detail, detectedAt).run();
+    try {
+      await env.DB.prepare(
+        `INSERT INTO care_actions (id, rule, companion_id, detail, detected_at) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(newId(), f.rule, companion, f.detail, detectedAt).run();
+    } catch (e) {
+      // Before mig 0162 the rule CHECK refuses 'stress_elevated': skip THAT firing, never the tick.
+      // Every other rule's insert failing stays loud, as before.
+      if (f.rule === "stress_elevated" && /CHECK constraint/i.test(String(e))) {
+        console.warn("[care] stress_elevated skipped: care_actions predates mig 0162");
+        continue;
+      }
+      throw e;
+    }
     console.log(`[care] rule fired: ${f.rule} -> ${companion} (${f.detail})`);
   }
 
@@ -189,7 +210,7 @@ async function runEscalationPass(
   try {
     const [reportRows, escFiredRows, escPendingRows] = await Promise.all([
       env.DB.prepare(
-        `SELECT recorded_at, mood, spoons FROM biometric_snapshots WHERE recorded_at > ? ORDER BY recorded_at DESC`,
+        `SELECT recorded_at, mood, spoons FROM biometric_snapshots WHERE recorded_at > ? AND source IS NOT 'wellness' ORDER BY recorded_at DESC`,
       ).bind(new Date(nowMs - ESC_REDLINE_HOURS * 3_600_000).toISOString()).all<{ recorded_at: string; mood: string | null; spoons: number | null }>(),
       env.DB.prepare(
         `SELECT rule, MAX(detected_at) AS at FROM care_escalations GROUP BY rule`,
