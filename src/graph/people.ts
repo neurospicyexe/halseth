@@ -98,10 +98,11 @@ export async function listPeople(env: Env): Promise<GraphPerson[]> {
 }
 
 /** A shared name with no other spelling would link nothing; say so instead of saving a dead entry. */
-export function sharedNeedsSpelling(label: string, shares: string | null, names: string[]): string | null {
+export function sharedNeedsSpelling(label: string, shares: string | null, names: string[], kind?: string): string | null {
   if (!shares) return null;
+  const example = kind === "self" ? `${label} (ours)` : `Blue's ${label}`;
   return spellingsOf({ label, match_names: names, shares_name_with: shares }).length === 0
-    ? `${label} is also a character, so the bare name won't link. Add a spelling only the person has, like "Blue's ${label}".`
+    ? `${label} is also a character, so the bare name won't link. Add a spelling only the person has, like "${example}".`
     : null;
 }
 
@@ -118,7 +119,7 @@ export async function addPerson(env: Env, input: {
   const kind = requested && ADDABLE_KINDS.has(requested) ? requested : "person";
   const names = parseMatchNames(input.match_names ?? []).filter((n) => n !== label && !isCentreName(n));
   const shares = normalizeSharesName(input.shares_name_with);
-  const dead = sharedNeedsSpelling(label, shares, names);
+  const dead = sharedNeedsSpelling(label, shares, names, kind);
   if (dead) return { ok: false, reason: dead };
   const existing = await env.DB.prepare("SELECT id FROM graph_people WHERE label = ? AND archived = 0").bind(label).first<{ id: string }>();
   if (existing) return { ok: false, reason: `${label} is already on the list` };
@@ -153,7 +154,7 @@ export async function updatePerson(env: Env, id: string, input: { match_names?: 
     ? current.match_names
     : parseMatchNames(input.match_names).filter((n) => n !== current.label && !isCentreName(n));
   const shares = input.shares_name_with === undefined ? current.shares_name_with : normalizeSharesName(input.shares_name_with);
-  const dead = sharedNeedsSpelling(current.label, shares, names);
+  const dead = sharedNeedsSpelling(current.label, shares, names, current.kind);
   if (dead) return { ok: false, status: 409, reason: dead };
   try {
     await env.DB.prepare("UPDATE graph_people SET match_names = ?, shares_name_with = ? WHERE id = ? AND archived = 0")
