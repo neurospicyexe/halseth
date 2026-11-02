@@ -9,8 +9,11 @@ const jsonRes = (data: unknown, status = 200): Response =>
 
 export async function handleBiometricsLatest(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
+  // Hand-entered rows only (Hearth's reads): the wellness bridge's machine rows are not a check-in and
+  // must not appear as one. `?source=wellness` reads them (the bridge's baseline, never a surface).
+  const src = new URL(request.url).searchParams.get("source") === "wellness";
   const row = await env.DB.prepare(
-    "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
+    `SELECT * FROM biometric_snapshots WHERE source ${src ? "=" : "IS NOT"} 'wellness' ORDER BY recorded_at DESC LIMIT 1`
   ).first();
 
   return new Response(JSON.stringify(row ?? null), {
@@ -24,8 +27,9 @@ export async function handleBiometricsList(request: Request, env: Env): Promise<
   const rawLimit = parseInt(url.searchParams.get("limit") ?? "7", 10);
   const limit = Math.min(Math.max(1, isNaN(rawLimit) ? 7 : rawLimit), 30);
 
+  const wellness = url.searchParams.get("source") === "wellness";
   const result = await env.DB.prepare(
-    "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT ?"
+    `SELECT * FROM biometric_snapshots WHERE source ${wellness ? "=" : "IS NOT"} 'wellness' ORDER BY recorded_at DESC LIMIT ?`
   ).bind(limit).all();
 
   return new Response(JSON.stringify(result.results), {
@@ -193,4 +197,67 @@ export async function handleBiometricsDelete(
   }
   if (!result.found) return jsonRes({ error: "not found" }, 404);
   return jsonRes({ ok: true, id, care_firings_voided: result.voided.length });
+}
+
+// PUT /biometrics/wellness/:day: the wellness bridge's per-day upsert (B8, ops/wellness-bridge.py).
+// One row per wearable day with the deterministic id `wellness_<day>`, so a re-run converges instead of
+// duplicating and no client-side lookup is needed. source is forced to 'wellness': these are machine
+// rows, excluded from every hand-entered read (orient, presence, the care tick's spoons, owner
+// activity, Hearth's /biometrics list) and read only by the stress rule and the bridge's baseline.
+// Only the objective columns are touched; the subjective ones stay NULL by construction. A field the
+// bridge could not read this run (null) keeps its stored value, so a morning sleep figure survives
+// the afternoon run that skips the sleep call.
+export async function handleBiometricsWellnessPut(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env); if (denied) return denied;
+  const day = params.day ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`))) {
+    return jsonRes({ error: "day must be YYYY-MM-DD" }, 400);
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return jsonRes({ error: "invalid JSON" }, 400);
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return jsonRes({ error: "body must be an object" }, 400);
+  }
+  const num = (v: unknown, lo: number, hi: number): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : null;
+  const recordedAt = typeof body.recorded_at === "string" && !Number.isNaN(Date.parse(body.recorded_at))
+    ? new Date(body.recorded_at).toISOString()
+    : new Date().toISOString();
+  const hrv = num(body.hrv_resting, 0, 400);
+  const rhr = num(body.resting_hr, 20, 250);
+  const sleep = num(body.sleep_hours, 0, 24);
+  const steps = num(body.steps, 0, 500000);
+  const active = num(body.active_energy, 0, 20000);
+  const stress = num(body.stress_score, 0, 100);
+  const now = new Date().toISOString();
+  const id = `wellness_${day}`;
+  try {
+    await env.DB.prepare(`
+      INSERT INTO biometric_snapshots
+        (id, recorded_at, logged_at, source, hrv_resting, resting_hr, sleep_hours, stress_score, steps, active_energy, notes)
+      VALUES (?, ?, ?, 'wellness', ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        recorded_at   = excluded.recorded_at,
+        logged_at     = excluded.logged_at,
+        hrv_resting   = COALESCE(excluded.hrv_resting, hrv_resting),
+        resting_hr    = COALESCE(excluded.resting_hr, resting_hr),
+        sleep_hours   = COALESCE(excluded.sleep_hours, sleep_hours),
+        stress_score  = COALESCE(excluded.stress_score, stress_score),
+        steps         = COALESCE(excluded.steps, steps),
+        active_energy = COALESCE(excluded.active_energy, active_energy)
+      WHERE source = 'wellness'
+    `).bind(id, recordedAt, now, hrv, rhr, sleep, stress, steps, active, `wellness-bridge ${day}`).run();
+  } catch (e) {
+    console.error(`[wellness] upsert ${day} failed:`, String(e));
+    return jsonRes({ error: "upsert failed" }, 500);
+  }
+  return jsonRes({ ok: true, id, day });
 }

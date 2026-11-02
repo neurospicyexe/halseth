@@ -15,7 +15,7 @@ import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
 import { getRazielInbox, getRazielInboxItem, postRazielInboxRead } from "./handlers/raziel-inbox";
 import { getRazielNeeds, getRazielNeedsCount } from "./handlers/raziel-needs";
 import { getRazielCompanion, postRazielCompanionLooked } from "./handlers/raziel-companion";
-import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost, handleBiometricsPatch, handleBiometricsDelete } from "./handlers/biometrics";
+import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost, handleBiometricsPatch, handleBiometricsDelete, handleBiometricsWellnessPut } from "./handlers/biometrics";
 import { getHandovers, getCompanionJournal, getRecallIneligible, getIngestContinuityNotes, getIngestContinuityIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
@@ -292,6 +292,7 @@ const router = new Router()
   .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
   .on("GET", "/biometrics",        (request, env) => handleBiometricsList(request, env))
   .on("POST", "/biometrics",       (request, env) => handleBiometricsPost(request, env))
+  .on("PUT",   "/biometrics/wellness/:day", (request, env, params) => handleBiometricsWellnessPut(request, env, params ?? {}))
   .on("PATCH",  "/biometrics/:id", (request, env, params) => handleBiometricsPatch(request, env, params ?? {}))
   .on("DELETE", "/biometrics/:id", (request, env, params) => handleBiometricsDelete(request, env, params ?? {}))
   .on("GET",  "/raziel/inbox",      (request, env, params) => getRazielInbox(request, env, params ?? {}))

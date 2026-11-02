@@ -50,7 +50,7 @@ export async function getPresence(request: Request, env: Env): Promise<Response>
       "SELECT id, companion_id, dream_text AS content, created_at FROM companion_dreams ORDER BY created_at DESC LIMIT 5"
     ).all<{ id: string; companion_id: string; content: string; created_at: string }>(),
     env.DB.prepare(
-      "SELECT * FROM biometric_snapshots ORDER BY recorded_at DESC LIMIT 1"
+      "SELECT * FROM biometric_snapshots WHERE source IS NOT 'wellness' ORDER BY recorded_at DESC LIMIT 1"
     ).first<BiometricSnapshot>(),
     env.DB.prepare(
       "SELECT valence, COUNT(*) as n FROM relational_deltas WHERE delta_text IS NOT NULL GROUP BY valence"
