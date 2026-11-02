@@ -116,14 +116,19 @@ export function checkContamination(
  * store, so ordering normalises before it compares.
  */
 export function contaminationSightingsSql(): string {
+  // The NEWEST 200 sightings, returned oldest-first. Taking the oldest 200 let a common substring
+  // fill the cap with old rows and miss a recent shared window, so gate B failed open (review
+  // 2026-11-01).
   return `
-    SELECT id AS row_id, agent AS companion_id, note_text AS excerpt,
-           replace(created_at,' ','T') AS at, 'companion_journal' AS source
-      FROM companion_journal
-     WHERE lower(note_text) LIKE '%' || lower(?1) || '%'
-       AND replace(created_at,' ','T') >= ?2
-     ORDER BY replace(created_at,' ','T') ASC
-     LIMIT 200`;
+    SELECT * FROM (
+      SELECT id AS row_id, agent AS companion_id, note_text AS excerpt,
+             replace(created_at,' ','T') AS at, 'companion_journal' AS source
+        FROM companion_journal
+       WHERE lower(note_text) LIKE '%' || lower(?1) || '%'
+         AND replace(created_at,' ','T') >= ?2
+       ORDER BY replace(created_at,' ','T') DESC
+       LIMIT 200
+    ) ORDER BY at ASC`;
 }
 
 /**

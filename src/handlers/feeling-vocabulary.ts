@@ -62,8 +62,11 @@ export async function getFeelingVocabulary(request: Request, env: Env): Promise<
   const denied = authGuard(request, env);
   if (denied) return denied;
   const url = new URL(request.url);
-  const companion = url.searchParams.get("companion_id") ?? identifyCallerCompanion(request, env) ?? "";
+  const caller = identifyCallerCompanion(request, env);
+  const companion = url.searchParams.get("companion_id") ?? caller ?? "";
   if (!(COMPANIONS as readonly string[]).includes(companion)) return json({ error: "companion_id must be cypher, drevan or gaia" }, 400);
+  // A companion token reads only its own vocabulary (distinct selves); the admin token reads any.
+  if (caller && caller !== companion) return json({ error: "a companion reads only its own vocabulary" }, 403);
   const status = url.searchParams.get("status") ?? "active";
   if (!["active", "superseded", "rejected", "all"].includes(status)) return json({ error: "bad status" }, 400);
   try {

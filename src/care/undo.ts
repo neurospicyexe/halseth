@@ -51,11 +51,14 @@ export const VOID_FIRING_SQL =
 /** What the tick would have read at ?1 (a firing's detected_at), leaving out the undone row ?2. */
 export const UNDO_LATEST_AT_SQL =
   `SELECT spoons, recorded_at FROM biometric_snapshots WHERE logged_at <= ?1 AND id != ?2
-   ORDER BY recorded_at DESC LIMIT 1`;
+   AND source IS NOT 'wellness' ORDER BY recorded_at DESC LIMIT 1`;
 
-/** What the next tick will read (its own query, tick.ts), leaving out the undone row ?1. */
+/** What the next tick will read (its own query, tick.ts), leaving out the undone row ?1. Bridge rows
+ *  (source 'wellness', mig 0162) are skipped exactly as the tick skips them: a bridge row has no spoons,
+ *  and reading it would void a firing a hand reading still justifies (review 2026-11-01, W1). */
 export const UNDO_LATEST_NOW_SQL =
-  `SELECT spoons, recorded_at FROM biometric_snapshots WHERE id != ?1 ORDER BY recorded_at DESC LIMIT 1`;
+  `SELECT spoons, recorded_at FROM biometric_snapshots WHERE id != ?1 AND source IS NOT 'wellness'
+   ORDER BY recorded_at DESC LIMIT 1`;
 
 /** The tick's low_spoons condition (rules.ts evaluateCareRules) with the tick's own age arithmetic
  *  (hoursSinceIso), minus the cooldown: a firing that exists already passed it, and the question here

@@ -395,7 +395,9 @@ export function parseRelationalRequest(request: string): { toward: string; state
   if (!m) return null;
   const toward = m[2]!.replace(/\s+/g, " ").toLowerCase().trim();
   const stateText = m[3]!.trim();
-  if (!toward || !stateText) return null;
+  // A name, not a sentence: "note toward the end of the day: ..." must still fail loudly rather than
+  // write toward "the end of the day" (review 2026-11-01). Qualified names fit well inside the cap.
+  if (!toward || !stateText || toward.length > 60 || toward.split(" ").length > 6) return null;
   const verb = m[1]!.toLowerCase();
   return { toward, stateText, stateType: /^witness/.test(verb) ? "witness" : /^held/.test(verb) ? "held" : undefined };
 }

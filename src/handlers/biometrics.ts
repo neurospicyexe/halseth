@@ -1,5 +1,5 @@
 import { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, isAdminToken } from "../lib/auth.js";
 
 import { generateId } from "../db/queries.js";
 import { undoCheckin } from "../care/undo.js";
@@ -213,6 +213,9 @@ export async function handleBiometricsWellnessPut(
   params: Record<string, string>,
 ): Promise<Response> {
   const denied = authGuard(request, env); if (denied) return denied;
+  // Only the bridge writes these rows, and it holds ADMIN_SECRET. A companion token must never be
+  // able to write a machine row that fires a care rule (review 2026-11-01, W2).
+  if (!isAdminToken(request, env)) return jsonRes({ error: "admin token required" }, 403);
   const day = params.day ?? "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`))) {
     return jsonRes({ error: "day must be YYYY-MM-DD" }, 400);
@@ -228,9 +231,20 @@ export async function handleBiometricsWellnessPut(
   }
   const num = (v: unknown, lo: number, hi: number): number | null =>
     typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : null;
-  const recordedAt = typeof body.recorded_at === "string" && !Number.isNaN(Date.parse(body.recorded_at))
-    ? new Date(body.recorded_at).toISOString()
-    : new Date().toISOString();
+  // recorded_at is the end of the wearable's local day (capped at fetch time). It must sit inside
+  // that day's window and never in the future: a future stamp would read as fresh forever and keep a
+  // stale stress row firing after the watch or bridge stopped (review 2026-11-01, W2). The window is
+  // generous in UTC (day 00:00Z to day+2 00:00Z) so any US local day fits.
+  const nowMs = Date.now();
+  const dayStart = Date.parse(`${day}T00:00:00Z`);
+  const dayEnd = dayStart + 2 * 86_400_000;
+  let recordedMs = typeof body.recorded_at === "string" ? Date.parse(body.recorded_at) : NaN;
+  if (Number.isNaN(recordedMs)) recordedMs = Math.min(nowMs, dayEnd - 1);
+  if (recordedMs < dayStart || recordedMs >= dayEnd) {
+    return jsonRes({ error: "recorded_at must fall within that day" }, 400);
+  }
+  if (recordedMs > nowMs) recordedMs = nowMs;
+  const recordedAt = new Date(recordedMs).toISOString();
   const hrv = num(body.hrv_resting, 0, 400);
   const rhr = num(body.resting_hr, 20, 250);
   const sleep = num(body.sleep_hours, 0, 24);

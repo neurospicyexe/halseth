@@ -40,7 +40,7 @@ export const STRESS_FRESH_HOURS = 24;
 export const STRESS_VOICE: CareCompanionId = "gaia";
 /** What a firing's detail may say: NO numbers, NO score (care rule R-5, and the health-data rule: a raw
  *  figure in a companion's prompt becomes conversational material). The number lives in the row. */
-export const STRESS_DETAIL = "his body signals have been running well off his own baseline (recovery markers, not a feeling he reported)";
+export const STRESS_DETAIL = "their body signals have been running well off their own baseline (recovery markers, not a feeling they reported)";
 
 /** Owner silent across ALL surfaces this long (plus low mood) fires owner_silence. */
 export const OWNER_SILENCE_HOURS = 36;
