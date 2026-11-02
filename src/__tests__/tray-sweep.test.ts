@@ -64,6 +64,7 @@ const ALLOW: Allow[] = [
   { file: "webmind/tray.ts", match: "FROM wm_continuity_notes WHERE note_id = ? AND agent_id = ?", reason: "the tray itself: read draft <id> for a note, any state" },
   { file: "webmind/notes.ts", match: "DELETE FROM wm_continuity_notes WHERE note_id IN", reason: "cap eviction deletes exactly the ids the KEPT-gated overflow SELECT above chose" },
   { file: "webmind/vocabulary-guards.ts", match: "'companion_journal' AS source", reason: "contamination detector: counts who SAID a token -- drafts are the speech; yields a verdict, never recall" },
+  { file: "webmind/vocabulary-write.ts", match: "SELECT note_id FROM wm_continuity_notes WHERE note_id", reason: "capture_id existence check: returns only the note_id key, never content; a draft is still a real capture" },
   { file: "handlers/retract.ts", match: "SELECT id, archived FROM companion_journal WHERE agent = ? AND external_id IN", reason: "retract must find drafts (the usual case) and already-archived rows" },
   { file: "handlers/retract.ts", match: "SELECT note_id, archived FROM wm_continuity_notes WHERE agent_id = ? AND correlation_id IN", reason: "retract must find drafts and already-archived rows" },
   { file: "handlers/admin.ts", match: "SELECT id, note_text, agent FROM companion_journal", reason: "rebuild-embeddings: the index mirrors D1 (drafts are embedded; the READ hydration gates them)" },

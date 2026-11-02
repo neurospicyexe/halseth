@@ -123,6 +123,7 @@ import { postSkillProposal, listSkillProposals, decideSkillProposal } from "./ha
 import { getMedDue, postMedClaim, postMedDelivered, postMedRelease, postMedAnswer, getMedToday } from "./handlers/med-reminder.js";
 import { postReachReserve, postReachDelivered, postReachRelease, getReachToday } from "./handlers/reach-cap.js";
 import { postCareHold, getCareHold } from "./handlers/care-hold.js";
+import { postFeelingVocabulary, getFeelingVocabulary } from "./handlers/feeling-vocabulary.js";
 import { postDepartureDeclare, postDepartureEnd, postDepartureObject, postDepartureStandDown, getDepartures } from "./handlers/departures.js";
 import { postVoiceLesson, getVoiceLessons, postVoiceLessonDecide } from "./handlers/voice-lessons.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
@@ -544,6 +545,9 @@ const router = new Router()
   .on("POST",  "/mind/departures/object",      (request, env)         => postDepartureObject(request, env))
   .on("POST",  "/mind/departures/stand-down",  (request, env)         => postDepartureStandDown(request, env))
   .on("GET",   "/mind/departures",             (request, env)         => getDepartures(request, env))
+  // The feeling-line write path (B5): every new vocabulary row runs guards B,F,G,D,C,A,E first; src/webmind/vocabulary-write.ts.
+  .on("POST",  "/mind/feeling-vocabulary",     (request, env)         => postFeelingVocabulary(request, env))
+  .on("GET",   "/mind/feeling-vocabulary",     (request, env)         => getFeelingVocabulary(request, env))
 
   // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))
