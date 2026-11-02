@@ -2,6 +2,7 @@
 //
 //   GET  /mind/people               the list, each with how many kept rows the graph links to them
 //   POST /mind/people               { label, match_names?: string[], kind?, pk_member_id?, note? }
+//   POST /mind/people/:id           { match_names?: string[], shares_name_with?: string|null } (mig 0160)
 //   POST /mind/people/:id/archive   take someone off the list (their links drop at the next rebuild)
 //
 // Raziel's door (Hearth): added_by = 'raziel'. Links appear at the next nightly rebuild, or at once
@@ -9,7 +10,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
-import { addPerson, archivePerson, frontsOf, listPeople } from "../graph/people.js";
+import { addPerson, archivePerson, frontsOf, listPeople, updatePerson } from "../graph/people.js";
 import { KEPT_SQL } from "../webmind/review-state.js";
 
 // Counted the way the map shows them: only links whose source row is visible (kept, not archived,
@@ -51,7 +52,7 @@ export async function getMindPeople(request: Request, env: Env): Promise<Respons
 export async function postMindPeople(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
-  let body: { label?: unknown; match_names?: unknown; kind?: unknown; pk_member_id?: unknown; note?: unknown };
+  let body: { label?: unknown; match_names?: unknown; kind?: unknown; pk_member_id?: unknown; note?: unknown; shares_name_with?: unknown };
   try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   if (typeof body.label !== "string") return json({ error: "label is required" }, 400);
   const r = await addPerson(env, {
@@ -60,6 +61,7 @@ export async function postMindPeople(request: Request, env: Env): Promise<Respon
     kind: typeof body.kind === "string" ? body.kind : undefined,
     pk_member_id: typeof body.pk_member_id === "string" ? body.pk_member_id : null,
     note: typeof body.note === "string" ? body.note : null,
+    shares_name_with: typeof body.shares_name_with === "string" ? body.shares_name_with : null,
     added_by: "raziel",
   });
   return r.ok ? json({ ok: true, person: r.person }) : json({ ok: false, error: r.reason }, 409);
@@ -71,4 +73,20 @@ export async function postMindPersonArchive(request: Request, env: Env, params: 
   const id = params.id ?? "";
   if (!id) return json({ error: "id required" }, 400);
   return (await archivePerson(env, id)) ? json({ ok: true }) : json({ ok: false, error: "not found" }, 404);
+}
+
+/** Edit an entry's other spellings and/or whether its name is shared with a character (mig 0160).
+ *  A field left out is unchanged; shares_name_with null or "" clears the flag. */
+export async function postMindPersonUpdate(request: Request, env: Env, params: { id?: string }): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const id = params.id ?? "";
+  if (!id) return json({ error: "id required" }, 400);
+  let body: { match_names?: unknown; shares_name_with?: unknown };
+  try { body = await request.json(); } catch { return json({ error: "invalid JSON" }, 400); }
+  const r = await updatePerson(env, id, {
+    match_names: Array.isArray(body.match_names) ? body.match_names.filter((x): x is string => typeof x === "string") : undefined,
+    shares_name_with: body.shares_name_with === undefined ? undefined : typeof body.shares_name_with === "string" ? body.shares_name_with : null,
+  });
+  return r.ok ? json({ ok: true, person: r.person }) : json({ ok: false, error: r.reason }, r.status);
 }

@@ -40,7 +40,8 @@
 import type { Env } from "../types.js";
 import { COMPANION_IDS } from "../companions.js";
 import { NOTE_REF_TABLES, type NoteRefType } from "../librarian/backends/halseth.js";
-import { ambiguousSpellings, CENTRE_ID, FRONT_PROVENANCE_PREFIX, isCentreName, parseMatchNames, spellingsOf } from "./people.js";
+import { ambiguousSpellings, CENTRE_ID, FRONT_PROVENANCE_PREFIX, isCentreName, missingSharesName, parseMatchNames, spellingsOf } from "./people.js";
+import { onlyIf } from "../care/schema-gap.js";
 
 export const MECHANICAL_PROVENANCE_LIKE = "mechanical%";
 
@@ -520,7 +521,11 @@ export function buildTextMentionsEdges(textRows: MentionTextRow[], titleRows: Me
 // provenance as the front ('mechanical:front:Magpie' or 'mechanical:front:Jude,Magpie'), never to a
 // node of its own. The 'centre' entry itself is never name-matched (lane m gives it its links).
 // One edge per (row, target) however many spellings hit.
-export interface PersonMatchRow { id: string; label: string; match_names: string[]; kind?: string }
+//
+// A NAME SHARED WITH A CHARACTER (mig 0160, Raziel 2026-11-01): shares_name_with set = the bare label
+// is not matched, only the entry's other spellings ("Blue's Barbossa"). spellingsOf applies it, so
+// the ambiguity check sees the same spellings the matcher does.
+export interface PersonMatchRow { id: string; label: string; match_names: string[]; kind?: string; shares_name_with?: string | null }
 
 export function buildPeopleMentionsEdges(textRows: MentionTextRow[], people: PersonMatchRow[]): GraphEdgeRow[] {
   const live = people.filter((p) => p.kind !== "centre");
@@ -1047,8 +1052,14 @@ export async function rebuildGraphDetailed(env: Env): Promise<{ sources: SourceC
     selectColumns<{ id: string; title: string; status: string }>(db, "companion_projects", ["id", "title", "status"]),
     // mig 0149. Tolerates the table not existing yet (a Worker deployed ahead of its migration
     // derives no people lane rather than failing the whole rebuild).
-    db.prepare("SELECT id, label, match_names, kind FROM graph_people WHERE archived = 0").all<{ id: string; label: string; match_names: string; kind: string }>()
-      .then((r) => (r.results ?? []).map((p) => ({ id: p.id, label: p.label, match_names: parseMatchNames(p.match_names), kind: p.kind })))
+    // mig 0160 adds shares_name_with; before it, the narrower select reads every entry as unshared.
+    db.prepare("SELECT id, label, match_names, kind, shares_name_with FROM graph_people WHERE archived = 0")
+      .all<{ id: string; label: string; match_names: string; kind: string; shares_name_with?: string | null }>()
+      .catch(onlyIf(missingSharesName, () => db.prepare("SELECT id, label, match_names, kind FROM graph_people WHERE archived = 0")
+        .all<{ id: string; label: string; match_names: string; kind: string; shares_name_with?: string | null }>()))
+      .then((r) => (r.results ?? []).map((p) => ({
+        id: p.id, label: p.label, match_names: parseMatchNames(p.match_names), kind: p.kind, shares_name_with: p.shares_name_with ?? null,
+      })))
       .catch((e: unknown): PersonMatchRow[] | null => {
         // 2026-10-29: ONLY "table not created yet" reads as an empty list. Any other D1 error (a
         // transient blip) used to read as "nobody on the list" and the stale pass deleted every

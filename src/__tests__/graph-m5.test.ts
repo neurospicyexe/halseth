@@ -7,7 +7,7 @@ import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import { rebuildGraphDetailed } from "../graph/rebuild.js";
 import { addPerson, archivePerson, listPeople } from "../graph/people.js";
 import { loadMapNodes } from "../graph/map.js";
-import { getMindPeople, postMindPeople } from "../handlers/people.js";
+import { getMindPeople, postMindPeople, postMindPersonUpdate } from "../handlers/people.js";
 
 function envWith() {
   const { db, DB } = makeSqliteD1();
@@ -106,6 +106,95 @@ describe("people", () => {
     await rebuildGraphDetailed(env);
     const list: any = await (await getMindPeople(new Request("https://x/mind/people", { headers: auth }), env)).json();
     expect(list.people).toMatchObject([{ label: "Raziel", kind: "centre" }, { label: "Blue", kind: "person", added_by: "raziel", mentions: 1 }]);
+  });
+});
+
+describe("a name shared with a character (mig 0160, 2026-11-01)", () => {
+  const film = (db: any) => db.prepare(
+    `INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES
+      ('j1', 'drevan', 'Barbossa and the apple, best entrance in the film', ?),
+      ('j2', 'drevan', 'Blue''s Barbossa fronted for the last act and called the monkey Jack', ?),
+      ('j3', 'gaia', 'Barbossa (Blue) said goodnight', ?)`,
+  ).run(at, at, at);
+
+  it("the bare label never links; only the person's own spellings do", async () => {
+    const { db, env } = envWith();
+    film(db);
+    const r: any = await addPerson(env, {
+      label: "Barbossa", match_names: ["Blue's Barbossa", "Barbossa (Blue)"], kind: "person",
+      shares_name_with: "  Pirates of the Caribbean  ", note: "Blue's system", added_by: "raziel",
+    });
+    expect(r.ok).toBe(true);
+    expect(r.person.shares_name_with).toBe("Pirates of the Caribbean");
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").map((e: any) => e.src_id)).toEqual(["j2", "j3"]);
+    expect((await listPeople(env)).find((p) => p.label === "Barbossa")?.shares_name_with).toBe("Pirates of the Caribbean");
+  });
+
+  it("without the flag the bare label still links (unchanged behaviour)", async () => {
+    const { db, env } = envWith();
+    film(db);
+    await addPerson(env, { label: "Barbossa", kind: "person", added_by: "raziel" });
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").map((e: any) => e.src_id)).toEqual(["j1", "j2", "j3"]);
+  });
+
+  it("refuses a shared name with no spelling of its own (it would link nothing)", async () => {
+    const { env } = envWith();
+    const r: any = await addPerson(env, { label: "Barbossa", shares_name_with: "Pirates", added_by: "raziel" });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/Blue's Barbossa/);
+    // The label itself as an "other spelling" is not a spelling of its own.
+    expect((await addPerson(env, { label: "Barbossa", match_names: ["Barbossa"], shares_name_with: "Pirates", added_by: "raziel" })).ok).toBe(false);
+  });
+
+  it("a self entry with a shared name keeps its front only on the qualified spelling", async () => {
+    const { db, env } = envWith();
+    db.prepare("INSERT INTO companion_journal (id, agent, note_text, created_at) VALUES ('j1', 'cypher', 'Lestat in the film was cruel', ?), ('j2', 'cypher', 'Lestat (ours) fronted tonight', ?)").run(at, at);
+    await addPerson(env, { label: "Lestat", match_names: ["Lestat (ours)"], kind: "self", shares_name_with: "Interview with the Vampire", added_by: "raziel" });
+    await rebuildGraphDetailed(env);
+    const rows = db.prepare("SELECT src_id, dst_id, provenance FROM graph_edges WHERE dst_table = 'graph_people' AND src_table = 'companion_journal' ORDER BY src_id").all();
+    expect(rows).toEqual([{ src_id: "j2", dst_id: "raziel", provenance: "mechanical:front:Lestat" }]);
+  });
+
+  it("the edit endpoint flips an existing entry; the next rebuild drops the bare-name links", async () => {
+    const { db, env } = envWith();
+    film(db);
+    const added: any = await addPerson(env, { label: "Barbossa", kind: "person", added_by: "raziel" });
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").length).toBe(3);
+
+    const auth = { Authorization: "Bearer s", "Content-Type": "application/json" };
+    const post = (body: unknown) => postMindPersonUpdate(
+      new Request(`https://x/mind/people/${added.person.id}`, { method: "POST", headers: auth, body: JSON.stringify(body) }), env, { id: added.person.id });
+
+    // Flag without a spelling: refused, nothing saved.
+    expect((await post({ shares_name_with: "Pirates of the Caribbean" })).status).toBe(409);
+    const ok = await post({ shares_name_with: "Pirates of the Caribbean", match_names: ["Blue's Barbossa"] });
+    expect(ok.status).toBe(200);
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").map((e: any) => e.src_id)).toEqual(["j2"]);
+
+    // Clearing the flag ("" or null) brings the bare name back.
+    expect((await post({ shares_name_with: "" })).status).toBe(200);
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").length).toBe(3);
+
+    const missing = await postMindPersonUpdate(new Request("https://x/mind/people/nope", { method: "POST", headers: auth, body: "{}" }), env, { id: "nope" });
+    expect(missing.status).toBe(404);
+    const centre = await postMindPersonUpdate(new Request("https://x/mind/people/raziel", { method: "POST", headers: auth, body: "{}" }), env, { id: "raziel" });
+    expect(centre.status).toBe(404);
+  });
+
+  it("before the 0160 column exists: reads fall back, a plain add still works, a shared add is refused", async () => {
+    const { db, env } = envWith();
+    db.exec("ALTER TABLE graph_people DROP COLUMN shares_name_with");
+    film(db);
+    expect((await addPerson(env, { label: "Barbossa", match_names: ["Blue's Barbossa"], shares_name_with: "Pirates", added_by: "raziel" })).ok).toBe(false);
+    expect((await addPerson(env, { label: "Barbossa", kind: "person", added_by: "raziel" })).ok).toBe(true);
+    expect((await listPeople(env)).find((p) => p.label === "Barbossa")?.shares_name_with).toBeNull();
+    await rebuildGraphDetailed(env);
+    expect(edges(db, "mentions", "graph_people").length).toBe(3);
   });
 });
 
