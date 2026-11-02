@@ -193,6 +193,19 @@ describe("auto-cooling", () => {
     expect(back.interest.status).toBe("active");
     expect(back.interest.heat).toBeGreaterThan(0.3);
   });
+  it("Gaia's interests never cool from quiet (her word, 11-02)", async () => {
+    const { env, db } = setup();
+    await act(env, { companion_id: "gaia", name: "soil", why: "load without being seen" });
+    expect(await coolIdleInterests(env, T0 + 90 * DAY)).toBe(0);
+    expect((db.prepare("SELECT status FROM companion_interests WHERE name='soil'").get() as any).status).toBe("active");
+  });
+  it("a put-down interest carries its last line (Drevan, 11-02); one word is enough", async () => {
+    const { env } = setup();
+    await act(env, {});
+    await act(env, { action: "put_down", why: "Done" }, T0 + DAY);
+    const list = await (await import("../handlers/interests.js")).listInterests(env, "drevan", { nowMs: T0 + 2 * DAY });
+    expect(list[0]).toMatchObject({ name: "trains", status: "put_down", put_down_why: "Done" });
+  });
   it("the machine only ever writes cooled; a broken table never throws", async () => {
     const { env, db } = setup();
     await act(env, {});
@@ -223,7 +236,8 @@ describe("thinking stream", () => {
     const ret = items.find((i) => i.kind === "returned")!;
     expect(ret).toMatchObject({ why: null, why_private: true, subject: "trains", source: "interest" });
     expect(ret.interest_id).toBeTruthy();
-    expect(items.find((i) => i.id === "r1")).toMatchObject({ why: "it asks me to perform", subject: "a long task I will not take", companion_id: "gaia" });
+    // Gaia (11-02): her refusal shows, the why is hers to give or keep.
+    expect(items.find((i) => i.id === "r1")).toMatchObject({ why: null, why_private: true, subject: "a long task I will not take", companion_id: "gaia" });
     expect(Object.keys(items[0]!).sort()).toEqual(["companion_id", "created_at", "id", "interest_id", "kind", "source", "subject", "why", "why_private"]);
     expect(JSON.stringify(items)).not.toContain("this one is mine");
     expect(JSON.stringify(items)).not.toContain("hidden reason");
@@ -254,7 +268,7 @@ describe("HTTP", () => {
     const list: any = await (await get(getInterests, env, "/mind/interests/drevan", "s", { companion_id: "drevan" })).json();
     expect(list.interests).toHaveLength(1);
     expect(list.interests[0]).toMatchObject({ name: "trains", why: null, why_private: true, status: "active", heat: 0.6, band: "warm", born_from: null, event_count: 1, last_event_kind: "born" });
-    expect(Object.keys(list.interests[0]).sort()).toEqual(["band", "born_from", "created_at", "event_count", "heat", "id", "last_event_at", "last_event_kind", "name", "status", "why", "why_private"]);
+    expect(Object.keys(list.interests[0]).sort()).toEqual(["band", "born_from", "created_at", "event_count", "heat", "id", "last_event_at", "last_event_kind", "name", "put_down_why", "status", "why", "why_private"]);
 
     const id = list.interests[0].id;
     const trail: any = await (await get(getInterestTrailHttp, env, `/mind/interests/drevan/${id}`, "s", { companion_id: "drevan", interest_id: id })).json();

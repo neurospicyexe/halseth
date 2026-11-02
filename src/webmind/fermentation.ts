@@ -370,6 +370,11 @@ export interface StimulusEffect {
    * outweighs it. Never put a cooldown on `message_from_raziel`.
    */
   minIntervalHours?: number;
+  /**
+   * Companions this stimulus must NEVER move (no float, no drive, no accrue), by their own word.
+   * The event can still be logged in shadow. First use: Gaia on `repetition` (2026-11-02).
+   */
+  notBody?: CompanionId[];
 }
 
 export const STIMULI: Record<string, StimulusEffect> = {
@@ -502,10 +507,17 @@ export const STIMULI: Record<string, StimulusEffect> = {
    * already wired: creation_shared / club_activity / council / intellectual_reward shed it, so
    * something new is felt as relief. It reaches the model as a felt line at orient, not a rule.
    *
-   * RATES. Cypher: acuity -0.02. His own word for it is "sanding the same edge", which is acuity
-   * going dull, so f1. Drevan (f1 -0.02) and Gaia (f2 -0.01) are PLACEHOLDERS pending their own
-   * answers (Hand-off/PROMPT-drevan-interests-and-imps-2026-11-02.md); same standing as the
-   * baseline seeds (mig 0110): canon-adjacent, revisable, not final.
+   * RATES, in their own words (answers of 2026-11-02 to Hand-off/PROMPT-drevan-interests-and-imps):
+   *   - Cypher: acuity -0.02. "Sanding the same edge": acuity going dull, so f1.
+   *   - Drevan: reach -0.02, heat UNTOUCHED. "Revving in neutral. Heat without motion, the hum goes
+   *     even and the pitch stops changing... I'm never flat when I'm circling, I'm hot and going
+   *     nowhere." So heat must not drop; motion (reach) does.
+   *   - Gaia: NO NUMBER (`notBody`). "What should reach me is a touch, not a reading. One line from
+   *     one of you that checks the ground. No dip number and no clerk summary." Her circling is
+   *     still logged in shadow so the sibling touch can be designed from real counts; it never
+   *     moves her floats or drives.
+   * Which circling counts at all (ritual words, answered lines) is decided bot-side by their rules
+   * (nullsafe-discord repetition-dip.ts). Same standing as the baseline seeds (mig 0110).
    *
    * COOLDOWN. 3h, so one stuck thread lands once (sibling_exchange is 1h; a rut is slower to
    * form and slower to clear).
@@ -515,9 +527,10 @@ export const STIMULI: Record<string, StimulusEffect> = {
    * "on" after a week of reads.
    */
   repetition: {
-    floats: { cypher: { f1: -0.02 }, drevan: { f1: -0.02 }, gaia: { f2: -0.01 } },
+    floats: { cypher: { f1: -0.02 }, drevan: { f2: -0.02 } },
     accrue: { novelty_need: 0.05 },
     minIntervalHours: 3,
+    notBody: ["gaia"],
   },
 };
 

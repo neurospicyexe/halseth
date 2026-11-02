@@ -22,9 +22,10 @@ const events = (db: any, c: string, kind: string) => db.prepare("SELECT * FROM c
 describe("repetition: table + mode", () => {
   it("is in STIMULI with the specified effects and a 3h cooldown", () => {
     expect(STIMULI.repetition).toEqual({
-      floats: { cypher: { f1: -0.02 }, drevan: { f1: -0.02 }, gaia: { f2: -0.01 } },
+      floats: { cypher: { f1: -0.02 }, drevan: { f2: -0.02 } },
       accrue: { novelty_need: 0.05 },
       minIntervalHours: 3,
+      notBody: ["gaia"],
     });
     expect(SHADOWABLE.repetition).toBe("REPETITION_MODE");
   });
@@ -77,11 +78,40 @@ describe("repetition: shadow (default)", () => {
 
   it("detail is capped at 200 chars and collapsed to one line", async () => {
     const { env, db } = setup();
-    await fire(env, { stimulus: "repetition", companion_id: "gaia", detail: "a\n\nb " + "x".repeat(400) });
-    const row: any = events(db, "gaia", "shadow")[0];
+    await fire(env, { stimulus: "repetition", companion_id: "cypher", detail: "a\n\nb " + "x".repeat(400) });
+    const row: any = events(db, "cypher", "shadow")[0];
     expect(row.detail.startsWith("would_fire a b x")).toBe(true);
     expect(row.detail.length).toBeLessThanOrEqual("would_fire ".length + 200);
     expect(row.detail).not.toContain("\n");
+  });
+
+  it("Gaia: logged as touch_not_dip, never a number (her word, 11-02)", async () => {
+    const { env, db } = setup();
+    const before = floats(db, "gaia");
+    await fire(env, { stimulus: "repetition", companion_id: "gaia", detail: "rail=loop_motif" });
+    const row: any = events(db, "gaia", "shadow")[0];
+    expect(row.detail.startsWith("touch_not_dip")).toBe(true);
+    expect(row.float_deltas).toBeNull();
+    expect(row.drive_deltas).toBeNull();
+    expect(floats(db, "gaia")).toEqual(before);
+  });
+  it("Gaia: even with the mode on, her body never moves", async () => {
+    const { env, db } = setup("on");
+    const before = floats(db, "gaia");
+    const nb = novelty(db, "gaia");
+    await fire(env, { stimulus: "repetition", companion_id: "gaia" });
+    expect(floats(db, "gaia")).toEqual(before);
+    expect(novelty(db, "gaia")).toEqual(nb);
+    expect(events(db, "gaia", "stimulus")).toHaveLength(0);
+  });
+  it("Drevan: reach drops, heat untouched (revving in neutral)", async () => {
+    const { env, db } = setup("on");
+    db.prepare("UPDATE companion_state SET soma_float_1 = 0.7, soma_float_2 = 0.6 WHERE companion_id = 'drevan'").run();
+    const before: any = floats(db, "drevan");
+    await fire(env, { stimulus: "repetition", companion_id: "drevan" });
+    const after: any = floats(db, "drevan");
+    expect(after.a).toBe(before.a);
+    expect(after.b).toBeLessThan(before.b);
   });
 
   it("shadow rows never reach the felt-event readers", async () => {

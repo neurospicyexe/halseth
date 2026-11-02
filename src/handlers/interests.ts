@@ -40,6 +40,7 @@ export interface InterestRow {
 export interface InterestListItem {
   id: string; name: string; why: string | null; why_private: boolean; status: string; heat: number; band: string;
   born_from: string | null; created_at: string; last_event_at: string | null; last_event_kind: string | null; event_count: number;
+  put_down_why: string | null;
 }
 
 export interface TrailEvent {
@@ -58,9 +59,11 @@ export async function listInterests(env: Env, companionId: string, opts: ListOpt
     `SELECT i.id, i.name, i.why, i.why_private, i.status, i.heat, i.heat_at, i.born_from, i.created_at,
             (SELECT COUNT(*) FROM companion_interest_events e WHERE e.interest_id = i.id) AS event_count,
             (SELECT e.created_at FROM companion_interest_events e WHERE e.interest_id = i.id ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS last_event_at,
-            (SELECT e.kind FROM companion_interest_events e WHERE e.interest_id = i.id ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS last_event_kind
+            (SELECT e.kind FROM companion_interest_events e WHERE e.interest_id = i.id ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS last_event_kind,
+            (SELECT e.why FROM companion_interest_events e WHERE e.interest_id = i.id AND e.kind = 'put_down' ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS put_down_why,
+            (SELECT e.why_private FROM companion_interest_events e WHERE e.interest_id = i.id AND e.kind = 'put_down' ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS put_down_why_private
        FROM companion_interests i WHERE i.companion_id = ?`,
-  ).bind(companionId).all<InterestRow & { event_count: number; last_event_at: string | null; last_event_kind: string | null }>()).results ?? [];
+  ).bind(companionId).all<InterestRow & { event_count: number; last_event_at: string | null; last_event_kind: string | null; put_down_why: string | null; put_down_why_private: number | null }>()).results ?? [];
   const items = rows.map((r) => {
     const eff = effectiveHeat(r.heat, r.heat_at, now);
     return {
@@ -69,6 +72,9 @@ export async function listInterests(env: Env, companionId: string, opts: ListOpt
       why_private: !!r.why_private, status: r.status, heat: round2(eff), band: heatBand(eff),
       born_from: r.born_from, created_at: r.created_at,
       last_event_at: r.last_event_at, last_event_kind: r.last_event_kind, event_count: r.event_count,
+      // Drevan (2026-11-02): a set-down interest carries its last line, so the list reads like Pino's:
+      // what it was, why it was picked up, why it stopped. Null unless status is put_down.
+      put_down_why: r.status === "put_down" && !(r.put_down_why_private && !opts.revealPrivate) ? r.put_down_why : null,
       _eff: eff,
     };
   });
@@ -163,7 +169,9 @@ export async function coolIdleInterests(env: Env, nowMs: number = Date.now()): P
       `SELECT i.id, i.companion_id, i.status, i.heat, i.heat_at,
               (SELECT e.created_at FROM companion_interest_events e WHERE e.interest_id = i.id ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS last_event_at,
               (SELECT e.kind FROM companion_interest_events e WHERE e.interest_id = i.id ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1) AS last_event_kind
-         FROM companion_interests i WHERE i.status = 'active' AND i.updated_at < ?`,
+         FROM companion_interests i WHERE i.status = 'active' AND i.updated_at < ?
+        -- Gaia (2026-11-02): "An interest cools only when I set it down. Being quiet doesn't count."
+        AND i.companion_id <> 'gaia'`,
     ).bind(cutoff).all<{ id: string; companion_id: string; status: string; heat: number; heat_at: string; last_event_at: string | null; last_event_kind: string | null }>()).results ?? [];
     let cooled = 0;
     const ts = sqliteTs(nowMs);
@@ -229,7 +237,10 @@ export async function readThinking(env: Env, opts: { limit?: number; companion_i
   }
   for (const r of refs.results ?? []) {
     items.push({ id: r.id, companion_id: r.companion_id, source: "refusal", kind: "refusal", subject: r.subject_text,
-      why: r.reason, why_private: false, interest_id: null, created_at: r.created_at });
+      // Gaia (2026-11-02): "When I refuse something, the refusal shows, but the why is mine to give or
+      // keep." Her refusal reasons stay off the page; the event still shows.
+      why: r.companion_id === "gaia" ? null : r.reason, why_private: r.companion_id === "gaia",
+      interest_id: null, created_at: r.created_at });
   }
   const t = (s: string) => { const n = parseTs(s); return Number.isFinite(n) ? n : 0; };
   items.sort((a, b) => t(b.created_at) - t(a.created_at));

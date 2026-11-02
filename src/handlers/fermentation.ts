@@ -449,17 +449,19 @@ async function shadowStimulusForCompanion(
     return false;
   }
   const d = stimulusFloatDelta(stimulus, companionId);
-  const touchesFloats = d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0;
+  const notBody = !!eff.notBody?.includes(companionId);
+  const touchesFloats = !notBody && (d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0);
   const driveDeltas: Record<string, number> = {};
-  for (const [key, delta] of Object.entries(eff.accrue ?? {})) if (delta) driveDeltas[key] = delta;
+  if (!notBody) for (const [key, delta] of Object.entries(eff.accrue ?? {})) if (delta) driveDeltas[key] = delta;
   const tail = detail ? ` ${detail}` : "";
   await logEvent(env, companionId, "shadow", {
     stimulus,
     floatDeltas: touchesFloats ? d : null,
-    driveDeltas,
-    detail: `would_fire${tail}`,
+    driveDeltas: notBody ? null : driveDeltas,
+    // notBody: logged so the thing that reaches her instead (a sibling touch) can be designed from counts.
+    detail: `${notBody ? "touch_not_dip" : "would_fire"}${tail}`,
   });
-  console.log(`[ferment] ${stimulus} would_fire companion=${companionId}${tail}`);
+  console.log(`[ferment] ${stimulus} ${notBody ? "touch_not_dip" : "would_fire"} companion=${companionId}${tail}`);
   return true;
 }
 
@@ -467,6 +469,7 @@ async function shadowStimulusForCompanion(
 async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stimulus: string): Promise<boolean> {
   const eff = STIMULI[stimulus];
   if (!eff) return false;
+  if (eff.notBody?.includes(companionId)) return false; // by their own word: never moves this body
   if (eff.minIntervalHours && await inCooldown(env, companionId, stimulus, eff.minIntervalHours)) {
     return false;
   }
