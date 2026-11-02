@@ -114,6 +114,7 @@ const SPECS: Record<string, Spec> = {
   },
   companion_ferment_events: {
     kind: "ferment", from: "companion_ferment_events t",
+    where: "t.kind != 'shadow'", // a shadow row is a would-have-fired log line, not a felt move
     select: "t.id, t.companion_id AS owner, t.created_at, t.kind AS fkind, t.stimulus",
     label: (r) => (r.stimulus ? `stimulus: ${clip(r.stimulus, LABEL_CHARS - 10)}` : `settling (${r.fkind ?? "tick"})`),
   },

@@ -12,6 +12,7 @@
 //   - tick: a single deterministic server-side pass (no concurrency) reading each row, computing
 //     the fermented floats + drifted baselines with the pure helpers, writing them back.
 
+import { coolIdleInterests } from "./interests.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import {
@@ -30,6 +31,8 @@ import {
   parseOffSince,
   updateOffSince,
   STIMULI,
+  stimulusMode,
+  type StimulusMode,
   TICK_MAX_HOURS,
   readFermentStateSql,
   readFermentStateOneSql,
@@ -332,6 +335,9 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
     }
   }
 
+  // B62: the one automatic interest event (cooled). Cheap single query, never breaks the tick.
+  await coolIdleInterests(env).catch(() => 0);
+
   return { ticked };
 }
 
@@ -405,14 +411,56 @@ function rowFloatMap(row: FloatsRow | null): Partial<Record<SomaFloatKey, number
  * by accident -- the whole protection for Raziel's scarce contact depends on it holding. Reads
  * the ferment event log, which is already the record of every stimulus application.
  */
-async function inCooldown(env: Env, companionId: CompanionId, stimulus: string, hours: number): Promise<boolean> {
+async function inCooldown(
+  env: Env,
+  companionId: CompanionId,
+  stimulus: string,
+  hours: number,
+  kinds: readonly string[] = ["stimulus"],
+): Promise<boolean> {
+  // `kinds` is a closed internal list (never request text), so inlining the quoted names is safe;
+  // the default keeps the pre-B62 statement byte for byte for every other stimulus.
+  const kindSql = kinds.length === 1 ? `kind = '${kinds[0]}'` : `kind IN (${kinds.map((k) => `'${k}'`).join(",")})`;
   const row = await env.DB.prepare(
     `SELECT 1 AS hit FROM companion_ferment_events
-     WHERE companion_id = ? AND kind = 'stimulus' AND stimulus = ?
+     WHERE companion_id = ? AND ${kindSql} AND stimulus = ?
        AND created_at > datetime('now', ?)
      LIMIT 1`,
   ).bind(companionId, stimulus, `-${hours} hours`).first<{ hit: number }>().catch(() => null);
   return row !== null;
+}
+
+/**
+ * SHADOW path for a stimulus behind a mode switch (B62 `repetition`): decide whether it WOULD have
+ * fired and write a kind='shadow' event saying so. Touches no float and no drive. The cooldown
+ * counts shadow rows too (and live rows, for a mid-flip window), so the would_fire rate read off
+ * the log is the rate the live stimulus would have had.
+ */
+async function shadowStimulusForCompanion(
+  env: Env,
+  companionId: CompanionId,
+  stimulus: string,
+  detail: string | null,
+): Promise<boolean> {
+  const eff = STIMULI[stimulus];
+  if (!eff) return false;
+  if (eff.minIntervalHours && await inCooldown(env, companionId, stimulus, eff.minIntervalHours, ["stimulus", "shadow"])) {
+    console.log(`[ferment] ${stimulus} shadow cooldown companion=${companionId}`);
+    return false;
+  }
+  const d = stimulusFloatDelta(stimulus, companionId);
+  const touchesFloats = d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0;
+  const driveDeltas: Record<string, number> = {};
+  for (const [key, delta] of Object.entries(eff.accrue ?? {})) if (delta) driveDeltas[key] = delta;
+  const tail = detail ? ` ${detail}` : "";
+  await logEvent(env, companionId, "shadow", {
+    stimulus,
+    floatDeltas: touchesFloats ? d : null,
+    driveDeltas,
+    detail: `would_fire${tail}`,
+  });
+  console.log(`[ferment] ${stimulus} would_fire companion=${companionId}${tail}`);
+  return true;
 }
 
 /** Full stimulus: floats + drive sheds + drive accrues, for one companion. */
@@ -484,10 +532,14 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
 
   let stimulus = "";
   let companionId: string | undefined;
+  let detail: string | null = null;
   try {
-    const body = (await request.json()) as { stimulus?: string; companion_id?: string };
+    const body = (await request.json()) as { stimulus?: string; companion_id?: string; detail?: unknown };
     stimulus = (body.stimulus ?? "").trim();
     companionId = body.companion_id?.trim();
+    // Optional free-text rail/score from the caller (B62 repetition). Capped; whitespace and
+    // newlines collapsed so it stays one log line.
+    if (typeof body.detail === "string") detail = body.detail.replace(/\s+/g, " ").trim().slice(0, 200) || null;
   } catch {
     return json({ error: "body must be JSON { stimulus, companion_id? }" }, 400);
   }
@@ -500,6 +552,15 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
 
   try {
     const targets = companionId ? [companionId as CompanionId] : COMPANIONS;
+    const mode: StimulusMode = stimulusMode(stimulus, env as unknown as Record<string, unknown>);
+    if (mode === "off") return json({ ok: true, stimulus, skipped: "off" });
+    if (mode === "shadow") {
+      const wouldFire: string[] = [];
+      for (const c of targets) {
+        if (await shadowStimulusForCompanion(env, c, stimulus, detail)) wouldFire.push(c);
+      }
+      return json({ ok: true, stimulus, shadow: true, would_fire: wouldFire.length > 0, would_fire_for: wouldFire });
+    }
     const applied: string[] = [];
     for (const c of targets) {
       if (await applyStimulusToCompanion(env, c, stimulus)) applied.push(c);

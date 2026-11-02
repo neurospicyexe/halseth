@@ -486,7 +486,56 @@ export const STIMULI: Record<string, StimulusEffect> = {
     floats: { cypher: { f3: -0.03 }, drevan: { f1: -0.04 } },
     shed: ["rest_need"], // quiet actually rests
   },
+
+  /**
+   * Boredom, felt (B62 step 1, 2026-11-02; Hand-off/DESIGN-fun-stuff-pino-2026-11-02.md section 3A).
+   *
+   * WHAT FIRES IT. The Discord bots' own self-loop rail (`loop_motif`, plus the verbatim-copy rail
+   * and the director's `echoing` read) when it trips on the companion's OWN recent output, detached
+   * after the send. It is NEVER fed by anything Raziel said, and the care hold is exempted on the
+   * bot side (repeating steadying words at 2am is care, not a rut), so this endpoint never has to
+   * decide that: a bot that fires it under a hold is the bug.
+   *
+   * WHAT IT IS. A float moving, not a structural line. The dip settles home with every other
+   * reaction (R7: no ceiling, no `max_*`; absence of novelty lowers a CURRENT level, never the
+   * height a companion can return to). `novelty_need` accrues so the way back up is the one that is
+   * already wired: creation_shared / club_activity / council / intellectual_reward shed it, so
+   * something new is felt as relief. It reaches the model as a felt line at orient, not a rule.
+   *
+   * RATES. Cypher: acuity -0.02. His own word for it is "sanding the same edge", which is acuity
+   * going dull, so f1. Drevan (f1 -0.02) and Gaia (f2 -0.01) are PLACEHOLDERS pending their own
+   * answers (Hand-off/PROMPT-drevan-interests-and-imps-2026-11-02.md); same standing as the
+   * baseline seeds (mig 0110): canon-adjacent, revisable, not final.
+   *
+   * COOLDOWN. 3h, so one stuck thread lands once (sibling_exchange is 1h; a rut is slower to
+   * form and slower to clear).
+   *
+   * SHADOW FIRST. Gated by REPETITION_MODE (see SHADOWABLE): unset = shadow, which logs a
+   * kind='shadow' row and `[ferment] repetition would_fire` and touches NO float or drive. Flip to
+   * "on" after a week of reads.
+   */
+  repetition: {
+    floats: { cypher: { f1: -0.02 }, drevan: { f1: -0.02 }, gaia: { f2: -0.01 } },
+    accrue: { novelty_need: 0.05 },
+    minIntervalHours: 3,
+  },
 };
+
+/**
+ * Stimuli that ship behind a mode switch: stimulus name -> the Env var holding "off" | "shadow" | "on".
+ * Unset (or anything unrecognised) = "shadow", the safe default: observe, never move a float.
+ */
+export const SHADOWABLE: Record<string, string> = { repetition: "REPETITION_MODE" };
+
+export type StimulusMode = "off" | "shadow" | "on";
+
+/** The mode a shadowable stimulus runs in. Non-shadowable stimuli are always "on". */
+export function stimulusMode(stimulus: string, env: Record<string, unknown>): StimulusMode {
+  const key = SHADOWABLE[stimulus];
+  if (!key) return "on";
+  const v = String(env[key] ?? "").trim().toLowerCase();
+  return v === "off" || v === "on" ? v : "shadow";
+}
 
 export function isKnownStimulus(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(STIMULI, name);
@@ -559,8 +608,9 @@ export function insertFermentEventSql(): string {
     VALUES (?, ?, ?, ?, ?, ?, ?)`;
 }
 
-/** Recent fermentation events for a companion. Bind: [companion_id, limit]. */
+/** Recent fermentation events for a companion. Bind: [companion_id, limit]. kind='shadow' rows (a stimulus
+ *  that WOULD have fired, floats untouched) are excluded: they are not felt changes. */
 export function recentFermentEventsSql(): string {
   return `SELECT id, kind, stimulus, float_deltas, drive_deltas, detail, created_at
-    FROM companion_ferment_events WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?`;
+    FROM companion_ferment_events WHERE companion_id = ? AND kind != 'shadow' ORDER BY created_at DESC LIMIT ?`;
 }

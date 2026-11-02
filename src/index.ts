@@ -100,6 +100,7 @@ import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
+import { getInterests, getInterestTrailHttp, getThinking, postInterest } from "./handlers/interests.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
 import { runGraphRebuildTick } from "./graph/tick.js";
@@ -475,6 +476,11 @@ const router = new Router()
   .on("POST",  "/mind/ferment/tick",                 (request, env)         => tickFermentation(request, env))
   .on("POST",  "/mind/ferment/stimulus",             (request, env)         => postFermentStimulus(request, env))
   .on("GET",   "/mind/ferment/:companion_id",        (request, env, params) => getFermentation(request, env, params ?? {}))
+  // Interests + why trail (0161, B62): authored by the companion only; reads are public-by-default (private whys nulled)
+  .on("POST",  "/mind/interests",                    (request, env)         => postInterest(request, env))
+  .on("GET",   "/mind/interests/:companion_id",      (request, env, params) => getInterests(request, env, params ?? {}))
+  .on("GET",   "/mind/interests/:companion_id/:interest_id", (request, env, params) => getInterestTrailHttp(request, env, params ?? {}))
+  .on("GET",   "/mind/thinking",                     (request, env)         => getThinking(request, env))
 
   // Salience prune (0105, task 20) -- cold machine-source journal rows self-archive; manual/test trigger
   .on("POST",  "/mind/salience/prune",               (request, env)         => postSaliencePrune(request, env))

@@ -96,17 +96,23 @@ export async function acknowledgeRefusal(env: Env, id: string): Promise<boolean>
 export async function setPreference(
   env: Env,
   companion_id: string,
-  input: { preference: string; domain?: string; strength?: string },
+  input: { preference: string; domain?: string; strength?: string; why?: string | null; why_private?: boolean },
 ): Promise<{ id: string; created_at: string }> {
   const id = generateId();
   const now = new Date().toISOString();
   const strength = input.strength && STRENGTHS.has(input.strength) ? input.strength : "medium";
-  const res = await env.DB.prepare(
-    "INSERT INTO companion_preferences (id, companion_id, domain, preference, strength, status, created_at) " +
-      "VALUES (?, ?, ?, ?, ?, 'active', ?)",
-  )
-    .bind(id, companion_id, input.domain ?? "general", input.preference, strength, now)
-    .run();
+  const why = input.why && input.why.trim() ? input.why.trim().slice(0, 500) : null;
+  // The why columns (mig 0161) are only named when there IS a why, so a preference with no reason
+  // still writes on a database that has not applied 0161 yet.
+  const res = why
+    ? await env.DB.prepare(
+        "INSERT INTO companion_preferences (id, companion_id, domain, preference, strength, status, created_at, why, why_private) " +
+          "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+      ).bind(id, companion_id, input.domain ?? "general", input.preference, strength, now, why, input.why_private ? 1 : 0).run()
+    : await env.DB.prepare(
+        "INSERT INTO companion_preferences (id, companion_id, domain, preference, strength, status, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, 'active', ?)",
+      ).bind(id, companion_id, input.domain ?? "general", input.preference, strength, now).run();
   assertWritten(res, { op: "preference_set", companion_id });
   return { id, created_at: now };
 }
@@ -193,6 +199,8 @@ export async function postPreferenceHttp(request: Request, env: Env): Promise<Re
     preference: preference.slice(0, 600),
     domain: typeof body.domain === "string" ? body.domain.slice(0, 60) : undefined,
     strength: body.strength,
+    why: typeof (body as { why?: unknown }).why === "string" ? (body as { why: string }).why : null,
+    why_private: (body as { why_private?: unknown }).why_private === true,
   });
   return json(r, 201);
 }

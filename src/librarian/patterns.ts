@@ -1721,6 +1721,16 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["departure_stand_down"],
     response_key: "witness",
   },
+  // Interests + the why trail (B62 step 2, mig 0161). The companion's own act, one sentence each; the real
+  // match is the anchored guard set in router.ts ANCHORED_GUARDS (a why can contain any trigger word, so none of
+  // these may be a substring trigger). The triggers below are formalities no sentence will contain.
+  interest_born: { triggers: ["interest_born"], tools: ["interest_born"], response_key: "witness" },
+  interest_return: { triggers: ["interest_return"], tools: ["interest_return"], response_key: "witness" },
+  interest_made: { triggers: ["interest_made"], tools: ["interest_made"], response_key: "witness" },
+  interest_put_down: { triggers: ["interest_put_down"], tools: ["interest_put_down"], response_key: "witness" },
+  interest_pick_up: { triggers: ["interest_pick_up"], tools: ["interest_pick_up"], response_key: "witness" },
+  interests_read: { triggers: ["interests_read"], tools: ["interests_read"], response_key: "data" },
+  interest_trail: { triggers: ["interest_trail"], tools: ["interest_trail"], response_key: "data" },
   // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
   voice_lessons_list: {
     triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],

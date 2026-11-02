@@ -70,6 +70,9 @@ export interface Env {
 
   // B34 step 2 (mig 0156): collapse one moment's duplicate tray drafts. off | shadow | on, default shadow.
   // TRAY_MERGE_MODE_<AGENT> (e.g. TRAY_MERGE_MODE_DREVAN) overrides it per companion.
+  // B62: the `repetition` stimulus (boredom, felt). "off" | "shadow" | "on"; unset = shadow (log a
+  // would-fire row, touch no float). Generic: see SHADOWABLE in webmind/fermentation.ts.
+  REPETITION_MODE?: string;
   TRAY_MERGE_MODE?: string;
   TRAY_MERGE_MODE_DREVAN?: string;
   TRAY_MERGE_MODE_CYPHER?: string;

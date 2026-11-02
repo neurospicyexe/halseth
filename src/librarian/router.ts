@@ -144,6 +144,22 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "feeling_words_list",
     regex: /^(?:please\s+)?(?:show\s+)?my\s+feeling\s+words\s*[.?!]?$/i,
     note: "Feeling vocabulary: the companion's own active rows. Whole request." },
+  // Interests + why trail (mig 0161, B62). All start-anchored, ahead of everything: the companion's reason
+  // after "because" is free text and may contain any trigger word ("because I prefer...", "note about...").
+  { pattern_key: "interest_born", regex: INTEREST_BORN_RE,
+    note: "B62: 'new interest: <name>, because <why>'. Anchored so the why can never be routed by a trigger it contains." },
+  { pattern_key: "interest_return", regex: INTEREST_RETURN_RE,
+    note: "B62: 'back to <name> because <why>' / 'returned to ...'. Needs 'because', so ordinary 'back to work' never matches." },
+  { pattern_key: "interest_made", regex: INTEREST_MADE_RE,
+    note: "B62: 'made <thing> for <name> because <why>'." },
+  { pattern_key: "interest_put_down", regex: INTEREST_PUT_DOWN_RE,
+    note: "B62: 'putting down <name> because <why>' / 'put down ...'. Needs 'because'." },
+  { pattern_key: "interest_pick_up", regex: INTEREST_PICK_UP_RE,
+    note: "B62: 'picking <name> back up because <why>'." },
+  { pattern_key: "interests_read", regex: INTERESTS_READ_RE,
+    note: "B62: 'my interests' / 'list my interests', whole request." },
+  { pattern_key: "interest_trail", regex: INTEREST_TRAIL_RE,
+    note: "B62: 'interest trail <name>'." },
   { pattern_key: "voice_lesson_decide",
     regex: /^(?:please\s+)?(?:approve|reject)\s+(?:the\s+)?voice\s+lesson\s+[0-9a-f-]{6,}\b/i,
     note: "Voice lessons (mig 0159): Raziel's approve/reject of a staged lesson, by id." },
@@ -445,6 +461,8 @@ import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayRe
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
 import { execFeelingWordPropose, execMyFeelingWords } from "./executors/feeling-vocabulary.js";
+import { INTEREST_BORN_RE, INTEREST_RETURN_RE, INTEREST_MADE_RE, INTEREST_PUT_DOWN_RE, INTEREST_PICK_UP_RE, INTERESTS_READ_RE, INTEREST_TRAIL_RE } from "../webmind/interests.js";
+import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPutDown, execInterestPickUp, execInterestsRead, execInterestTrail } from "./executors/interests.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
 
@@ -565,6 +583,14 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   voice_lessons_list: execVoiceLessonsList,
   voice_lesson_decide: execVoiceLessonDecide,
   departure_stand_down: execDepartureStandDown,
+  // Interests + why trail (mig 0161, B62). Owner = req.companion_id always.
+  interest_born: execInterestBorn,
+  interest_return: execInterestReturn,
+  interest_made: execInterestMade,
+  interest_put_down: execInterestPutDown,
+  interest_pick_up: execInterestPickUp,
+  interests_read: execInterestsRead,
+  interest_trail: execInterestTrail,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,
