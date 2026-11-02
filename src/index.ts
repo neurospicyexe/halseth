@@ -100,6 +100,7 @@ import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
+import { postMake, getMakes, getMakeItemHttp, serveMakeFile, getPendingMakes, getMakeSource, postMakeRendered, patchMake } from "./handlers/makes.js";
 import { getInterests, getInterestTrailHttp, getThinking, postInterest } from "./handlers/interests.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
 import { postSaliencePrune, runSaliencePrune } from "./webmind/salience-prune.js";
@@ -481,6 +482,16 @@ const router = new Router()
   .on("GET",   "/mind/interests/:companion_id",      (request, env, params) => getInterests(request, env, params ?? {}))
   .on("GET",   "/mind/interests/:companion_id/:interest_id", (request, env, params) => getInterestTrailHttp(request, env, params ?? {}))
   .on("GET",   "/mind/thinking",                     (request, env)         => getThinking(request, env))
+  // Making (0164, B62): what a companion makes. All admin-gated (Hearth proxies server-side), none public.
+  // /mind/makes/pending is registered before /mind/makes/:companion_id (first match wins).
+  .on("POST",  "/mind/makes",                        (request, env)         => postMake(request, env))
+  .on("GET",   "/mind/makes/pending",                (request, env)         => getPendingMakes(request, env))
+  .on("GET",   "/mind/makes/item/:id",               (request, env, params) => getMakeItemHttp(request, env, params ?? {}))
+  .on("GET",   "/mind/makes/file/:id/:which",        (request, env, params) => serveMakeFile(request, env, params ?? {}))
+  .on("GET",   "/mind/makes/source/:id",             (request, env, params) => getMakeSource(request, env, params ?? {}))
+  .on("POST",  "/mind/makes/:id/rendered",           (request, env, params) => postMakeRendered(request, env, params ?? {}))
+  .on("PATCH", "/mind/makes/:id",                    (request, env, params) => patchMake(request, env, params ?? {}))
+  .on("GET",   "/mind/makes/:companion_id",          (request, env, params) => getMakes(request, env, params ?? {}))
 
   // Salience prune (0105, task 20) -- cold machine-source journal rows self-archive; manual/test trigger
   .on("POST",  "/mind/salience/prune",               (request, env)         => postSaliencePrune(request, env))

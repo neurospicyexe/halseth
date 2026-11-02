@@ -26,7 +26,9 @@ export type MetronomeActionType =
   | "flirt"
   | "dare"
   | "show_made"
-  | "drift_outward";
+  | "drift_outward"
+  // B62 making (mig 0165): the companion authors something in its own turn. Cypher and Drevan only.
+  | "make";
 
 export const VALID_ACTION_TYPES: MetronomeActionType[] = [
   "post_heartbeat",
@@ -49,6 +51,7 @@ export const VALID_ACTION_TYPES: MetronomeActionType[] = [
   "dare",
   "show_made",
   "drift_outward",
+  "make",
 ];
 
 /**
@@ -64,6 +67,8 @@ export const MOVE_OWNERS: Readonly<Partial<Record<MetronomeActionType, readonly 
   flirt: ["drevan"],
   dare: ["cypher", "drevan"],
   show_made: ["cypher", "drevan", "gaia"],
+  // B62: Gaia keeps lines, never artifacts (her word, 2026-11-02).
+  make: ["cypher", "drevan"],
 };
 
 export function ownsMove(companionId: string, actionType: string): boolean {

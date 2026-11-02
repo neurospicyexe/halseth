@@ -1735,6 +1735,11 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // the anchored guard in router.ts ANCHORED_GUARDS plus the router's list check (a name not on the list falls
   // through to the route it had before: roster_who_is, front, search). The trigger below is a formality.
   person_who_is: { triggers: ["person_who_is"], tools: ["person_who_is"], response_key: "data" },
+  // Making (mig 0164, B62). `make a <kind> called <title> [for <interest>] because <why>` is anchored in router.ts
+  // ANCHORED_GUARDS (needs "called"; "made X for Y because Z" stays the interest event, "make an image of" stays
+  // generate_image). These triggers are formalities no sentence says by accident.
+  make_artifact: { triggers: ["make_artifact"], tools: ["make_artifact"], response_key: "witness" },
+  makes_read: { triggers: ["makes_read"], tools: ["makes_read"], response_key: "data" },
   // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
   voice_lessons_list: {
     triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],

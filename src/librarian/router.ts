@@ -160,6 +160,10 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "B62: 'my interests' / 'list my interests', whole request." },
   { pattern_key: "interest_trail", regex: INTEREST_TRAIL_RE,
     note: "B62: 'interest trail <name>'." },
+  { pattern_key: "make_artifact", regex: MAKE_VERB_RE,
+    note: "B62 making: 'make a <kind words> called <title> [for <interest>] because <why>'. Needs 'called', so 'made X for Y because Z' (past tense, the interest event) and 'make an image of ...' (generate_image) are untouched; anchored so the why can never be routed by a trigger it contains." },
+  { pattern_key: "makes_read", regex: MAKES_READ_RE,
+    note: "B62 making: 'my makes' / 'list my makes', whole request." },
   { pattern_key: "person_who_is", regex: PERSON_LOOKUP_RE,
     note: "People pull-lookup (2026-11-02): 'who is / who's / look up person / tell me about <name>'. Only a CANDIDATE: route() checks the name against Raziel's live list (personLookupApplies) and, when nobody is there, re-runs the match without this guard so roster_who_is, front state, web search and normal speech behave exactly as before." },
   { pattern_key: "voice_lesson_decide",
@@ -469,6 +473,8 @@ import { execPersonWhoIs } from "./executors/people.js";
 import { execFeelingWordPropose, execMyFeelingWords } from "./executors/feeling-vocabulary.js";
 import { INTEREST_BORN_RE, INTEREST_RETURN_RE, INTEREST_MADE_RE, INTEREST_PUT_DOWN_RE, INTEREST_PICK_UP_RE, INTERESTS_READ_RE, INTEREST_TRAIL_RE } from "../webmind/interests.js";
 import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPutDown, execInterestPickUp, execInterestsRead, execInterestTrail } from "./executors/interests.js";
+import { MAKE_VERB_RE, MAKES_READ_RE } from "../webmind/makes.js";
+import { execMake, execMakesRead } from "./executors/makes.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
 
@@ -597,6 +603,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   interest_pick_up: execInterestPickUp,
   interests_read: execInterestsRead,
   interest_trail: execInterestTrail,
+  make_artifact: execMake,
+  makes_read: execMakesRead,
   person_who_is: execPersonWhoIs,
 
   // Weekly budget (consequence layer C3, mig 0124).

@@ -554,25 +554,40 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
   }
 
   try {
-    const targets = companionId ? [companionId as CompanionId] : COMPANIONS;
-    const mode: StimulusMode = stimulusMode(stimulus, env as unknown as Record<string, unknown>);
-    if (mode === "off") return json({ ok: true, stimulus, skipped: "off" });
-    if (mode === "shadow") {
-      const wouldFire: string[] = [];
-      for (const c of targets) {
-        if (await shadowStimulusForCompanion(env, c, stimulus, detail)) wouldFire.push(c);
-      }
-      return json({ ok: true, stimulus, shadow: true, would_fire: wouldFire.length > 0, would_fire_for: wouldFire });
-    }
-    const applied: string[] = [];
-    for (const c of targets) {
-      if (await applyStimulusToCompanion(env, c, stimulus)) applied.push(c);
-    }
-    return json({ ok: true, stimulus, applied });
+    return json(await fireStimulus(env, stimulus, companionId as CompanionId | undefined, detail));
   } catch (err) {
     console.error("[mind/ferment] stimulus error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
+}
+
+/**
+ * The in-Worker stimulus path (one copy: the HTTP route above and any other Worker code that fires a
+ * stimulus, e.g. a make landing -> creation_shared, call this, never the route over HTTP). Omit
+ * companionId to apply to every companion the stimulus touches. Returns the same body the route sends.
+ * Honours the stimulus mode (off / shadow / on). The caller validates the stimulus name.
+ */
+export async function fireStimulus(
+  env: Env,
+  stimulus: string,
+  companionId?: CompanionId,
+  detail: string | null = null,
+): Promise<Record<string, unknown>> {
+  const targets = companionId ? [companionId] : COMPANIONS;
+  const mode: StimulusMode = stimulusMode(stimulus, env as unknown as Record<string, unknown>);
+  if (mode === "off") return { ok: true, stimulus, skipped: "off" };
+  if (mode === "shadow") {
+    const wouldFire: string[] = [];
+    for (const c of targets) {
+      if (await shadowStimulusForCompanion(env, c, stimulus, detail)) wouldFire.push(c);
+    }
+    return { ok: true, stimulus, shadow: true, would_fire: wouldFire.length > 0, would_fire_for: wouldFire };
+  }
+  const applied: string[] = [];
+  for (const c of targets) {
+    if (await applyStimulusToCompanion(env, c, stimulus)) applied.push(c);
+  }
+  return { ok: true, stimulus, applied };
 }
 
 // ── Read (Hearth) ──────────────────────────────────────────────────────────────────
