@@ -61,6 +61,23 @@ describe("parseEpisodeCode -- must agree with the Discord-side parser", () => {
   });
 });
 
+describe("parseEpisodeCode -- spelled numbers and episode-before-season (2026-11-02)", () => {
+  it("reads spelled season/episode, same as the Discord parser", () => {
+    expect(parseEpisodeCode("season four episode ten")).toEqual({ season: 4, episode: 10 });
+    expect(parseEpisodeCode("season 4, episode ten")).toEqual({ season: 4, episode: 10 });
+    expect(parseEpisodeCode("ep ten")).toEqual({ season: null, episode: 10 });
+  });
+  it("reads episode before season", () => {
+    expect(parseEpisodeCode("episode 10 of season four")).toEqual({ season: 4, episode: 10 });
+    expect(parseEpisodeCode("ep 3 season 2")).toEqual({ season: 2, episode: 3 });
+  });
+  it("never reads times, dates or a lone spelled number", () => {
+    for (const t of ["12:04", "9/2", "I have one idea", "it was ten minutes"]) {
+      expect(parseEpisodeCode(t)).toEqual({ season: null, episode: null });
+    }
+  });
+});
+
 describe("formatPosition", () => {
   it("renders one canonical position string for every surface", () => {
     // Composed server-side so no consumer has to reassemble it from two integers and none of them

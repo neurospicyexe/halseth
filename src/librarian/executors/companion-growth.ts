@@ -9,6 +9,7 @@ import { embedAndStoreAsync } from "../../mcp/embed.js";
 import { RATIFIABLE_PENDING_SQL } from "../../lib/ratifiable.js";
 import { KEPT_LIVE_SQL } from "../../webmind/review-state.js";
 import { journalInsert } from "../../webmind/tray-insert.js";
+import { digitizeSpelledPositions, parseEpisodeCode } from "../../handlers/watch.js";
 
 const COMPANIONS = COMPANION_IDS;
 
@@ -672,17 +673,10 @@ export async function execWatchProgress(ctx: ExecutorContext): Promise<ExecutorR
   }
 
   // Parse position out of free text, same forms the Discord command accepts.
-  const lower = raw.toLowerCase();
-  let season: number | null = null;
-  let episode: number | null = null;
-  let m = lower.match(/\bs\s*(\d{1,2})\s*[\s._-]*e\s*(\d{1,3})\b/)
-    ?? lower.match(/\b(\d{1,2})\s*x\s*(\d{1,3})\b/)
-    ?? lower.match(/\bseason\s*(\d{1,2})\s*,?\s*ep(?:isode)?\s*(\d{1,3})\b/);
-  if (m) { season = Number(m[1]) || null; episode = Number(m[2]) || null; }
-  else {
-    m = lower.match(/\bep(?:isode)?\s*(\d{1,3})\b/);
-    if (m) episode = Number(m[1]) || null;
-  }
+  // Spelled numbers ("season four episode ten") and either order ("episode 10 of season 4") are read by
+  // the shared handlers/watch.ts parser, so this path cannot disagree with the Discord command.
+  raw = digitizeSpelledPositions(raw);
+  let { season, episode } = parseEpisodeCode(raw);
   // Title = the text with the position and any trailing landmark note stripped.
   const sepIdx = raw.search(/\s+(?:--|—|\|)\s+/);
   const head = sepIdx >= 0 ? raw.slice(0, sepIdx) : raw;
@@ -691,6 +685,7 @@ export async function execWatchProgress(ctx: ExecutorContext): Promise<ExecutorR
     .replace(/\bs\s*\d{1,2}\s*[\s._-]*e\s*\d{1,3}\b/i, "")
     .replace(/\b\d{1,2}\s*x\s*\d{1,3}\b/i, "")
     .replace(/\bseason\s*\d{1,2}\b/i, "").replace(/\bep(?:isode)?\s*\d{1,3}\b/i, "")
+    .replace(/^\s*of\s*$|\s+of\s*$/i, "")
     .replace(/^[\s,:-]+|[\s,:-]+$/g, "").trim();
   if (!title) return { error: "watch_progress_failed", reason: "couldn't find a title in that -- try \"Fargo S4E5\"" };
 

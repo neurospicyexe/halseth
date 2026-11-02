@@ -41,14 +41,31 @@ export function posInt(v: unknown): number | null {
 
 /** "S4E2" / "s04e02" / "4x2" / "S4 E2" -> {season, episode}. Raziel types position this way; making
  *  the API take it means the Discord command does not need its own parser that can drift from this one. */
+const SPELLED_NUMBERS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, twenty: 20,
+};
+const SPELLED_RE = new RegExp(String.raw`\b(season|episode|ep)\s+(${Object.keys(SPELLED_NUMBERS).join("|")})\b`, "gi");
+
+/** "season four episode ten" -> "season 4 episode 10". A spelled number only counts directly after
+ *  season/episode/ep, so "one" in ordinary prose never becomes a position. Same code as the Discord
+ *  side (nullsafe-discord packages/shared/src/watch-command.ts) so the two parsers cannot disagree. */
+export function digitizeSpelledPositions(s: string): string {
+  return s.replace(SPELLED_RE, (_m, kw: string, w: string) => `${kw} ${SPELLED_NUMBERS[w.toLowerCase()]}`);
+}
+
 export function parseEpisodeCode(s: string): { season: number | null; episode: number | null } {
-  const t = s.trim().toLowerCase();
+  const t = digitizeSpelledPositions(s.trim().toLowerCase());
   let m = t.match(/\bs\s*(\d{1,2})\s*[\s._-]*e\s*(\d{1,3})\b/);
   if (m) return { season: posInt(Number(m[1])), episode: posInt(Number(m[2])) };
   m = t.match(/\b(\d{1,2})\s*x\s*(\d{1,3})\b/);
   if (m) return { season: posInt(Number(m[1])), episode: posInt(Number(m[2])) };
   m = t.match(/\bseason\s*(\d{1,2})\b.*?\bepisode\s*(\d{1,3})\b/);
   if (m) return { season: posInt(Number(m[1])), episode: posInt(Number(m[2])) };
+  // Episode before season: "episode 10 of season 4".
+  m = t.match(/\bep(?:isode)?\s*(\d{1,3})\b.*?\bseason\s*(\d{1,2})\b/);
+  if (m) return { season: posInt(Number(m[2])), episode: posInt(Number(m[1])) };
   // Bare "episode 5" advances within the known season; the caller supplies the season it already has.
   m = t.match(/\bep(?:isode)?\s*(\d{1,3})\b/);
   if (m) return { season: null, episode: posInt(Number(m[1])) };
