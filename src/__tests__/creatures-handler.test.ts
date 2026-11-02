@@ -31,6 +31,8 @@ function fakeDb() {
     setTrustAfter(t: number) { trustAfter = t; },
     prepare(sql: string) {
       return {
+        // listPeople / pk_roster read with no bind (B62 step 6 guard on give notes)
+        async all() { executed.push({ sql, binds: [] }); return { results: [] }; },
         bind(...binds: unknown[]) {
           return {
             sql, binds,
@@ -83,6 +85,15 @@ describe("performTend", () => {
     expect(nestInsert).toBeDefined();
     expect(nestInsert!.binds).toContain("a smooth stone from the river");
     expect(nestInsert!.binds).toContain("raziel");
+  });
+  test("a give whose words name Raziel or a care word is a give, but the words are not kept (B62 step 6)", async () => {
+    for (const note of ["Raziel's lucky pebble", "the pill bottle cap"]) {
+      const db = fakeDb();
+      db.setTrustAfter(0.5);
+      const out = await performTend(db as never, { id: "sol1", kind: "companion_pet", trust: 0.45 }, "cypher", "give", note);
+      expect(out.trust).toBe(0.5);
+      expect(db.executed.some(e => e.sql.includes("INSERT INTO creature_nest"))).toBe(false);
+    }
   });
   test("real animals get neither milestones nor nest rows (texts are Sol's)", async () => {
     const db = fakeDb();

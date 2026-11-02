@@ -16,6 +16,8 @@ import {
   crossedMilestones,
   NEST_CAP,
 } from "./creatures.js";
+import { nestTextAllowed } from "./sol-hoard.js";
+import { loadPersonRegex } from "./sol-hoard-people.js";
 
 export interface TendTarget {
   id: string;
@@ -57,8 +59,11 @@ export async function performTend(
     }
   }
 
-  // A give with words lands in the nest as a kept thing, not just a log line.
-  if (action === "give" && note && creature.kind === "companion_pet") {
+  // A give with words lands in the nest as a kept thing, not just a log line. Unless the words
+  // carry a care word or a person's name (B62 step 6, Drevan: nothing about Raziel's body and no
+  // facts about Raziel in the hoard): then the give is still a give (ledger + trust above), the
+  // words just are not kept. Unreadable person list = not kept (fail closed).
+  if (action === "give" && note && creature.kind === "companion_pet" && nestTextAllowed(note, await loadPersonRegex(db))) {
     await evictForRoom(db, creature.id, 1);
     await db.prepare(
       "INSERT INTO creature_nest (id, creature_id, content, source, given_by, sparkle) VALUES (?, ?, ?, 'gift', ?, 1.0)",

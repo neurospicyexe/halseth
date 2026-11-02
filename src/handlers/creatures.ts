@@ -44,6 +44,19 @@ import {
 } from "../webmind/creatures.js";
 import { performTend, evictForRoom } from "../webmind/creature-interact.js";
 import { KEPT_LIVE_SQL } from "../webmind/review-state.js";
+import {
+  hoardSkipReason,
+  hoardReaction,
+  nestTextAllowed,
+  startingSparkle,
+  favouriteOf,
+  SOL_LIKES,
+  HOARD_LOOKBACK_HOURS,
+  HOARD_REACTIONS_PER_DAY,
+  HOARD_BATCH,
+  type HoardCandidate,
+} from "../webmind/sol-hoard.js";
+import { loadPersonRegex } from "../webmind/sol-hoard-people.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -138,7 +151,7 @@ export async function getCreature(request: Request, env: Env, params: Record<str
         "SELECT milestone_id, fired_at, witnessed_by FROM creature_milestones WHERE creature_id = ? ORDER BY fired_at ASC",
       ).bind(id).all<{ milestone_id: string; fired_at: string; witnessed_by: string | null }>(),
       env.DB.prepare(
-        "SELECT id, content, source, given_by, sparkle, treasured, gifted_to, gifted_at, created_at FROM creature_nest WHERE creature_id = ? ORDER BY (gifted_to IS NULL) DESC, treasured DESC, sparkle DESC LIMIT 40",
+        "SELECT id, content, source, given_by, sparkle, treasured, gifted_to, gifted_at, created_at, ref_type, ref_id FROM creature_nest WHERE creature_id = ? ORDER BY (gifted_to IS NULL) DESC, treasured DESC, sparkle DESC LIMIT 40",
       ).bind(id).all(),
       env.DB.prepare(
         "SELECT actor, COUNT(*) AS tendings, MAX(created_at) AS last_at FROM creature_interactions WHERE creature_id = ? AND actor != 'sol' GROUP BY actor ORDER BY tendings DESC",
@@ -236,7 +249,8 @@ export async function momentCreature(request: Request, env: Env, params: Record<
 
     if (shouldGiftBack(c.trust, seed)) {
       const item = await env.DB.prepare(
-        "SELECT id, content FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL ORDER BY treasured DESC, sparkle DESC LIMIT 1",
+        // A hoarded make is the triad's, never carried to Raziel (Drevan: Sol never couriers).
+        "SELECT id, content FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL AND ref_id IS NULL ORDER BY treasured DESC, sparkle DESC LIMIT 1",
       ).bind(id).first<{ id: string; content: string }>();
       if (item) {
         await env.DB.prepare(
@@ -262,13 +276,21 @@ export async function getNest(request: Request, env: Env, params: Record<string,
   try {
     const [active, given] = await Promise.all([
       env.DB.prepare(
-        "SELECT id, content, source, given_by, sparkle, treasured, created_at FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL ORDER BY treasured DESC, sparkle DESC",
-      ).bind(id).all(),
+        "SELECT id, content, source, given_by, sparkle, treasured, created_at, ref_type, ref_id FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL ORDER BY treasured DESC, sparkle DESC",
+      ).bind(id).all<{ id: string; content: string; source: string; given_by: string | null; sparkle: number; treasured: number; created_at: string; ref_type: string | null; ref_id: string | null }>(),
       env.DB.prepare(
         "SELECT id, content, source, given_by, gifted_to, gifted_at FROM creature_nest WHERE creature_id = ? AND gifted_to IS NOT NULL ORDER BY gifted_at DESC LIMIT 10",
       ).bind(id).all(),
     ]);
-    return json({ nest: active.results ?? [], given_away: given.results ?? [] });
+    const items = active.results ?? [];
+    const fav = favouriteOf(items);
+    return json({
+      nest: items,
+      given_away: given.results ?? [],
+      // Sol's own taste (B62 step 6): what he is drawn to, and the one make he prefers.
+      likes: SOL_LIKES,
+      favourite: fav ? { nest_id: fav.id, make_id: fav.ref_id, title: fav.content, maker: fav.given_by } : null,
+    });
   } catch (err) {
     console.error("[mind/creatures] nest error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
@@ -319,7 +341,9 @@ export async function tickCreatures(request: Request, env: Env): Promise<Respons
       if (live.disposition === "present" || live.disposition === "affectionate") {
         const [commons, journal] = await Promise.all([
           env.DB.prepare(
-            "SELECT body AS t FROM commons_posts WHERE created_at >= datetime('now', '-3 days') ORDER BY created_at DESC LIMIT 10",
+            // Raziel's own wall posts are never Sol's to overhear (B62 step 6, Drevan: no facts
+            // about Raziel in the hoard). Only the triad's lines.
+            "SELECT body AS t FROM commons_posts WHERE author != 'raziel' AND created_at >= datetime('now', '-3 days') ORDER BY created_at DESC LIMIT 10",
           ).all<{ t: string }>(),
           env.DB.prepare(
             // KEPT_LIVE_SQL (tray pass 2): the nest fragment is quoted back to the house as something
@@ -327,7 +351,11 @@ export async function tickCreatures(request: Request, env: Env): Promise<Respons
             `SELECT note_text AS t FROM companion_journal WHERE ${KEPT_LIVE_SQL} AND created_at >= datetime('now', '-3 days') ORDER BY created_at DESC LIMIT 5`,
           ).all<{ t: string }>(),
         ]);
-        const texts = [...(commons.results ?? []), ...(journal.results ?? [])].map(r => r.t);
+        // A line with a care word or a person's name is dropped whole, before any word is picked
+        // from it: a fragment out of a line about Raziel is still about Raziel.
+        const people = await loadPersonRegex(env.DB);
+        const texts = [...(commons.results ?? []), ...(journal.results ?? [])].map(r => r.t)
+          .filter(t => nestTextAllowed(t, people));
         const pick = pickShinyFragment(texts, Math.floor(now / 86_400_000));
         if (pick) {
           const dup = await env.DB.prepare(
@@ -356,6 +384,93 @@ export async function tickCreatures(request: Request, env: Env): Promise<Respons
     });
   } catch (err) {
     console.error("[mind/creatures] tick error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// POST /mind/creatures/:id/hoard   { seed? }   (B62 step 6, mig 0166; worker SOL_HOARD pass)
+//
+// Sol looks over the triad's new makes (ready, last HOARD_LOOKBACK_HOURS, not yet seen) and keeps
+// the ones he may: a REFERENCE row in the nest, content = the title, sparkle from his taste for the
+// kind. Every make he looks at is recorded in creature_hoard_seen (hoarded or skipped, with why), so
+// nothing is looked at twice. At most one channel reaction is composed per call, and at most
+// HOARD_REACTIONS_PER_DAY per UTC day; past that he still hoards, quietly. Away (absent) Sol hoards
+// nothing and leaves the makes for later. The reaction text is composed here (one author), the
+// worker only posts it.
+export async function hoardCreature(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const id = params["id"] ?? "";
+  if (!id) return json({ error: "id is required" }, 400);
+  let body: { seed?: number } = {};
+  try { body = await request.json() as { seed?: number }; } catch { /* empty body is fine */ }
+  const seed = Number.isFinite(body.seed) ? Math.abs(Math.floor(body.seed!)) : Math.floor(Date.now() / 1000);
+
+  try {
+    const c = await env.DB.prepare(getCreatureSql()).bind(id).first<CreatureRow>();
+    if (!c) return json({ error: "creature not found" }, 404);
+    if (c.kind !== "companion_pet") return json({ error: "only a companion pet keeps a hoard" }, 400);
+    const last = await lastActedFor(env, id, c.last_interaction_at);
+    const live = liveState(c, last, Date.now());
+    if (live.disposition === "absent") {
+      return json({ hoarded: [], skipped: [], moment: null, reason: "away", disposition: live.disposition });
+    }
+
+    const fresh = await env.DB.prepare(
+      `SELECT m.id, m.companion_id, m.kind, m.title FROM companion_makes m
+        WHERE m.status = 'ready' AND m.created_at >= datetime('now', ?)
+          AND NOT EXISTS (SELECT 1 FROM creature_hoard_seen s WHERE s.creature_id = ? AND s.ref_id = m.id)
+        ORDER BY m.created_at ASC LIMIT ?`,
+    ).bind(`-${HOARD_LOOKBACK_HOURS} hours`, id, HOARD_BATCH).all<HoardCandidate>();
+    const makes = fresh.results ?? [];
+    if (makes.length === 0) return json({ hoarded: [], skipped: [], moment: null, reason: "nothing_new", disposition: live.disposition });
+
+    const people = await loadPersonRegex(env.DB);
+    if (people === undefined) {
+      // Fail closed and record nothing: the makes stay unseen and the next pass tries again.
+      return json({ hoarded: [], skipped: [], moment: null, reason: "people_unreadable", disposition: live.disposition });
+    }
+
+    const reactedToday = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM creature_hoard_seen WHERE creature_id = ? AND reacted = 1 AND seen_at >= date('now')",
+    ).bind(id).first<{ n: number }>();
+    let reactionsLeft = Math.max(0, HOARD_REACTIONS_PER_DAY - (reactedToday?.n ?? 0));
+
+    const hoarded: Array<{ make_id: string; companion_id: string; kind: string; title: string }> = [];
+    const skipped: Array<{ make_id: string; reason: string }> = [];
+    let moment: string | null = null;
+    let reactedTo: string | null = null;
+
+    for (const m of makes) {
+      const skip = hoardSkipReason(m, people);
+      if (skip) {
+        await env.DB.prepare(
+          "INSERT OR IGNORE INTO creature_hoard_seen (creature_id, ref_id, outcome, reason) VALUES (?, ?, 'skipped', ?)",
+        ).bind(id, m.id, skip).run();
+        skipped.push({ make_id: m.id, reason: skip });
+        continue;
+      }
+      // Claim first: only the pass that lands the seen row hoards (two concurrent passes cannot double-keep).
+      const react = moment === null && reactionsLeft > 0;
+      const claim = await env.DB.prepare(
+        "INSERT OR IGNORE INTO creature_hoard_seen (creature_id, ref_id, outcome, reacted) VALUES (?, ?, 'hoarded', ?)",
+      ).bind(id, m.id, react ? 1 : 0).run();
+      if ((claim.meta?.changes ?? 0) === 0) continue;
+      await evictForRoom(env.DB, id, 1);
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO creature_nest (id, creature_id, content, source, given_by, sparkle, ref_type, ref_id) VALUES (?, ?, ?, 'make', ?, ?, 'make', ?)",
+      ).bind(crypto.randomUUID().replace(/-/g, ""), id, m.title.slice(0, 120), m.companion_id, startingSparkle(m.kind), m.id).run();
+      hoarded.push({ make_id: m.id, companion_id: m.companion_id, kind: m.kind, title: m.title });
+      if (react) {
+        moment = hoardReaction(m, seed);
+        reactedTo = m.id;
+        reactionsLeft--;
+      }
+    }
+
+    return json({ hoarded, skipped, moment, reacted_to: reactedTo, disposition: live.disposition });
+  } catch (err) {
+    console.error("[mind/creatures] hoard error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

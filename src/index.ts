@@ -99,7 +99,7 @@ import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./h
 import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
-import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest } from "./handlers/creatures.js";
+import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature } from "./handlers/creatures.js";
 import { postMake, getMakes, getMakeItemHttp, serveMakeFile, getPendingMakes, getMakeSource, postMakeRendered, patchMake } from "./handlers/makes.js";
 import { getInterests, getInterestTrailHttp, getThinking, postInterest } from "./handlers/interests.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
@@ -512,6 +512,7 @@ const router = new Router()
   .on("POST",  "/mind/creatures/:id/interact",       (request, env, params) => interactCreature(request, env, params ?? {}))
   .on("POST",  "/mind/creatures/:id/moment",         (request, env, params) => momentCreature(request, env, params ?? {}))
   .on("GET",   "/mind/creatures/:id/nest",           (request, env, params) => getNest(request, env, params ?? {}))
+  .on("POST",  "/mind/creatures/:id/hoard",          (request, env, params) => hoardCreature(request, env, params ?? {}))
 
   // Collection / sparkle (0079) -- emotional archaeology over forage + listens (take 13)
   .on("GET",   "/mind/collection/:companion_id",     (request, env, params) => getCollection(request, env, params ?? {}))
