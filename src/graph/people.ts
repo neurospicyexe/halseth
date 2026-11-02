@@ -62,6 +62,9 @@ export const EXTRA_KEYS = ["system_of", "relation", "frame_line", "discord_user_
 export const RELATIONS = ["partner", "family", "friend", "kid", "pet", "other"] as const;
 export const PK_SYSTEMS = ["raziel", "blue"] as const;
 export const FRAME_LINE_MAX = 200;
+/** Raziel's private note about a person. Verbatim, never rewritten; capped so a paste cannot bloat the row. */
+export const NOTE_MAX = 1000;
+const noteTooLong = (n: string | null) => (n && n.length > NOTE_MAX ? `a note is at most ${NOTE_MAX} characters (this is ${n.length})` : null);
 const NO_EXTRAS: PersonExtras = { system_of: null, relation: null, frame_line: null, discord_user_id: null, pk_system: null };
 
 export function parseMatchNames(raw: unknown): string[] {
@@ -200,6 +203,8 @@ export async function addPerson(env: Env, input: {
   const shares = normalizeSharesName(input.shares_name_with);
   const dead = sharedNeedsSpelling(label, shares, names, kind);
   if (dead) return { ok: false, reason: dead };
+  const tooLong = noteTooLong(input.note?.trim() || null);
+  if (tooLong) return { ok: false, reason: tooLong };
   const x: PersonExtras = {
     system_of: str(input.system_of), relation: str(input.relation), frame_line: str(input.frame_line),
     discord_user_id: str(input.discord_user_id), pk_system: str(input.pk_system),
@@ -243,12 +248,12 @@ export async function addPerson(env: Env, input: {
   return { ok: true, person, warnings };
 }
 
-export type UpdatePersonResult = { ok: true; person: GraphPerson; warnings: string[] } | { ok: false; status: 404 | 409; reason: string };
+export type UpdatePersonResult = { ok: true; person: GraphPerson; warnings: string[] } | { ok: false; status: 400 | 404 | 409; reason: string };
 
 /** Change an entry's other spellings, its shared-name flag (mig 0160) and its frame fields (mig 0163).
  *  A field left undefined is unchanged; null or "" clears it. Label and kind stay: a different name is
  *  a different entry (archive + add). The centre is not editable here. */
-export async function updatePerson(env: Env, id: string, input: { match_names?: string[]; shares_name_with?: string | null } & ExtrasInput): Promise<UpdatePersonResult> {
+export async function updatePerson(env: Env, id: string, input: { match_names?: string[]; shares_name_with?: string | null; note?: string | null } & ExtrasInput): Promise<UpdatePersonResult> {
   const people = await listPeople(env);
   const current = people.find((p) => p.id === id);
   if (!current || current.kind === "centre") return { ok: false, status: 404, reason: "not found" };
@@ -258,6 +263,10 @@ export async function updatePerson(env: Env, id: string, input: { match_names?: 
   const shares = input.shares_name_with === undefined ? current.shares_name_with : normalizeSharesName(input.shares_name_with);
   const dead = sharedNeedsSpelling(current.label, shares, names, current.kind);
   if (dead) return { ok: false, status: 409, reason: dead };
+  // undefined = unchanged; null, "" or whitespace clears; a string is kept verbatim (outer whitespace trimmed only).
+  const note = input.note === undefined ? current.note : (typeof input.note === "string" ? input.note.trim() || null : null);
+  const tooLong = noteTooLong(note);
+  if (tooLong) return { ok: false, status: 400, reason: tooLong };
   const x: PersonExtras = { system_of: current.system_of, relation: current.relation, frame_line: current.frame_line, discord_user_id: current.discord_user_id, pk_system: current.pk_system };
   for (const k of EXTRA_KEYS) if (input[k] !== undefined) x[k] = str(input[k]);
   const changed = EXTRA_KEYS.some((k) => input[k] !== undefined && x[k] !== current[k]);
@@ -265,12 +274,12 @@ export async function updatePerson(env: Env, id: string, input: { match_names?: 
     const bad = validateExtras(current.kind, id, x, people);
     if (bad) return { ok: false, status: 409, reason: bad };
   }
-  const person: GraphPerson = { ...current, match_names: names, shares_name_with: shares, ...x };
+  const person: GraphPerson = { ...current, match_names: names, shares_name_with: shares, note, ...x };
   const warnings = frameLineWarnings(x.frame_line);
   if (changed) {
     try {
-      await env.DB.prepare(`UPDATE graph_people SET match_names = ?, shares_name_with = ?, ${EXTRA_KEYS.map((k) => `${k} = ?`).join(", ")} WHERE id = ? AND archived = 0`)
-        .bind(JSON.stringify(names), shares, x.system_of, x.relation, x.frame_line, x.discord_user_id, x.pk_system, id).run();
+      await env.DB.prepare(`UPDATE graph_people SET match_names = ?, shares_name_with = ?, ${EXTRA_KEYS.map((k) => `${k} = ?`).join(", ")}, note = ? WHERE id = ? AND archived = 0`)
+        .bind(JSON.stringify(names), shares, x.system_of, x.relation, x.frame_line, x.discord_user_id, x.pk_system, note, id).run();
       return { ok: true, person, warnings };
     } catch (e) {
       if (isUnique(e)) return { ok: false, status: 409, reason: "that Discord id already belongs to someone on the list" };
@@ -279,8 +288,8 @@ export async function updatePerson(env: Env, id: string, input: { match_names?: 
     }
   }
   try {
-    await env.DB.prepare("UPDATE graph_people SET match_names = ?, shares_name_with = ? WHERE id = ? AND archived = 0")
-      .bind(JSON.stringify(names), shares, id).run();
+    await env.DB.prepare("UPDATE graph_people SET match_names = ?, shares_name_with = ?, note = ? WHERE id = ? AND archived = 0")
+      .bind(JSON.stringify(names), shares, note, id).run();
   } catch (e) {
     if (!missingSharesName(e)) throw e;
     return { ok: false, status: 409, reason: "editing needs the 0160 migration first" };

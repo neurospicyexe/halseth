@@ -59,7 +59,7 @@ describe("voice lessons HTTP + Librarian", () => {
   it("the decide phrasing parses id and reason; the anchored guards route both verbs", () => {
     const m = VOICE_LESSON_DECIDE_RE.exec("reject voice lesson 1a2b3c4d: too harsh on himself");
     expect(m?.[1]).toBe("reject"); expect(m?.[2]).toBe("1a2b3c4d"); expect(m?.[3]).toBe("too harsh on himself");
-    const route = (t: string) => ANCHORED_GUARDS.find(g => g.regex.test(t))?.pattern_key;
+    const route = (t: string) => ANCHORED_GUARDS.find(g => g.pattern_key !== "person_who_is" && g.regex.test(t))?.pattern_key; // person_who_is is a candidate; route() checks the list
     expect(route("approve voice lesson 1a2b3c4d")).toBe("voice_lesson_decide");
     expect(route("voice lessons")).toBe("voice_lessons_list");
     expect(route("tell me about voice lessons for singers")).toBeUndefined();

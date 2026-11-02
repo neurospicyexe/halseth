@@ -1731,6 +1731,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   interest_pick_up: { triggers: ["interest_pick_up"], tools: ["interest_pick_up"], response_key: "witness" },
   interests_read: { triggers: ["interests_read"], tools: ["interests_read"], response_key: "data" },
   interest_trail: { triggers: ["interest_trail"], tools: ["interest_trail"], response_key: "data" },
+  // People pull-lookup (2026-11-02): Raziel's list and his notes about people, read on demand. The REAL match is
+  // the anchored guard in router.ts ANCHORED_GUARDS plus the router's list check (a name not on the list falls
+  // through to the route it had before: roster_who_is, front, search). The trigger below is a formality.
+  person_who_is: { triggers: ["person_who_is"], tools: ["person_who_is"], response_key: "data" },
   // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
   voice_lessons_list: {
     triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],

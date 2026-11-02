@@ -160,6 +160,8 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "B62: 'my interests' / 'list my interests', whole request." },
   { pattern_key: "interest_trail", regex: INTEREST_TRAIL_RE,
     note: "B62: 'interest trail <name>'." },
+  { pattern_key: "person_who_is", regex: PERSON_LOOKUP_RE,
+    note: "People pull-lookup (2026-11-02): 'who is / who's / look up person / tell me about <name>'. Only a CANDIDATE: route() checks the name against Raziel's live list (personLookupApplies) and, when nobody is there, re-runs the match without this guard so roster_who_is, front state, web search and normal speech behave exactly as before." },
   { pattern_key: "voice_lesson_decide",
     regex: /^(?:please\s+)?(?:approve|reject)\s+(?:the\s+)?voice\s+lesson\s+[0-9a-f-]{6,}\b/i,
     note: "Voice lessons (mig 0159): Raziel's approve/reject of a staged lesson, by id." },
@@ -332,15 +334,17 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
 // Single source of truth: anchored guards table + Object.entries trigger sweep.
 // Returns matched pattern's key + entry, or null on miss. Used by both the
 // LibrarianRouter and the test suite (no mirror to drift).
-export function matchFastPath(request: string): { key: string; entry: PatternEntry } | null {
+export function matchFastPath(request: string, skip?: ReadonlySet<string>): { key: string; entry: PatternEntry } | null {
   const trimmed = request.trim();
   for (const guard of ANCHORED_GUARDS) {
+    if (skip?.has(guard.pattern_key)) continue;
     if (guard.regex.test(trimmed)) {
       const entry = FAST_PATH_PATTERNS[guard.pattern_key];
       if (entry) return { key: guard.pattern_key, entry };
     }
   }
   for (const [key, entry] of Object.entries(FAST_PATH_PATTERNS)) {
+    if (skip?.has(key)) continue;
     if (entry.triggers.some(t => triggerMatches(trimmed, t))) {
       return { key, entry };
     }
@@ -460,6 +464,8 @@ import { LINK_GUARD_RE, UNLINK_GUARD_RE } from "../graph/links.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
+import { PERSON_LOOKUP_RE, personLookupApplies } from "../people/lookup.js";
+import { execPersonWhoIs } from "./executors/people.js";
 import { execFeelingWordPropose, execMyFeelingWords } from "./executors/feeling-vocabulary.js";
 import { INTEREST_BORN_RE, INTEREST_RETURN_RE, INTEREST_MADE_RE, INTEREST_PUT_DOWN_RE, INTEREST_PICK_UP_RE, INTERESTS_READ_RE, INTEREST_TRAIL_RE } from "../webmind/interests.js";
 import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPutDown, execInterestPickUp, execInterestsRead, execInterestTrail } from "./executors/interests.js";
@@ -591,6 +597,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   interest_pick_up: execInterestPickUp,
   interests_read: execInterestsRead,
   interest_trail: execInterestTrail,
+  person_who_is: execPersonWhoIs,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,
@@ -794,7 +801,12 @@ export class LibrarianRouter {
     }
 
     // Tier 1: fast path -- anchored guards + in-memory trigger match
-    const fastMatch = matchFastPath(req.request);
+    let fastMatch = matchFastPath(req.request);
+    // The people lookup only owns a request whose name is on Raziel's list; otherwise the request goes
+    // exactly where it went before the verb existed ("who is fronting", roster names, "tell me about X").
+    if (fastMatch?.key === "person_who_is" && !(await personLookupApplies(this.env, req.request))) {
+      fastMatch = matchFastPath(req.request, new Set(["person_who_is"]));
+    }
     if (fastMatch) {
       return this.execute(req, fastMatch.entry, fastMatch.key);
     }

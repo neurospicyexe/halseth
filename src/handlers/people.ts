@@ -3,7 +3,7 @@
 //   GET  /mind/people               the list, each with how many kept rows the graph links to them
 //   POST /mind/people               { label, match_names?: string[], kind?, pk_member_id?, note?, shares_name_with?,
 //                                     system_of?, relation?, frame_line?, discord_user_id?, pk_system? }  (0163 fields)
-//   POST /mind/people/:id           { match_names?: string[], shares_name_with?: string|null } (mig 0160)
+//   POST /mind/people/:id           { match_names?: string[], shares_name_with?: string|null, note?: string|null } (mig 0160; note: omit = unchanged, null/"" clears, max 1000)
 //   GET  /people/frame-index?companion=  what the bots may say about each person (B49, mig 0163)
 //   POST /mind/people/:id/archive   take someone off the list (their links drop at the next rebuild)
 //
@@ -41,21 +41,23 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-export async function getMindPeople(request: Request, env: Env): Promise<Response> {
-  const denied = authGuard(request, env);
-  if (denied) return denied;
-  const [people, rows] = await Promise.all([
-    listPeople(env),
-    env.DB.prepare(VISIBLE_MENTIONS_SQL).all<{ dst_id: string; provenance: string }>().then((r) => r.results ?? []),
-  ]);
-  // A node's count is its links; a system name's count is the links that carry it as the front
-  // (they all point at the centre, which counts every one of them as its own).
+/** Visible mention counts: per node, and per front name (a system name is credited with the fronts it
+ *  rode in on; they all point at the centre, which counts every one of them as its own). */
+export async function getMentionCounts(env: Env): Promise<{ byNode: Map<string, number>; byFront: Map<string, number> }> {
+  const rows = (await env.DB.prepare(VISIBLE_MENTIONS_SQL).all<{ dst_id: string; provenance: string }>()).results ?? [];
   const byNode = new Map<string, number>();
   const byFront = new Map<string, number>();
   for (const r of rows) {
     byNode.set(r.dst_id, (byNode.get(r.dst_id) ?? 0) + 1);
     for (const f of frontsOf(r.provenance)) byFront.set(f, (byFront.get(f) ?? 0) + 1);
   }
+  return { byNode, byFront };
+}
+
+export async function getMindPeople(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const [people, { byNode, byFront }] = await Promise.all([listPeople(env), getMentionCounts(env)]);
   return json({ people: people.map((p) => ({ ...p, mentions: p.kind === "self" ? (byFront.get(p.label) ?? 0) : (byNode.get(p.id) ?? 0) })) });
 }
 
@@ -98,6 +100,7 @@ export async function postMindPersonUpdate(request: Request, env: Env, params: {
   const r = await updatePerson(env, id, {
     match_names: Array.isArray(body.match_names) ? body.match_names.filter((x): x is string => typeof x === "string") : undefined,
     shares_name_with: body.shares_name_with === undefined ? undefined : typeof body.shares_name_with === "string" ? body.shares_name_with : null,
+    note: typeof body.note === "string" || body.note === null ? (body.note as string | null) : undefined,
     ...extrasOf(body),
   });
   return r.ok ? json({ ok: true, person: r.person, warnings: r.warnings }) : json({ ok: false, error: r.reason }, r.status);

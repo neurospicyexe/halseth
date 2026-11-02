@@ -242,9 +242,12 @@ describe("librarian routing", () => {
     expect(matchFastPath("who's here")?.key).not.toBe("roster_who_is");
   });
 
-  it("'who is <name>' routes to the roster", () => {
-    expect(matchFastPath("who is Magpie")?.key).toBe("roster_who_is");
-    expect(matchFastPath("who's Magpie?")?.key).toBe("roster_who_is");
+  it("'who is <name>' routes to the roster when the name is not on Raziel's people list", () => {
+    // The people pull-lookup guard is a candidate only; route() skips it when the list does not hold the name.
+    const skip = new Set(["person_who_is"]);
+    expect(matchFastPath("who is Magpie", skip)?.key).toBe("roster_who_is");
+    expect(matchFastPath("who's Magpie?", skip)?.key).toBe("roster_who_is");
+    expect(matchFastPath("who is Magpie")?.key).toBe("person_who_is");
   });
 
   it("roster_who_is is the LAST pattern declared -- earlier would shadow get_front", () => {
@@ -255,7 +258,7 @@ describe("librarian routing", () => {
   it("every roster trigger actually reaches the roster (no dead duplicates of earlier patterns)", () => {
     const entry = FAST_PATH_PATTERNS["roster_who_is"]!;
     const shadowed = entry.triggers.filter(t => {
-      const hit = matchFastPath(`${t} Magpie`);
+      const hit = matchFastPath(`${t} Magpie`, new Set(["person_who_is"]));
       return hit !== null && hit.key !== "roster_who_is";
     });
     expect(shadowed).toEqual([]);
