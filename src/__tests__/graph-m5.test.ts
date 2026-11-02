@@ -143,7 +143,7 @@ describe("a name shared with a character (mig 0160, 2026-11-01)", () => {
     const { env } = envWith();
     const r: any = await addPerson(env, { label: "Barbossa", shares_name_with: "Pirates", added_by: "raziel" });
     expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/Blue's Barbossa/);
+    expect(r.reason).toMatch(/Barbossa \(Blue\)/);
     // The label itself as an "other spelling" is not a spelling of its own.
     expect((await addPerson(env, { label: "Barbossa", match_names: ["Barbossa"], shares_name_with: "Pirates", added_by: "raziel" })).ok).toBe(false);
   });

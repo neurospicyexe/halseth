@@ -50,7 +50,7 @@ import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMin
 import { postMindPin, getMindPins } from "./handlers/pins.js";
 import { postMindLink, getMindLinks } from "./handlers/links.js";
 import { getMindMap } from "./handlers/map.js";
-import { getMindPeople, postMindPeople, postMindPersonArchive, postMindPersonUpdate } from "./handlers/people.js";
+import { getMindPeople, getPeopleFrameIndex, postMindPeople, postMindPersonArchive, postMindPersonUpdate } from "./handlers/people.js";
 import { getMindKeepOff, postMindKeepOff, postMindKeepOffArchive } from "./handlers/keep-off.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "./handlers/director.js";
@@ -364,6 +364,7 @@ const router = new Router()
   .on("POST", "/mind/keep-off",                (request, env) => postMindKeepOff(request, env))
   .on("POST", "/mind/keep-off/:id/archive",    (request, env, params) => postMindKeepOffArchive(request, env, params ?? {}))
   .on("GET",  "/mind/people",                  (request, env) => getMindPeople(request, env))
+  .on("GET",  "/people/frame-index",           (request, env) => getPeopleFrameIndex(request, env))
   .on("POST", "/mind/people",                  (request, env) => postMindPeople(request, env))
   .on("POST", "/mind/people/:id",              (request, env, params) => postMindPersonUpdate(request, env, params ?? {}))
   .on("POST", "/mind/people/:id/archive",      (request, env, params) => postMindPersonArchive(request, env, params ?? {}))
