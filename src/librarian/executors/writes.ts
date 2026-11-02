@@ -6,6 +6,7 @@ import { noveltyCheck } from "../../webmind/novelty.js";
 import { effectiveHeatSql } from "../../webmind/heat.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { normalizeWitnessType } from "../../lib/witness-type.js";
+import { applyTaskEdits, pickTaskEdits } from "../../lib/task-edit.js";
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { COMPANION_SPEECH_JOURNAL_SOURCES } from "../../webmind/review-state.js";
 import { queueAndRunSpiral } from '../../webmind/spiral.js';
@@ -22,6 +23,7 @@ import { buildResponse } from "../response/builder.js";
 import { extractCompanionFromRequest } from "../lib/companion.js";
 import type { ResponseKey } from "../response/budget.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../../graph/live.js";
+import { carryPinStatement } from "../../webmind/pins.js";
 import { noteInsert, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE, RetiredJournalSourceError } from "../../webmind/tray-insert.js";
 
 // Strip a leading note-command preamble ("Write a companion note for gaia:", "for drevan:",
@@ -64,6 +66,20 @@ export function claimableNlSource(raw: unknown, companionId?: string): string | 
     companion: companionId, source: typeof raw === "string" ? raw.slice(0, 64) : typeof raw,
   });
   return undefined;
+}
+
+/**
+ * The session a journal or delta write belongs to (map M5 / STATUS B61 D4, 2026-10-28). Every librarian
+ * journal write hardcoded session_id NULL and deltas stamped one only when the caller passed it, so 98%
+ * of journal rows and every delta since 05-31 sat outside any session, and the graph could not connect
+ * "what I wrote" to "the conversation it was in". Rule: an explicit id wins; otherwise the companion's
+ * OPEN session on this surface (the same lookup the float-update path uses); otherwise null, never a
+ * guess. Best-effort: a lookup failure leaves the write unstamped, never failed.
+ */
+async function sessionForWrite(ctx: ExecutorContext, explicit?: string | null): Promise<string | null> {
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  const open = await findOpenSession(ctx.env, ctx.req.companion_id, ctx.req.surface).catch(() => null);
+  return open?.id ?? null;
 }
 
 export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -152,7 +168,7 @@ export async function execCompanionNoteAdd(ctx: ExecutorContext): Promise<Execut
   }
   // Unaddressed, no broadcast intent — a self-reflection — companion_journal (visible in Hearth).
   try {
-    const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source);
+    const r = await companionJournalAdd(ctx.env, ctx.req.companion_id, noteText, tags, source, await sessionForWrite(ctx));
     return { ack: true, id: r.id, routed_to: "journal" };
   } catch (err) {
     // Belt and braces: the door throws for a retired source; answer it as a refusal, never a 500.
@@ -246,7 +262,7 @@ export async function execDeltaLog(ctx: ExecutorContext): Promise<ExecutorResult
   // never having supplied one -- an empty string is not a value.
   if (valence === "") valence = undefined;
   const agent = p?.agent ?? ctx.req.companion_id;
-  const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: p?.session_id });
+  const r = await deltaLog(ctx.env, { delta_text: deltaText, valence, agent, initiated_by: p?.initiated_by, session_id: await sessionForWrite(ctx, p?.session_id) ?? undefined });
   return { ack: true, id: r.id };
 }
 
@@ -263,13 +279,35 @@ export async function execTaskAdd(ctx: ExecutorContext): Promise<ExecutorResult>
 }
 
 export async function execTaskUpdateStatus(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ id: string; status: string }>(ctx.req.context);
-  if (!p || !p.id || !p.status) return { response_key: "witness", witness: "task_update_status requires { id, status } in context" };
-  // Attribute the close to the companion doing it (mig 0119), so the others are told who
-  // finished it and this companion is not mailed about their own action.
-  const r = await taskUpdateStatus(ctx.env, p.id, p.status, ctx.req.companion_id ?? null);
-  if ("error" in r) return { response_key: "witness", witness: r.error };
-  return { ack: true, id: r.id, status: r.status };
+  // 2026-10-19: was status-only, and acked while dropping due_at (10-14: moved dates never landed).
+  // Now { id } plus any of status / title / description / priority / due_at / assigned_to.
+  const p = parseContext<Record<string, unknown> & { id?: string; status?: string }>(ctx.req.context);
+  if (!p || !p.id) {
+    return { response_key: "witness", witness: "task update requires { id } plus at least one of status, title, description, priority, due_at, assigned_to in context" };
+  }
+  const id = String(p.id);
+  const edits = pickTaskEdits(p);
+  const hasEdits = Object.keys(edits).length > 0;
+  if (!p.status && !hasEdits) {
+    return { response_key: "witness", witness: "task update needs a change: status, title, description, priority, due_at or assigned_to" };
+  }
+
+  let changed: string[] = [];
+  if (hasEdits) {
+    const e = await applyTaskEdits(ctx.env, id, edits);
+    if (!e.ok) return { response_key: "witness", witness: e.error };
+    changed = e.changed;
+  }
+  let status: string | undefined;
+  if (p.status) {
+    // Attribute the close to the companion doing it (mig 0119), so the others are told who
+    // finished it and this companion is not mailed about their own action.
+    const r = await taskUpdateStatus(ctx.env, id, String(p.status), ctx.req.companion_id ?? null);
+    if ("error" in r) return { response_key: "witness", witness: r.error };
+    status = r.status;
+    changed.push("status");
+  }
+  return { ack: true, id, ...(status ? { status } : {}), changed };
 }
 
 export async function execTaskList(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -663,7 +701,13 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
 
   // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
   // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
-  const decision = await noveltyCheck(ctx.env, conclusionText, "companion_conclusions", ctx.req.companion_id);
+  // NOT FOR A DECLARED SUPERSEDE (2026-10-19, same rule as architect-fact-write.ts): a correction
+  // is by definition close to the row it replaces, so a pronoun-only rewrite matched the very row
+  // being retired and answered deduped -- the supersede never happened. The companion's own pen
+  // wins; the null embedding routes the vector through the re-embed path below.
+  const decision = supersedes
+    ? { action: "insert" as const, embedding: null }
+    : await noveltyCheck(ctx.env, conclusionText, "companion_conclusions", ctx.req.companion_id);
 
   if (decision.action === "skip") {
     return {
@@ -702,6 +746,8 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
   ];
   const supersededIds: string[] = [];
   if (supersedes) {
+    // The pin travels with the belief (mig 0148): batched before the UPDATE that retires the old row.
+    stmts.push(carryPinStatement(ctx.env.DB, { oldId: supersedes, newId, owner: ctx.req.companion_id }));
     // `superseded_by IS NULL` guard keeps this from clobbering an already-superseded row.
     stmts.push(
       ctx.env.DB.prepare(

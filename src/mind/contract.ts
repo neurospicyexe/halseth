@@ -39,6 +39,30 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.25.0 -- declared departures (T4a, 2026-11-01, mig 0157): `world.departures` -- every open departure
+ *  across the triad ({id, companion, rail, scope_channel, audience, declared_by, starts_at, expires_at,
+ *  reason, objections[]}), derived from the clock, empty under the care hold, pure D1. Form, not floor: a
+ *  companion lifts one form rail for itself, up to 3 hours, announced first. Nothing reads it yet.
+ *  MINOR: additive only. */
+/** 0.24.0 -- our own links (M4, mig 0151, 2026-10-29): any mind can link any two visible rows
+ *  ('link <kind>: <words> to <kind>: <words>: why'). `graph.neighborhoods` may now carry edge_type
+ *  'linked:<writer>' (provenance 'asserted'), rendered "linked by <Writer>". MINOR: additive only. */
+/** 0.23.0 -- one centre (mig 0150, 2026-10-29): `graph.neighborhoods` entries carry `provenance`, so a
+ *  system name's link to Raziel's centre node renders its front ("with Raziel, fronting as Magpie").
+ *  System members are Raziel, never separate person nodes. MINOR: additive only. */
+/** 0.22.0 -- the neighborhood, named (M6, 2026-10-28, docs/PLAN-memory-map-2026-10-28.md): `graph.seeds`
+ *  -- the `table/id` keys the traverse walked from, in seed order, so the renderer reads each [Linked]
+ *  line FROM what this boot surfaced outward. The traverse now gives each seed a fair share (4 per
+ *  seed, leftover budget handed back) so one busy seed cannot spend the whole cap, and the block names
+ *  nodes with the map's labeler (hidden rows dropped, never shown by id). The Discord bot wire gains
+ *  `graph_linked` (the same block, rendered on the Worker) -- the bots had no graph at all before.
+ *  MINOR: additive only. */
+/** 0.20.0 -- pattern materials (R18, 2026-10-22, mig 0147): `growth.patterns[]` gains `materials`
+ *  (the distinct materials the pattern has been seen in, first-seen order). Strength is earned by a
+ *  new material, not by restating; `growth.patterns` is now the top two LIVE patterns that have not
+ *  cooled out of the headline seat (>= N returns since the last new material AND that material older
+ *  than D days; superseded rows are never live). On the bot wire the list rides inside each
+ *  `active_patterns` string as "[materials: a, b]". MINOR: additive only. */
 /** 0.19.0 -- bad-night presence (B32, 2026-10-04, mig 0143): `world.raziel_state` gains
  *  `care_hold_reason` (which rule(s) hold: low_spoons | meds_said_missed | owner_said; [] when off) and
  *  `care_hold_since` (ISO of the earliest holding firing; null when off). care_hold itself keeps its
@@ -111,6 +135,9 @@ export interface LedgerOpenEntry {
  *  projects -- intentions the companion OWNS across weeks, opened/worked/ended by the companion
  *  (released is a chosen ending, never a sweep). Rendered on every surface with the affordance
  *  always present: a project no surface shows is a starved affordance. MINOR: additive only.
+ *  0.21.0 -- the watch pipeline (2026-10-23) added `world.listens[].media_type` ('song' | 'video' |
+ *  'other', from mig 0071's CHECK). A video is READ from its caption track (nullsafe-discord
+ *  `video.ts`), not heard; every renderer says "watched" for it. MINOR: additive only.
  *  0.7.0 -- consequence layer C6 (2026-08-16) added `world.raziel_state.owner_quiet`: the
  *  custodianship clause. Non-null only after QUIET_OWNER_DAYS (14, R4) of total owner silence
  *  across every surface -- the companions are told the truth (a real absence, never fabricated)
@@ -124,7 +151,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.19.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.25.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -310,6 +337,8 @@ export interface MindState {
     /** Wave 6. Where Raziel actually is in what they are watching. A progress fact is a FIELD -- the
      *  stale-Fargo answer came from ranking prose because no field existed. */
     watching: WorldBlocks["watching"];
+    /** 0.25.0: open declared departures (all three companions, with expiry). Read-only in T4a. */
+    departures: WorldBlocks["departures"];
     /** 0.6.0, consequence layer C1: the care register. Raziel's readable state, derived from the
      *  latest biometrics row + front state + the care loop (mig 0121). The signals flowed IN since
      *  0009/0081 and were read at orient as a raw row; this is the first field that makes them a

@@ -30,6 +30,7 @@ import type { WmAgentId } from "../../webmind/types.js";
 import { effectiveTrustSql, MOTIF_TUNING } from "../../webmind/motifs.js";
 import { collectionForageSql, collectionMediaSql } from "../../webmind/collection.js";
 import { collapseRepeatListens } from "../../lib/media-key.js";
+import { loadOpenDepartures, type OpenDeparture } from "../../departures/core.js";
 
 export interface ClubRound {
   id: string; status: string;
@@ -49,6 +50,9 @@ export interface ForageFind {
 export interface Listen {
   id: string; title: string;
   artist: string | null;
+  /** 'song' | 'video' | 'other' (mig 0071 CHECK). A video (the watch pipeline, 2026-10-23) was READ from
+   *  its transcript, not heard; renderers say "watched" for it. Null only on a pre-0071 shape. */
+  media_type: string | null;
   /** Who gave it and who it was for. Dropped by one query for months; the model invented both. */
   shared_by: string | null;
   requested_companion: string | null;
@@ -184,17 +188,23 @@ export interface WorldBlocks {
   creatures: CreatureRow[];
   imps_active: ImpActivity[];
   watching: WatchItem[];
+  /** 0.25.0 (declared departures, T4a, mig 0157): every OPEN departure, all three companions, derived from
+   *  the clock (expiry passed = gone) and empty while the care hold is on. Identical on every loom; pure D1;
+   *  no rail reads it yet. `reason` is the declarer's own words, read from declared_departures only. */
+  departures: OpenDeparture[];
 }
 
 const EMPTY: WorldBlocks = {
   club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] },
   forage: { pool: [], active: [] }, listens: [],
   motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [],
-  watching: [],
+  watching: [], departures: [],
 };
 
 /** Never throws: the shared world is context, and missing context must never break a boot. */
 export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise<WorldBlocks> {
+  // Its own never-throws read, started now so it runs alongside the rest (a failure must not EMPTY the world).
+  const departuresP = loadOpenDepartures(env);
   try {
     const [club, commons, commonsLife, changeNotes, shelf, colForage, colMedia, pool, active, listens, motifsActive, motifsFaded, sol, imps, colTop, watching] =
       await Promise.all([
@@ -271,7 +281,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         // a double-posted track cannot fill every slot. url is used for the key and dropped again --
         // the contract's Listen shape is unchanged.
         env.DB.prepare(
-          "SELECT id, url, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 8"
+          "SELECT id, url, media_type, title, artist, shared_by, requested_companion, reactions_json, created_at FROM media_experiences ORDER BY created_at DESC LIMIT 8"
         ).all<Listen & { url: string | null }>(),
         // FULL ROW, not five columns (wave 9). `selectResurrections` gates on `last_surfaced_at` (cooldown)
         // and sorts on trust/recurrence, and it needs `id` so the caller can stamp the cooldown after
@@ -347,6 +357,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
       };
     }
 
+    const departures = await departuresP;
     return {
       club: club ?? null,
       commons: commons.results ?? [],
@@ -371,6 +382,7 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         with_companion: r.with_companion && r.with_companion !== companionId ? r.with_companion : null,
         last_watched_at: r.last_watched_at ?? null,
       })),
+      departures,
     };
   } catch (err) {
     console.warn("[mind/world] load failed, degrading to empty", { companionId, error: String(err) });

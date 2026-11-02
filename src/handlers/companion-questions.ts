@@ -117,12 +117,17 @@ export async function getQuestions(
   const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "10", 10) || 10, 1), 50);
 
   try {
+    // Answered rows sort by when they were ANSWERED: an old question answered today must be in
+    // "Recently answered" (Hearth /needs) and in the worker's limit=3 read, not fall off the page.
+    const order = status === "answered"
+      ? "COALESCE(answered_at, created_at) DESC, id DESC"
+      : "created_at DESC";
     const stmt = status === "all"
       ? env.DB.prepare(
           "SELECT * FROM companion_questions WHERE companion_id = ? ORDER BY created_at DESC LIMIT ?"
         ).bind(companion_id, limit)
       : env.DB.prepare(
-          "SELECT * FROM companion_questions WHERE companion_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+          `SELECT * FROM companion_questions WHERE companion_id = ? AND status = ? ORDER BY ${order} LIMIT ?`
         ).bind(companion_id, status, limit);
     const rows = await stmt.all();
     return json({ questions: rows.results ?? [] });
@@ -133,7 +138,7 @@ export async function getQuestions(
 }
 
 // PATCH /mind/questions/:id
-// body: { status: 'answered'|'dismissed', answer? }
+// body: { status: 'answered'|'dismissed', answer? }. Moves an OPEN question only; anything else is 404.
 export async function patchQuestion(
   request: Request,
   env: Env,
@@ -162,10 +167,12 @@ export async function patchQuestion(
     const result = await env.DB.prepare(
       `UPDATE companion_questions
        SET status = ?, answer = ?, answered_at = CASE WHEN ? = 'answered' THEN datetime('now') ELSE answered_at END
-       WHERE id = ?`
+       WHERE id = ? AND status = 'open'`
     ).bind(status, answer, status, id).run();
 
-    if (!result.meta.changes) return json({ error: "Question not found" }, 404);
+    // Only an OPEN question moves. A stale tap or a replayed queue write on one already answered or
+    // dismissed must not erase or overwrite the answer; Hearth reads this 404 as "Already handled."
+    if (!result.meta.changes) return json({ error: "Question not found or already handled" }, 404);
     return json({ ok: true });
   } catch (err) {
     console.error("[mind/questions] patch error", { id, error: String(err) });

@@ -165,6 +165,20 @@ describe("execConclusionAdd -- novelty gate", () => {
     expect(updateBind).toEqual([res.id, "oldrow456", "cypher"]);
   });
 
+  // 2026-10-19: a pronoun-only rewrite scored ~0.97 against the very row it superseded, the gate
+  // answered deduped, and the supersede never ran (workaround was release-then-write). A declared
+  // supersede now bypasses the gate, like architect-fact-write.ts.
+  it("a declared supersede of a NEAR-IDENTICAL row inserts and retires it, never dedupes", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.97 }], captured);
+
+    const res = await execConclusionAdd(ctx(env, { supersedes: "oldrow456" })) as Record<string, unknown>;
+
+    expect(res.deduped).toBeUndefined();
+    expect(insertCalls(captured)).toBe(1);
+    expect(supersedeUpdateFor(captured, "oldrow456")).toEqual([res.id, "oldrow456", "cypher"]);
+  });
+
   it("reuses the gate's embedding -- AI.run called exactly once, one Vectorize upsert, no re-embed", async () => {
     const captured: Captured = { prepared: [], binds: [] };
     const env = makeEnv([{ id: "companion_conclusions:oldrow456", score: 0.90 }], captured) as any;

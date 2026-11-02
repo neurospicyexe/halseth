@@ -653,7 +653,8 @@ describe("loader", () => {
     for (const f of ["wrangler.toml", "wrangler.prod.toml"]) {
       const cfg = readFileSync(join(HERE, "../../", f), "utf8");
       expect(cfg, `${f} does not declare FEELING_LINE_MODE`).toContain('FEELING_LINE_MODE');
-      expect(cfg).toContain('"shadow"');
+      // Live since R8 (697e0e3, 10-26); revert is `shadow`. Either is a valid declared mode.
+      expect(cfg).toMatch(/FEELING_LINE_MODE\s*=\s*"(?:off|shadow|live)"/);
     }
   });
 

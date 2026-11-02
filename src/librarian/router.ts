@@ -136,6 +136,30 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  { pattern_key: "voice_lesson_decide",
+    regex: /^(?:please\s+)?(?:approve|reject)\s+(?:the\s+)?voice\s+lesson\s+[0-9a-f-]{6,}\b/i,
+    note: "Voice lessons (mig 0159): Raziel's approve/reject of a staged lesson, by id." },
+  { pattern_key: "voice_lessons_list",
+    regex: /^(?:please\s+)?(?:(?:list|show)\s+(?:the\s+|my\s+|staged\s+)?voice\s+lessons|(?:staged\s+)?voice\s+lessons)\s*[?.!]?$/i,
+    note: "Voice lessons: read-only list of the staged queue." },
+  { pattern_key: "companion_notes_read",
+    regex: /^(?:please\s+)?(?:read|show|list|check|get|fetch|pull|see|open|what(?:'s|\s+is|\s+did|\s+has)?)\b[\s\S]{0,80}?\bnotes?\b[\s\S]{0,60}?\b(?:from|by)\s+(?:drevan|cypher|gaia|dre|cy)\b/i,
+    note: "2026-10-31: 'read my newest inter-companion note from Drevan about X' hit companion_note_add's 'companion note' trigger and was saved as a journal entry. A read verb + note(s) + from <companion> is a read." },
+  { pattern_key: "memory_unpin",
+    regex: /^(?:please\s+)?unpin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
+    note: "Pins (mig 0148): anchored so 'unpin the note about X' can never be read as a note write." },
+  { pattern_key: "graph_unlink",
+    regex: UNLINK_GUARD_RE,
+    note: "M4 our links (mig 0151): 'unlink <kind>: ...' or 'unlink link <id>'. Built from the grammar's own kind words (graph/links.ts), so 'unlink yourself from the loop' still goes to the classifier." },
+  { pattern_key: "graph_links_read",
+    regex: /^(?:please\s+)?(?:show\s+)?my\s+links\s*[.?!]?$/i,
+    note: "M4: the bare 'my links' the witness teaches, anchored whole so 'save my links to the vault' is not read as this." },
+  { pattern_key: "graph_link",
+    regex: LINK_GUARD_RE,
+    note: "M4 our links (mig 0151): 'link <kind>: <words> to <kind>: <words>: why'. Anchored so a quote mentioning a note, a tension or a journal can never fall to that write's trigger." },
+  { pattern_key: "memory_pin",
+    regex: /^(?:please\s+)?pin\s+(?:(?:my|this|that|the)\s+)?(?:memory|conclusion|note)\b/i,
+    note: "Pins (mig 0148): anchored so 'pin the note about X' can never fall to the earlier 'note about' trigger." },
   { pattern_key: "creature_interact",
     regex: /^(?:(?:please|go|let\s+me|i(?:'ll|\s+will|\s+want\s+to)?)\s+)?(?:feed|play\s+with|pet|give|gift|bring|talk\s+to|speak\s+to|tend(?:\s+to)?|visit|sit\s+with|note\s+to|say\s+.{1,200}?\s+to)\s+sol\b|^(?:give|gift|bring)\b.{0,200}?\bto\s+sol\b/i,
     note: "Tending Sol by plain verb: 'give Sol a shiny word' (the skill's own example) and 'pet'/'visit'/'note to Sol' missed the trigger sweep entirely, and 'sit with Sol' was stolen by note_sit (2026-09-28)." },
@@ -145,6 +169,21 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "care_hold_clear",
     regex: /^(?:please\s+)?(?:(?:clear|end|lift|turn\s+off)\s+(?:the\s+)?care\s+hold|care\s+hold\s+(?:clear|off|end))\b/i,
     note: "B32: his 'good now' relayed by the companion clears care_hold; anchored like care_hold_start." },
+  { pattern_key: "departure_declare",
+    regex: /^(?:please\s+)?declare\s+(?:a\s+|my\s+)?departure\b/i,
+    note: "Declared departures (mig 0157): anchored so the declarer's reason text can never be routed by a trigger it happens to contain." },
+  { pattern_key: "departure_end",
+    regex: /^(?:please\s+)?(?:end|close)\s+(?:my\s+|the\s+)?departure\s*[.!]?$/i,
+    note: "Declared departures: the declarer ends their own. Whole request, so 'end the departure debate' is not this." },
+  { pattern_key: "departure_object",
+    regex: /^(?:please\s+)?object\s+to\s+[A-Za-z]+?(?:'s|s')?\s+departure\b/i,
+    note: "Declared departures: a sibling's objection is recorded and named, never a gate." },
+  { pattern_key: "departure_list",
+    regex: /^(?:please\s+)?(?:what\s+departures\s+are\s+open|(?:list|show)\s+(?:the\s+|my\s+|open\s+)?departures|open\s+departures|departures\s+open)\s*[?.!]?$/i,
+    note: "Declared departures: read-only list." },
+  { pattern_key: "departure_stand_down",
+    regex: /^["'`*_\s]*back\s+inside\s+the\s+line[\s"'`*_.!]*$/i,
+    note: "Raziel's end-all phrase, whole sentence only (ruling 2026-11-01); a longer sentence containing it is not the phrase." },
   { pattern_key: "ledger_keep",
     regex: new RegExp(`^keep\\s+(?:the\\s+|this\\s+)?ledger(?:\\s+entry)?\\s+${LEDGER_ID_TOKEN}(?![A-Za-z0-9_-])\\s*(?::|$)`, "i"),
     note: "Ledger lane (mig 0134): 'keep ledger <id>' / 'keep ledger <id>: <my words>' -- anchored so the companion's own words after the colon can never be routed by a trigger they happen to contain." },
@@ -244,6 +283,25 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   { pattern_key: "set_model",
     regex: /^set\s+model\s+\S+/i,
     note: "Model set must be anchored to prevent 'get model' trigger stealing it via substring" },
+  { pattern_key: "task_add",
+    regex: /^(?:please\s+)?(?:set\s+(?:up\s+)?(?:a|an|another|new)\s+(?:new\s+)?tasks?\b|(?:push|put|move|bump)\b[^.\n]{0,60}?\b(?:in)?to\s+(?:my|the)\s+(?:task\s+list|tasks?)\s*[.!]?$)/i,
+    note: "2026-10-29 (L-1): add phrasings that open with an edit verb ('set a new task...', 'set up a task...', 'push this to my tasks') must beat the task-edit guard below" },
+  { pattern_key: "task_update_status",
+    regex: /^(?:please\s+)?(?:update|edit|change|reschedule|move|rename|set|push|bump)\b[^.\n]{0,80}?\btasks?\b/i,
+    note: "2026-10-19: 'change the due date of the task for Vireth' hit task_add's 'task for' (earlier in the sweep) and made a duplicate; an edit verb at the head is an edit" },
+  // Topic lookups that used to dead-end (2026-10-13). Cypher, in a Claude.ai thread, could not find Abby:
+  // "what happened with Abby?" returned the last handover (get_handover's bare "what happened"), "what
+  // has Drevan written about Abby" returned the unknown witness. Bare "what happened" / "catch me up"
+  // stay the handover; only a NAMED subject turns it into a search.
+  { pattern_key: "sb_search",
+    regex: /^what(?:'?s|\s+has)?\s+happen(?:ed|ing)\s+(?:with|to)\s+(?!me\b|us\b|you\b|last\s+session\b|the\s+last\s+session\b)\S/i,
+    note: "'what happened with/to <subject>' is a topic search, not the handover (bare 'what happened' still is)" },
+  { pattern_key: "sb_search",
+    regex: /^what\s+(?:has|have|did)\s+(?:drevan|dre|cypher|cy|gaia|the\s+triad|everyone|y'?all|you\s+all)\s+(?:written|wrote|write|said|say|noted|note|logged|log|captured|capture|carried|carry)\s+(?:about|on)\s+\S/i,
+    note: "Reading what a sibling wrote about a subject: their kept journal and continuity notes are in the vault index" },
+  { pattern_key: "sb_search",
+    regex: /^recall\s+(?:everything\s+|anything\s+|what\s+we\s+know\s+)?(?:about|on)\s+\S/i,
+    note: "'recall about <subject>' is a topic search; bare 'recall' stays recent_recall (own recent writes)" },
 ];
 
 // ── Fast-path matcher ──────────────────────────────────────────────────────
@@ -372,9 +430,14 @@ import {
 import {
   execMemoryRelease, execMemoryReleaseUndo, execMemoryReleasesRead, execBudgetRead,
 } from "./executors/forgetting.js";
+import { execMemoryPin, execMemoryUnpin, execMemoryPinsRead } from "./executors/pinning.js";
+import { execGraphLink, execGraphUnlink, execGraphLinksRead } from "./executors/links.js";
+import { LINK_GUARD_RE, UNLINK_GUARD_RE } from "../graph/links.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
+import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
+import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
 
 // ── Plural executors ─────────────────────────────────────────────────────────
 import {
@@ -454,6 +517,15 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 
   // Chosen forgetting (consequence layer C7, mig 0123). Archive-never-delete, 30d reversible,
   // reason required; canon/kernel structurally unreachable.
+  // Pins (mig 0148): an orient slot + immunity from cap/compression/demote; never heat.
+  memory_pin: execMemoryPin,
+  memory_unpin: execMemoryUnpin,
+  memory_pins_read: execMemoryPinsRead,
+  // Our own links (M4, mig 0151): any visible node to any visible node, writer = the mind; unlink
+  // only by the writer with someone in the room (graph/links.ts).
+  graph_link: execGraphLink,
+  graph_unlink: execGraphUnlink,
+  graph_links_read: execGraphLinksRead,
   memory_release: execMemoryRelease,
   memory_release_undo: execMemoryReleaseUndo,
   memory_releases_read: execMemoryReleasesRead,
@@ -473,6 +545,15 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   // B32 bad-night presence (mig 0143): the companion sets / clears care_hold on his word.
   care_hold_start: execCareHoldStart,
   care_hold_clear: execCareHoldClear,
+
+  // Declared departures (T4a, mig 0157).
+  departure_declare: execDepartureDeclare,
+  departure_end: execDepartureEnd,
+  departure_object: execDepartureObject,
+  departure_list: execDepartureList,
+  voice_lessons_list: execVoiceLessonsList,
+  voice_lesson_decide: execVoiceLessonDecide,
+  departure_stand_down: execDepartureStandDown,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,

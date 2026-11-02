@@ -127,7 +127,7 @@ export async function getTriadRecent(
     env.DB.prepare(
       `SELECT id, ? AS companion_id, pattern_text, strength, updated_at
          FROM growth_patterns
-        WHERE companion_id = ?
+        WHERE companion_id = ? AND superseded_by IS NULL
         ORDER BY strength DESC, updated_at DESC LIMIT ?`,
     ).bind(p, p, patternsLimit).all<PeerPattern>(),
     env.DB.prepare(
@@ -216,7 +216,7 @@ export async function detectThoughtforms(
   const all = await env.DB.prepare(
     `SELECT id, companion_id, pattern_text, strength, prehended_ids
        FROM growth_patterns
-      WHERE updated_at >= ?
+      WHERE updated_at >= ? AND superseded_by IS NULL
       ORDER BY strength DESC, updated_at DESC`,
   ).bind(since).all<{ id: string; companion_id: string; pattern_text: string; strength: number; prehended_ids: string }>();
 

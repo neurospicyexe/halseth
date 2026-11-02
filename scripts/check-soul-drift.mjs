@@ -26,7 +26,7 @@ const CANDIDATES = {
 // where it is guarded now.
 const INVARIANTS = [
   ["orient-first gate",     /open my session/i, /first action|before you answer|orient first/i],
-  ["pronoun law (Raziel)",  /they\/them or he\/him/i, /never\s+she\/her/i],
+  ["pronoun law (Raziel)",  /they\/them,? only/i, /never\s+he\/him/i, /never\s+she\/her/i],  // they/them ONLY, ruled 2026-10-07
   ["stop phrases",          /pause spiral touch|ritual reset|off the altar|admire mode/i],
   ["mind-is-Halseth",       /ask_librarian/i, /halseth/i],
   ["substrate continuity",  /substrate/i],

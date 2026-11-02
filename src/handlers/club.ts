@@ -8,6 +8,7 @@
 //   POST  /mind/club/round         -- open a round (409 if one is open)
 //   POST  /mind/club/recommend     -- recommend into the gathering round (replace-on-repeat)
 //   POST  /mind/club/vote          -- vote (one per voter per round; never your own pick)
+//   DELETE /mind/club/vote        -- withdraw a vote while the round accepts votes
 //   POST  /mind/club/abstain       -- record a vote that could not land (0099)
 //   PATCH /mind/club/:id/status    -- legal transitions only: gathering->voting->active->closed
 //   POST  /mind/club/:id/discuss   -- reflection on an active/closed round
@@ -217,6 +218,38 @@ export async function postClubVote(request: Request, env: Env): Promise<Response
     return json({ voted: true, round_id: round.id });
   } catch (err) {
     console.error("[mind/club] vote error", { error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
+// DELETE /mind/club/vote
+// Withdraw a voter's vote in the current round (Hearth Club page: remove or
+// change with undo). Idempotent: no vote to remove is withdrawn:false, not an
+// error. Touches only club_votes; abstentions and recommendations stay.
+export async function deleteClubVote(request: Request, env: Env): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  let body: { voter?: string };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return json({ error: "voter must be one of cypher, drevan, gaia, raziel" }, 400);
+  }
+  const voter = body?.voter ?? "";
+  if (!VALID_MEMBERS.has(voter)) {
+    return json({ error: "voter must be one of cypher, drevan, gaia, raziel" }, 400);
+  }
+  try {
+    const round = await currentRound(env);
+    if (!round || (round.status !== "gathering" && round.status !== "voting")) {
+      return json({ error: "no round is accepting votes" }, 409);
+    }
+    const res = await env.DB.prepare(
+      "DELETE FROM club_votes WHERE round_id = ? AND voter = ?"
+    ).bind(round.id, voter).run();
+    return json({ withdrawn: (res.meta?.changes ?? 0) > 0, round_id: round.id });
+  } catch (err) {
+    console.error("[mind/club] vote withdraw error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
   }
 }

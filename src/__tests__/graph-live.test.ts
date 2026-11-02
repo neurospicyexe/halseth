@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import { edgeForNote, edgeForNoteRef, edgeForConclusionSupersede, edgeForResumedFrom } from "../graph/live.js";
 import { buildNoteEdges, buildSupersedesEdges } from "../graph/rebuild.js";
 import { registerSessionTools } from "../mcp/tools/session.js";
+import { loadOrientData, loadSessionData } from "../mcp/tools/session_load.js";
 import type { Env } from "../types.js";
 
 // ── 1. inter_companion_notes -> 'sent_to' / 'references', byte-identical to rebuild ────────────
@@ -178,5 +179,55 @@ describe("halseth_session_open: 'resumed_from' edge written iff prior_handover_i
 
     const edgeInsert = calls.find((c) => c.sql.includes("INSERT OR IGNORE INTO graph_edges"));
     expect(edgeInsert!.bound[5]).toBe("system"); // writer column
+  });
+});
+
+// ── 3b. the librarian session-open paths write the same edge (2026-10-27 graph audit) ────────────
+// halseth_session_open was the ONLY writer and has opened 1 session ever on prod; loadOrientData and
+// loadSessionData mark the same packet returned and wrote nothing, so the live lane sat at 0 rows.
+
+function permissiveEnv(): { env: Env; calls: StmtCall[] } {
+  const calls: StmtCall[] = [];
+  const stmt = (sql: string, bound: unknown[] = []) => ({
+    bind: (...b: unknown[]) => stmt(sql, b),
+    async run() { calls.push({ sql, bound }); return { meta: { changes: 1 } }; },
+    // The post-insert existence check must see the session; every other read is empty.
+    async first() { return sql.startsWith("SELECT id FROM sessions WHERE id") ? { id: bound[0] } : null; },
+    async all() { return { results: [] }; },
+  });
+  const env = {
+    DB: {
+      prepare: (sql: string) => stmt(sql),
+      async batch(stmts: Array<{ run: () => Promise<unknown> }>) {
+        const results = [];
+        for (const s of stmts) results.push(await s.run());
+        return results;
+      },
+    },
+  } as unknown as Env;
+  return { env, calls };
+}
+
+describe.each([
+  ["loadOrientData", loadOrientData],
+  ["loadSessionData", loadSessionData],
+] as const)("%s: 'resumed_from' edge written iff prior_handover_id is present", (_name, load) => {
+  it("writes the live edge from the new session to the packet, in the same batch as the returned mark", async () => {
+    const { env, calls } = permissiveEnv();
+    await load(env, { front_state: "raziel", companion_id: "drevan", prior_handover_id: "handover-old-2" } as never).catch(() => undefined);
+    const edgeInsert = calls.find((c) => c.sql.includes("INSERT OR IGNORE INTO graph_edges"));
+    expect(edgeInsert).toBeDefined();
+    const [srcTable, srcId, dstTable, dstId, edgeType, writer, provenance] = edgeInsert!.bound as string[];
+    expect([srcTable, dstTable, dstId, edgeType, writer, provenance]).toEqual(
+      ["sessions", "handover_packets", "handover-old-2", "resumed_from", "drevan", "live"],
+    );
+    expect(srcId).toBe(calls.find((c) => c.sql.includes("INSERT INTO sessions"))!.bound[0]);
+    expect(calls.some((c) => c.sql.includes("UPDATE handover_packets SET returned"))).toBe(true);
+  });
+
+  it("writes no edge without prior_handover_id", async () => {
+    const { env, calls } = permissiveEnv();
+    await load(env, { front_state: "raziel", companion_id: "drevan" } as never).catch(() => undefined);
+    expect(calls.some((c) => c.sql.includes("INSERT OR IGNORE INTO graph_edges"))).toBe(false);
   });
 });

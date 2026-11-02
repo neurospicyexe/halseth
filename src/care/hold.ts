@@ -4,7 +4,7 @@
 //
 // care_hold has no column. It is derived, here and nowhere else, from three sources inside the last
 // CARE_HOLD_HOURS (12h):
-//   low_spoons        care_actions rows (the hourly tick's firing)
+//   low_spoons        care_actions rows (the hourly tick's firing), unless a check-in undo voided them (mig 0155)
 //   meds_said_missed  med_answers rows with outcome = 'missed' (he SAID he missed a dose, mig 0141)
 //   owner_said        care_hold_events kind = 'start' (mig 0143: "bad night", or a companion on his word)
 // ...minus everything at or before the newest care_hold_events kind = 'clear'. His clear outranks the
@@ -20,6 +20,8 @@
 
 import type { Env } from "../types.js";
 import { CARE_HOLD_HOURS, CARE_HOLD_RULES, CARE_HOLD_ACTION_RULES, type CareHoldRule } from "./rules.js";
+import { onlyIf, schemaGap } from "./schema-gap.js";
+import { endOpenOnCareHold } from "../departures/core.js";
 
 export interface CareHoldState {
   care_hold: boolean;
@@ -33,17 +35,25 @@ export const NO_HOLD: CareHoldState = { care_hold: false, care_hold_reason: [], 
 
 const ACTION_RULES_SQL = CARE_HOLD_ACTION_RULES.map(r => `'${r}'`).join(", ");
 
-/** The full read (0143 applied). ?1 = window cutoff ISO. Exported so a real-schema test runs this text. */
-export const CARE_HOLD_SQL = `
+/** care_actions firings a check-in undo voided (mig 0155) are not firings. */
+const NOT_VOIDED = " AND voided_at IS NULL";
+
+const fullHoldSql = (voidFilter: string) => `
   WITH clr AS (SELECT COALESCE(MAX(at), '') AS at FROM care_hold_events WHERE kind = 'clear'),
   f AS (
-    SELECT rule, detected_at AS at FROM care_actions WHERE rule IN (${ACTION_RULES_SQL}) AND detected_at > ?1
+    SELECT rule, detected_at AS at FROM care_actions WHERE rule IN (${ACTION_RULES_SQL}) AND detected_at > ?1${voidFilter}
     UNION ALL
     SELECT 'meds_said_missed' AS rule, answered_at AS at FROM med_answers WHERE outcome = 'missed' AND answered_at > ?1
     UNION ALL
     SELECT 'owner_said' AS rule, at FROM care_hold_events WHERE kind = 'start' AND at > ?1
   )
   SELECT f.rule AS rule, MIN(f.at) AS since FROM f, clr WHERE f.at > clr.at GROUP BY f.rule`;
+
+/** The full read (0155 applied). ?1 = window cutoff ISO. Exported so a real-schema test runs this text. */
+export const CARE_HOLD_SQL = fullHoldSql(NOT_VOIDED);
+
+/** A DB before 0155 (no voided_at): nothing can have been voided yet. */
+const CARE_HOLD_SQL_PRE_0155 = fullHoldSql("");
 
 /** A DB before 0143 (no care_hold_events): no owner start, no clear. */
 const CARE_HOLD_SQL_PRE_0143 = `
@@ -67,16 +77,19 @@ export function holdFromRows(rows: ReadonlyArray<{ rule: string; since: string |
 }
 
 /**
- * The hold, as of nowMs. Falls back through the pre-0143 and pre-0141 shapes (so a deploy ahead of
- * the migration loses only the parts the schema cannot hold yet), and throws only if care_actions
- * itself cannot be read: callers decide what an unreadable hold means for them.
+ * The hold, as of nowMs. Falls back through the pre-0155, pre-0143 and pre-0141 shapes (so a deploy ahead of
+ * the migration loses only the parts the schema cannot hold yet), and throws on any other error, or if
+ * care_actions itself cannot be read: callers decide what an unreadable hold means for them.
  */
 export async function readCareHold(db: D1Database, nowMs = Date.now()): Promise<CareHoldState> {
   const cutoff = new Date(nowMs - CARE_HOLD_HOURS * 3_600_000).toISOString();
   const run = (sql: string) => db.prepare(sql).bind(cutoff).all<{ rule: string; since: string | null }>();
+  // Each step down only on a missing column or table. A transient error is rethrown: the pre-0155
+  // text would re-admit voided firings, so it must never stand in for a read that merely failed.
   const res = await run(CARE_HOLD_SQL)
-    .catch(() => run(CARE_HOLD_SQL_PRE_0143))
-    .catch(() => run(CARE_HOLD_SQL_PRE_0141));
+    .catch(onlyIf(schemaGap, () => run(CARE_HOLD_SQL_PRE_0155)))
+    .catch(onlyIf(schemaGap, () => run(CARE_HOLD_SQL_PRE_0143)))
+    .catch(onlyIf(schemaGap, () => run(CARE_HOLD_SQL_PRE_0141)));
   return holdFromRows(res.results ?? []);
 }
 
@@ -112,6 +125,8 @@ export async function writeHoldEvent(
     `INSERT INTO care_hold_events (id, kind, rule, source, companion_id, at) VALUES (?, ?, ?, ?, ?, ?)`,
   ).bind(id, input.action, input.action === "start" ? "owner_said" : null, input.source, input.companion, at).run();
   const state = await readCareHold(env.DB, nowMs);
+  // Declared departures (mig 0157): the hold starting ends every open one (end_reason care_hold). Never throws.
+  if (input.action === "start" || state.care_hold) await endOpenOnCareHold(env.DB, nowMs);
   console.log(`[b32] care_hold ${input.action} by ${input.source}${input.companion ? `/${input.companion}` : ""} -> hold=${state.care_hold} reason=${state.care_hold_reason.join(",") || "-"}`);
   return { ok: true, action: input.action, id, at, state };
 }

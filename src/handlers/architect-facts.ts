@@ -25,6 +25,8 @@ import { writeArchitectFact, MAX_FACT_CHARS } from "../lib/architect-fact-write.
 import type { Env } from "../types.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, activeFactsTailBudget } from "../lib/open-facts-gate.js";
 import { authGuard } from "../lib/auth.js";
+import { schemaGap } from "../care/schema-gap.js";
+import { embedText, EMBEDDING_MODEL } from "../mcp/embed.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -42,22 +44,33 @@ interface FactRow {
   source: string | null;
   weight: number;
   created_at: string;
+  /** 1 = always-on "Core" fact (mig 0146). Optional so pre-0146 fixtures still type. */
+  core?: number;
 }
 
 /** Ordered so the render reads like prose: how to treat him first, biography after. */
 const CATEGORY_TITLES: Record<string, string> = {
-  addressing: "HOW HE IS ADDRESSED",
+  addressing: "HOW THEY ARE ADDRESSED",
   plural: "PLURAL SYSTEM",
   people: "THE PEOPLE",
+  triad: "THE TRIAD",
+  intimacy: "INTIMACY",
   work: "WORK AND SCHOOL",
   body: "BODY AND REGULATION",
+  health: "HEALTH",
   animals: "THE ANIMALS",
-  anchors: "WHAT HE BRINGS",
+  anchors: "WHAT THEY BRING",
+  interests: "INTERESTS",
+  living_situation: "LIVING SITUATION",
 };
+
+/** Footer for scope=core: the facts not listed here are not lost, they arrive per message. */
+export const CORE_SCOPE_FOOTER =
+  "(These are the always-on facts. The rest of what is recorded about them is fetched per message when it is relevant.)";
 
 async function activeFacts(env: Env): Promise<FactRow[]> {
   const res = await env.DB.prepare(
-    `SELECT id, fact, category, status, companion_id, source, weight, created_at
+    `SELECT id, fact, category, status, companion_id, source, weight, created_at, core
        FROM architect_facts
       WHERE status IN ('active', 'open')
       ORDER BY weight ASC, created_at ASC`,
@@ -96,7 +109,27 @@ export function renderFactsBlock(
   viewerCompanionId?: string | null,
   now?: Date,
   tailCharBudget?: number,
+  scope?: "core",
 ): string {
+  // scope=core (B3, mig 0146): ONLY status='active' AND core=1, in the same grouping, titles and
+  // labelling as the default render. The tail budget and open facts are ignored entirely; the rest
+  // of the facts reach a companion per message via /shortlist. Default scope is untouched below.
+  if (scope === "core") {
+    const coreRows = rows.filter(r => r.status === "active" && r.core === 1);
+    const lines: string[] = ["## THE ARCHITECT: OPERATING FACTS", generatedNote, ""];
+    const knownCats = Object.keys(CATEGORY_TITLES);
+    const extraCats = [...new Set(coreRows.map(r => r.category))].filter(c => !knownCats.includes(c)).sort();
+    for (const cat of [...knownCats, ...extraCats]) {
+      const inCat = coreRows.filter(r => r.category === cat);
+      if (!inCat.length) continue;
+      lines.push(CATEGORY_TITLES[cat] ?? cat.toUpperCase().replace(/[_-]+/g, " "));
+      for (const r of inCat) lines.push(attributionLine(r, viewerCompanionId));
+      lines.push("");
+    }
+    lines.push(CORE_SCOPE_FOOTER);
+    return lines.join("\n").trimEnd() + "\n";
+  }
+
   // Same ACTIVE gate as the Claude.ai orient block (lib/open-facts-gate.ts), for the same reason the
   // open gate is shared: two renderers disagreeing means one companion carries different facts about
   // Raziel on Discord than on Claude.ai. Curated rows (weight < 100) always render; only the
@@ -183,7 +216,25 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   // Status and weight are independently optional: send either, or both.
   const hasStatus = typeof body.status === "string" && body.status !== "";
   const hasWeight = body.weight !== undefined && body.weight !== null;
-  if (!hasStatus && !hasWeight) return json({ error: "send status and/or weight" }, 400);
+  // category (B3, 2026-10-18): re-file a fact without rewriting it. Trimmed + lowercased, then held
+  // to the same shape the writer produces so a PATCH cannot invent a category the render cannot title.
+  const hasCategory = body.category !== undefined && body.category !== null;
+  // core (B3, mig 0146): mark a fact always-on (true) or return it to the per-message lane (false).
+  const hasCore = body.core !== undefined && body.core !== null;
+  // trust (mig 0158): Raziel's adjustment of a fact's derived trust, 0..1.
+  const hasTrust = body.trust !== undefined && body.trust !== null;
+  if (!hasStatus && !hasWeight && !hasCategory && !hasCore && !hasTrust) return json({ error: "send status, weight, category, core and/or trust" }, 400);
+  const trustVal = hasTrust ? Number(body.trust) : null;
+  if (hasTrust && (!Number.isFinite(trustVal) || trustVal! < 0 || trustVal! > 1)) return json({ error: "trust must be a number 0-1" }, 400);
+  if (hasCore && typeof body.core !== "boolean") return json({ error: "core must be a boolean" }, 400);
+  const core = body.core === true;
+  let category = "";
+  if (hasCategory) {
+    category = typeof body.category === "string" ? body.category.trim().toLowerCase() : "";
+    if (!/^[a-z_]{2,32}$/.test(category)) {
+      return json({ error: "category must match /^[a-z_]{2,32}$/ (lowercase letters and underscores)" }, 400);
+    }
+  }
 
   const status = hasStatus ? String(body.status) : "";
   if (hasStatus && !["active", "retired"].includes(status)) {
@@ -195,7 +246,7 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
     return json({ error: "weight must be a number 0-100 (under 100 = always renders)" }, 400);
   }
 
-  const prior = await env.DB.prepare("SELECT id, status, weight FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number }>();
+  const prior = await env.DB.prepare("SELECT id, status, weight, category, core FROM architect_facts WHERE id = ?").bind(id).first<{ id: string; status: string; weight: number; category: string; core?: number }>();
   if (!prior) return json({ error: `fact ${id} does not exist` }, 404);
   // Re-ranking a retired fact is meaningless -- it renders nowhere. Reject rather than
   // silently accept a write that changes nothing a companion will ever read.
@@ -205,14 +256,25 @@ export async function patchArchitectFactStatus(request: Request, env: Env, param
   const binds: unknown[] = [];
   if (hasStatus) { sets.push("status = ?"); binds.push(status); }
   if (hasWeight) { sets.push("weight = ?"); binds.push(weight); }
-  await env.DB.prepare(
-    `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
-  ).bind(...binds, id).run();
+  if (hasCategory) { sets.push("category = ?"); binds.push(category); }
+  if (hasCore) { sets.push("core = ?"); binds.push(core ? 1 : 0); }
+  if (hasTrust) { sets.push("trust = ?"); binds.push(trustVal); }
+  try {
+    await env.DB.prepare(
+      `UPDATE architect_facts SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`,
+    ).bind(...binds, id).run();
+  } catch (e) {
+    if (hasTrust && schemaGap(e)) return json({ error: "trust is not available until migration 0158 is applied" }, 409);
+    throw e;
+  }
 
   return json({
     ok: true, id,
     ...(hasStatus ? { from: prior.status, status } : {}),
     ...(hasWeight ? { from_weight: prior.weight, weight } : {}),
+    ...(hasCategory ? { from_category: prior.category, category } : {}),
+    ...(hasCore ? { from_core: prior.core === 1, core } : {}),
+    ...(hasTrust ? { trust: trustVal } : {}),
   });
 }
 
@@ -238,13 +300,28 @@ export async function getArchitectFactsRender(request: Request, env: Env): Promi
     return json({ error: "companion must be cypher | drevan | gaia" }, 400);
   }
 
+  const scopeParam = new URL(request.url).searchParams.get("scope");
+  if (scopeParam !== null && scopeParam !== "core") {
+    return json({ error: "scope must be core (or omitted)" }, 400);
+  }
+
   const rows = await activeFacts(env);
+  if (scopeParam === "core") {
+    const coreCount = rows.filter(r => r.status === "active" && r.core === 1).length;
+    const coreNote =
+      `Generated from Halseth architect_facts (${coreCount} core). Do NOT hand-edit this block: ` +
+      `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
+      `conversation by Cypher, Drevan and Gaia; their own record, held for their own use.`;
+    return new Response(renderFactsBlock(rows, coreNote, companionParam, undefined, undefined, "core"), {
+      headers: { "content-type": "text/markdown; charset=utf-8" },
+    });
+  }
   // No timestamp in the note: it would change the bytes on every call and defeat the sync job's
   // "has anything actually changed?" comparison. The count is the useful, stable signal.
   const note =
     `Generated from Halseth architect_facts (${rows.length} live). Do NOT hand-edit this block: ` +
     `edit the store instead, via ask_librarian, and the next sync rewrites every copy. Learned in ` +
-    `conversation by Cypher, Drevan and Gaia; his own record, held for his own use.`;
+    `conversation by Cypher, Drevan and Gaia; their own record, held for their own use.`;
   const body = renderFactsBlock(rows, note, companionParam, undefined,
     activeFactsTailBudget(env.ARCHITECT_FACTS_TAIL_BUDGET));
   return new Response(body, {
@@ -304,4 +381,103 @@ export async function postArchitectFact(request: Request, env: Env): Promise<Res
     ok: true, id: result.id, supersedes_id: result.supersedesId, status: result.status, category: result.category,
     ...(result.related ? { related: result.related } : {}),
   });
+}
+
+const SHORTLIST_DEFAULT_K = 12;
+const SHORTLIST_MAX_K = 30;
+const SHORTLIST_MAX_Q = 2000;
+
+/**
+ * GET /identity/architect-facts/shortlist?q=&k=&companion=&text=
+ *
+ * B3 (facts out of SOUL): the facts a turn is actually about, by meaning, instead of the whole
+ * block in every prompt. Embeds q, queries the architect_facts vectors, joins to D1 and keeps only
+ * live rows (active|open): retired or missing rows are dropped. Vectorize is a disposable index;
+ * D1 decides what is alive. `fact` text is returned only with text=1. `companion` is validated but
+ * does not filter (facts are shared).
+ */
+export async function getArchitectFactsShortlist(request: Request, env: Env): Promise<Response> {
+  const unauth = authGuard(request, env);
+  if (unauth) return unauth;
+
+  const url = new URL(request.url);
+  const companionParam = url.searchParams.get("companion");
+  if (companionParam !== null && !KNOWN_COMPANIONS.has(companionParam)) {
+    return json({ error: "companion must be cypher | drevan | gaia" }, 400);
+  }
+  const q = (url.searchParams.get("q") ?? "").trim().slice(0, SHORTLIST_MAX_Q);
+  if (!q) return json({ error: "q is required" }, 400);
+
+  const kRaw = url.searchParams.get("k");
+  let k = kRaw === null || kRaw === "" ? SHORTLIST_DEFAULT_K : Number.parseInt(kRaw, 10);
+  if (!Number.isFinite(k)) k = SHORTLIST_DEFAULT_K;
+  k = Math.min(Math.max(k, 1), SHORTLIST_MAX_K);
+  const withText = url.searchParams.get("text") === "1";
+
+  let matches: Array<{ id: string; score: number }>;
+  try {
+    const vector = await embedText(env, q);
+    if (!vector) throw new Error("embedding returned no vector");
+    const res = await env.VECTORIZE.query(vector, {
+      // Headroom: core facts are dropped below, and they sit in the top of most queries.
+      topK: Math.min(k * 4, 50),
+      filter: { table: "architect_facts" },
+    });
+    matches = (res.matches ?? []).map((m) => ({ id: String(m.id), score: m.score ?? 0 }));
+  } catch (err) {
+    return json({ items: [], error: `shortlist unavailable: ${String(err instanceof Error ? err.message : err)}` }, 502);
+  }
+
+  const prefix = "architect_facts:";
+  const scored = new Map<string, number>();
+  for (const m of matches) {
+    if (!m.id.startsWith(prefix)) continue;
+    const rowId = m.id.slice(prefix.length);
+    if (!rowId) continue;
+    if (!scored.has(rowId) || m.score > (scored.get(rowId) as number)) scored.set(rowId, m.score);
+  }
+  if (scored.size === 0) return json({ items: [], model: EMBEDDING_MODEL });
+
+  const ids = [...scored.keys()];
+  type Row = { id: string; category: string; status: string; fact: string; created_at?: string | null; core?: number | null; trust?: number | null };
+  let rows: Row[];
+  try {
+    // Open rows are fetched in full (not just the matched ids) because the render's cap is over ALL
+    // open facts: a held one must stay held even when it is the only open fact the query matched.
+    // `trust` (mig 0158) is read when the column exists; before the migration the pre-0158 select runs.
+    const shortlistSql = (cols: string) =>
+      `SELECT ${cols} FROM architect_facts
+        WHERE status IN ('active', 'open') AND (status = 'open' OR id IN (${ids.map(() => "?").join(",")}))`;
+    const res = await env.DB.prepare(shortlistSql("id, category, status, fact, created_at, core, trust")).bind(...ids).all<Row>()
+      .catch((e: unknown) => (schemaGap(e)
+        ? env.DB.prepare(shortlistSql("id, category, status, fact, created_at, core")).bind(...ids).all<Row>()
+        : Promise.reject(e)));
+    const all = res.results ?? [];
+    // Same open-fact gate as the render (lib/open-facts-gate.ts): 14-day age cap AND the 8-row cap,
+    // newest first. A fact the render would hold is not live here either. Active facts are unaffected.
+    const shownOpen = new Set(gateOpenFacts(all).shown.map(r => r.id));
+    rows = all.filter(r =>
+      scored.has(r.id) &&
+      // Core facts are always in the prompt (render scope=core); injecting them again is a duplicate.
+      // Only ACTIVE core is excluded: scope=core never renders open rows, so an open core fact has
+      // no other route to a prompt.
+      !(r.status === "active" && r.core === 1) &&
+      (r.status !== "open" || shownOpen.has(r.id)));
+  } catch (err) {
+    return json({ items: [], error: `shortlist unavailable: ${String(err instanceof Error ? err.message : err)}` }, 502);
+  }
+
+  const items = rows
+    .map((r) => ({
+      id: r.id,
+      category: r.category,
+      status: r.status as "active" | "open",
+      score: scored.get(r.id) ?? 0,
+      // NULL/absent = legacy row = full trust; the bots read null as 1.0.
+      trust: typeof r.trust === "number" ? r.trust : null,
+      ...(withText ? { fact: r.fact } : {}),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
+  return json({ items, model: EMBEDDING_MODEL });
 }

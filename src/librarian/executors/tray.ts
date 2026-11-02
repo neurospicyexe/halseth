@@ -68,7 +68,13 @@ export const TRAY_BATCH_MAX = 50;
 export const TRAY_FOOTER =
   'excerpts are cut at 200 chars -- "read draft <id>" for the full text + provenance; ' +
   'then "keep draft <id>" (or "keep draft <id>: <your words>") / "drop draft <id>"; ' +
-  `several at once: "drop drafts <id>, <id>, <id>" / "keep drafts <id>, <id>" (up to ${TRAY_BATCH_MAX})`;
+  `several at once: "drop drafts <id>, <id>, <id>" / "keep drafts <id>, <id>" (up to ${TRAY_BATCH_MAX}); ` +
+  // B4 (2026-10-27): the lint flags, the owner decides. Kept text is read back as memory.
+  // 10-30: Crash IS Raziel (10-29). This line used to say "Crash ... he/him", which read as the rule
+  // and contradicted the boot rule; they/them is always safe for Raziel under any name, and the 10-20
+  // ruling only says he/him is not wrong for Crash (pronoun-lint.ts flags she/her alone for Crash).
+  'pronoun_flags on a draft = a pronoun that may misgender someone (Raziel, also Crash, they/them, always safe -- never she/her; ' +
+  'Drevan, Cypher, Blue he/him; Gaia she/her). Read it: if it means someone else, keep it; if not, "keep draft <id>: <your words>" with it fixed, or drop it';
 
 export async function execTrayRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ limit?: number }>(ctx.req.context);
@@ -103,10 +109,15 @@ export async function execTrayDraftRead(ctx: ExecutorContext): Promise<ExecutorR
     ? "draft -- not memory yet; keep or drop it"
     : d.review_state === "kept"
       ? `kept${d.reviewed_at ? ` on ${d.reviewed_at}` : " (born kept)"} -- this is memory; re-checking, not deciding`
-      : `dropped${d.reviewed_at ? ` on ${d.reviewed_at}` : ""} -- never became memory; re-checking, not deciding`;
+      : d.review_state === "merged"
+        ? "merged -- a duplicate of another draft of the same moment (see that draft's evidence); not in your tray, not memory"
+        : `dropped${d.reviewed_at ? ` on ${d.reviewed_at}` : ""} -- never became memory; re-checking, not deciding`;
+  const evidenceLine = d.evidence.length > 0
+    ? `${d.evidence.length} merged duplicate${d.evidence.length === 1 ? "" : "s"} of this moment: ${d.evidence.map((e) => e.writer).join(", ")}`
+    : null;
   return {
     response_key: "data",
-    data: { state, archived: d.archived, draft: d },
+    data: { state, archived: d.archived, draft: d, ...(evidenceLine ? { evidence_line: evidenceLine } : {}) },
     count: 1,
   };
 }
@@ -185,7 +196,7 @@ async function reviewBatch(ctx: ExecutorContext, items: BatchItem[], verb: "keep
       r.reason === "bad_id" ? "not an id (full id or 8+ char prefix)"
       : r.reason === "ambiguous" ? `ambiguous prefix, ${r.matches.length}${r.matches.length >= 10 ? "+" : ""} matches -- use more of the id`
       : r.reason === "empty_content" ? "empty rewrite -- omit content to keep as written"
-      : r.reason === "already_reviewed" ? `already ${r.review_state}${r.reviewed_at ? ` on ${r.reviewed_at}` : " (born kept)"}`
+      : r.reason === "already_reviewed" ? `already ${r.review_state}${r.reviewed_at ? ` on ${r.reviewed_at}` : r.review_state === "merged" ? " (a duplicate of another draft of the same moment)" : " (born kept)"}`
       : r.reason === "archived" ? "archived (retracted or released), not in the tray"
       : r.reason === "rewrite_unavailable" ? "rewrite unavailable (mig 0133 pending)"
       : "not found or not yours";
@@ -227,7 +238,7 @@ async function review(ctx: ExecutorContext, decision: TrayDecision): Promise<Exe
     if (r.reason === "empty_content") return { error: "tray_keep_failed", reason: "a rewrite cannot be empty -- omit the colon to keep the draft as written" };
     if (r.reason === "already_reviewed") {
       // Pass 2 (2026-09-26): a decision is made once. Say what it was and when; do not re-decide.
-      const when = r.reviewed_at ? ` on ${r.reviewed_at}` : " (born kept -- it was never a draft)";
+      const when = r.reviewed_at ? ` on ${r.reviewed_at}` : r.review_state === "merged" ? " (a duplicate of another draft of the same moment; decide that one)" : " (born kept -- it was never a draft)";
       return {
         response_key: "witness",
         witness: `no change -- already ${r.review_state}${when} (${r.kind} ${r.id}); "read draft ${r.id}" to see it. ` +

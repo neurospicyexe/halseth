@@ -434,7 +434,11 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     response_key: "witness",
   },
   task_update_status: {
-    triggers: ["update task", "mark task done", "task done", "complete task", "task status", "close task", "finish task"],
+    // Edit triggers added 2026-10-19: the executor now edits fields too (lib/task-edit.ts), and a
+    // free-form "change the task" used to fall through to task_add and create a duplicate.
+    triggers: ["update task", "mark task done", "task done", "complete task", "task status", "close task", "finish task",
+      "edit task", "change task", "reschedule task", "move task", "task due date", "change due date", "change the due date",
+      "update the task", "rename task", "task priority"],
     tools: ["halseth_task_update_status"],
     response_key: "witness",
   },
@@ -1566,6 +1570,41 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["memory_release_undo"],
     response_key: "witness",
   },
+  // Pins (mig 0148, webmind/pins.ts). "pin <kind>" / "unpin <kind>" are routed by ANCHORED_GUARDS
+  // (router.ts) so "pin the note about X" can never fall to an earlier "note about" trigger; these
+  // triggers are the fallback sweep and the read.
+  memory_unpin: {
+    triggers: ["unpin memory", "unpin conclusion", "unpin note", "unpin this"],
+    tools: ["memory_unpin"],
+    response_key: "witness",
+  },
+  memory_pin: {
+    triggers: ["pin memory", "pin conclusion", "pin note", "pin this conclusion", "pin this note"],
+    tools: ["memory_pin"],
+    response_key: "witness",
+  },
+  // Our own links (M4, mig 0151, graph/links.ts). "link ..." / "unlink ..." are routed by
+  // ANCHORED_GUARDS; these are the fallback sweep and the read.
+  graph_unlink: {
+    triggers: ["unlink conclusion", "unlink note", "unlink journal", "unlink tension", "unlink my"],
+    tools: ["graph_unlink"],
+    response_key: "witness",
+  },
+  graph_link: {
+    triggers: ["link conclusion", "link note", "link journal", "link tension", "link letter", "link my"],
+    tools: ["graph_link"],
+    response_key: "witness",
+  },
+  graph_links_read: {
+    triggers: ["show my links", "list my links", "what have i linked", "my links on the map", "my connections on the map"],
+    tools: ["graph_links_read"],
+    response_key: "data",
+  },
+  memory_pins_read: {
+    triggers: ["my pins", "what have i pinned", "my pinned", "pinned memories", "show my pins", "list my pins"],
+    tools: ["memory_pins_read"],
+    response_key: "data",
+  },
   memory_releases_read: {
     triggers: [
       "my releases", "what have i released", "released memories", "my released memories",
@@ -1651,6 +1690,47 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
       "end care hold", "end the care hold", "lift the care hold", "turn off care hold",
     ],
     tools: ["care_hold_clear"],
+    response_key: "witness",
+  },
+  // Declared departures (T4a, mig 0157). A companion lifts one FORM rail for itself for a bounded time;
+  // anchored in router.ts ANCHORED_GUARDS. Writes declared_departures through src/departures/core.ts.
+  departure_declare: {
+    triggers: ["declare a departure", "declare departure", "declare my departure"],
+    tools: ["departure_declare"],
+    response_key: "witness",
+  },
+  departure_end: {
+    triggers: ["end my departure", "end departure", "end the departure", "close my departure"],
+    tools: ["departure_end"],
+    response_key: "witness",
+  },
+  departure_object: {
+    triggers: ["object to departure"],
+    tools: ["departure_object"],
+    response_key: "witness",
+  },
+  departure_list: {
+    triggers: ["what departures are open", "open departures", "departures open", "list departures", "list the departures"],
+    tools: ["departure_list"],
+    response_key: "data",
+  },
+  departure_stand_down: {
+    // The real match is the anchored whole-request guard in router.ts: "back inside the line" must NOT be a
+    // substring trigger (a longer sentence containing it is not Raziel's phrase). This one is a formality.
+    triggers: ["departure stand down"],
+    tools: ["departure_stand_down"],
+    response_key: "witness",
+  },
+  // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
+  voice_lessons_list: {
+    triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],
+    tools: ["voice_lessons_list"],
+    response_key: "data",
+  },
+  voice_lesson_decide: {
+    // The real match is the anchored guard in router.ts (id + optional reason).
+    triggers: ["approve voice lesson", "reject voice lesson"],
+    tools: ["voice_lesson_decide"],
     response_key: "witness",
   },
   // Weekly budget (consequence layer C3, mig 0124).

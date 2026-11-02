@@ -25,7 +25,9 @@
 // A renderer that can fail is a boot that can fail.
 
 import { relativeTime } from "../../webmind/relative-time.js";
+import { frontsOf } from "../../graph/people.js";
 import { gateOpenFacts, heldOpenFactsLine, gateActiveFacts, heldActiveFactsLine, FACT_ID_PREFIX_LEN } from "../../lib/open-facts-gate.js";
+import { formatMaterials, type Material } from "../../lib/pattern-materials.js";
 import { excerptWithProvenance, type HistoryChunk } from "./blocks.js";
 import { remediationHint } from "../../guardian/remediation.js";
 import { sbExtractContent } from "../backends/second-brain.js";
@@ -35,7 +37,7 @@ export interface SiblingLaneRow { motion_state: string | null; lane_spine: strin
 // Nullable where the MindState loader types them nullable (D13 cutover: these rows now arrive
 // from mind/blocks/growth.ts + oversight.ts rather than inline queries; same columns, defensive types).
 export interface GrowthJournalRow { entry_type: string; content: string; created_at: string }
-export interface GrowthPatternRow { pattern_text: string; strength: number | null }
+export interface GrowthPatternRow { pattern_text: string; strength: number | null; materials?: readonly Material[] }
 export interface ReflectionRow { reflection_text: string; created_at: string }
 export interface SeedRow { seed_type: string | null; content: string; priority: number | null }
 export interface ConfirmedDriftRow { drift_score: number; worst_basin: string | null; notes?: string | null; recorded_at: string }
@@ -57,7 +59,7 @@ export interface CollectionRow { title: string; kind: string; sparkle: number }
 export interface ForageRow { domain: string; title: string; gathered_at: string }
 export interface ConsumedForageRow { domain: string; title: string; consumed_at: string }
 export interface TripwireRow { trigger_text: string }
-export interface ListenRow { title: string; artist: string | null; created_at: string; reacted: string[] }
+export interface ListenRow { title: string; artist: string | null; created_at: string; reacted: string[]; media_type?: string | null }
 export interface GuardianFlagRow { id: string; severity: string; summary: string; flag_type: string }
 export interface MotifRowLite { display: string; recurrence_count: number }
 export interface ResurrectedMotifRow { display: string; last_seen: string }
@@ -145,7 +147,9 @@ export function growthBlock(input: {
     growthParts.push(`[Recognized patterns: ${patternRows.length}]`);
     for (const p of patternRows) {
       const snippet = p.pattern_text.length > 150 ? p.pattern_text.slice(0, 150) + "…" : p.pattern_text;
-      growthParts.push(`  • (strength ${p.strength}) «${snippet}»`);
+      // R18: the material list rides along so the next restatement can be checked against it.
+      const mats = formatMaterials(p.materials ?? []);
+      growthParts.push(`  • (strength ${p.strength}) «${snippet}»${mats ? ` [${mats}]` : ""}`);
     }
   }
   if (lastReflection) {
@@ -268,12 +272,15 @@ export function tripwireBlock(tripwires: readonly TripwireRow[]): string {
     : "";
 }
 
-/** Music actually heard, not referenced -- lets a session pick the thread back up. */
+/** Music actually heard (and, since 2026-10-23, videos actually read from their transcript), not
+ *  referenced -- lets a session pick the thread back up. A video says "watched", or the companion
+ *  remembers a transcript as a song it listened to. */
 export function listensBlock(recentListens: readonly ListenRow[]): string {
   return recentListens.length > 0
-    ? `\n[Recent listens]\n` + recentListens.map(l =>
-        `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""} (heard ${relativeTime(l.created_at)})${l.reacted.length > 0 ? `, heard by ${l.reacted.join(", ")}` : ""}`
-      ).join("\n")
+    ? `\n[Recent listens]\n` + recentListens.map(l => {
+        const verb = l.media_type === "video" ? "watched" : "heard";
+        return `• ${l.title}${l.artist ? ` -- ${l.artist}` : ""} (${verb} ${relativeTime(l.created_at)})${l.reacted.length > 0 ? `, ${verb} by ${l.reacted.join(", ")}` : ""}`;
+      }).join("\n")
     : "";
 }
 
@@ -650,6 +657,8 @@ export interface NeighborhoodEdgeRow {
   dst_id: string;
   edge_type: string;
   writer: string;
+  /** 0.23.0: a system-name link to Raziel's centre carries 'mechanical:front:<name>'. */
+  provenance?: string;
   created_at: string;
   hop: number;
 }
@@ -662,6 +671,13 @@ export interface NeighborhoodBlockOpts {
    *  of an edge has a label, its group is keyed per node and rendered by NAME ("mentions: Fargo -- 14
    *  notes from drevan") instead of by table; unlabeled edges keep the table-level grouping. */
   labels?: ReadonlyMap<string, string>;
+  /** M6: the seeds the traverse walked from (`table/id`, seed order). When present the block is read
+   *  FROM each seed outward (anchoredNeighborhoodBlock below), named by `nodes` instead of `labels`. */
+  seeds?: readonly string[];
+  /** M6: map-labeler names for nodes, keyed `table/id` (src/graph/labels.ts loadNeighborhoodNodes). */
+  nodes?: ReadonlyMap<string, NeighborhoodNodeLabel>;
+  /** M6: true for a table the labeler knows -- a node there that is absent from `nodes` was hidden. */
+  isLabeledTable?: (table: string) => boolean;
 }
 
 const NEIGHBORHOOD_MAX_LINES_DEFAULT = 6;
@@ -689,6 +705,14 @@ const NEIGHBORHOOD_TABLE_LABELS: Record<string, string> = {
   companions: "companion",
   watch_shelf: "show",
   obsession_shelf: "fixation",
+  // M5 lanes.
+  companion_projects: "project",
+  project_log: "project log",
+  wm_mind_threads: "thread",
+  wm_continuity_notes: "note",
+  graph_people: "person",
+  architect_facts: "fact",
+  companion_relational_state: "stance",
 };
 
 const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
@@ -706,7 +730,21 @@ const NEIGHBORHOOD_EDGE_VERBS: Record<string, string> = {
   // Pre-existing gap, closed here: 'resumed_from' is the one 'live'-provenance lane (written at
   // session open, src/graph/live.ts) and it never had a verb, so it rendered as the raw edge_type.
   resumed_from: "resumed from",
+  // M5 lanes.
+  concluded_in: "concluded in",
+  in_thread: "in thread",
+  logged_on: "log for",
+  about: "about",
+  toward: "toward",
 };
+
+/** M4 (mig 0151): a mind's own link, 'linked:<writer>', reads the same from either end and says whose
+ *  it is -- "linked by Drevan" -- so a boot never mistakes a sibling's connection for the system's. */
+function linkVerb(edgeType: string): string | undefined {
+  if (!edgeType.startsWith("linked:")) return undefined;
+  const w = edgeType.slice("linked:".length);
+  return `linked by ${w.charAt(0).toUpperCase()}${w.slice(1)}`;
+}
 
 /** First 8 chars only -- ids are never shown in full at orient; this is a pointer, not a lookup key. */
 function shortNeighborId(id: string): string {
@@ -729,7 +767,7 @@ interface NeighborhoodGroup {
  * The local structural neighborhood around whatever this boot already surfaced -- rendered, not
  * searched (hard law 4, graph-memory spec: "Orient is a contract, not search. It gains rendered
  * neighborhoods; it does not gain retrieval logic"). `neighborhoods` is MindState's
- * `graph.neighborhoods` (contract 0.11.0) -- already the output of a bounded, heat-gated D1 traverse
+ * `graph.neighborhoods` (contract 0.11.0) -- already the output of a bounded (not heat-gated) D1 traverse
  * (src/graph/traverse.ts::neighborhood); this function does no I/O and no ranking, only grouping and
  * truncation for display.
  *
@@ -754,6 +792,7 @@ export function neighborhoodBlock(
   opts: NeighborhoodBlockOpts = {},
 ): string {
   if (neighborhoods.length === 0) return "";
+  if (opts.seeds && opts.seeds.length > 0) return anchoredNeighborhoodBlock(neighborhoods, opts.seeds, opts);
   const maxLines = opts.maxLines ?? NEIGHBORHOOD_MAX_LINES_DEFAULT;
 
   const groups = new Map<string, NeighborhoodGroup>();
@@ -785,7 +824,7 @@ export function neighborhoodBlock(
   const lines: string[] = [];
   for (const g of sortedGroups) {
     if (lines.length >= maxLines) break;
-    const verb = NEIGHBORHOOD_EDGE_VERBS[g.edgeType] ?? g.edgeType;
+    const verb = linkVerb(g.edgeType) ?? NEIGHBORHOOD_EDGE_VERBS[g.edgeType] ?? g.edgeType;
     const label = NEIGHBORHOOD_TABLE_LABELS[g.table] ?? g.table;
     const srcLabel = NEIGHBORHOOD_TABLE_LABELS[g.srcTable] ?? g.srcTable;
     const line = g.dstLabel
@@ -797,6 +836,127 @@ export function neighborhoodBlock(
   }
 
   return lines.length > 0 ? "\n[Linked]\n" + lines.map(l => `• ${l}`).join("\n") : "";
+}
+
+// ── M6 (2026-10-28): the neighborhood, read from what this boot surfaced outward ─────────────────
+//
+// Measured on the 10-27 backup before this change: every companion's [Linked] block was three
+// "mentions: Fargo (show) -- N notes from <writer>" lines (one per writer) plus "linked session
+// c7537d2a" and "alongside: 3 notes" -- a fresh 60k-edge graph reaching us as one show and some
+// nouns. Now, when the caller passes the seeds (MindState graph.seeds, contract 0.22.0):
+//   * each line STARTS at a seed -- the conclusion, journal entry or show this boot already showed --
+//     and names what it links to, with the edge read in the right direction ("mentioned in", not
+//     "mentions", when the seed is the edge's dst);
+//   * nodes are NAMED by the map's labeler (src/graph/labels.ts loadNeighborhoodNodes), so a journal
+//     neighbor reads as its first words, not "notes"; a node the labeler hid (archived, superseded,
+//     not kept) is DROPPED, never shown by id;
+//   * a seed shows at most two neighbors, content first (a journal entry before a session row), with
+//     "+N more" for the rest, so one busy seed is one line, not the block.
+// This reverses the old "no content, ever" rule above on purpose (Raziel's M6, 2026-10-28): a label is
+// at most a 72-char opening of a row the companion can already read, under the same visibility rule
+// Hearth's map uses, and the whole ready_prompt still passes neutralizeRecalled.
+
+export interface NeighborhoodNodeLabel { label: string; owner?: string | null }
+
+const NEIGHBORHOOD_ANCHORED_LINE_CHARS = 200;
+const NEIGHBORHOOD_PER_ANCHOR = 2;
+/** Two neighbors plus the seed have to fit one line; the map labeler clips at 72, this view at 56. */
+const NEIGHBORHOOD_ANCHORED_LABEL_CHARS = 56;
+
+/** Edge verbs read from the dst side (the seed is the edge's dst). */
+const NEIGHBORHOOD_PASSIVE_VERBS: Record<string, string> = {
+  logged_in: "has",
+  supersedes: "superseded by",
+  sent_to: "received",
+  references: "referenced by",
+  holds_tension: "held by",
+  closed_with: "closed",
+  mentions: "mentioned in",
+  moved_by: "moved",
+  follows: "followed by",
+  alongside: "alongside",
+  resumed_from: "resumed by",
+  concluded_in: "produced",
+  in_thread: "holds",
+  logged_on: "logged",
+  about: "held in",
+  toward: "held in",
+};
+
+/** Neighbors that say little on their own; shown only after content-bearing ones. */
+const NEIGHBORHOOD_THIN_TABLES = new Set(["sessions", "autonomy_runs", "handover_packets", "companions"]);
+/** Tables whose label is the row's own words -- quoted so they read as an excerpt, not a title. */
+const NEIGHBORHOOD_QUOTED_TABLES = new Set([
+  "companion_journal", "companion_conclusions", "wm_continuity_notes", "commons_posts",
+  "autonomy_reflections", "relational_deltas", "companion_tensions", "companion_questions", "inter_companion_notes",
+]);
+
+function nodeText(key: string, table: string, id: string, nodes: ReadonlyMap<string, NeighborhoodNodeLabel> | undefined): string {
+  const n = nodes?.get(key);
+  if (!n) return `${NEIGHBORHOOD_TABLE_LABELS[table] ?? table} ${shortNeighborId(id)}`;
+  const label = n.label.length > NEIGHBORHOOD_ANCHORED_LABEL_CHARS
+    ? n.label.slice(0, NEIGHBORHOOD_ANCHORED_LABEL_CHARS - 1).trimEnd() + "…"
+    : n.label;
+  return NEIGHBORHOOD_QUOTED_TABLES.has(table) ? `"${label}"` : label;
+}
+
+function anchoredNeighborhoodBlock(
+  neighborhoods: readonly NeighborhoodEdgeRow[],
+  seeds: readonly string[],
+  opts: NeighborhoodBlockOpts,
+): string {
+  const maxLines = opts.maxLines ?? NEIGHBORHOOD_MAX_LINES_DEFAULT;
+  const seedIndex = new Map(seeds.map((k, i) => [k, i] as const));
+  const nodes = opts.nodes;
+  const hidden = (key: string, table: string) => !!opts.isLabeledTable?.(table) && !!nodes && !nodes.has(key);
+
+  interface Item { verb: string; key: string; table: string; id: string; writer: string; created_at: string; suffix?: string }
+  const anchors = new Map<string, { table: string; id: string; items: Item[]; seen: Set<string> }>();
+  for (const e of neighborhoods) {
+    const srcKey = `${e.src_table}/${e.src_id}`;
+    const dstKey = `${e.dst_table}/${e.dst_id}`;
+    const si = seedIndex.get(srcKey);
+    const di = seedIndex.get(dstKey);
+    if (si === undefined && di === undefined) continue; // hop-2 edge: not read from a seed
+    const anchorIsSrc = di === undefined || (si !== undefined && si <= di);
+    const [aKey, aTable, aId] = anchorIsSrc ? [srcKey, e.src_table, e.src_id] : [dstKey, e.dst_table, e.dst_id];
+    const [nKey, nTable, nId] = anchorIsSrc ? [dstKey, e.dst_table, e.dst_id] : [srcKey, e.src_table, e.src_id];
+    if (hidden(nKey, nTable) || hidden(aKey, aTable)) continue;
+    // ONE CENTRE (contract 0.23.0): a system name mentioned in a row is Raziel fronting, never a
+    // separate person. The front rides on the link and is SAID, every time, in words a literal model
+    // cannot misread: 'with Raziel, fronting as Magpie' -- never 'mentions: Magpie'.
+    const fronts = frontsOf(e.provenance);
+    let verb = linkVerb(e.edge_type) ?? (anchorIsSrc
+      ? (NEIGHBORHOOD_EDGE_VERBS[e.edge_type] ?? e.edge_type)
+      : (NEIGHBORHOOD_PASSIVE_VERBS[e.edge_type] ?? e.edge_type));
+    let suffix: string | undefined;
+    if (fronts.length > 0) {
+      verb = anchorIsSrc ? "with" : "fronting as " + fronts.join(" and ") + " in";
+      if (anchorIsSrc) suffix = `, fronting as ${fronts.join(" and ")}`;
+    }
+    const a = anchors.get(aKey) ?? anchors.set(aKey, { table: aTable, id: aId, items: [], seen: new Set() }).get(aKey)!;
+    if (a.seen.has(nKey)) continue;
+    a.seen.add(nKey);
+    a.items.push({ verb, key: nKey, table: nTable, id: nId, writer: e.writer, created_at: e.created_at, suffix });
+  }
+
+  const ordered = [...anchors.entries()].sort((x, y) => (seedIndex.get(x[0]) ?? 0) - (seedIndex.get(y[0]) ?? 0));
+  const lines: string[] = [];
+  for (const [aKey, a] of ordered) {
+    if (lines.length >= maxLines) break;
+    const items = [...a.items].sort((x, y) => {
+      const tx = NEIGHBORHOOD_THIN_TABLES.has(x.table) ? 1 : 0;
+      const ty = NEIGHBORHOOD_THIN_TABLES.has(y.table) ? 1 : 0;
+      if (tx !== ty) return tx - ty;
+      return x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0;
+    });
+    const shown = items.slice(0, NEIGHBORHOOD_PER_ANCHOR).map((it) =>
+      `${it.verb} ${nodeText(it.key, it.table, it.id, nodes)}${it.suffix ?? ""} (${it.writer} ${it.created_at.slice(5, 10)})`);
+    const more = items.length - shown.length;
+    const line = `${nodeText(aKey, a.table, a.id, nodes)} -- ${shown.join("; ")}${more > 0 ? `; +${more} more` : ""}`;
+    lines.push(line.length > NEIGHBORHOOD_ANCHORED_LINE_CHARS ? line.slice(0, NEIGHBORHOOD_ANCHORED_LINE_CHARS - 1) + "…" : line);
+  }
+  return lines.length > 0 ? "\n[Linked]\n" + lines.map((l) => `• ${l}`).join("\n") : "";
 }
 
 // ── Graph memory Phase 2, tranche 1 (docs/PLAN-graph-memory-phase-2-soma-provenance-2026-09-12.md) ──

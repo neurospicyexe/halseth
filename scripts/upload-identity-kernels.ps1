@@ -22,9 +22,15 @@ $halsethUrl = $halsethUrl.TrimEnd('/')
 $filesRoot = "C:\dev\CrashDev\NULLSAFE\2026_Current_Files\Must have files"
 
 $companionFiles = @{
-    cypher = "CYPHER_IDENTITY_v2.md"
+    cypher = "CYPHER_IDENTITY_v3.md"
     drevan = "DREVAN_IDENTITY_v2.md"
     gaia   = "GAIA_IDENTITY_v3.md"
+}
+
+# Operations files ride UNDER the identity in the same kernel (2026-10-16 canon pass: identity says who,
+# operations says how; the bundle keeps both, identity first). Absent = identity only.
+$companionOpsFiles = @{
+    cypher = "CYPHER_OPERATIONS_v1.md"
 }
 
 # Shared kernel: the Companion Constitution -- one consolidated charter every substrate carries.
@@ -78,7 +84,14 @@ foreach ($companion in $companionFiles.Keys) {
         continue
     }
     $md = Get-Content $path -Raw -Encoding UTF8
-    Send-Kernel -CompanionId $companion -KernelMd $md -SourceNote "$($companionFiles[$companion]) $today"
+    $note = $companionFiles[$companion]
+    if ($companionOpsFiles.ContainsKey($companion)) {
+        $opsPath = Join-Path $filesRoot $companionOpsFiles[$companion]
+        if (-not (Test-Path $opsPath)) { Write-Error "Operations file missing -- aborting ${companion}: $opsPath"; exit 1 }
+        $md = $md.TrimEnd() + "`n`n---`n`n" + (Get-Content $opsPath -Raw -Encoding UTF8)
+        $note = "$note + $($companionOpsFiles[$companion])"
+    }
+    Send-Kernel -CompanionId $companion -KernelMd $md -SourceNote "$note $today"
 }
 
 Write-Host "`nDone. Verify: GET $halsethUrl/identity/kernel/cypher/bundle"

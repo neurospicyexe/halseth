@@ -495,6 +495,9 @@ export async function sessionClose(env: Env, params: {
       // authored close saw an unchanged version, believed nothing had moved, and overwrote the
       // floats the companion had just set. COALESCE because legacy rows can hold NULL.
       assignments.push("updated_at = datetime('now')", "version = COALESCE(version, 0) + 1");
+      // mood_set_at (mig 0153): Hearth's "last said" age. Same instant as updated_at, and ONLY when the
+      // companion authored a mood word / compound_state in this close (floats alone never move it).
+      if (moodAuthored(assignments)) assignments.push("mood_set_at = datetime('now')");
       bindings.push(params.companionId);
       stmts.push(
         env.DB.prepare("INSERT OR IGNORE INTO companion_state (companion_id, updated_at) VALUES (?, datetime('now'))").bind(params.companionId)
@@ -898,6 +901,7 @@ export async function companionJournalAdd(
   note_text: string,
   tags?: string,
   source?: string,
+  sessionId?: string | null,
 ): Promise<{ id: string; created_at: string; deduped?: boolean; novelty?: { action: string; match_id?: string; score: number } }> {
   // Ledger lane (mig 0134): a retired clerk source is refused before the novelty gate spends anything.
   assertJournalSourceOpen(source);
@@ -932,7 +936,7 @@ export async function companionJournalAdd(
   // Imp tray (mig 0132): born `draft` when the source is the companion's own speech or a clerk's
   // note in its voice; recall serves `kept` only. journalInsert() applies the one birth rule.
   await journalInsert(env.DB, {
-    id, created_at: now, agent, note_text, tags: resolvedTags, session_id: null,
+    id, created_at: now, agent, note_text, tags: resolvedTags, session_id: sessionId ?? null,
     source: source ?? null, topic_tags: topicTags,
   }).run();
 
@@ -1160,6 +1164,11 @@ async function supersedeSomaGap(env: Env, companionId: string): Promise<void> {
   }
 }
 
+/** True when the assignment list writes current_mood or compound_state (the only columns mood_set_at tracks). */
+function moodAuthored(assignments: string[]): boolean {
+  return assignments.some((a) => a.startsWith("current_mood =") || a.startsWith("compound_state ="));
+}
+
 export async function updateCompanionState(
   env: Env,
   companionId: string,
@@ -1213,6 +1222,8 @@ export async function updateCompanionState(
   // COALESCE matches sessionClose's bump: a legacy row with a NULL version would otherwise stay
   // NULL forever on this path (NULL + 1 = NULL) and never become CAS-able.
   assignments.push("updated_at = datetime('now')", "version = COALESCE(version, 0) + 1");
+  // mood_set_at (mig 0153): stamped only when the companion authored current_mood / compound_state.
+  if (moodAuthored(assignments)) assignments.push("mood_set_at = datetime('now')");
   bindings.push(companionId);
 
   const updateStmt = env.DB.prepare(

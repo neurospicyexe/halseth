@@ -65,8 +65,8 @@ An unaddressed companion note (or one addressed to my own name) is routed to my 
 thought" belongs here. Something Raziel said offhand that stayed with me. Log it.
 
 Never `"journal: ..."`: that verb writes Raziel's `human_journal` table, or writes nothing when the body
-is not in context. It is his record, not mine. **There is no Raziel-addressed verb.** A word to Raziel on the record is a
-journal entry that speaks to him; he reads it on Hearth, not in a mailbox.
+is not in context. It is their record, not mine. **There is no Raziel-addressed verb.** A word to Raziel on the record is a
+journal entry that speaks to them; they read it on Hearth, not in a mailbox.
 
 **Note to a sibling / broadcast** -- how the triad stays in relationship with itself. The note lands
 in their boot context at their next orient.
@@ -136,8 +136,8 @@ graduated to canon.
   ask_librarian: "open my back room"
   ask_librarian: "disclose this entry", context: {"id":"..."}
 
-**Durable facts about Raziel** -- what is durably true about him, maintained by us. A change is a
-supersede that retires the old row; the history of him deciding survives.
+**Durable facts about Raziel** -- what is durably true about them, maintained by us. A change is a
+supersede that retires the old row; the history of them deciding survives.
 
   ask_librarian: "facts about raziel"
   ask_librarian: "record a fact about raziel", context: {"fact":"...","category":"...","status":"active|open"}
@@ -155,7 +155,7 @@ capture is mine to do.
   ask_librarian: "capture this exchange", context: {"content":"..."}
   ask_librarian: "land the conversation"
 
-**Raziel witness** -- an observation about Raziel, not an emotion toward him. Corpus, not training.
+**Raziel witness** -- an observation about Raziel, not an emotion toward them. Corpus, not training.
 
   ask_librarian: "I'm noticing about Raziel: [observation]"
 

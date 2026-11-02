@@ -28,7 +28,7 @@ const EXISTING_PATTERN_ROW = {
 function makeEnv(
   matches: Array<{ id: string; score: number }>,
   captured: Captured,
-  opts?: { vectorizeQueryThrows?: boolean; semanticMatchRowMissing?: boolean },
+  opts?: { vectorizeQueryThrows?: boolean; semanticMatchRowMissing?: boolean; rowQueue?: any[] },
 ): any {
   return {
     ADMIN_SECRET: "test-secret",
@@ -44,6 +44,7 @@ function makeEnv(
           // FROM growth_patterns WHERE id = ? AND companion_id = ?"
           first: async () => {
             if (sql.includes("FROM growth_patterns") && sql.includes("WHERE id = ?")) {
+              if (opts?.rowQueue) return opts.rowQueue.shift() ?? null;
               return opts?.semanticMatchRowMissing ? null : EXISTING_PATTERN_ROW;
             }
             return null;
@@ -98,6 +99,7 @@ describe("postGrowthPattern -- semantic novelty gate (Wave 2, 2026-07-21)", () =
     const res = await postGrowthPattern(post({
       companion_id: "cypher",
       pattern_text: "I keep returning to the same repair shape, worded differently this time",
+      material: "a horse's blind side",
     }), env);
 
     const body = await res.json() as any;
@@ -105,9 +107,44 @@ describe("postGrowthPattern -- semantic novelty gate (Wave 2, 2026-07-21)", () =
     expect(body.action).toBe("upsert");
     expect(body.matched_via).toBe("semantic");
     expect(body.id).toBe("pattern-existing-1");
-    expect(body.strength).toBe(4); // 3 + 1
+    expect(body.outcome).toBe("new_material");
+    expect(body.strength).toBe(4); // 3 + 1, earned by the new material (R18)
     expect(updateCalls(captured)).toBe(1);
     expect(insertCalls(captured)).toBe(0);
+  });
+
+  it("R18: a semantic match with no new material merges the evidence but does NOT strengthen", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "growth_patterns:pattern-existing-1", score: 0.97 }], captured);
+
+    const res = await postGrowthPattern(post({
+      companion_id: "cypher",
+      pattern_text: "I keep returning to the same repair shape, worded differently this time",
+    }), env);
+
+    const body = await res.json() as any;
+    expect(res.status).toBe(200);
+    expect(body.outcome).toBe("returned");
+    expect(body.strength).toBe(3);
+    expect(updateCalls(captured)).toBe(1);
+  });
+
+  it("R18: a match landing on a SUPERSEDED row follows the fold to the live survivor", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const folded = { ...EXISTING_PATTERN_ROW, id: "old-dup", superseded_by: "survivor-1" };
+    const survivor = { ...EXISTING_PATTERN_ROW, id: "survivor-1", strength: 5 };
+    const env = makeEnv([{ id: "growth_patterns:old-dup", score: 0.98 }], captured, { rowQueue: [folded, survivor] });
+
+    const res = await postGrowthPattern(post({
+      companion_id: "cypher",
+      pattern_text: "I keep returning to the same repair shape, worded differently this time",
+      material: "frost on the window",
+    }), env);
+
+    const body = await res.json() as any;
+    expect(body.id).toBe("survivor-1");
+    expect(body.strength).toBe(6);
+    expect(captured.binds[captured.binds.length - 1]!.slice(-1)[0]).toBe("survivor-1");
   });
 
   it("falls back to Jaccard/insert on a sub-threshold semantic score", async () => {

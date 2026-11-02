@@ -27,19 +27,23 @@ function authedJson(url: string, method: string, body: unknown): Request {
 }
 
 describe("postGrowthPattern UPSERT", () => {
-  it("UPSERTS into an existing similar pattern (action=upsert, strength incremented)", async () => {
+  // R18 (2026-10-22): a merge no longer strengthens by itself; only a NEW material does.
+  function mergeFixture(extraBody: Row) {
     const existingPattern: Row = {
       id: "existing-1",
       pattern_text: "I keep returning to repair architecture under load",
       strength: 4,
       evidence_json: JSON.stringify([{ quote: "earlier quote" }]),
       prehended_ids: JSON.stringify(["row-a"]),
+      materials_json: JSON.stringify([{ name: "alula", first_seen: "2026-09-01T00:00:00.000Z" }]),
+      times_stated: 4,
+      returns_since_material: 1,
+      last_new_material_at: "2026-09-01T00:00:00.000Z",
     };
-    let updateBound: unknown[] = [];
-
+    const holder: { updateBound: unknown[] } = { updateBound: [] };
     const env = makeEnv((sql: string) => {
-      // filterExistingIds union query — return row-b as found so the prehension
-      // makes it through validation. row-a is already in the existing pattern.
+      // filterExistingIds union query -- return row-b as found so the prehension makes it through
+      // validation. row-a is already in the existing pattern.
       if (sql.startsWith("SELECT id FROM growth_journal") && sql.includes("UNION SELECT id FROM growth_patterns")) {
         return makeStmt([{ id: "row-b" }]);
       }
@@ -49,7 +53,7 @@ describe("postGrowthPattern UPSERT", () => {
       if (sql.startsWith("UPDATE growth_patterns")) {
         const stmt: any = {
           bind: (...binds: unknown[]) => {
-            updateBound = binds;
+            holder.updateBound = binds;
             return { run: async () => ({ meta: { changes: 1 } }) };
           },
         };
@@ -58,32 +62,66 @@ describe("postGrowthPattern UPSERT", () => {
       // No INSERT path expected.
       return makeStmt([]);
     });
+    const req = authedJson("https://test.local/mind/growth/patterns", "POST", {
+      companion_id: "cypher",
+      pattern_text: "Repair architecture is the shape I keep returning to",
+      evidence: [{ quote: "new quote" }],
+      prehended_ids: ["row-b"],
+      strength: 9, // ignored: strength is earned, not asserted
+      ...extraBody,
+    });
+    return { env, req, holder };
+  }
 
-    const res = await postGrowthPattern(authedJson(
-      "https://test.local/mind/growth/patterns",
-      "POST",
-      {
-        companion_id: "cypher",
-        pattern_text: "Repair architecture is the shape I keep returning to",
-        evidence: [{ quote: "new quote" }],
-        prehended_ids: ["row-b"],
-        strength: 7,
-      },
-    ), env);
-
+  // UPDATE bind order: strength, evidence, prehended_ids, materials_json, times_stated,
+  //                    returns_since_material, last_new_material_at, id
+  it("a NEW material merges, appends it, and earns exactly one point of strength", async () => {
+    const { env, req, holder } = mergeFixture({ material: "the dime" });
+    const res = await postGrowthPattern(req, env);
     const body = await res.json() as any;
     expect(res.status).toBe(200);
     expect(body.action).toBe("upsert");
     expect(body.id).toBe("existing-1");
-    expect(body.strength).toBe(5);  // 4 + 1, capped at 10
+    expect(body.outcome).toBe("new_material");
+    expect(body.strength).toBe(5);
+    expect(body.materials).toEqual(["alula", "the dime"]);
 
-    // Update bind order: strength, evidence, prehended_ids, id
-    expect(updateBound[0]).toBe(5);
-    const mergedEvidence = JSON.parse(updateBound[1] as string);
-    const mergedPrehended = JSON.parse(updateBound[2] as string);
+    const b = holder.updateBound;
+    expect(b[0]).toBe(5);
+    const mergedEvidence = JSON.parse(b[1] as string);
+    const mergedPrehended = JSON.parse(b[2] as string);
     expect(mergedEvidence).toContainEqual({ quote: "earlier quote" });
     expect(mergedEvidence).toContainEqual({ quote: "new quote" });
     expect(mergedPrehended).toEqual(["row-a", "row-b"]);
+    expect(JSON.parse(b[3] as string).map((m: any) => m.name)).toEqual(["alula", "the dime"]);
+    expect(b[4]).toBe(5);   // times_stated
+    expect(b[5]).toBe(0);   // returns_since_material reset
+    expect(typeof b[6]).toBe("string"); // last_new_material_at stamped
+    expect(b[7]).toBe("existing-1");
+  });
+
+  it("a known material (any case, article) is 'returned, no new material': strength frozen", async () => {
+    const { env, req, holder } = mergeFixture({ material: "The Alula" });
+    const res = await postGrowthPattern(req, env);
+    const body = await res.json() as any;
+    expect(res.status).toBe(200);
+    expect(body.outcome).toBe("returned");
+    expect(body.message).toBe("returned, no new material");
+    expect(body.strength).toBe(4);
+    const b = holder.updateBound;
+    expect(b[0]).toBe(4);
+    expect(JSON.parse(b[3] as string)).toHaveLength(1);
+    expect(b[4]).toBe(5);   // times_stated climbs
+    expect(b[5]).toBe(2);   // returns_since_material climbs
+    expect(b[6]).toBe("2026-09-01T00:00:00.000Z"); // last_new_material_at untouched
+  });
+
+  it("no material named is a return, never a strengthening (the model cannot self-award)", async () => {
+    const { env, req } = mergeFixture({});
+    const res = await postGrowthPattern(req, env);
+    const body = await res.json() as any;
+    expect(body.outcome).toBe("returned");
+    expect(body.strength).toBe(4);
   });
 
   it("INSERTS a brand new pattern when no similar pattern exists (action=insert)", async () => {
@@ -122,6 +160,7 @@ describe("postGrowthPattern UPSERT", () => {
     expect(res.status).toBe(201);
     expect(body.action).toBe("insert");
     expect(insertBound).toBeTruthy();
+    expect(body.strength).toBe(1); // a new pattern is one sighting, whatever the writer asserted
   });
 });
 

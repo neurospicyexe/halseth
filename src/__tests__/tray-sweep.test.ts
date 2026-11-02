@@ -30,6 +30,12 @@ interface Allow { file: string; match: string; reason: string }
 // file is relative to src/, forward slashes; match is a substring of the literal's source text.
 const ALLOW: Allow[] = [
   { file: "mind/room-label.ts", match: "SELECT tags FROM companion_journal", reason: "channel -> room lookup reads TAGS only, never content: a draft speech row still records which room a channel id names (2026-10-05)" },
+  { file: "handlers/raziel-inbox.ts", match: "FROM companion_journal AS j \"", reason: "Raziel's own inbox (2026-10-30): letters addressed to HIM, shown to him not into a companion prompt; excludes dropped, and a draft letter must still reach him" },
+  { file: "handlers/raziel-inbox.ts", match: "SELECT COUNT(*) AS n FROM companion_journal j", reason: "unread count for Raziel's inbox: same letter set as the list above (dropped excluded), counts only, no text" },
+  { file: "handlers/raziel-companion.ts", match: "companion_journal j WHERE j.agent = ?1 AND j.archived = 0", reason: "Raziel's companion page (Hearth P3, 2026-10-30): journal count since he last looked, dropped and letters excluded, counts only, no text, never into a companion prompt" },
+  { file: "handlers/raziel-companion.ts", match: "${LETTER_WHERE} AND ${AFTER_C", reason: "Raziel's companion page: letters-to-him count since he last looked (same letter set as his inbox, dropped excluded), counts only, no text" },
+  { file: "handlers/raziel-companion.ts", match: "${LETTER_WHERE} `", reason: "Raziel's companion page: unread letters-to-him count, same unread rule as /raziel/inbox, counts only, no text" },
+  { file: "handlers/soma.ts", match: "SELECT MAX(j.created_at) FROM companion_journal j WHERE j.agent = cs.companion_id", reason: "/soma seen_at (2026-10-30): the TIME of the companion's own last journal entry, never its text, for Hearth's 'seen Nh' age; a draft is still the companion showing up" },
   // ── Idempotency / write gates: a draft must still dedupe, or it is re-written every run ──
   { file: "webmind/notes.ts", match: "SELECT note_id, content, created_at FROM wm_continuity_notes\n       WHERE agent_id = ? AND archived = 0 AND thread_key = ?", reason: "addNote's 10-minute thread write gate: drafts must dedupe too, or a pulse floods the thread" },
   { file: "librarian/executors/writes.ts", match: "WHERE agent_id = ? AND note_type = 'soma_arc' AND archived = 0", reason: "soma_arc 15-minute inflection gate (soma_arc is companion-authored, born kept)" },
@@ -37,6 +43,7 @@ const ALLOW: Allow[] = [
   { file: "webmind/vibecheck.ts", match: "SELECT COUNT(*) AS n FROM companion_journal WHERE agent = ? AND source = 'discord_speech'", reason: "day ledger: how many times each companion SPOKE today -- a count of speech (which is drafts by design), no text read" },
   { file: "webmind/briefing.ts", match: "WHERE agent = 'steward' AND created_at >= date('now') AND tags LIKE ?", reason: "briefing once-a-day idempotency lookup (steward letters, born kept)" },
 
+  { file: "handlers/tray.ts", match: "SELECT note_id FROM wm_continuity_notes WHERE agent_id = ? AND correlation_id = ?", reason: "POST /admin/tray/draft idempotency lookup: must see a draft in ANY state (a dropped import is not re-created); reads the id only, no text" },
   // ── Liveness / health / counts: a draft is still a WRITE ──
   { file: "guardian/writer-liveness.ts", match: "SELECT MAX(created_at) AS ts FROM companion_journal", reason: "writer liveness: is the speech journaler writing at all -- drafts are exactly its output" },
   { file: "guardian/writer-liveness.ts", match: "SELECT MAX(created_at) AS ts FROM wm_continuity_notes", reason: "writer liveness for the notes store" },
@@ -65,11 +72,12 @@ const ALLOW: Allow[] = [
   { file: "handlers/admin.ts", match: "SELECT id FROM companion_journal", reason: "vector coverage audit: id sets only" },
   { file: "handlers/admin.ts", match: "SELECT note_id AS id, content AS text, agent_id AS companion FROM wm_continuity_notes", reason: "vector coverage fill: embeds missing rows, index mirrors D1" },
   { file: "handlers/admin.ts", match: "SELECT id, note_text AS text, agent AS companion FROM companion_journal", reason: "vector coverage fill (journal)" },
+  { file: "handlers/history.ts", match: "WHERE NOT (${NOTE_ELIGIBLE_SQL}) AND ${keyset}", reason: "continuity purge feed (2026-10-13): lists the ids of notes that must NOT have a search mirror (drafts, drops, archives, non-allowlisted types) so Second Brain can delete them; ids + state only, no text" },
   { file: "handlers/history.ts", match: "WHERE (review_state <> 'kept' OR archived = 1) AND ${keyset}", reason: "recall reconcile: lists the ids of rows that are NOT memory (drafts, drops, archives) so Second Brain can delete their stale rag/ mirrors; ids + state only, no text" },
   { file: "mind/note-provenance.ts", match: "SELECT note_id, thread_key, created_at FROM wm_continuity_notes WHERE note_id IN", reason: "provenance of note ids ALREADY selected by a gated read; reads no text" },
 
   // ── Human (Raziel) display / signal plumbing ──
-  { file: "handlers/presence.ts", match: "FROM companion_journal ORDER BY created_at DESC LIMIT 6", reason: "Hearth /halseth + /house display only (see comment at the call site); no companion prompt reads /presence" },
+  { file: "handlers/presence.ts", match: "FROM companion_journal WHERE COALESCE(review_state,'') <> 'merged' ORDER BY created_at DESC LIMIT 6", reason: "Hearth /halseth + /house display only (see comment at the call site); no companion prompt reads /presence. Drafts show (review, not recall); B34 merged duplicates do not" },
   { file: "librarian/backends/halseth.ts", match: "WHERE agent = ? AND tags LIKE '%signal_audit%'", reason: "signal-audit rows are Cypher's own authored audits (source NULL, born kept); tag-scoped" },
   { file: "mcp/tools/session_load.ts", match: "WHERE agent = ? AND tags LIKE '%signal_audit%'", reason: "signal-audit presence flag (id + date only)" },
 ];

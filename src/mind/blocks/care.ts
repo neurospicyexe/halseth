@@ -18,6 +18,7 @@ import { hoursSinceIso } from "../../webmind/drives.js";
 import { PENDING_DECAY_HOURS, QUIET_OWNER_DAYS, type CareHoldRule } from "../../care/rules.js";
 import { readOwnerLastSeen } from "../../care/owner-activity.js";
 import { readCareHold } from "../../care/hold.js";
+import { readPendingCare } from "../../care/pending.js";
 
 export interface PendingCare {
   id: string;
@@ -96,11 +97,8 @@ export async function loadCareBlocks(env: Env, companionId: WmAgentId): Promise<
     // The ONE hold derivation (care/hold.ts). Counts acted care_actions rows too: a gesture already
     // made still leaves the house soft for the window. An unreadable hold reads as off (absent).
     readCareHold(env.DB, nowMs).catch(() => null),
-    env.DB.prepare(
-      `SELECT id, rule, detail, detected_at FROM care_actions
-       WHERE companion_id = ? AND acted_at IS NULL AND detected_at > ?
-       ORDER BY detected_at DESC LIMIT 1`,
-    ).bind(companionId, decayCutoff).first<PendingCare>().catch(() => null),
+    // Shared with the worker's gesture poll (care/pending.ts); a voided firing asks for nothing.
+    readPendingCare(env.DB, companionId, decayCutoff).catch(() => null),
     // The shared owner-activity read (C6) -- same lane as the tick's owner_silence signal.
     readOwnerLastSeen(env).catch(() => null),
   ]);

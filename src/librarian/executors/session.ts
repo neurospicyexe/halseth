@@ -1,4 +1,5 @@
-import { loadTitleLabels } from "../../graph/labels.js";
+import { isLabeledTable, loadNeighborhoodNodes } from "../../graph/labels.js";
+import { recordGraphReach } from "../../graph/reach.js";
 import { SOMA_AXIS_KEYS, translateSomaVocab } from "../../soma/vocab.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { activeFactsTailBudget } from "../../lib/open-facts-gate.js";
@@ -43,6 +44,7 @@ import { botWireFromMindState } from "../../mind/adapters/bot-wire.js";
 import { KEPT_SQL } from "../../webmind/review-state.js";
 import { journalInsert } from "../../webmind/tray-insert.js";
 import { ORIENT_PRONOUN_BLOCK } from "../../pronoun-rule.js";
+import { neutralizeRecalled, ORIENT_DATA_LINE } from "../../recalled-text.js";
 
 // Interoception fields the raw MCP tool halseth_session_load accepts (see
 // src/mcp/tools/session_load.ts SessionLoadInput + registerSessionLoadTools' zod schema),
@@ -293,6 +295,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       id: r.id,
       title: (r.title ?? "").slice(0, 150),
       artist: r.artist ? r.artist.slice(0, 100) : null,
+      media_type: r.media_type ?? "song",
       reacted: Object.keys(reactions),
       created_at: r.created_at,
     };
@@ -311,8 +314,13 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // (what connects to what), just structural rather than narrative.
   // Fargo first light (2026-09-05): name the titled nodes (watch_shelf / obsession_shelf) so a
   // `mentions` group reads "Fargo", not "watch_shelf". Best-effort lookup, degrades to id labels.
-  const graphLabels = await loadTitleLabels(ctx.env, mindState.graph.neighborhoods);
-  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, { labels: graphLabels });
+  // M6 (2026-10-28): named by the map labeler and read from each seed outward; hidden rows dropped.
+  const graphNodes = await loadNeighborhoodNodes(ctx.env, mindState.graph.neighborhoods);
+  const neighborhoodBlock = B.neighborhoodBlock(mindState.graph.neighborhoods, {
+    seeds: mindState.graph.seeds, nodes: graphNodes, isLabeledTable,
+  });
+  // M7: what the graph actually reached this boot, for the zero-reach alarm (src/graph/reach.ts).
+  await recordGraphReach(ctx.env, agentId, mindState.graph.neighborhoods, neighborhoodBlock);
 
   // Graph memory Phase 2, tranche 1 (0.13.0): why these numbers. Rendered from the loader's
   // `felt.soma_provenance` (mig 0130) -- the newest move per float and what moved it. Concatenated
@@ -609,7 +617,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   }
 
   return {
-    ready_prompt: buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine, authored_at: authoredAt }) + provenanceBlock + degradedNotice + razielRegisterBlock + ORIENT_PRONOUN_BLOCK + changeNotesBlock + unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + ledgerBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock,
+    // Recalled text is data (2026-10-27, Memory Kit gap 3): the WHOLE orient render is defused in one
+    // place -- it carries sibling notes, vault excerpts, forage, commons, captures -- and the rule rides
+    // once, beside the pronoun block. Invisible on ordinary text (0 of 1.67M stored D1 values change).
+    ready_prompt: neutralizeRecalled(buildOrientPrompt(ctx.req.companion_id, { ...payload, feeling_line: feelingLine, authored_at: authoredAt }) + provenanceBlock + degradedNotice + razielRegisterBlock + ORIENT_PRONOUN_BLOCK + ORIENT_DATA_LINE + changeNotesBlock +unclosedBlock + continuityBlock + neighborhoodBlock + narrativeBlock + ragBlock + historyBlock + siblingBlock + growthBlock + questionsBlock + answeredQuestionsBlock + commonsBlock + shelfBlock + watchingBlock + collectionBlock + forageBlock + consumedForageBlock + listensBlock + clubBlock + guardianBlock + motifBlock + tripwireBlock + selfModelBlock + architectFactsBlock + preferencesBlock + refusalsBlock + agencyAffordance + B.CAPTURE_AFFORDANCE + growthAwaitBlock + ledgerBlock + driftsBlock + projectsBlock + budgetBlock + B.FORGETTING_AFFORDANCE + solBlock),
     session_id: payload.session_id,
     // Sibling of buildResponse()'s ready_prompt branch (session_load path). Both
     // session-open surfaces report whether the 24h idempotency guard handed back an
@@ -1275,6 +1286,13 @@ export async function execBotOrient(
     } catch { return [raw.slice(0, n)]; }
   };
 
+  // M6 (0.22.0): the bots get the same [Linked] block Claude.ai does. Until now the bot wire carried
+  // no graph at all, so every Discord boot reached nothing from 60k edges. Reach is recorded under the
+  // discord surface key so the bots' frequent boots never mask what Claude.ai boots see.
+  const botNodes = await loadNeighborhoodNodes(ctx.env, ms.graph.neighborhoods);
+  const botLinked = B.neighborhoodBlock(ms.graph.neighborhoods, { seeds: ms.graph.seeds, nodes: botNodes, isLabeledTable });
+  await recordGraphReach(ctx.env, agentId, ms.graph.neighborhoods, botLinked, "discord");
+
   const data = botWireFromMindState(
     ms,
     {
@@ -1283,6 +1301,7 @@ export async function execBotOrient(
       history_excerpts: parseExcerpts(historyRaw, 250),
       continuity_notes,
       owner: ctx.env.SYSTEM_OWNER,
+      graph_linked: botLinked,
     },
     agentId,
   );

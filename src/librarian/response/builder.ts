@@ -14,6 +14,7 @@ import type { WmOrientResponse, WmJournalEntry, WmConclusion, WmResurfacedConclu
 import { relativeTime } from "../../webmind/relative-time.js";
 import { roomLabelFromTags } from "../../mind/room-label.js";
 import { textContains } from "../../webmind/handoffs.js";
+import { neutralizeRecalled, ORIENT_DATA_LINE } from "../../recalled-text.js";
 
 /**
  * Strip content that could be interpreted as instructions when embedded in an AI prompt.
@@ -66,8 +67,21 @@ export function nowCstBlock(now: Date = new Date()): string {
       weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "numeric", minute: "2-digit", hour12: true,
     }).format(now);
-    return `\n[Now: ${cst} CST]`;
+    return `\n[Now: ${cst} ${chicagoZoneLabel(now)}]`;
   } catch { return ""; }
+}
+
+/**
+ * "CDT" or "CST" for America/Chicago at `now`. The label was hardcoded "CST" until 2026-10-13, so every
+ * orient from March to November named the wrong zone (the hour itself was always right). Falls back to
+ * "CT" if Intl cannot name it.
+ */
+export function chicagoZoneLabel(now: Date = new Date()): string {
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", timeZoneName: "short" })
+      .formatToParts(now).find(p => p.type === "timeZoneName")?.value;
+    return part === "CDT" || part === "CST" ? part : "CT";
+  } catch { return "CT"; }
 }
 
 export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): string {
@@ -76,7 +90,7 @@ export function buildContinuityBlock(wm: WmOrientResponse, agentId?: string): st
   // Temporal grounding -- first thing companions read, before identity or state.
   // Prevents time mismatches when Raziel states a date/time in conversation.
   if (wm.current_datetime_cst) {
-    parts.push(`[Now: ${wm.current_datetime_cst} CST]`);
+    parts.push(`[Now: ${wm.current_datetime_cst} ${chicagoZoneLabel()}]`);
   }
 
   // Restoration preamble -- frame this as the companion's own state resuming,
@@ -702,7 +716,9 @@ export function buildResponse(
     // inject [Now: CST] directly so companions always know the current time.
     const datetimeBlock = !continuityData ? nowCstBlock() : "";
     return {
-      ready_prompt: basePrompt + frontTag + datetimeBlock + continuityBlock,
+      // Recalled text is data (2026-10-27): the continuity block quotes notes, journals and sibling
+      // writes; defused as a whole, like execSessionOrient's ready_prompt (session.ts).
+      ready_prompt: neutralizeRecalled(basePrompt + frontTag + datetimeBlock + continuityBlock + (continuityBlock ? ORIENT_DATA_LINE : "")),
       session_id: payload.session_id,
       // Default false, never null: an absent flag must read as "this caller opened it"
       // only when the loader genuinely said so. Both loaders always set it, so the ??

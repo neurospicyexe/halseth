@@ -12,12 +12,15 @@ import { postInteriority, getInteriority, getInteriorityMeta, patchInteriorityDi
 import { getRefusals, getPreferences, patchRefusalAck, postPreferenceHttp, postRefusalHttp } from "./handlers/agency.js";
 import { getDrifts, postDriftRun, getSomaShifts } from "./handlers/drift.js";
 import { uploadAsset, serveAsset, listAssets } from "./handlers/assets";
-import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost } from "./handlers/biometrics";
-import { getHandovers, getCompanionJournal, getRecallIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
+import { getRazielInbox, getRazielInboxItem, postRazielInboxRead } from "./handlers/raziel-inbox";
+import { getRazielNeeds, getRazielNeedsCount } from "./handlers/raziel-needs";
+import { getRazielCompanion, postRazielCompanionLooked } from "./handlers/raziel-companion";
+import { handleBiometricsLatest, handleBiometricsList, handleBiometricsPost, handleBiometricsPatch, handleBiometricsDelete } from "./handlers/biometrics";
+import { getHandovers, getCompanionJournal, getRecallIneligible, getIngestContinuityNotes, getIngestContinuityIneligible, getCypherAudit, getGaiaWitness, getWounds, getRoutines, getDeltas, getTasks, postTask, getEvents, postEvent, getLists, patchTask, completeListItem } from "./handlers/history";
 import { logRoutine } from "./handlers/routines";
 import { postCompanionJournal } from "./handlers/companion_journal";
 import { adminRetract } from "./handlers/retract.js";
-import { getAdminTray, postAdminTrayReview } from "./handlers/tray.js";
+import { getAdminTray, postAdminTrayReview, postAdminTrayDraft } from "./handlers/tray.js";
 import { postLedger, getLedger, getIngestLedger, getIngestLedgerIneligible, getSomaFreshness } from "./handlers/ledger.js";
 import { getSessions, getSessionById, getRecentRelationalSessions } from "./handlers/sessions";
 import { getFeelings, getDreams, getDreamSeeds, postDreamSeed } from "./handlers/feelings-dreams";
@@ -44,6 +47,11 @@ import { getEdges } from "./handlers/edges.js";
 import { postGraphRebuild, getGraphHealth } from "./handlers/graph.js";
 import { postSomaBackfillEvents, getSomaEvents } from "./handlers/soma-events.js";
 import { getMindState, getMindOrient, getMindOrientDebug, getMindGround, postMindHandoff, postMindThread, postThreadsSweep, patchMindThreadStatus, postMindNote, getMindSearch, getMindSbSearchLog, getMindCommonsSupply, postMindCommonsConsume, postMindDream, getMindDreams, postMindDreamExamine, postMindDreamPin, postMindLoop, getMindLoops, postMindLoopClose, postMindLoopReview, postMindLoopAct, postMindRelational, getMindRelational, postMindLimbic, getMindLimbicCurrent, getMindCompressEligible, postMindNotesArchive, postMindNotesRecall, getMindNotesSearch, postMindNotesDemote, getMindNotesRecent, postMindSpiralRun, getMindSpiralRuns, getMindMetronomeActions, getMindMetronomeEligibleActions, postMindMetronomeAction, patchMindMetronomeAction, deleteMindMetronomeAction, postMindMetronomeActionFired } from "./handlers/webmind.js";
+import { postMindPin, getMindPins } from "./handlers/pins.js";
+import { postMindLink, getMindLinks } from "./handlers/links.js";
+import { getMindMap } from "./handlers/map.js";
+import { getMindPeople, postMindPeople, postMindPersonArchive, postMindPersonUpdate } from "./handlers/people.js";
+import { getMindKeepOff, postMindKeepOff, postMindKeepOffArchive } from "./handlers/keep-off.js";
 import { postConversation, getConversationActive, getConversationByMessage, listConversationsHandler, postConversationTurn, postConversationLand, postConversationFade } from "./handlers/conversations.js";
 import { postDirectorInvitation, patchDirectorInvitation, getDirectorSupply, getDirectorNeighborhood, getDirectorHealth } from "./handlers/director.js";
 import { postNoteSit, postNoteMetabolize, getSittingNotes } from "./handlers/sits.js";
@@ -77,11 +85,11 @@ import {
 } from "./handlers/plural-store.js";
 import { handleGetCompanionSettings, handlePostCompanionSettings } from "./handlers/companion-settings.js";
 import { getKernel, getKernelBundle, postKernel } from "./handlers/identity-kernel.js";
-import { getArchitectFacts, getArchitectFactsRender, postArchitectFact, patchArchitectFactStatus } from "./handlers/architect-facts.js";
+import { getArchitectFacts, getArchitectFactsRender, getArchitectFactsShortlist, postArchitectFact, patchArchitectFactStatus } from "./handlers/architect-facts.js";
 import { getRosterWho, getRosterStats, postRosterRefresh } from "./handlers/roster.js";
 import { runRosterRefresh } from "./roster/pk-roster.js";
 import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFloats } from "./handlers/companion-questions.js";
-import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores } from "./handlers/self-monitoring.js";
+import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores, getVoiceScoreRows } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
 import { postBriefingRun, getBriefingPreview } from "./handlers/briefing.js";
 import { postVibeCheckRun, getVibeCheckPreview } from "./handlers/vibecheck.js";
@@ -100,6 +108,7 @@ import { getProjects, getProjectLog, postProjectLog } from "./handlers/projects.
 import { runCareTick } from "./care/tick.js";
 import { runBudgetReplenish } from "./care/budget.js";
 import { runChangelogAnnounce } from "./mind/changelog.js";
+import { recordKickHeartbeat, runDeadmanCheck } from "./deadman.js";
 import { postSiblingSend, getSiblingUnread, postSiblingRead, postSiblingDisclose } from "./handlers/siblings.js";
 import { getBudget, postBudgetSpend } from "./handlers/budget.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
@@ -114,12 +123,14 @@ import { postSkillProposal, listSkillProposals, decideSkillProposal } from "./ha
 import { getMedDue, postMedClaim, postMedDelivered, postMedRelease, postMedAnswer, getMedToday } from "./handlers/med-reminder.js";
 import { postReachReserve, postReachDelivered, postReachRelease, getReachToday } from "./handlers/reach-cap.js";
 import { postCareHold, getCareHold } from "./handlers/care-hold.js";
+import { postDepartureDeclare, postDepartureEnd, postDepartureObject, postDepartureStandDown, getDepartures } from "./handlers/departures.js";
+import { postVoiceLesson, getVoiceLessons, postVoiceLessonDecide } from "./handlers/voice-lessons.js";
 import { postCommonsPost, getCommonsPosts, getCommonsFeed } from "./handlers/commons.js";
 import { postObsession, getObsessions, patchObsession } from "./handlers/shelf.js";
 import { getWatchShelf, postWatchShelf, postWatchProgress, patchWatchShelf } from "./handlers/watch.js";
 import { postWatchalong, patchWatchalong, getWatchalongActive } from "./handlers/watchalong.js";
 import { postMediaExperience, getRecentMedia, reactToMedia } from "./handlers/media.js";
-import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
+import { getClubCurrent, getClubRounds, postClubRound, postClubRecommend, postClubVote, deleteClubVote, postClubAbstain, patchClubStatus, postClubDiscuss } from "./handlers/club.js";
 import { postBook, postUploadTicket, putBookUpload, optionsBookUpload, getBooks, getBook, getBookFile, getBookCover, patchBook, deleteBook, getBookProgress, putBookProgress, getBookAnnotations, postBookAnnotation, deleteBookAnnotation } from "./handlers/books.js";
 import { runHomeTick } from "./webmind/home/tick.js";
 
@@ -184,6 +195,7 @@ const router = new Router()
   // Hearth/ops door; companions use the Librarian verbs "my tray" / "keep draft <id>" / "drop draft <id>".
   .on("GET",  "/admin/tray",                  (request, env) => getAdminTray(request, env))
   .on("POST", "/admin/tray/review",           (request, env) => postAdminTrayReview(request, env))
+  .on("POST", "/admin/tray/draft",            (request, env) => postAdminTrayDraft(request, env))
   // The ledger lane (mig 0134): clerks POST record lines through the one door (src/ledger/door.ts);
   // Hearth/ops read with GET. Companions use "my ledger" / "keep ledger <id>" / "drop ledger <id>".
   .on("POST", "/ledger",                      (request, env) => postLedger(request, env))
@@ -200,6 +212,7 @@ const router = new Router()
   .on("POST", "/admin/run-scheduled", async (request, env) => {
     const denied = authGuard(request, env);
     if (denied) return denied;
+    await recordKickHeartbeat(env);
     await runScheduledWork(env);
     return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
   })
@@ -278,6 +291,15 @@ const router = new Router()
   .on("GET", "/biometrics/latest", (request, env) => handleBiometricsLatest(request, env))
   .on("GET", "/biometrics",        (request, env) => handleBiometricsList(request, env))
   .on("POST", "/biometrics",       (request, env) => handleBiometricsPost(request, env))
+  .on("PATCH",  "/biometrics/:id", (request, env, params) => handleBiometricsPatch(request, env, params ?? {}))
+  .on("DELETE", "/biometrics/:id", (request, env, params) => handleBiometricsDelete(request, env, params ?? {}))
+  .on("GET",  "/raziel/inbox",      (request, env, params) => getRazielInbox(request, env, params ?? {}))
+  .on("POST", "/raziel/inbox/read", (request, env, params) => postRazielInboxRead(request, env, params ?? {}))
+  .on("GET",  "/raziel/inbox/:id",  (request, env, params) => getRazielInboxItem(request, env, params ?? {}))
+  .on("GET",  "/raziel/needs/count", (request, env, params) => getRazielNeedsCount(request, env, params ?? {}))
+  .on("GET",  "/raziel/needs",      (request, env, params) => getRazielNeeds(request, env, params ?? {}))
+  .on("GET",  "/raziel/companion/:id",        (request, env, params) => getRazielCompanion(request, env, params ?? {}))
+  .on("POST", "/raziel/companion/:id/looked", (request, env, params) => postRazielCompanionLooked(request, env, params ?? {}))
 
   // Inter-companion notes — Discord bot note delivery poll
   .on("GET", "/inter-companion-notes/unread/:companionId", (request, env, params) => getUnreadInterCompanionNotes(request, env, params ?? {}))
@@ -333,6 +355,18 @@ const router = new Router()
   .on("POST", "/mind/notes/archive",           (request, env) => postMindNotesArchive(request, env))
   .on("POST", "/mind/notes/recall",            (request, env) => postMindNotesRecall(request, env))
   .on("POST", "/mind/notes/demote",            (request, env) => postMindNotesDemote(request, env))
+  .on("POST", "/mind/pin",                     (request, env) => postMindPin(request, env))
+  .on("GET",  "/mind/pins/:companion_id",       (request, env, params) => getMindPins(request, env, params ?? {}))
+  .on("POST", "/mind/link",                    (request, env) => postMindLink(request, env))
+  .on("GET",  "/mind/links/:writer",            (request, env, params) => getMindLinks(request, env, params ?? {}))
+  .on("GET",  "/mind/map",                     (request, env) => getMindMap(request, env))
+  .on("GET",  "/mind/keep-off",                (request, env) => getMindKeepOff(request, env))
+  .on("POST", "/mind/keep-off",                (request, env) => postMindKeepOff(request, env))
+  .on("POST", "/mind/keep-off/:id/archive",    (request, env, params) => postMindKeepOffArchive(request, env, params ?? {}))
+  .on("GET",  "/mind/people",                  (request, env) => getMindPeople(request, env))
+  .on("POST", "/mind/people",                  (request, env) => postMindPeople(request, env))
+  .on("POST", "/mind/people/:id",              (request, env, params) => postMindPersonUpdate(request, env, params ?? {}))
+  .on("POST", "/mind/people/:id/archive",      (request, env, params) => postMindPersonArchive(request, env, params ?? {}))
   .on("GET",  "/mind/notes/recent",            (request, env) => getMindNotesRecent(request, env))
   // Meaning-search over a companion's own notes. The AUTOMATIC path (per-message bot recall);
   // the Librarian's notes_recall_meaning stays the companion-initiated, loop-guarded one.
@@ -370,6 +404,7 @@ const router = new Router()
   // companions themselves. /render is what the VPS sync job pulls into every prompt-bearing file.
   .on("GET",  "/identity/architect-facts",              (request, env)         => getArchitectFacts(request, env))
   .on("GET",  "/identity/architect-facts/render",       (request, env)         => getArchitectFactsRender(request, env))
+  .on("GET",  "/identity/architect-facts/shortlist",    (request, env)         => getArchitectFactsShortlist(request, env))
   .on("POST", "/identity/architect-facts",              (request, env)         => postArchitectFact(request, env))
   // 2026-09-14: the confirm/retire verb an OPEN fact never had (Hearth /facts calls it).
   .on("PATCH", "/identity/architect-facts/:id",         (request, env, params) => patchArchitectFactStatus(request, env, params ?? {}))
@@ -395,6 +430,7 @@ const router = new Router()
   .on("GET",   "/mind/self-model/:companion_id",   (request, env, params) => getSelfModel(request, env, params ?? {}))
   .on("PATCH", "/mind/self-model/:id",             (request, env, params) => patchSelfModel(request, env, params ?? {}))
   .on("POST",  "/mind/voice-scores",               (request, env)         => postVoiceScore(request, env))
+  .on("GET",   "/mind/voice-scores/:companion_id/rows", (request, env, params) => getVoiceScoreRows(request, env, params ?? {}))
   .on("GET",   "/mind/voice-scores/:companion_id", (request, env, params) => getVoiceScores(request, env, params ?? {}))
 
   // Unified Guardian (0073) -- meta-observer over the self-monitoring feeds
@@ -498,6 +534,16 @@ const router = new Router()
   // B32 bad-night presence (0143): his word starts and clears care_hold (src/care/hold.ts)
   .on("POST",  "/mind/care/hold",              (request, env)         => postCareHold(request, env))
   .on("GET",   "/mind/care/hold",              (request, env)         => getCareHold(request, env))
+  // Declared departures (0157, T4a): a companion lifts one form rail for itself, bounded; src/departures/core.ts
+  // Voice lessons (0159): staged by the voice drift job, decided by Raziel, never auto-applied.
+  .on("POST",  "/mind/voice-lessons",              (request, env)         => postVoiceLesson(request, env))
+  .on("GET",   "/mind/voice-lessons",              (request, env)         => getVoiceLessons(request, env))
+  .on("POST",  "/mind/voice-lessons/:id/decide",   (request, env, params) => postVoiceLessonDecide(request, env, params ?? {}))
+  .on("POST",  "/mind/departures/declare",     (request, env)         => postDepartureDeclare(request, env))
+  .on("POST",  "/mind/departures/end",         (request, env)         => postDepartureEnd(request, env))
+  .on("POST",  "/mind/departures/object",      (request, env)         => postDepartureObject(request, env))
+  .on("POST",  "/mind/departures/stand-down",  (request, env)         => postDepartureStandDown(request, env))
+  .on("GET",   "/mind/departures",             (request, env)         => getDepartures(request, env))
 
   // Hearth write layer (0092) -- the async wall: global /log, club discussion, shelf comments.
   .on("GET",   "/mind/commons/feed",               (request, env)         => getCommonsFeed(request, env))
@@ -532,6 +578,7 @@ const router = new Router()
   .on("POST",  "/mind/club/round",                 (request, env)         => postClubRound(request, env))
   .on("POST",  "/mind/club/recommend",             (request, env)         => postClubRecommend(request, env))
   .on("POST",  "/mind/club/vote",                  (request, env)         => postClubVote(request, env))
+  .on("DELETE", "/mind/club/vote",                 (request, env)         => deleteClubVote(request, env))
   .on("POST",  "/mind/club/abstain",               (request, env)         => postClubAbstain(request, env))
   .on("PATCH", "/mind/club/:id/status",            (request, env, params) => patchClubStatus(request, env, params ?? {}))
   .on("POST",  "/mind/club/:id/discuss",           (request, env, params) => postClubDiscuss(request, env, params ?? {}))
@@ -618,6 +665,9 @@ const router = new Router()
   .on("GET", "/ingest/growth-journal",        (request, env) => getIngestGrowthJournal(request, env))
   .on("GET", "/ingest/companion-conclusions", (request, env) => getIngestCompanionConclusions(request, env))
   .on("GET", "/ingest/recall-ineligible",     (request, env) => getRecallIneligible(request, env))
+  // Continuity notes into SB search (2026-10-13): kept, allowlisted types; the purge feed beside it.
+  .on("GET", "/ingest/continuity-notes",      (request, env) => getIngestContinuityNotes(request, env))
+  .on("GET", "/ingest/continuity-ineligible", (request, env) => getIngestContinuityIneligible(request, env))
   // The ledger lane (mig 0134, 2026-09-26): clerk records ABOUT a companion, never in its voice.
   // The SB puller pulls /ingest/ledger into rag/ledger/<id> (mark first, no wrapChunk); the purge feed
   // lists dropped ids. See src/handlers/ledger.ts.
@@ -811,6 +861,8 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runScheduledWork(env));
+    // Dead-man's switch: native-cron ONLY (never in runScheduledWork, which the VPS kick also drives).
+    ctx.waitUntil(runDeadmanCheck(env));
 
     // RETIRED 2026-08-01: the bot-orient parity sampler used to run here.
     //

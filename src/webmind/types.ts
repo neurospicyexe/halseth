@@ -81,7 +81,7 @@ export interface WmContinuityNote {
   correlation_id: string | null;
   created_at: string;
   /** Imp tray (mig 0132): draft | kept | dropped. Optional for the same reason as the heat columns below. */
-  review_state?: "draft" | "kept" | "dropped";
+  review_state?: "draft" | "kept" | "dropped" | "merged";
   reviewed_at?: string | null;
   /** The earned-salience columns (migs 0074/0105). Optional because only some queries select them, and
    *  `SELECT *` reads return them while narrow reads do not -- the live payload has carried both for months

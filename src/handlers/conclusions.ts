@@ -11,6 +11,7 @@ import type { WmAgentId } from "../webmind/types.js";
 import { embedAndStoreAsync, storeVector, vectorId } from "../mcp/embed.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { edgeForConclusionSupersede, insertEdgeStatements } from "../graph/live.js";
+import { carryPinStatement } from "../webmind/pins.js";
 import { effectiveHeatSql } from "../webmind/heat.js";
 
 const VALID_AGENT_IDS: WmAgentId[] = ["cypher", "drevan", "gaia"];
@@ -84,7 +85,13 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
 
   // Novelty gate (2026-07-20): dedupe near-identical beliefs, supersede evolved ones.
   // Fails open -- a Vectorize/embedding hiccup falls back to a plain insert below.
-  const decision = await noveltyCheck(env, trimmedText, "companion_conclusions", companion_id);
+  // NOT FOR A DECLARED SUPERSEDE (2026-10-19, same rule as architect-fact-write.ts): a correction
+  // is by definition close to the row it replaces, so a pronoun-only rewrite matched the very row
+  // being retired and answered deduped -- the supersede never happened. The companion's own pen
+  // wins; the null embedding routes the vector through the re-embed path below.
+  const decision = supersedesId
+    ? { action: "insert" as const, embedding: null }
+    : await noveltyCheck(env, trimmedText, "companion_conclusions", companion_id);
 
   if (decision.action === "skip") {
     return json({
@@ -125,6 +132,8 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   // cannot clobber an already-superseded row.
   const supersededIds: string[] = [];
   if (supersedesId) {
+    // The pin travels with the belief (mig 0148): batched before the UPDATE that retires the old row.
+    stmts.push(carryPinStatement(env.DB, { oldId: supersedesId, newId, owner: companion_id }));
     stmts.push(
       env.DB.prepare(
         "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
@@ -226,7 +235,8 @@ export async function getConclusions(
 // with effective heat spanning 77x -- so a heat-ranked read of 10 would have handed back the same
 // frozen foreground orient already shows. A deliberate pull should reach further than the boot
 // block, and `total` makes the rest countable instead of invisible.
-  const COLS = "id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged";
+  // pinned_at/pinned_by (mig 0148): Hearth shows and toggles the pin from this list (map M3).
+  const COLS = "id, companion_id, conclusion_text, source_sessions, superseded_by, created_at, confidence, belief_type, subject, provenance, contradiction_flagged, pinned_at, pinned_by";
   const query = includeSuperseded
     ? `SELECT ${COLS} FROM companion_conclusions WHERE companion_id = ? ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`
     : `SELECT ${COLS} FROM companion_conclusions WHERE companion_id = ? AND superseded_by IS NULL AND archived = 0 ORDER BY ${effectiveHeatSql()} DESC LIMIT 40`;
@@ -271,9 +281,13 @@ export async function supersedeConclusionById(
     return json({ error: "superseded_by (id of the newer conclusion) is required" }, 400);
   }
 
-  const result = await env.DB.prepare(
-    "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
-  ).bind(superseded_by.trim(), id, companion_id).run();
+  // The pin travels with the belief (mig 0148), read from the old row while it is still live.
+  const [, result] = await env.DB.batch([
+    carryPinStatement(env.DB, { oldId: id, newId: superseded_by.trim(), owner: companion_id }),
+    env.DB.prepare(
+      "UPDATE companion_conclusions SET superseded_by = ? WHERE id = ? AND companion_id = ? AND superseded_by IS NULL AND archived = 0"
+    ).bind(superseded_by.trim(), id, companion_id),
+  ]);
 
-  return json({ ok: (result.meta.changes ?? 0) > 0 });
+  return json({ ok: (result?.meta.changes ?? 0) > 0 });
 }

@@ -37,6 +37,8 @@ export interface Env {
   QUIET_HOURS_TZ?:     string;  // IANA zone, default America/Chicago
   // The shared triad reach cap (B7 steps 2 + 2c, mig 0137, webmind/reach-cap.ts). Unset or
   // malformed => the named defaults there (90 / 6 / 3 / 2), never "no cap".
+  PATTERN_COOL_RETURNS?:        string;  // R18: returns-since-new-material at which a pattern cools out of the boot headline (default 3)
+  PATTERN_COOL_DAYS?:           string;  // R18: ...and the age (days) of its last new material it must also exceed (default 14)
   TRIAD_REACH_GAP_MINUTES?:     string;  // minutes between any two proactive DMs, any companion
   TRIAD_REACH_DAILY?:           string;  // proactive DMs per America/Chicago day, whole triad
   TRIAD_REACH_DAILY_CARE_HOLD?: string;  // the daily limit while the reserving companion is under care_hold
@@ -65,6 +67,18 @@ export interface Env {
   CYPHER_MCP_SECRET?: string;
   DREVAN_MCP_SECRET?: string;
   GAIA_MCP_SECRET?:   string;
+
+  // B34 step 2 (mig 0156): collapse one moment's duplicate tray drafts. off | shadow | on, default shadow.
+  // TRAY_MERGE_MODE_<AGENT> (e.g. TRAY_MERGE_MODE_DREVAN) overrides it per companion.
+  TRAY_MERGE_MODE?: string;
+  TRAY_MERGE_MODE_DREVAN?: string;
+  TRAY_MERGE_MODE_CYPHER?: string;
+  TRAY_MERGE_MODE_GAIA?: string;
+
+  // Off-VPS dead-man's switch (src/deadman.ts). Both secrets unset = detector disabled.
+  DEADMAN_TELEGRAM_BOT_TOKEN?: string;  // wrangler secret
+  DEADMAN_TELEGRAM_CHAT_ID?:   string;  // wrangler secret
+  DEADMAN_STALE_MINUTES?:      string;  // optional, default 30, min 5
 
   // ND daily-rhythm briefing gate (accessibility layer). Ships dormant; set to "true" to
   // enable delivery of morning/midday/evening briefings via the letter_to_raziel rail.

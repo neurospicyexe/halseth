@@ -27,6 +27,7 @@
 import { noveltyCheck } from "../webmind/novelty.js";
 import { storeVector, embedText } from "../mcp/embed.js";
 import type { Env } from "../types.js";
+import { schemaGap } from "../care/schema-gap.js";
 
 export const MAX_FACT_CHARS = 1200;
 
@@ -41,6 +42,21 @@ export const RELATED_FACT_SURFACE = 0.8;
 
 import { FACT_ID_PREFIX_LEN } from "./open-facts-gate.js";
 export { FACT_ID_PREFIX_LEN };
+
+/**
+ * Fact trust (mig 0158, 2026-11-01): DERIVED at write time, never taken from the caller. NULL in the column
+ * means a legacy row and reads as 1.0. `inherited` is the replaced row's trust on a supersede (undefined when
+ * not a supersede; null when the replaced row is legacy).
+ */
+export function deriveFactTrust(o: { source: string; companionId: string | null; status: string; inherited?: number | null }): number | null {
+  const razielStated = o.source.toLowerCase() === "raziel" || !o.companionId;
+  let t: number | null;
+  if (razielStated) t = 1.0;
+  else if (o.inherited !== undefined) t = o.inherited;   // a companion's correction keeps what it replaced
+  else t = 0.6;
+  if (o.status === "open") t = Math.min(t ?? 1.0, 0.5);
+  return t;
+}
 
 export interface FactWriteInput {
   fact: string;
@@ -131,21 +147,40 @@ export async function writeArchitectFact(env: Env, input: FactWriteInput): Promi
   const source = input.source && input.source.trim() ? input.source.trim() : (input.companionId ?? "unattributed");
   const weight = Number.isFinite(Number(input.weight ?? NaN)) ? Number(input.weight) : 100;
 
-  const stmts = [
-    env.DB.prepare(
-      `INSERT INTO architect_facts
-         (id, fact, category, status, companion_id, source, supersedes_id, weight, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-    ).bind(id, fact, category, input.status, input.companionId, source, supersedesId, weight),
-  ];
+  // Trust (mig 0158): a supersede inherits the replaced row's value. Before 0158 is applied the column is
+  // missing; the read answers null and the INSERT falls back to the pre-0158 shape (schemaGap), so the
+  // Worker can deploy ahead of the migration.
+  let inherited: number | null | undefined;
   if (supersedesId) {
-    // Retire, never delete: lineage is the whole difference between this and the layer it replaced.
-    stmts.push(
-      env.DB.prepare("UPDATE architect_facts SET status = 'retired', updated_at = datetime('now') WHERE id = ?")
-        .bind(supersedesId),
-    );
+    inherited = await env.DB.prepare("SELECT trust FROM architect_facts WHERE id = ?").bind(supersedesId)
+      .first<{ trust: number | null }>().then((r) => (r ? r.trust : null)).catch(() => null);
   }
-  await env.DB.batch(stmts);
+  const trust = deriveFactTrust({ source, companionId: input.companionId, status: input.status, inherited });
+
+  // Retire, never delete: lineage is the whole difference between this and the layer it replaced.
+  const retire = supersedesId
+    ? [env.DB.prepare("UPDATE architect_facts SET status = 'retired', updated_at = datetime('now') WHERE id = ?").bind(supersedesId)]
+    : [];
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO architect_facts
+           (id, fact, category, status, companion_id, source, supersedes_id, weight, trust, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      ).bind(id, fact, category, input.status, input.companionId, source, supersedesId, weight, trust),
+      ...retire,
+    ]);
+  } catch (e) {
+    if (!schemaGap(e)) throw e;
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO architect_facts
+           (id, fact, category, status, companion_id, source, supersedes_id, weight, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      ).bind(id, fact, category, input.status, input.companionId, source, supersedesId, weight),
+      ...retire,
+    ]);
+  }
 
   // Index after the D1 write and non-fatal: a fact that lands but is not indexed is merely
   // un-deduped next time; a fact lost because indexing failed is gone.

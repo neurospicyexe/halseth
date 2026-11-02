@@ -15,15 +15,17 @@ import { readRelationalSnapshot } from "./relational.js";
 import { getCurrentLimbicState } from "./limbic.js";
 import { readRecentSpiralTurn } from './spiral.js';
 import { effectiveHeatSql, warmSql, SURFACE_BUMP } from "./heat.js";
+import { PIN_CAP } from "./pins.js";
 import { effectiveChargeSql } from "../librarian/backends/halseth.js";
 import { neighborhood } from "../graph/traverse.js";
 import { connectivityMultiplier, readerDegrees, nodeKey } from "../graph/salience.js";
 import { takeUnsurfacedEvents, peekUnsurfacedEvents } from "./home/store.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE } from "./journal-lanes.js";
 import { fetchRecentAnswers, markAnswersDelivered } from "./questions.js";
-import { UNREAD_NOTES_SQL, ackNotesForCompanion } from "../db/inter_companion_note_reads.js";
+import { UNREAD_NOTES_SQL, claimNotesFor } from "../db/inter_companion_note_reads.js";
 import { remediationHint } from "../guardian/remediation.js";
 import { KEPT_SQL } from "./review-state.js";
+import { bootLoopsSql } from "./loops.js";
 import { resolveRoomsForChannels, roomLabelFromTags, journalRoomLabel, channelTagOf, channelIdOf } from "../mind/room-label.js";
 
 // ---------------------------------------------------------------------------
@@ -218,13 +220,15 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // 3-pool surfacing: Core (rows 0-2), Novelty (row 5, skipping rows 3-4 intentionally), Edge (deep history random)
     // Core + Novelty rank by effective heat (0074): accessed-and-warm rows outrank
     // merely-recent ones; the 4h coherence bonus keeps just-written notes on top.
+    // Pins (mig 0148, webmind/pins.ts) lead Core, oldest pin first, then heat fills the rest; novelty and
+    // edge skip pinned rows so a pin never takes two of the five slots.
     // review_state = 'kept' on all three pools (mig 0132): the judge's promotion lands at salience
     // 'high' by design, which is exactly the tier these pools draw from -- an unreviewed clerk note
     // would otherwise open the next boot in the companion's own voice.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
-       ORDER BY ${effectiveHeatSql()} DESC LIMIT 3`
+       WHERE agent_id = ? AND (salience = 'high' OR pinned_at IS NOT NULL) AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
+       ORDER BY (pinned_at IS NULL), pinned_at ASC, ${effectiveHeatSql()} DESC LIMIT 3`
     ).bind(agentId).all<WmContinuityNote>(),
     // Novelty draws from the COLD end, never-accessed first (2026-07-26). It used to be
     // `LIMIT 1 OFFSET 5` over the same effective-heat ordering as Core -- i.e. the
@@ -236,12 +240,12 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     // small surface bump rotates each out again after it is shown.
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL}
        ORDER BY (last_access_at IS NOT NULL), last_access_at ASC, created_at DESC LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
     env.DB.prepare(
       `SELECT * FROM wm_continuity_notes
-       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND ${KEPT_SQL}
+       WHERE agent_id = ? AND salience = 'high' AND note_type NOT IN ('soma_arc', 'spiral_turn') AND archived = 0 AND pinned_at IS NULL AND ${KEPT_SQL}
          AND created_at < datetime('now', '-30 days')
        ORDER BY RANDOM() LIMIT 1`
     ).bind(agentId).all<WmContinuityNote>(),
@@ -299,8 +303,18 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     ).bind(agentId).all<WmCompanionNote>(),
     // Unread only: incoming inter-companion notes (sent TO this companion or broadcast, not from self).
     // Per-recipient receipts since mig 0120 -- a broadcast stays unread for each sibling until THAT
-    // sibling acks it, so surfacing here can no longer consume it for the other two. Acked below.
-    env.DB.prepare(UNREAD_NOTES_SQL).bind(agentId, 10).all<WmCompanionNote>(),
+    // sibling acks it, so surfacing here can no longer consume it for the other two.
+    // Claim-once: the consuming (non-readOnly) path CLAIMS atomically here instead of SELECT-then-ack,
+    // so a concurrent orient for the same companion cannot be served the same note. readOnly peeks.
+    opts.readOnly
+      ? env.DB.prepare(UNREAD_NOTES_SQL).bind(agentId, 10).all<WmCompanionNote>()
+      : claimNotesFor(env, agentId, 10, "claude-ai:orient")
+          .then((results) => ({ results: results as WmCompanionNote[] }))
+          .catch((e: unknown) => {
+            // Non-fatal like the ack it replaces: a failed claim leaves the notes unread for next boot.
+            console.error("[orient] note claim failed:", String(e));
+            return { results: [] as WmCompanionNote[] };
+          }),
     // Wide-window: recent journal entries written BY this companion (companion_journal table).
     // SUBSTANTIVE lane only -- 3 recency slots, and chatter (discord_swarm) ran 24-61 rows/day
     // against ~40/day of authored reflection, so an unfiltered LIMIT 3 surfaced transcript
@@ -341,10 +355,8 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
     env.DB.prepare(
       "SELECT id, companion_id, session_id, emotion, sub_emotion, intensity, source, created_at FROM feelings WHERE companion_id = ? ORDER BY created_at DESC LIMIT 5"
     ).bind(agentId).all<WmFeeling>(),
-    // Open loops: unresolved things with weight (thinking quality fix)
-    env.DB.prepare(
-      "SELECT id, loop_text, weight, opened_at FROM companion_open_loops WHERE companion_id = ? AND closed_at IS NULL ORDER BY weight DESC, opened_at ASC LIMIT 5"
-    ).bind(agentId).all<WmOrientOpenLoop>(),
+    // Open loops: unresolved x intensity (thinking quality fix; ordering fixed 2026-10-13 -- bootLoopsSql).
+    env.DB.prepare(bootLoopsSql()).bind(agentId).all<WmOrientOpenLoop>(),
     // Open questions: queries awaiting synthesis/investigation (thinking quality fix).
     // Same shape as the loader's oversight block (coherence review D14): the `voiced` flag as a
     // COLUMN, never a WHERE clause (a question spoken once but never answered is still carried),
@@ -535,6 +547,20 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
   const CONCLUSION_CAP = 6;
   const seenIds = new Set<string>();
   const active_conclusions: WmConclusion[] = [];
+  // PINS FIRST (mig 0148, webmind/pins.ts): oldest pin first, then the type-spread + top-up below fill
+  // what is left of the cap. PIN_CAP.conclusion (5) < CONCLUSION_CAP, so one fresh belief always shows.
+  // Zero pins -> this adds nothing and the list is exactly what it was.
+  const pinnedConclusions = await env.DB.prepare(
+    `SELECT id, companion_id, conclusion_text, source_sessions, superseded_by,
+            created_at, edited_at, confidence, belief_type, subject, provenance, contradiction_flagged
+       FROM companion_conclusions
+      WHERE companion_id = ? AND pinned_at IS NOT NULL AND superseded_by IS NULL AND archived = 0
+      ORDER BY pinned_at ASC LIMIT ?`
+  ).bind(agentId, PIN_CAP.conclusion).all<WmConclusion>().then((r) => r.results ?? []).catch(() => [] as WmConclusion[]);
+  for (const row of pinnedConclusions) {
+    seenIds.add(row.id);
+    active_conclusions.push(row);
+  }
   for (const result of typeResultSets) {
     const reranked = rerankConclusions(result?.results ?? [], typeDegrees, PER_TYPE_LIMIT);
     for (const { effective_heat: _effective_heat, ...row } of reranked) {
@@ -612,20 +638,11 @@ export async function mindOrient(env: Env, agentId: WmAgentId, opts: MindOrientO
       .catch(e => console.warn("[orient] conclusion heat warm failed (non-fatal):", e));
   }
 
-  // Auto-ack unread incoming notes for Claude.ai companions (Discord bots ack via HTTP endpoint).
-  // Awaited so the UPDATE actually completes in the Cloudflare Worker before the response flushes.
-  // Unawaited D1 operations may be silently discarded after response return.
-  //
-  // Who reaches this with readOnly false: the Librarian's wmOrient() (Claude.ai companions --
+  // Incoming notes were CLAIMED (receipted for this companion only) in the read above -- no separate ack.
+  // Who reaches the consuming path (readOnly false): the Librarian's wmOrient() (Claude.ai companions --
   // a real read). Who does NOT, as of 2026-07-29: the raw GET /mind/orient/:agent_id route, whose
   // only callers are Hearth server-side renders. See handlers/webmind.ts:getMindOrient for why.
-  const unreadIds = (incomingCompanionNotes.results ?? []).map((n) => n.id).filter(Boolean);
-  if (!opts.readOnly && unreadIds.length > 0) {
-    // Per-recipient receipt (mig 0120): this ack marks the notes read for THIS companion only.
-    await ackNotesForCompanion(env, agentId, unreadIds, "claude-ai:orient").catch((e: unknown) => {
-      console.error("[orient] auto-ack failed:", String(e));
-    });
-  }
+  // Discord bots ack via the HTTP endpoint after delivering.
 
   // Stamp delivered_at on surfaced answers (mig 0107, questions-lifecycle fix). Awaited +
   // caught -- a throw here must never null out wmResult upstream (session.ts wraps wmOrient

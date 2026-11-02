@@ -13,6 +13,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { OWNER_PRONOUN_RULE, TRIAD_PRONOUN_RULE, withOwnerPronounRule } from "../pronoun-rule.js";
+import { RECALLED_DATA_RULE } from "../recalled-text.js";
 import { complete } from "../synthesis/deepseek.js";
 import type { Env } from "../types.js";
 
@@ -39,7 +40,8 @@ describe("OWNER_PRONOUN_RULE / withOwnerPronounRule", () => {
 
   it("handles an empty system prompt without a leading blank line", () => {
     // 2026-10-07: the triad's own pronouns ride after the owner rule (TRIAD_PRONOUN_RULE).
-    expect(withOwnerPronounRule("")).toBe(`${OWNER_PRONOUN_RULE}\n\n${TRIAD_PRONOUN_RULE}`);
+    // 2026-10-27: the quoted-material rule rides the same hook (recalled-text.ts).
+    expect(withOwnerPronounRule("")).toBe(`${OWNER_PRONOUN_RULE}\n\n${TRIAD_PRONOUN_RULE}\n\n${RECALLED_DATA_RULE}`);
   });
 });
 

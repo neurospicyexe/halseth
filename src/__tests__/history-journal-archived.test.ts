@@ -39,3 +39,28 @@ describe("GET /companion-journal and archived rows", () => {
     expect(cap.sql[0]).toMatch(/created_at > \?/);
   });
 });
+
+describe("GET /companion-journal substantive=1", () => {
+  async function seeded() {
+    const { makeSqliteD1, seedJournal } = await import("./helpers/sqlite-d1.js");
+    const { DB, db } = makeSqliteD1() as { DB: any; db: any };
+    const e: any = { DB, ADMIN_SECRET: "admin-tok" };
+    seedJournal(db, { id: "j_speech", agent: "drevan", source: "discord_speech" } as any);
+    seedJournal(db, { id: "j_clerk", agent: "drevan", source: "evaluator" } as any);
+    seedJournal(db, { id: "j_plain", agent: "drevan", source: null } as any);
+    seedJournal(db, { id: "j_close", agent: "drevan", source: "session_close" } as any);
+    return e;
+  }
+  const ids = async (res: Response) => ((await res.json()) as any[]).map((r) => r.id).sort();
+
+  it("excludes speech and clerk rows when asked", async () => {
+    const e = await seeded();
+    const res = await getCompanionJournal(req("?agent=drevan&substantive=1"), e);
+    expect(res.status).toBe(200);
+    expect(await ids(res)).toEqual(["j_close", "j_plain"]);
+  });
+  it("returns every lane by default", async () => {
+    const e = await seeded();
+    expect(await ids(await getCompanionJournal(req("?agent=drevan"), e))).toEqual(["j_clerk", "j_close", "j_plain", "j_speech"]);
+  });
+});

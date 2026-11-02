@@ -25,6 +25,7 @@ import {
   type EscalationSignals,
   type EscalationRule,
 } from "./rules.js";
+import { missingVoidedAt, onlyIf } from "./schema-gap.js";
 
 const TICK_GATE_HOURS = 1;
 
@@ -49,6 +50,15 @@ export const MED_DM_TAKEN_SQL =
 export const MED_DM_TAKEN_SQL_PRE_0141 =
   `SELECT MAX(a.answered_at) AS at FROM med_answers a
    JOIN med_schedule s ON s.slot_key = a.slot_key WHERE s.weekday_mask = 127`;
+
+/** Per-rule last firing (cooldown) and the rules with a live pending firing; voided rows excluded
+ *  (mig 0155), with the pre-0155 text as the fallback. Exported so a real-schema test runs them. */
+export const FIRED_SQL = `SELECT rule, MAX(detected_at) AS at FROM care_actions WHERE voided_at IS NULL GROUP BY rule`;
+export const FIRED_SQL_PRE_0155 = `SELECT rule, MAX(detected_at) AS at FROM care_actions GROUP BY rule`;
+export const PENDING_RULES_SQL =
+  `SELECT DISTINCT rule FROM care_actions WHERE acted_at IS NULL AND voided_at IS NULL AND detected_at > ?`;
+export const PENDING_RULES_SQL_PRE_0155 =
+  `SELECT DISTINCT rule FROM care_actions WHERE acted_at IS NULL AND detected_at > ?`;
 
 /** The fresher of two ages; null only when both are null ("never confirmed" stays absent). */
 export function newestAge(a: number | null, b: number | null): number | null {
@@ -113,15 +123,19 @@ export async function runCareTick(
     // one lane one filter with the C6 quiet-owner detector. The denominator is stated in the
     // detail line the rule table builds -- a silence claim must name what it checked.
     readOwnerLastSeen(env),
-    env.DB.prepare(
-      `SELECT rule, MAX(detected_at) AS at FROM care_actions GROUP BY rule`,
-    ).all<{ rule: CareRule; at: string }>(),
+    // A voided firing (a check-in undo, mig 0155) neither holds the cooldown nor blocks as pending:
+    // the reading it came from is gone. Before 0155 nothing is voided, so the plain read is the same;
+    // only the missing column falls back (anything else fails the run and the next kick retries).
+    env.DB.prepare(FIRED_SQL).all<{ rule: CareRule; at: string }>()
+      .catch(onlyIf(missingVoidedAt, () => env.DB.prepare(FIRED_SQL_PRE_0155).all<{ rule: CareRule; at: string }>())),
     // Un-acted, un-decayed firings: while one exists for a rule, that rule must not fire again --
     // otherwise two pendings for one condition end up assigned to two companions and the
     // one-gesture rail breaks structurally.
-    env.DB.prepare(
-      `SELECT DISTINCT rule FROM care_actions WHERE acted_at IS NULL AND detected_at > ?`,
-    ).bind(new Date(nowMs - PENDING_DECAY_HOURS * 3_600_000).toISOString()).all<{ rule: CareRule }>(),
+    (() => {
+      const cutoff = new Date(nowMs - PENDING_DECAY_HOURS * 3_600_000).toISOString();
+      return env.DB.prepare(PENDING_RULES_SQL).bind(cutoff).all<{ rule: CareRule }>()
+        .catch(onlyIf(missingVoidedAt, () => env.DB.prepare(PENDING_RULES_SQL_PRE_0155).bind(cutoff).all<{ rule: CareRule }>()));
+    })(),
   ]);
 
   const lastFired: Partial<Record<CareRule, number>> = {};

@@ -20,11 +20,13 @@ const sessionSrc = readFileSync(resolve(here, "../librarian/executors/session.ts
 
 describe("execSessionOrient ready_prompt block order (graph memory Tranche 5)", () => {
   it("computes neighborhoodBlock via the loader's graph.neighborhoods, not a fresh query", () => {
-    expect(sessionSrc).toMatch(/const neighborhoodBlock = B\.neighborhoodBlock\(mindState\.graph\.neighborhoods(, \{ labels: graphLabels \})?\)/);
+    // M6 (0.22.0): the opts now carry seeds + map-labeler nodes, still from mindState, still no query.
+    expect(sessionSrc).toMatch(/const neighborhoodBlock = B\.neighborhoodBlock\(mindState\.graph\.neighborhoods, \{\s*seeds: mindState\.graph\.seeds, nodes: graphNodes, isLabeledTable,\s*\}\)/);
   });
 
   it("places neighborhoodBlock after continuityBlock and before narrativeBlock in the concatenation", () => {
-    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: buildOrientPrompt"));
+    // Since 2026-10-27 the whole concatenation is wrapped in neutralizeRecalled(...) (recalled-text.ts).
+    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: neutralizeRecalled(buildOrientPrompt"));
     expect(line, "ready_prompt concatenation line not found").toBeTruthy();
 
     const idxContinuity = line!.indexOf("+ continuityBlock");
@@ -49,7 +51,7 @@ describe("execSessionOrient ready_prompt block order (graph memory Phase 2, prov
   });
 
   it("places provenanceBlock immediately after the orient header and before continuityBlock", () => {
-    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: buildOrientPrompt"));
+    const line = sessionSrc.split("\n").find((l) => l.includes("ready_prompt: neutralizeRecalled(buildOrientPrompt"));
     expect(line, "ready_prompt concatenation line not found").toBeTruthy();
 
     const idxHeader = line!.indexOf("buildOrientPrompt(");

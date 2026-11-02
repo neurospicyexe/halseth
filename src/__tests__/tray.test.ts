@@ -64,7 +64,7 @@ describe("listTray", () => {
     });
     const view = await listTray(env, "drevan");
     expect(view.drafts.map(d => `${d.kind}:${d.id}`)).toEqual(["note:n-new", "journal:j-old"]);
-    expect(view.stats).toEqual({ draft: 2, kept: 3, dropped: 1, keep_rate_pct: 75, window_days: 30 });
+    expect(view.stats).toEqual({ draft: 2, kept: 3, dropped: 1, keep_rate_pct: 75, window_days: 30, pronoun_flagged: 0 });
     expect(view.stats_line).toContain("75%");
     for (const c of calls) {
       expect(c.binds[0]).toBe("drevan");

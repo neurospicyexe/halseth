@@ -88,6 +88,22 @@ function supersedeUpdateFor(c: Captured, matchId: string): unknown[] | undefined
 // ---------------------------------------------------------------------------
 
 describe("postConclusion -- novelty gate", () => {
+  // 2026-10-19: a pronoun-only rewrite matched the very row it superseded at ~0.97 and was deduped,
+  // so the supersede never ran. A declared supersede bypasses the gate (architect-fact-write.ts rule).
+  it("a declared supersede of a NEAR-IDENTICAL row inserts and retires it, never dedupes", async () => {
+    const captured: Captured = { prepared: [], binds: [] };
+    const env = makeEnv([{ id: "companion_conclusions:existing123", score: 0.97 }], captured);
+
+    const res = await postConclusion(makeRequest({ ...BASE_BODY, supersedes: "existing123" }), env);
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.deduped).toBeUndefined();
+    expect(body.superseded).toBe("existing123");
+    expect(insertCalls(captured)).toBe(1);
+    expect(supersedeUpdateFor(captured, "existing123")).toBeDefined();
+  });
+
   it("skips on a near-identical match (score 0.97) -- 200, deduped, NO INSERT", async () => {
     const captured: Captured = { prepared: [], binds: [] };
     const env = makeEnv([{ id: "companion_conclusions:existing123", score: 0.97 }], captured);

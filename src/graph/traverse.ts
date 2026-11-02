@@ -3,6 +3,8 @@
 // Graph memory Phase 1, second deliverable (docs/private/graph-memory-spec-2026-08-28.md):
 // "a bounded traversal (1-2 hops, typed, heat-gated) hanging off existing vector search as
 // seeder. Vector search unchanged; it becomes the entry point, not the whole answer."
+// As built (checked 2026-10-27): typed and bounded, NOT heat-gated -- `withHeat` only attaches
+// node_heat for callers to rank by; nothing here drops a low-heat neighbour.
 //
 // `neighborhood()` takes the rows a vector/semantic search already surfaced (the seeds) and
 // walks graph_edges (mig 0127) outward 1-2 hops, BOTH directions, to find what's structurally
@@ -70,6 +72,10 @@ export interface TraverseOptions {
   /** When true, attach effective heat (nullable) for the newly-discovered endpoint of each edge,
    *  where that endpoint lives in a heat-bearing table. Read-only -- never warms the row. */
   withHeat?: boolean;
+  /** Fair share (M6, 2026-10-28): at most this many edges per frontier node per hop. Without it one
+   *  busy seed spends the whole per-hop cap -- on the 10-27 backup Fargo's ~25 `mentions` filled
+   *  26 of every companion's 30 orient edges. Omitted = no per-node cap (the old behavior). */
+  perNodeLimit?: number;
 }
 
 export interface TraverseEdge {
@@ -79,6 +85,9 @@ export interface TraverseEdge {
   dst_id: string;
   edge_type: string;
   writer: string;
+  /** mig 0150: carries the front on a system-name link ('mechanical:front:Magpie'). Always set by
+   *  neighborhood(); optional so callers that build edges by hand need not invent one. */
+  provenance?: string;
   created_at: string;
   hop: number;
   /**
@@ -101,6 +110,7 @@ interface RawEdgeRow {
   dst_id: string;
   edge_type: string;
   writer: string;
+  provenance: string;
   created_at: string;
 }
 
@@ -139,7 +149,7 @@ function buildEdgeQuery(
   const idPlaceholders = idChunk.map(() => "?").join(", ");
   const bindings: unknown[] = [table, ...idChunk, table, ...idChunk, SEALED_TABLE, SEALED_TABLE];
 
-  let sql = `SELECT id, src_table, src_id, dst_table, dst_id, edge_type, writer, created_at
+  let sql = `SELECT id, src_table, src_id, dst_table, dst_id, edge_type, writer, provenance, created_at
     FROM graph_edges
     WHERE ((src_table = ? AND src_id IN (${idPlaceholders})) OR (dst_table = ? AND dst_id IN (${idPlaceholders})))
       AND src_table != ? AND dst_table != ?`;
@@ -236,7 +246,22 @@ export async function neighborhood(
     const raw = await fetchEdgesTouching(db, frontier, edgeTypes);
     const fresh = raw.filter((e) => !seenEdgeIds.has(e.id));
     fresh.sort(compareEdges);
-    const capped = fresh.slice(0, limit);
+    let capped = fresh.slice(0, limit);
+    if (opts.perNodeLimit && opts.perNodeLimit > 0) {
+      // Charge each edge to the frontier node(s) it touches; skip it once every such node is full.
+      // Second pass hands unused budget back in the same order, so a quiet seed set does not leave the
+      // cap half-spent and a busy seed's count stays near true.
+      const per = new Map<string, number>();
+      const fair: RawEdgeRow[] = [];
+      const deferred: RawEdgeRow[] = [];
+      for (const e of fresh) {
+        const ends = [nodeKey(e.src_table, e.src_id), nodeKey(e.dst_table, e.dst_id)].filter((k) => frontierKeys.has(k));
+        if (fair.length >= limit || ends.every((k) => (per.get(k) ?? 0) >= opts.perNodeLimit!)) { deferred.push(e); continue; }
+        for (const k of ends) per.set(k, (per.get(k) ?? 0) + 1);
+        fair.push(e);
+      }
+      capped = [...fair, ...deferred.slice(0, Math.max(0, limit - fair.length))].sort(compareEdges);
+    }
 
     const nextFrontierMap = new Map<string, GraphSeed>();
 
@@ -256,6 +281,7 @@ export async function neighborhood(
         dst_id: e.dst_id,
         edge_type: e.edge_type,
         writer: e.writer,
+        provenance: e.provenance,
         created_at: e.created_at,
         hop,
         node_heat: null,

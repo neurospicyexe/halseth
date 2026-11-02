@@ -3,9 +3,10 @@ import { z } from "zod";
 import { Env } from "../../types.js";
 import { COMPANION_IDS } from "../../companions.js";
 import { generateId, findOpenSession, OPENED_BY } from "../../db/queries.js";
-import { unreadNotesFor, ackNotesForCompanion } from "../../db/inter_companion_note_reads.js";
+import { claimNotesFor } from "../../db/inter_companion_note_reads.js";
 import { getCurrentFronters } from "../../librarian/backends/plural-store.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
+import { edgeForResumedFrom, insertEdgeStatements } from "../../graph/live.js";
 
 const COMPANION_IDENTITY = {
   cypher: {
@@ -127,6 +128,40 @@ export interface SessionLoadInput {
   surface?: string;
 }
 
+// D3 (2026-10-28, Raziel: "a boot that shows a handover counts as resuming it"). Both open paths show
+// the newest human-closed packet (close_kind IS NULL): session_open returns it whole, orient renders
+// its anchor and motion state. Callers almost never pass prior_handover_id (the live 'resumed_from'
+// lane held 0 rows at the 10-27 audit), so when none was named, a NEW session resumes the packet it
+// was shown. A reused session already had its boot; a packet that closed this very session is not
+// something it resumes. Same writes as the explicit path: returned = 1 plus the live edge.
+// OWN CLOSES ONLY: the shown packet is newest-of-any-companion (the boot hook labels it so), and a
+// boot that shows Gaia's close orients from it but does not resume it -- a cypher session marked
+// as resuming Gaia's handover would be a live edge, surviving every rebuild, that says nothing true.
+async function resumeShownHandover(env: Env, args: {
+  sessionId: string;
+  isNew: boolean;
+  explicit: string | undefined;
+  shown: { id: string; session_id: string } | null | undefined;
+  companionId: string | undefined;
+  now: string;
+}): Promise<void> {
+  if (args.explicit || !args.isNew || !args.shown?.id || args.shown.session_id === args.sessionId) return;
+  try {
+    const closer = await env.DB.prepare("SELECT companion_id FROM sessions WHERE id = ?")
+      .bind(args.shown.session_id).first<{ companion_id: string | null }>();
+    if (!closer?.companion_id || closer.companion_id !== args.companionId) return;
+    await env.DB.batch([
+      env.DB.prepare("UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL").bind(args.shown.id),
+      ...insertEdgeStatements(env.DB, [edgeForResumedFrom({
+        sessionId: args.sessionId, priorHandoverId: args.shown.id, writer: args.companionId ?? null, createdAt: args.now,
+      })]),
+    ]);
+  } catch (err) {
+    // Never fail a boot over a continuity edge.
+    console.warn("[session] resume-shown-handover write failed", { sessionId: args.sessionId, error: String(err) });
+  }
+}
+
 // ── Orient: session creation + identity anchoring ────────────────────────────
 // Returns who-am-I context: identity, SOMA floats, somatic snapshot, last anchor.
 // Session record is created here; session_id flows to ground.
@@ -170,6 +205,12 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
     stmts.push(env.DB.prepare(
       "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
     ).bind(input.prior_handover_id));
+    // Same 'resumed_from' edge halseth_session_open writes (2026-10-27 graph audit: that tool was
+    // the edge's ONLY writer and has opened 1 session ever, so the live lane sat at 0 rows while
+    // this path, which marks the same packet returned, wrote nothing). Same batch, same covenant.
+    stmts.push(...insertEdgeStatements(env.DB, [edgeForResumedFrom({
+      sessionId, priorHandoverId: input.prior_handover_id, writer: input.companion_id ?? null, createdAt: now,
+    })]));
   }
   if (stmts.length > 0) {
     await env.DB.batch(stmts);
@@ -184,8 +225,8 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       .bind(input.companion_id).first<CompanionState>(),
     env.DB.prepare("SELECT * FROM somatic_snapshot WHERE companion_id = ? ORDER BY created_at DESC LIMIT 1")
       .bind(input.companion_id).first<SomaticSnapshot>(),
-    env.DB.prepare("SELECT active_anchor, motion_state FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1")
-      .first<{ active_anchor: string | null; motion_state: string | null }>(),
+    env.DB.prepare("SELECT id, session_id, active_anchor, motion_state FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1")
+      .first<{ id: string; session_id: string; active_anchor: string | null; motion_state: string | null }>(),
     env.DB.prepare("SELECT autonomous_turn FROM house_state WHERE id = 'main'")
       .first<{ autonomous_turn: string | null }>(),
     env.DB.prepare(
@@ -198,6 +239,9 @@ export async function loadOrientData(env: Env, input: SessionOrientInput) {
       .first<{ id: string; created_at: string }>(),
     getCurrentFronters(env),
   ]);
+  await resumeShownHandover(env, {
+    sessionId, isNew: !skipInsert, explicit: input.prior_handover_id, shown: lastHandover, companionId: input.companion_id, now,
+  });
 
   return {
     session_id: sessionId,
@@ -327,7 +371,11 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
     sessionStatements.push(
       env.DB.prepare(
         "UPDATE handover_packets SET returned = 1 WHERE id = ? AND returned IS NULL"
-      ).bind(input.prior_handover_id)
+      ).bind(input.prior_handover_id),
+      // See loadOrientData: all three session-open paths write the edge or neither does.
+      ...insertEdgeStatements(env.DB, [edgeForResumedFrom({
+        sessionId, priorHandoverId: input.prior_handover_id, writer: input.companion_id ?? null, createdAt: now,
+      })]),
     );
   }
 
@@ -343,6 +391,9 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   const handover = await env.DB.prepare(
     "SELECT * FROM handover_packets WHERE close_kind IS NULL ORDER BY created_at DESC LIMIT 1"
   ).first<HandoverPacket>();
+  await resumeShownHandover(env, {
+    sessionId, isNew: !skipInsert, explicit: input.prior_handover_id, shown: handover, companionId: input.companion_id, now,
+  });
 
   // 3. Read companion_state row for this companion
   const state = await env.DB.prepare(
@@ -415,12 +466,10 @@ export async function loadSessionData(env: Env, input: SessionLoadInput) {
   // no from_id guard (a boot consumed the companion's own outgoing broadcasts) and an unscoped
   // read_at UPDATE (one Claude Code boot marked the whole triad's mail read). Predicate + ack now
   // live in db/inter_companion_note_reads.ts -- one place, no second copy.
-  const pendingNotes: InterCompanionNote[] = await unreadNotesFor(env, input.companion_id, 20);
-
-  // 8. Mark those notes as read FOR THIS COMPANION only
-  if (pendingNotes.length > 0) {
-    await ackNotesForCompanion(env, input.companion_id, pendingNotes.map(n => n.id), input.surface ?? null);
-  }
+  // Claim-once: SELECT-then-ack left a gap two concurrent opens could both walk through. A reused
+  // (idempotency-guarded) session still claims: the mail is delivered to whoever asks first, exactly
+  // once, instead of being served again to the next surface.
+  const pendingNotes: InterCompanionNote[] = await claimNotesFor(env, input.companion_id, 20, input.surface ?? null);
 
   return {
     session_id: sessionId,

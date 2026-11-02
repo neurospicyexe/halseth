@@ -6,7 +6,7 @@ import { COMPANION_IDS, COMPANION_ID_SET, type CompanionId } from "../companions
 import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classifier.js";
 import { MACHINE_SOURCES } from "../webmind/notes.js";
 import { noveltyCheck } from "../webmind/novelty.js";
-import { journalInsert, journalBirthState, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE } from "../webmind/tray-insert.js";
+import { trayAwareJournalInsert, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE } from "../webmind/tray-insert.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -130,10 +130,10 @@ export async function postCompanionJournal(
   // `draft` and never reach recall until the owner keeps them. Decided in one place: journalInsert()
   // stamps review_state from the birth rule (webmind/tray-insert.ts, the only INSERT into this table).
   // The unique index (mig 0098) is PARTIAL; onConflictExternalId repeats its predicate.
-  const res = await journalInsert(env.DB, {
+  const res = await trayAwareJournalInsert(env as any, {
     id, created_at: now, agent, note_text: trimmedText, tags: safeTags, session_id: safeSessionId,
     source: safeSource, topic_tags: topicTags, external_id: safeExternalId,
-  }, { onConflictExternalId: true }).run();
+  }, { onConflictExternalId: true });
 
   // Conflict => this exact message was already journaled. Don't re-embed (Vectorize upsert is
   // idempotent by deterministic id, but the embed call still costs a Workers AI invocation).
@@ -174,7 +174,7 @@ export async function postCompanionJournal(
     }
   }
 
-  return new Response(JSON.stringify({ id, created_at: now, review_state: journalBirthState({ source: safeSource }) }), {
+  return new Response(JSON.stringify({ id, created_at: now, review_state: res.review_state }), {
     status: 201,
     headers: { "Content-Type": "application/json" },
   });

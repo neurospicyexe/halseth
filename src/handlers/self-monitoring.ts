@@ -398,6 +398,57 @@ export async function postVoiceScore(request: Request, env: Env): Promise<Respon
 
 // GET /mind/voice-scores/:companion_id?days=30
 // Aggregates + recent rows. self_catch_rate = self catches / all catches (self+human).
+// GET /mind/voice-scores/:companion_id/rows?from=ISO&to=ISO&limit=N&after=<cursor>  (2026-11-01, voice drift loop)
+// Raw rows for the worker's baseline + nightly drift job: score and hit arrays only, NEVER reply text (the table
+// has none). Ordered created_at ASC, id ASC; `next_after` = "<created_at>|<id>" of the last row when a page is full.
+// Dates compared through datetime() so ISO ("...T...Z") and SQLite ("YYYY-MM-DD HH:MM:SS") both work.
+export async function getVoiceScoreRows(
+  request: Request,
+  env: Env,
+  params: Record<string, string>,
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const { companion_id } = params;
+  if (!companion_id || !isCompanionId(companion_id)) {
+    return json({ error: `Invalid companion_id: must be one of ${VALID_COMPANIONS.join(", ")}` }, 400);
+  }
+  const url = new URL(request.url);
+  const from = url.searchParams.get("from") ?? "1970-01-01T00:00:00Z";
+  const to = url.searchParams.get("to") ?? new Date().toISOString();
+  if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) return json({ error: "from/to must be ISO dates" }, 400);
+  const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "1000", 10) || 1000, 1), 5000);
+  const after = url.searchParams.get("after");
+  let afterAt: string | null = null, afterId = "";
+  if (after) {
+    const i = after.lastIndexOf("|");
+    if (i <= 0) return json({ error: "bad cursor" }, 400);
+    afterAt = after.slice(0, i); afterId = after.slice(i + 1);
+  }
+  try {
+    const conds = ["companion_id = ?", "datetime(created_at) >= datetime(?)", "datetime(created_at) < datetime(?)"];
+    const binds: unknown[] = [companion_id, from, to];
+    if (afterAt !== null) {
+      conds.push("(datetime(created_at) > datetime(?) OR (datetime(created_at) = datetime(?) AND id > ?))");
+      binds.push(afterAt, afterAt, afterId);
+    }
+    const res = await env.DB.prepare(
+      `SELECT id, score, positive_hits, anti_hits, contamination_hits, message_len, created_at
+       FROM voice_scores WHERE ${conds.join(" AND ")}
+       ORDER BY datetime(created_at) ASC, id ASC LIMIT ?`,
+    ).bind(...binds, limit).all<{ id: string; score: number; positive_hits: string | null; anti_hits: string | null; contamination_hits: string | null; message_len: number | null; created_at: string }>();
+    const rows = res.results ?? [];
+    const last = rows[rows.length - 1];
+    return json({
+      rows: rows.map(({ id: _id, ...r }) => r),
+      ...(rows.length === limit && last ? { next_after: `${last.created_at}|${last.id}` } : {}),
+    });
+  } catch (err) {
+    console.error("[mind/voice-scores/rows] read error", { companion_id, error: String(err) });
+    return json({ error: "Internal server error" }, 500);
+  }
+}
+
 export async function getVoiceScores(
   request: Request,
   env: Env,

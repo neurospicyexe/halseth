@@ -19,7 +19,7 @@ describe("loadGraphBlocks", () => {
     } as unknown as Env;
 
     const result = await loadGraphBlocks(env, "cypher", []);
-    expect(result).toEqual({ neighborhoods: [] });
+    expect(result).toEqual({ neighborhoods: [], seeds: [] });
     expect(prepared).toBe(false);
   });
 
@@ -67,6 +67,6 @@ describe("loadGraphBlocks", () => {
     const env = { DB: { prepare: () => stmt } } as unknown as Env;
 
     const result = await loadGraphBlocks(env, "cypher", [{ table: "companion_conclusions", id: "c1" }]);
-    expect(result).toEqual({ neighborhoods: [] });
+    expect(result).toEqual({ neighborhoods: [], seeds: [] });
   });
 });

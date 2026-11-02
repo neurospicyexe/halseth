@@ -21,9 +21,9 @@
 // the bot payload has never had any of them, so this adapter drops them. The bots are the highest-frequency
 // presence in the house and the only surface with no emotional register at all -- worth fixing, and worth
 // fixing as a decision rather than inheriting as a side effect of a refactor.
-// `graph.neighborhoods` (0.11.0, graph memory Phase 1.5 Tranche 4) is deliberately deferred from the bot
-// wire this phase too -- putting it on the wire is a two-repo change (nullsafe-discord needs its own
-// renderer for the flat payload), tracked separately from landing the field on the contract.
+// `graph.neighborhoods` (0.11.0) stayed off the bot wire until M6 (0.22.0); it now rides as `graph_linked`,
+// the block pre-rendered on the Worker (extras, because naming nodes needs D1), so the bot needs no
+// renderer of its own and both surfaces read identical lines.
 //
 // WHAT STAYS OUTSIDE. Three inputs arrive via `extras` rather than from MindState, because all three need the
 // network: the two Second Brain semantic searches, and the `sbRead` that hydrates the session narrative.
@@ -39,6 +39,7 @@ import type { MindState } from "../contract.js";
 import type { WmAgentId } from "../../webmind/types.js";
 import { buildSolBlock } from "../../webmind/creatures.js";
 import { relativeTime } from "../../webmind/relative-time.js";
+import { formatMaterials } from "../../lib/pattern-materials.js";
 
 /**
  * The inputs the adapter cannot derive from MindState.
@@ -65,6 +66,10 @@ export interface BotWireExtras {
   /** `env.SYSTEM_OWNER`. An input, not derivable from MindState -- and load-bearing; see
    *  `relational_state_owner` below. */
   owner: string;
+  /** M6 (0.22.0): the [Linked] block, rendered on the Worker exactly as Claude.ai's orient renders it
+   *  (orient-blocks.ts neighborhoodBlock, map-labeler names). It needs a D1 node lookup, so it is an
+   *  input, not a projection. Empty string = nothing linked; the bot renders nothing. */
+  graph_linked?: string;
 }
 
 /** The flat wire payload. Deliberately `Record<string, unknown>`-shaped at the boundary: the authority on
@@ -125,6 +130,7 @@ export function botWireFromMindState(
       landed_by: c.landed_by, turn_count: c.turn_count,
     })),
     rag_excerpts: extras.rag_excerpts,
+    graph_linked: (extras.graph_linked ?? "").trim(),
     history_excerpts: extras.history_excerpts,
 
     identity_anchor: ms.identity.anchor?.anchor_summary ? text(ms.identity.anchor.anchor_summary, 300) : null,
@@ -151,7 +157,15 @@ export function botWireFromMindState(
       // a dog. Got it." about a fact thirteen days old, as though she had just learned it.
       age: relativeTime(g.created_at),
     })),
-    active_patterns: ms.growth.patterns.map(p => text(p.pattern_text, 150)).filter(Boolean),
+    // R18: the material list rides in the string (the consumers treat active_patterns as text), so the worker's
+    // reflect/seed prompts see what each pattern has already been seen in.
+    active_patterns: ms.growth.patterns
+      .map(p => {
+        const t = text(p.pattern_text, 150);
+        const mats = formatMaterials(p.materials);
+        return t && mats ? `${t} [${mats}]` : t;
+      })
+      .filter(Boolean),
     pending_seeds: ms.growth.seeds.map(s => text(s.content, 200)).filter(Boolean),
     unaccepted_growth: ms.growth.clearing_count,
 
@@ -216,6 +230,7 @@ export function botWireFromMindState(
       } catch { /* malformed -> no reaction, never breaks orient */ }
       return {
         id: l.id, title: text(l.title, 150), artist: l.artist ? text(l.artist, 100) : null,
+        media_type: l.media_type ?? "song",
         shared_by: l.shared_by ?? null, requested_companion: l.requested_companion ?? null,
         own_reaction: ownReaction, also_heard_by: reactedBy, created_at: l.created_at,
       };

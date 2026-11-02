@@ -139,10 +139,10 @@ export async function confirmBasinHistory(
   if (!id) return json({ error: "id required" }, 400);
 
   const result = await env.DB.prepare(
-    "UPDATE companion_basin_history SET caleth_confirmed = 1 WHERE id = ?"
+    "UPDATE companion_basin_history SET caleth_confirmed = 1 WHERE id = ? AND dismissed_at IS NULL AND caleth_confirmed = 0"
   ).bind(id).run();
 
-  if (result.meta.changes === 0) return json({ error: "not found" }, 404);
+  if (result.meta.changes === 0) return json({ error: "not found or already handled" }, 404);
   return json({ message: "confirmed" });
 }
 

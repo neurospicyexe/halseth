@@ -97,3 +97,13 @@ export function authGuard(request: Request, env: Env): Response | null {
 
   return new Response("Unauthorized", { status: 401 });
 }
+
+/**
+ * Raziel's own door: the request carries ADMIN_SECRET exactly (the token Hearth holds as
+ * HALSETH_SECRET). Narrower than authGuard, which also passes MCP_AUTH_SECRET and companion tokens.
+ * For surfaces that write AS Raziel (graph links, the map keep-off list). The VPS bot process also
+ * holds this token as clerkSecret for writeLedger (STATUS B41); bot code sends it only there.
+ */
+export function isAdminToken(request: Request, env: Env): boolean {
+  return !!env.ADMIN_SECRET && safeEqual(request.headers.get("Authorization") ?? "", `Bearer ${env.ADMIN_SECRET}`);
+}

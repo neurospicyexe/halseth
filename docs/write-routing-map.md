@@ -71,6 +71,12 @@ the traps below exist because names lie.
 | `project_close` | execProjectClose | projects.ts | companion_projects | done or released -- companion-chosen ending, never a sweep |
 | `project_pause` | execProjectPause | projects.ts | companion_projects | |
 | `project_resume` | execProjectResume | projects.ts | companion_projects | respects the open cap |
+| `memory_pin` | execMemoryPin | pinning.ts | companion_conclusions / wm_continuity_notes (pinned_at, pinned_by) | mig 0148; owner-only, kept + live rows only, refused at PIN_CAP (5 conclusions / 2 notes) with the current pins listed; never writes heat. Raziel's door: POST /mind/pin (pinned_by 'raziel') |
+| `memory_unpin` | execMemoryUnpin | pinning.ts | companion_conclusions / wm_continuity_notes (pinned_at, pinned_by -> NULL) | owner-only |
+| `memory_pins_read` | execMemoryPinsRead | pinning.ts | READ | both kinds with caps; GET /mind/pins/:companion_id is the HTTP twin |
+| `graph_link` | execGraphLink | links.ts | graph_links (ledger) + graph_edges (provenance 'asserted', edge_type 'linked:<writer>') | mig 0151, M4; any visible map row on either end, anyone's; a quote names exactly one row; idempotent either direction; never writes heat. Raziel's door: POST /mind/link (writer 'raziel') |
+| `graph_unlink` | execGraphUnlink | links.ts | graph_links (unlinked_at stamp) + graph_edges (DELETE of the one asserted row) | writer only, and only from Claude.ai (OAuth + claude-ai: surface) or Raziel's door; bots, Hermes and autonomous runs are refused; the ledger row is never deleted |
+| `graph_links_read` | execGraphLinksRead | links.ts | READ | the writer's live links, ends named by the map labeler; GET /mind/links/:writer is the HTTP twin |
 | `memory_release` | execMemoryRelease | forgetting.ts | memory_releases + companion_journal/wm_continuity_notes/companion_conclusions | C7 (mig 0123); archive-never-delete (sets archived=1), reason REQUIRED, owner-only; batch logs the release |
 | `memory_release_undo` | execMemoryReleaseUndo | forgetting.ts | memory_releases + the released row's table | 30d window; sets restored_at + archived=0 |
 | `memory_releases_read` | execMemoryReleasesRead | forgetting.ts | READ | last 20, with days_left on live releases |
@@ -85,6 +91,13 @@ the traps below exist because names lie.
 | `ledger_drop` | execLedgerDrop | ledger.ts | ledger_entries | state open->dropped + state_at (owner-only); Second Brain purges the chunk via GET /ingest/ledger-ineligible |
 | `care_hold_start` | execCareHoldStart | care-hold.ts | care_hold_events | B32 (mig 0143): INSERT kind `start`, rule `owner_said`, source `companion`, companion_id = caller; only when he has plainly said the night is bad. Returns the derived hold (care/hold.ts) |
 | `care_hold_clear` | execCareHoldClear | care-hold.ts | care_hold_events | B32: INSERT kind `clear`, source `companion`. Append-only; derivation ignores every hold firing at or before the newest clear |
+| `departure_declare` | execDepartureDeclare | departure.ts | declared_departures | T4a (mig 0157): INSERT; declarer = caller; rail from the closed menu, 3h clamp, one open, 3/Chicago-week, refused under care hold (departures/core.ts). No rail reads it yet |
+| `departure_end` | execDepartureEnd | departure.ts | declared_departures | UPDATE ended_at/ended_by `declarer`/end_reason `declared_end` on the caller's own open row |
+| `departure_object` | execDepartureObject | departure.ts | departure_objections | INSERT only; recorded and named to the declarer, never narrows or ends the departure |
+| `departure_list` | execDepartureList | departure.ts | declared_departures (read) | read-only; also sweeps expired rows and ends all under care hold before answering |
+| `voice_lessons_list` | execVoiceLessonsList | voice-lessons.ts | voice_lessons (read) | read-only list of staged lessons; expires staged rows older than 7 days first |
+| `voice_lesson_decide` | execVoiceLessonDecide | voice-lessons.ts | voice_lessons | UPDATE status approved/rejected (reject needs a reason); Raziel's word relayed by the companion; applies nothing else |
+| `departure_stand_down` | execDepartureStandDown | departure.ts | declared_departures | UPDATE end_reason `stand_down_phrase` on every open row; Raziel's whole-sentence "back inside the line" relayed by the companion he is talking to |
 | `halseth_companion_note_add` | execCompanionNoteAdd | writes.ts | inter_companion_notes OR companion_journal | THREE-WAY ROUTE: addressed peer → inter_companion_notes (to_id set); broadcast → inter_companion_notes (to_id=NULL); unaddressed/no broadcast intent → **companion_journal** (self-reflection; ack carries `routed_to: "journal"`). Trap cluster 2. Until 2026-07-26 this row claimed inter_companion_notes only — the journal fallback was undocumented, so unaddressed notes looked lost. |
 | `halseth_feeling_log` | execFeelingLog | writes.ts | feelings | |
 | `halseth_journal_add` | execJournalAdd | writes.ts | human_journal | TRAP: the human's journal, NOT companion_journal |
