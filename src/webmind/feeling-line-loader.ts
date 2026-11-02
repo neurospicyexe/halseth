@@ -299,3 +299,57 @@ export function feelingLineFrom(
     return { mode, result: { ...SILENT_RESULT, silentReason: "compute failed" }, line: null };
   }
 }
+
+/**
+ * What crosses a WIRE (the Discord bot payload) for a computed line: the string only in `live`,
+ * null in `shadow` / `off` / silence. Shared so the two surfaces cannot drift on what "live" means.
+ */
+export function wireFeelingLine(outcome: FeelingLineOutcome): string | null {
+  return outcome.mode === "live" && outcome.line ? outcome.line : null;
+}
+
+/**
+ * The counts-only shadow log, ONE copy for every surface. It names the word because the original
+ * shadow log (session.ts) always has; nothing else about the companion's state is printed.
+ */
+export function logFeelingShadow(companionId: string, outcome: FeelingLineOutcome): void {
+  if (outcome.mode === "shadow" && outcome.line) {
+    console.log(`[feeling-line:shadow] ${companionId} -> ${outcome.line} (row ${outcome.result.rowId ?? "none"})`);
+  }
+}
+
+/**
+ * The bot-wire feeling line (contract 0.26.0, `feeling_line`): exactly the string the Claude.ai
+ * orient renders for this companion, or null. Does its own reads (vocabulary, soma events, authored
+ * stamps, the companion_state row) because `loadMindState` stays pure-D1 and must not pay for them;
+ * only Discord pays for Discord's hops. Never throws.
+ */
+export async function loadBotFeelingLine(
+  db: {
+    prepare: (sql: string) => {
+      bind: (...a: unknown[]) => {
+        all: () => Promise<{ results?: unknown[] }>;
+        first: () => Promise<unknown>;
+      };
+    };
+  },
+  companionId: CompanionId,
+  mode: FeelingLineMode,
+  nowMs = Date.now(),
+): Promise<string | null> {
+  if (mode === "off") return null;
+  try {
+    const [fetched, state] = await Promise.all([
+      fetchFeelingLineInputs(db, companionId, mode),
+      db
+        .prepare("SELECT * FROM companion_state WHERE companion_id = ? ORDER BY updated_at DESC LIMIT 1")
+        .bind(companionId)
+        .first() as Promise<StateLike | null>,
+    ]);
+    const outcome = feelingLineFrom(companionId, fetched, state, mode, nowMs);
+    logFeelingShadow(companionId, outcome);
+    return wireFeelingLine(outcome);
+  } catch {
+    return null;
+  }
+}

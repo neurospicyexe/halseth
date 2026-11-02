@@ -39,6 +39,11 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.26.0 -- feeling line on the bot wire (2026-11-01): the Discord bot wire gains `feeling_line`
+ *  (string | null), the companion's own authored feeling word exactly as the Claude.ai orient renders
+ *  it; a string only when FEELING_LINE_MODE is `live`. NOT a MindState field: it needs reads
+ *  loadMindState must not pay for, so the bot orient executor computes it (loadBotFeelingLine).
+ *  MINOR: additive only. */
 /** 0.25.0 -- declared departures (T4a, 2026-11-01, mig 0157): `world.departures` -- every open departure
  *  across the triad ({id, companion, rail, scope_channel, audience, declared_by, starts_at, expires_at,
  *  reason, objections[]}), derived from the clock, empty under the care hold, pure D1. Form, not floor: a
@@ -151,7 +156,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.25.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.26.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own

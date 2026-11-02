@@ -290,8 +290,8 @@ describe("mind loader: world.departures", () => {
     expect(b.world.departures).toEqual(a.world.departures);
   });
 
-  it("contract: version bumped to 0.25.0 and the changelog carries its note", () => {
-    expect(MINDSTATE_CONTRACT_VERSION).toBe("0.25.0");
+  it("contract: 0.25.0 shipped and the changelog carries its note", () => {
+    expect(MINDSTATE_CONTRACT_VERSION >= "0.25.0").toBe(true);
     expect(CONTRACT_CHANGELOG["0.25.0"]).toMatch(/back inside the line/);
   });
 });

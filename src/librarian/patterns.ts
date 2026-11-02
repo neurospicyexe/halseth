@@ -1733,6 +1733,18 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
     tools: ["voice_lesson_decide"],
     response_key: "witness",
   },
+  // Feeling vocabulary from Discord (B5/B6 bot surface). The REAL match is the anchored guards at the top of
+  // router.ts ANCHORED_GUARDS (exact prefixes only); these triggers are formalities no sentence says by accident.
+  feeling_word_propose: {
+    triggers: ["feeling word propose"],
+    tools: ["feeling_word_propose"],
+    response_key: "witness",
+  },
+  feeling_words_list: {
+    triggers: ["feeling words list"],
+    tools: ["feeling_words_list"],
+    response_key: "data",
+  },
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: {
     triggers: [

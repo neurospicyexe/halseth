@@ -15,7 +15,7 @@ import {
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
 import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock, nowCstBlock } from "../response/builder.js";
-import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom } from "../../webmind/feeling-line-loader.js";
+import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom, logFeelingShadow, loadBotFeelingLine } from "../../webmind/feeling-line-loader.js";
 import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
 import { buildClubBlock, excerptWithProvenance, type HistoryChunk, type ClubRoundRow } from "../response/blocks.js";
 import type { ResponseKey } from "../response/budget.js";
@@ -604,9 +604,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // renders nothing. Raziel flips it to `live` after reading the shadow diff. Pure compute here;
   // the reads already happened above. Never throws; silence on any failure.
   const feelingLine = feelingLineFrom(agentId as FeelingCompanionId, feelingInputs, payload.state, flMode);
-  if (flMode === "shadow" && feelingLine.line) {
-    console.log(`[feeling-line:shadow] ${agentId} -> ${feelingLine.line} (row ${feelingLine.result.rowId ?? "none"})`);
-  }
+  logFeelingShadow(agentId, feelingLine);
 
   // Dates Drevan's "(you said ...)" suffix in the state line. Already fetched above (no new query);
   // empty when FEELING_LINE_MODE=off, which only drops the age, never the word.
@@ -1201,7 +1199,7 @@ export async function execBotOrient(
   // Proof of equivalence before the switch (GET /mind/parity/bot/:id?full=1, all 40 keys against the live
   // payload): cypher 39/40, drevan 38/40, gaia 38/40, with zero dropped and zero added keys. Every remaining
   // difference was identified and deliberate, not discovered afterwards -- see docs/CONTINUITY.md.
-  const [ms, synthRow, ragRaw, historyRaw] = await Promise.all([
+  const [ms, synthRow, ragRaw, historyRaw, botFeelingLine] = await Promise.all([
     loadMindState(ctx.env, agentId, "discord"),
     // The session narrative's TEXT, which is NOT what the contract carries. MindState holds the `full_ref`
     // (a vault path); the wire holds the prose. Both are `string | null`, so nothing but this comment and
@@ -1214,6 +1212,13 @@ export async function execBotOrient(
       .catch(() => null),
     semanticSearch(ctx.env, `companion state presence recent context ${agentId}`).catch(() => null),
     semanticSearch(ctx.env, `${agentId} history background origin memory`).catch(() => null),
+    // 0.26.0 `feeling_line`: the same word the Claude.ai orient renders (live mode only; null in
+    // shadow/off/silence). Its own reads, here and not in loadMindState, which stays pure-D1.
+    loadBotFeelingLine(
+      ctx.env.DB,
+      agentId as FeelingCompanionId,
+      feelingLineMode(ctx.env as unknown as Record<string, unknown>),
+    ).catch(() => null),
   ]);
 
   // ── Note surfacing: the bot's own policy, kept here on purpose ───────────────────────────────────────
@@ -1302,6 +1307,7 @@ export async function execBotOrient(
       continuity_notes,
       owner: ctx.env.SYSTEM_OWNER,
       graph_linked: botLinked,
+      feeling_line: botFeelingLine,
     },
     agentId,
   );

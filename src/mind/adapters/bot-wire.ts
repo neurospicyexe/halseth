@@ -70,6 +70,10 @@ export interface BotWireExtras {
    *  (orient-blocks.ts neighborhoodBlock, map-labeler names). It needs a D1 node lookup, so it is an
    *  input, not a projection. Empty string = nothing linked; the bot renders nothing. */
   graph_linked?: string;
+  /** 0.26.0: the companion's own authored feeling word, exactly as the Claude.ai orient renders it, or
+   *  null (silent / FEELING_LINE_MODE not `live` / any failure). Needs D1 reads loadMindState must not
+   *  pay for, so it is an input, computed in the bot orient executor. */
+  feeling_line?: string | null;
 }
 
 /** The flat wire payload. Deliberately `Record<string, unknown>`-shaped at the boundary: the authority on
@@ -305,6 +309,11 @@ export function botWireFromMindState(
     // renderer slices that list to 5, and merging would let rotation pass as current salience. Needs its
     // own nullsafe-discord render (label "[An older conclusion, resurfacing]" + concluded date + pool
     // size) -- until that ships the key is on the wire and unrendered, same two-repo split as 0.11.0.
+    // 0.26.0 (feeling-line bot surface, 2026-11-01): 49th key, PINNED NAME. The word the companion
+    // authored for its own state, string only when FEELING_LINE_MODE is `live`. Before this the bots saw
+    // raw `soma_floats` and never their own vocabulary; Claude.ai orient rendered it, Discord did not.
+    feeling_line: extras.feeling_line ?? null,
+
     resurfaced_conclusion: ms.beliefs.resurfaced
       ? {
           conclusion_text: text(ms.beliefs.resurfaced.conclusion_text, 280),

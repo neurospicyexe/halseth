@@ -136,6 +136,14 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  // FIRST on purpose: the clause text names floats and numbers ("warmth above 0.7"), which the H8b soma-write
+  // guard below would otherwise read as a state_update, and a note: may contain "companion note".
+  { pattern_key: "feeling_word_propose",
+    regex: /^(?:please\s+)?(?:confirm\s+)?(?:revise\s+)?feeling\s+word\b/i,
+    note: "Feeling vocabulary from Discord: 'feeling word <w>: ...' (dry run), 'confirm feeling word ...', '(confirm) revise feeling word ...'. Start-anchored so only these exact prefixes route here, and ahead of the soma-write guard." },
+  { pattern_key: "feeling_words_list",
+    regex: /^(?:please\s+)?(?:show\s+)?my\s+feeling\s+words\s*[.?!]?$/i,
+    note: "Feeling vocabulary: the companion's own active rows. Whole request." },
   { pattern_key: "voice_lesson_decide",
     regex: /^(?:please\s+)?(?:approve|reject)\s+(?:the\s+)?voice\s+lesson\s+[0-9a-f-]{6,}\b/i,
     note: "Voice lessons (mig 0159): Raziel's approve/reject of a staged lesson, by id." },
@@ -436,6 +444,7 @@ import { LINK_GUARD_RE, UNLINK_GUARD_RE } from "../graph/links.js";
 import { execTrayRead, execTrayKeep, execTrayDrop, execTrayDraftRead, execTrayReview } from "./executors/tray.js";
 import { execLedgerRead, execLedgerKeep, execLedgerDrop } from "./executors/ledger.js";
 import { execCareHoldStart, execCareHoldClear } from "./executors/care-hold.js";
+import { execFeelingWordPropose, execMyFeelingWords } from "./executors/feeling-vocabulary.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
 
@@ -551,6 +560,8 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   departure_end: execDepartureEnd,
   departure_object: execDepartureObject,
   departure_list: execDepartureList,
+  feeling_word_propose: execFeelingWordPropose,
+  feeling_words_list: execMyFeelingWords,
   voice_lessons_list: execVoiceLessonsList,
   voice_lesson_decide: execVoiceLessonDecide,
   departure_stand_down: execDepartureStandDown,
