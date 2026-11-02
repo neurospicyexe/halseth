@@ -386,6 +386,20 @@ export async function execWmLoopAct(ctx: ExecutorContext): Promise<ExecutorResul
 
 // ── Relational State ──────────────────────────────────────────────────────────
 
+/** "verb toward [name]: [text]". The name runs to the FIRST colon, so a qualified name
+ *  ("Barbossa (Blue)", "Lestat (ours)", "Hector Barbossa || 🍂") is kept whole. Before
+ *  2026-11-01 it was one token (\S+), and any multi-word name failed the match and the write
+ *  was lost with "missing required fields". Lowercased as before. */
+export function parseRelationalRequest(request: string): { toward: string; stateText: string; stateType?: "witness" | "held" } | null {
+  const m = request.match(/^(how\s+i\s+feel|i\s+feel|witness|held|state|note|relational\s+state|log\s+relational|write\s+relational|what\s+i\s+hold)\s+toward\s+([^:\n]+?)\s*:\s*([\s\S]+)/i);
+  if (!m) return null;
+  const toward = m[2]!.replace(/\s+/g, " ").toLowerCase().trim();
+  const stateText = m[3]!.trim();
+  if (!toward || !stateText) return null;
+  const verb = m[1]!.toLowerCase();
+  return { toward, stateText, stateType: /^witness/.test(verb) ? "witness" : /^held/.test(verb) ? "held" : undefined };
+}
+
 export async function execWmRelationalWrite(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parseContext<{ toward?: string; state_text?: string; weight?: number; state_type?: string }>(ctx.req.context);
   // Structured context wins; fall back to parsing "verb toward [name]: [text]" from request
@@ -393,13 +407,11 @@ export async function execWmRelationalWrite(ctx: ExecutorContext): Promise<Execu
   let stateText = p?.state_text?.trim();
   let inferredStateType: string | undefined;
   if (!toward || !stateText) {
-    const m = ctx.req.request.match(/^(how\s+i\s+feel|i\s+feel|witness|held|state|note|relational\s+state|log\s+relational|write\s+relational|what\s+i\s+hold)\s+toward\s+(\S+)\s*:\s*([\s\S]+)/i);
+    const m = parseRelationalRequest(ctx.req.request);
     if (m) {
-      toward = toward || m[2]!.toLowerCase().trim();
-      stateText = stateText || m[3]!.trim();
-      const verb = m[1]!.toLowerCase();
-      if (/^witness/.test(verb)) inferredStateType = "witness";
-      else if (/^held/.test(verb)) inferredStateType = "held";
+      toward = toward || m.toward;
+      stateText = stateText || m.stateText;
+      inferredStateType = m.stateType;
     }
   }
   if (!toward || !stateText) return { error: "wm_relational_write_failed", reason: "missing required fields: toward, state_text" };
