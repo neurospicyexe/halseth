@@ -2,7 +2,7 @@
 // guarantee that machine rows never masquerade as a hand-entered check-in anywhere a check-in is read.
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
-import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import {
   evaluateCareRules, assignCompanion, STRESS_ELEVATED_MIN, STRESS_FRESH_HOURS, RULE_COOLDOWN_HOURS, CARE_HOLD_ACTION_RULES,
@@ -133,7 +133,7 @@ describe("machine rows never read as a check-in", () => {
   it("0162 keeps existing care_actions rows, voided_at included", async () => {
     const { DB, db } = setup({ upTo: 161 });
     await DB.prepare(`INSERT INTO care_actions (id, rule, companion_id, detail, detected_at, voided_at) VALUES ('a','low_spoons','cypher','d','2026-10-30T00:00:00Z','2026-10-30T01:00:00Z')`).run();
-    db.exec(fs.readFileSync(fileURLToPath(new URL("../../migrations/0162_care_stress_elevated.sql", import.meta.url)), "utf8"));
+    db.exec(fs.readFileSync(path.join(process.cwd(), "migrations", "0162_care_stress_elevated.sql"), "utf8"));
     const r = await DB.prepare("SELECT * FROM care_actions WHERE id = 'a'").first();
     expect(r.voided_at).toBe("2026-10-30T01:00:00Z");
     await DB.prepare(`INSERT INTO care_actions (id, rule, companion_id, detail, detected_at) VALUES ('b','stress_elevated','gaia','d','2026-10-30T00:00:00Z')`).run();
