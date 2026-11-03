@@ -54,6 +54,7 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     // Subjective ND-state layer (migration 0081)
     mood?: string | null;
     pain?: number | null;
+    pain_where?: string | null;
     energy?: number | null;
     focus?: number | null;
     spoons?: number | null;
@@ -88,6 +89,7 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
   };
   const mood = typeof body.mood === "string" && body.mood.trim() !== "" ? body.mood.trim().slice(0, 200) : null;
   const pain = clampInt(body.pain, 0, 10);
+  const painWhere = typeof body.pain_where === "string" && body.pain_where.trim() !== "" ? body.pain_where.trim().slice(0, 120) : null;
   const energy = clampInt(body.energy, 0, 10);
   const focus = clampInt(body.focus, 0, 10);
   const spoons = clampInt(body.spoons, 0, 12);
@@ -103,8 +105,8 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     INSERT OR IGNORE INTO biometric_snapshots
       (id, recorded_at, logged_at, source, hrv_resting, resting_hr,
        sleep_hours, sleep_quality, stress_score, steps, active_energy, notes,
-       mood, pain, energy, focus, spoons, meds_taken)
-    VALUES (?, ?, ?, 'hearth', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       mood, pain, pain_where, energy, focus, spoons, meds_taken)
+    VALUES (?, ?, ?, 'hearth', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     recordedAt,
@@ -119,6 +121,7 @@ export async function handleBiometricsPost(request: Request, env: Env): Promise<
     body.notes         ?? null,
     mood,
     pain,
+    painWhere,
     energy,
     focus,
     spoons,
@@ -141,7 +144,7 @@ export async function handleBiometricsPatch(
   const id = params.id;
   if (!id) return jsonRes({ error: "id required" }, 400);
 
-  let body: { spoons?: unknown; mood?: unknown; energy?: unknown };
+  let body: { spoons?: unknown; mood?: unknown; energy?: unknown; pain?: unknown; pain_where?: unknown; notes?: unknown };
   try {
     body = await request.json() as typeof body;
   } catch {
@@ -153,21 +156,34 @@ export async function handleBiometricsPatch(
 
   const sets: string[] = [];
   const bindings: unknown[] = [];
-  const intField = (name: "spoons" | "energy", hi: number): string | null => {
+  const intField = (name: "spoons" | "energy" | "pain", hi: number): string | null => {
     const v = body[name];
     if (v === undefined) return null;
+    if (v === null && name === "pain") { sets.push("pain = ?"); bindings.push(null); return null; }
     if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > hi) return `${name} must be an integer 0..${hi}`;
     sets.push(`${name} = ?`);
     bindings.push(v);
     return null;
   };
-  const err = intField("spoons", 12) ?? intField("energy", 10);
+  const err = intField("spoons", 12) ?? intField("energy", 10) ?? intField("pain", 10);
   if (err) return jsonRes({ error: err }, 400);
   if (body.mood !== undefined) {
     if (typeof body.mood !== "string" || body.mood.length > 80) return jsonRes({ error: "mood must be a string up to 80 chars" }, 400);
     sets.push("mood = ?");
     bindings.push(body.mood.trim() === "" ? null : body.mood.trim());
   }
+  // Free-text fields: string up to max or null; empty/whitespace clears to null.
+  const textField = (name: "pain_where" | "notes", max: number): string | null => {
+    const v = body[name];
+    if (v === undefined) return null;
+    if (v === null) { sets.push(`${name} = ?`); bindings.push(null); return null; }
+    if (typeof v !== "string" || v.length > max) return `${name} must be a string up to ${max} chars`;
+    sets.push(`${name} = ?`);
+    bindings.push(v.trim() === "" ? null : v.trim());
+    return null;
+  };
+  const textErr = textField("pain_where", 120) ?? textField("notes", 2000);
+  if (textErr) return jsonRes({ error: textErr }, 400);
   if (sets.length === 0) return jsonRes({ error: "no fields to update" }, 400);
 
   const res = await env.DB.prepare(`UPDATE biometric_snapshots SET ${sets.join(", ")} WHERE id = ?`)

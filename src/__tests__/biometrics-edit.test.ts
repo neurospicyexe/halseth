@@ -1,7 +1,7 @@
 // Biometrics PATCH/DELETE by id: undo / amend for Hearth's one-tap spoons check-in.
 import { describe, it, expect } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
-import { handleBiometricsPost, handleBiometricsPatch, handleBiometricsDelete } from "../handlers/biometrics.js";
+import { handleBiometricsPost, handleBiometricsPatch, handleBiometricsDelete, handleBiometricsList } from "../handlers/biometrics.js";
 
 function setup() {
   const { DB } = makeSqliteD1() as { DB: any };
@@ -106,5 +106,74 @@ describe("biometrics edit", () => {
     const { id } = await post({ spoons: 5 });
     expect((await handleBiometricsPatch(req("PATCH", { spoons: 3 }, false), env, { id })).status).toBe(401);
     expect((await handleBiometricsDelete(req("DELETE", undefined, false), env, { id })).status).toBe(401);
+  });
+
+  describe("pain_where / pain / notes (0167)", () => {
+    it("POST stores pain_where trimmed; empty or non-string becomes null; over 120 is cut", async () => {
+      const { post, row } = setup();
+      expect((await row((await post({ pain: 4, pain_where: "  hips  " })).id)).pain_where).toBe("hips");
+      expect((await row((await post({ pain: 4, pain_where: "   " })).id)).pain_where).toBeNull();
+      expect((await row((await post({ pain: 4, pain_where: 7 })).id)).pain_where).toBeNull();
+      expect((await row((await post({ pain_where: "x".repeat(300) })).id)).pain_where).toHaveLength(120);
+    });
+
+    it("PATCH sets pain, pain_where and notes; other columns are untouched", async () => {
+      const { env, req, post, row } = setup();
+      const { id } = await post({ spoons: 5, energy: 4 });
+      const res = await handleBiometricsPatch(req("PATCH", { pain: 6, pain_where: " hips ", notes: " flat, but okay " }), env, { id });
+      expect(res.status).toBe(200);
+      const r = await row(id);
+      expect(r.pain).toBe(6);
+      expect(r.pain_where).toBe("hips");
+      expect(r.notes).toBe("flat, but okay");
+      expect(r.spoons).toBe(5);
+      expect(r.energy).toBe(4);
+    });
+
+    it("PATCH null or empty string clears pain_where and notes; null clears pain; pain 0 is kept", async () => {
+      const { env, req, post, row } = setup();
+      const { id } = await post({ pain: 6, pain_where: "hips", notes: "word" });
+      await handleBiometricsPatch(req("PATCH", { pain_where: "", notes: null }), env, { id });
+      let r = await row(id);
+      expect(r.pain_where).toBeNull();
+      expect(r.notes).toBeNull();
+      expect(r.pain).toBe(6);
+      await handleBiometricsPatch(req("PATCH", { pain: 0 }), env, { id });
+      expect((await row(id)).pain).toBe(0);
+      await handleBiometricsPatch(req("PATCH", { pain: null }), env, { id });
+      expect((await row(id)).pain).toBeNull();
+    });
+
+    it("PATCH rejects bad pain / pain_where / notes with 400 and writes nothing", async () => {
+      const { env, req, post, row } = setup();
+      const { id } = await post({ pain: 2, pain_where: "knee", notes: "n" });
+      for (const body of [
+        { pain: 11 }, { pain: -1 }, { pain: 2.5 }, { pain: "3" },
+        { pain_where: "x".repeat(121) }, { pain_where: 5 },
+        { notes: "x".repeat(2001) }, { notes: 5 },
+        { spoons: null },
+      ]) {
+        const res = await handleBiometricsPatch(req("PATCH", body), env, { id });
+        expect(res.status, JSON.stringify(body)).toBe(400);
+      }
+      const r = await row(id);
+      expect([r.pain, r.pain_where, r.notes]).toEqual([2, "knee", "n"]);
+      // boundaries are accepted
+      const ok = await handleBiometricsPatch(req("PATCH", { pain_where: "x".repeat(120), notes: "y".repeat(2000) }), env, { id });
+      expect(ok.status).toBe(200);
+    });
+
+    it("PATCH of the new fields on an unknown id is 404", async () => {
+      const { env, req } = setup();
+      const res = await handleBiometricsPatch(req("PATCH", { pain_where: "hips" }), env, { id: "nope" });
+      expect(res.status).toBe(404);
+    });
+
+    it("GET /biometrics rows include pain_where", async () => {
+      const { env, req, post } = setup();
+      await post({ pain: 3, pain_where: "back" });
+      const rows = (await (await handleBiometricsList(req("GET"), env)).json()) as any[];
+      expect(rows[0].pain_where).toBe("back");
+    });
   });
 });
