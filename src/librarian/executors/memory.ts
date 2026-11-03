@@ -5,6 +5,7 @@ import {
   sbFileChunks, searchByTags,
 } from "../backends/second-brain.js";
 import { truncateRaw, RAW_DATA_CHARS } from "../response/budget.js";
+import { listLibraryBooks, matchLibraryBooks, readLibraryBook } from "./book-library.js";
 import { recallNotesByMeaning } from "../../webmind/notes.js";
 import { resolveRoomsForChannels, journalRoomLabel, roomLabelFromTags, channelTagOf, channelIdOf } from "../../mind/room-label.js";
 
@@ -343,7 +344,7 @@ export function extractBookTitle(request: string): string | null {
 }
 
 export async function execBookRead(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const p = parseContext<{ title?: string; query?: string; chapter?: string }>(ctx.req.context);
+  const p = parseContext<{ title?: string; query?: string; chapter?: string | number; part?: number | string }>(ctx.req.context);
   let title = (p?.title ?? extractBookTitle(ctx.req.request))?.trim();
 
   // No explicit title -> fall back to the active club round's winning pick, so
@@ -359,6 +360,30 @@ export async function execBookRead(ctx: ExecutorContext): Promise<ExecutorResult
     return { response_key: "witness", witness: "which book? pass { title } in context (e.g. \"read from The Overstory\"), or activate a club round and say \"read the club book\".", meta: { operation: "book_read" } };
   }
 
+  // Library first (2026-11-03): the epub in R2 is the source of truth, so a stalled
+  // vault sync can never block co-reading. Vault is the fallback (pdf / no match / R2 miss).
+  const library = await listLibraryBooks(ctx.env);
+  const libMatches = matchLibraryBooks(title, library);
+  if (libMatches.length > 1) {
+    return {
+      response_key: "summary", loaded: false, requested: title,
+      ambiguous: libMatches.map(b => (b.author ? `${b.title} -- ${b.author}` : b.title)),
+      message: `"${title}" matches ${libMatches.length} books in the Library: ${libMatches.map(b => b.title).join("; ")}. Ask which one rather than guessing. You have NOT read any of them.`,
+      meta: { operation: "book_read", loaded: false, source: "library", ambiguous: true },
+    };
+  }
+  const libBook = libMatches[0];
+  if (libBook && libBook.file_type === "epub") {
+    const part = p?.part !== undefined ? Number(p.part) : undefined;
+    const lib = await readLibraryBook(ctx.env, libBook, {
+      query: p?.query, chapter: p?.chapter !== undefined ? String(p.chapter) : undefined,
+      part: part !== undefined && Number.isFinite(part) ? part : undefined,
+    });
+    if (lib) return lib;
+    // R2 object missing or unparseable: fall through to the vault copy rather than claim "not loaded".
+  }
+  const libraryTitles = library.map(b => b.title);
+
   const rootEntries = parseVaultEntries(await sbList(ctx.env, BOOKS_ROOT));
   const folders = bookFolders(rootEntries);
   const folder = matchBookFolder(title, folders);
@@ -370,9 +395,10 @@ export async function execBookRead(ctx: ExecutorContext): Promise<ExecutorResult
       loaded: false,
       requested: title,
       available_books: folders,
-      message: folders.length
-        ? `"${title}" is not in the vault. Books present: ${folders.join(", ")}. You have NOT read "${title}" -- say so plainly rather than inventing it.`
-        : `No books are loaded in the vault yet (Books/ is empty or absent). You have NOT read "${title}". To add one: ebook-convert to text, drop under Books/<Title>/, LiveSync pushes it, the SB ingest cron indexes it (~20min).`,
+      library_books: libraryTitles,
+      message: (folders.length || libraryTitles.length)
+        ? `"${title}" is not in the Library or the vault. Library books: ${libraryTitles.join(", ") || "(none)"}. Vault books: ${folders.join(", ") || "(none)"}. You have NOT read "${title}" -- say so plainly rather than inventing it.`
+        : `No books are loaded yet (the Library is empty and the vault Books/ is empty or absent). You have NOT read "${title}". To add one: upload the epub to the Library.`,
       meta: { operation: "book_read", loaded: false },
     };
   }
@@ -393,7 +419,7 @@ export async function execBookRead(ctx: ExecutorContext): Promise<ExecutorResult
   // Specific chapter filter, if asked.
   let targets = files;
   if (p?.chapter) {
-    const cn = normalizeTitle(p.chapter);
+    const cn = normalizeTitle(String(p.chapter));
     const hit = files.filter(f => normalizeTitle(vaultBasename(f)).includes(cn));
     if (hit.length) targets = hit;
   }

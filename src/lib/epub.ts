@@ -10,10 +10,11 @@
 // Extraction is best-effort by design: a malformed epub yields empty metadata,
 // never a throw at the upload path.
 
-interface ZipEntry {
+export interface ZipEntry {
   name: string;
   method: number;      // 0 = stored, 8 = deflate
   compressedSize: number;
+  uncompressedSize: number;
   localHeaderOffset: number;
 }
 
@@ -41,7 +42,7 @@ function findEocd(view: DataView): number | null {
   return null;
 }
 
-function parseEntries(buf: ArrayBuffer): ZipEntry[] {
+export function parseEntries(buf: ArrayBuffer): ZipEntry[] {
   const view = new DataView(buf);
   const eocd = findEocd(view);
   if (eocd === null) return [];
@@ -54,19 +55,20 @@ function parseEntries(buf: ArrayBuffer): ZipEntry[] {
     if (off + 46 > view.byteLength || readU32(view, off) !== CDIR_SIG) break;
     const method = readU16(view, off + 10);
     const compressedSize = readU32(view, off + 20);
+    const uncompressedSize = readU32(view, off + 24);
     const nameLen = readU16(view, off + 28);
     const extraLen = readU16(view, off + 30);
     const commentLen = readU16(view, off + 32);
     const localHeaderOffset = readU32(view, off + 42);
     const name = decoder.decode(new Uint8Array(buf, off + 46, nameLen));
-    entries.push({ name, method, compressedSize, localHeaderOffset });
+    entries.push({ name, method, compressedSize, uncompressedSize, localHeaderOffset });
     off += 46 + nameLen + extraLen + commentLen;
   }
   return entries;
 }
 
 /** Read + inflate one entry. The local header carries its own name/extra lengths. */
-async function readEntry(buf: ArrayBuffer, entry: ZipEntry): Promise<Uint8Array | null> {
+export async function readEntry(buf: ArrayBuffer, entry: ZipEntry): Promise<Uint8Array | null> {
   const view = new DataView(buf);
   const off = entry.localHeaderOffset;
   if (off + 30 > view.byteLength || readU32(view, off) !== LOCAL_SIG) return null;
@@ -86,7 +88,7 @@ async function readEntry(buf: ArrayBuffer, entry: ZipEntry): Promise<Uint8Array 
   }
 }
 
-async function readTextEntry(buf: ArrayBuffer, entries: ZipEntry[], name: string): Promise<string | null> {
+export async function readTextEntry(buf: ArrayBuffer, entries: ZipEntry[], name: string): Promise<string | null> {
   const entry = entries.find(e => e.name === name)
     ?? entries.find(e => e.name.toLowerCase() === name.toLowerCase());
   if (!entry) return null;
@@ -94,7 +96,7 @@ async function readTextEntry(buf: ArrayBuffer, entries: ZipEntry[], name: string
   return bytes ? new TextDecoder().decode(bytes) : null;
 }
 
-function decodeXmlEntities(s: string): string {
+export function decodeXmlEntities(s: string): string {
   return s
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
@@ -122,7 +124,7 @@ function mediaTypeFor(href: string, declared: string | null): string {
 }
 
 /** Resolve an OPF-relative href against the OPF's directory, collapsing ../ segments. */
-function resolveHref(opfPath: string, href: string): string {
+export function resolveHref(opfPath: string, href: string): string {
   const dir = opfPath.includes("/") ? opfPath.slice(0, opfPath.lastIndexOf("/") + 1) : "";
   const parts = (dir + decodeURIComponent(href)).split("/");
   const out: string[] = [];
@@ -134,9 +136,9 @@ function resolveHref(opfPath: string, href: string): string {
   return out.join("/");
 }
 
-interface ManifestItem { id: string; href: string; mediaType: string | null; properties: string | null }
+export interface ManifestItem { id: string; href: string; mediaType: string | null; properties: string | null }
 
-function parseManifest(opf: string): ManifestItem[] {
+export function parseManifest(opf: string): ManifestItem[] {
   const items: ManifestItem[] = [];
   for (const tag of opf.match(/<(?:opf:)?item\s[^>]*>/gi) ?? []) {
     const attr = (name: string) => tag.match(new RegExp(`${name}\\s*=\\s*"([^"]*)"`, "i"))?.[1]
