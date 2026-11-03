@@ -58,6 +58,8 @@ export interface MakeItem {
   heard_back: string | null; version: number; parent_id: string | null; created_at: string;
   files: { source?: MakeFile; file?: MakeFile; preview?: MakeFile };
   fail_reason: string | null;
+  /** The recipe a model was handed (music_audio / video: prompt, duration...). Null for code kinds and images. */
+  params: Record<string, unknown> | null;
 }
 
 export interface CreateMakeInput {
@@ -85,8 +87,20 @@ function toItem(r: MakeRow, revealPrivate = false): MakeItem {
     interest_name: r.interest_name ?? null, status: r.status, heard_back: r.heard_back,
     version: r.version, parent_id: r.parent_id, created_at: r.created_at, files,
     fail_reason: r.status === "failed" ? r.fail_reason : null,
+    params: parseParams(r.params),
   };
   return item;
+}
+
+/** A stored params blob as an object; a malformed or non-object blob reads as no params. */
+function parseParams(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 interface ImageCallRow { id: string; args_summary: string | null; result_summary: string | null; created_at: string }
@@ -94,7 +108,7 @@ function imageItem(r: ImageCallRow): MakeItem {
   const mime = (r.result_summary ?? "").startsWith("image/") ? (r.result_summary as string) : "image/png";
   return {
     id: IMAGE_ID_PREFIX + r.id, kind: "image", title: r.args_summary ?? "image", why: null, interest_name: null,
-    status: "ready", heard_back: null, version: 1, parent_id: null, created_at: r.created_at, files: { file: { mime } }, fail_reason: null,
+    status: "ready", heard_back: null, version: 1, parent_id: null, created_at: r.created_at, files: { file: { mime } }, fail_reason: null, params: null,
   };
 }
 

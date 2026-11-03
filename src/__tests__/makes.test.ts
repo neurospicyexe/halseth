@@ -356,6 +356,19 @@ describe("reads", () => {
     expect(lim.makes.map((m: any) => m.title)).toEqual(["third", "a fox at dusk"]);
     expect((await getMakes(req("/mind/makes/nobody"), env, { companion_id: "nobody" })).status).toBe(400);
   });
+  it("list carries the recipe: params for model kinds, null for code kinds and images", async () => {
+    const { env, db } = setup();
+    await create(env, { title: "song", kind: "music_audio", source: undefined, params: { prompt: "slow rain", duration: 45 } });
+    await create(env, { title: "cube", kind: "scad", source: "cube(1);" });
+    db.prepare(
+      "INSERT INTO companion_tool_calls (id, companion_id, tool, args_summary, status, provider, result_ref, result_summary, created_at) VALUES (?, 'drevan', 'generate_image', 'fox', 'success', 'p', 'k/x.png', 'image/png', '2026-11-02 11:30:00')",
+    ).run("c".repeat(32));
+    const { makes } = (await (await getMakes(req("/mind/makes/drevan"), env, { companion_id: "drevan" })).json()) as any;
+    const by = (t: string) => makes.find((m: any) => m.title === t);
+    expect(by("song").params).toEqual({ prompt: "slow rain", duration: 45, instrumental: true });
+    expect(by("cube").params).toBeNull();
+    expect(by("fox").params).toBeNull();
+  });
   it("item route: a make, an img_ row, and a miss", async () => {
     const { env, db } = setup();
     const id = (await create(env)).body.id;
