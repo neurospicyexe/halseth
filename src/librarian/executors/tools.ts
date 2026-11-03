@@ -133,10 +133,11 @@ export async function execCreatureInteract(ctx: ExecutorContext): Promise<Execut
     : "";
   return {
     response_key: "witness",
-    witness: `you ${PAST_TENSE[action]} ${creature.name}.${milestoneLine}`,
+    // Sol answers the care in his body (sol-care.ts); addressed to the tender as "you".
+    witness: `you ${PAST_TENSE[action]} ${creature.name}.${outcome.care ? ` ${outcome.care.reaction}` : ""}${milestoneLine}`,
     interacted: true,
     milestones_fired: outcome.milestones_fired,
-    meta: { operation: "creature_interact", creature: creature.name, action, trust: outcome.trust },
+    meta: { operation: "creature_interact", creature: creature.name, action, trust: outcome.trust, care_fit: outcome.care?.fit ?? null },
   };
 }
 

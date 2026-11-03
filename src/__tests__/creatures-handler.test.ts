@@ -95,6 +95,27 @@ describe("performTend", () => {
       expect(db.executed.some(e => e.sql.includes("INSERT INTO creature_nest"))).toBe(false);
     }
   });
+  test("Sol answers the care: a reaction comes back and the gain is scaled by need (2026-11-02)", async () => {
+    const db = fakeDb();
+    db.setTrustAfter(0.5);
+    // fake returns no created_at/ledger rows -> created now -> not hungry -> feed lands "full"
+    const noon = Date.parse("2026-11-02T17:00:00Z");
+    const out = await performTend(db as never, { id: "sol1", kind: "companion_pet", trust: 0.45 }, "raziel", "feed", null, noon);
+    expect(out.care?.fit).toBe("full");
+    expect(out.care?.reaction).not.toContain("{who}");
+    const bump = db.executed.find(e => e.sql.startsWith("UPDATE creatures SET trust"));
+    expect(bump!.binds[0]).toBeCloseTo(0.04 * 0.5);
+    expect(bump!.binds[0] as number).toBeGreaterThan(0);
+    expect(bump!.binds[1]).toBe("content");
+  });
+  test("real animals keep the flat delta and get no Sol reaction", async () => {
+    const db = fakeDb();
+    db.setTrustAfter(0.2);
+    const out = await performTend(db as never, { id: "cat1", kind: "real_animal", trust: 0.1 }, "raziel", "feed", null);
+    expect(out.care).toBeNull();
+    const bump = db.executed.find(e => e.sql.startsWith("UPDATE creatures SET trust"));
+    expect(bump!.binds[0]).toBe(0.04);
+  });
   test("real animals get neither milestones nor nest rows (texts are Sol's)", async () => {
     const db = fakeDb();
     db.setTrustAfter(0.9);

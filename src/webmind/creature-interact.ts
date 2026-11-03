@@ -14,8 +14,11 @@ import {
   insertInteractionSql,
   interactBumpSql,
   crossedMilestones,
+  deriveDrives,
+  trustTier,
   NEST_CAP,
 } from "./creatures.js";
+import { careResponse, SETTLED_WINDOW_MINUTES, type CareFit } from "./sol-care.js";
 import { nestTextAllowed } from "./sol-hoard.js";
 import { loadPersonRegex } from "./sol-hoard-people.js";
 
@@ -29,6 +32,8 @@ export interface TendOutcome {
   trust: number | null;
   state_json: string | null;
   milestones_fired: Array<{ id: string; text: string }>;
+  /** Sol's answer to the care (companion_pet only; null for real animals). */
+  care: { fit: CareFit; reaction: string; reaction_named: string } | null;
 }
 
 export async function performTend(
@@ -37,11 +42,42 @@ export async function performTend(
   actor: string,
   action: CreatureAction,
   note: string | null,
+  nowMs: number = Date.now(),
 ): Promise<TendOutcome> {
+  // Sol answers care against what he needs RIGHT NOW (sol-care.ts). Read the drives
+  // BEFORE this tend lands, or every feed would look like feeding a full crow.
+  // Real animals keep the flat delta + action mood: Sol's lines are Sol's.
+  let delta = trustDelta(action);
+  let mood = actionMood(action);
+  let care: TendOutcome["care"] = null;
+  if (creature.kind === "companion_pet") {
+    const [row, acted, recent] = await Promise.all([
+      db.prepare("SELECT created_at, last_interaction_at FROM creatures WHERE id = ?").bind(creature.id)
+        .first<{ created_at: string | null; last_interaction_at: string | null }>(),
+      db.prepare(
+        "SELECT action, MAX(created_at) AS last FROM creature_interactions WHERE creature_id = ? AND actor != 'sol' GROUP BY action",
+      ).bind(creature.id).all<{ action: string; last: string }>(),
+      db.prepare(
+        `SELECT COUNT(*) AS n FROM creature_interactions WHERE creature_id = ? AND actor = ? AND action = ? AND created_at > datetime('now', '-${SETTLED_WINDOW_MINUTES} minutes')`,
+      ).bind(creature.id, actor, action).first<{ n: number }>(),
+    ]);
+    const by = new Map((acted.results ?? []).map(r => [r.action, r.last]));
+    const createdAt = row?.created_at ?? new Date(nowMs).toISOString();
+    const drives = deriveDrives(
+      { feed: by.get("feed") ?? null, play: by.get("play") ?? null, any: row?.last_interaction_at ?? null },
+      createdAt, nowMs,
+    );
+    const seed = Math.floor(nowMs / 60_000);
+    const r = careResponse(action, drives, recent?.n ?? 0, trustTier(creature.trust), actor, seed);
+    delta = delta * r.gain;
+    mood = r.mood;
+    care = { fit: r.fit, reaction: r.reaction, reaction_named: r.reaction_named };
+  }
+
   const interactionId = crypto.randomUUID().replace(/-/g, "");
   await db.batch([
     db.prepare(insertInteractionSql()).bind(interactionId, creature.id, actor, action, note),
-    db.prepare(interactBumpSql()).bind(trustDelta(action), actionMood(action), creature.id),
+    db.prepare(interactBumpSql()).bind(delta, mood, creature.id),
   ]);
   const updated = await db.prepare("SELECT trust, state_json FROM creatures WHERE id = ?").bind(creature.id)
     .first<{ trust: number; state_json: string | null }>();
@@ -74,6 +110,7 @@ export async function performTend(
     trust: updated?.trust ?? null,
     state_json: updated?.state_json ?? null,
     milestones_fired: fired,
+    care,
   };
 }
 
