@@ -2,6 +2,7 @@
 import { describe, test, expect } from "vitest";
 // Validation is pure; exported for testability.
 import { validateInteract } from "../handlers/creatures.js";
+import { tenderName } from "../webmind/sol-care.js";
 
 describe("validateInteract", () => {
   test("companion may feed", () => {
@@ -122,5 +123,18 @@ describe("performTend", () => {
     const out = await performTend(db as never, { id: "cat1", kind: "real_animal", trust: 0.1 }, "raziel", "give", "a ribbon");
     expect(out.milestones_fired).toEqual([]);
     expect(db.executed.some(e => e.sql.includes("creature_nest"))).toBe(false);
+  });
+  test("an imp may feed, play or talk as itself", () => {
+    expect(validateInteract("imp", "feed")).toBeNull();
+    expect(validateInteract("imp", "play")).toBeNull();
+    expect(validateInteract("imp", "talk")).toBeNull();
+  });
+  test("an imp never gives (a give carries words; an imp authors nothing)", () => {
+    expect(validateInteract("imp", "give")).toMatch(/imp/i);
+    expect(validateInteract("imp", "appear")).toMatch(/imp/i);
+  });
+  test("an imp is never named on the record", () => {
+    expect(tenderName("imp")).toBe("an imp");
+    for (const n of ["mossling", "iris", "Mossling"]) expect(validateInteract(n, "feed")).toMatch(/actor/i);
   });
 });

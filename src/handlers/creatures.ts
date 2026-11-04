@@ -62,15 +62,25 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const VALID_ACTORS = new Set<string>(["raziel", "cypher", "drevan", "gaia", "sol"]);
+// `imp` (Drevan, 2026-11-03: "Sol gets fed by Iris and tended by Mossling"): an imp on an errand
+// tends as ITSELF, never as the companion it serves -- his hard line is that an imp never writes to
+// Halseth under his name. One nameless actor: the imp's name is not a voice on the record.
+const VALID_ACTORS = new Set<string>(["raziel", "cypher", "drevan", "gaia", "sol", "imp"]);
+
+/** An imp feeds, plays or talks. It never `give`s: a give carries words into the nest, and an imp
+ *  authors nothing. */
+const IMP_ACTIONS = new Set<string>(["feed", "play", "talk"]);
 
 /** Returns an error string, or null if the actor/action pair is allowed. */
 export function validateInteract(actor: string, action: string): string | null {
   if (!VALID_ACTORS.has(actor)) {
-    return "actor must be one of raziel, cypher, drevan, gaia, sol";
+    return "actor must be one of raziel, cypher, drevan, gaia, sol, imp";
   }
   if (actor === "sol") {
     return action === "appear" ? null : "sol may only 'appear'";
+  }
+  if (actor === "imp") {
+    return IMP_ACTIONS.has(action) ? null : "an imp may only feed, play or talk (an imp never gives: it authors nothing)";
   }
   return isValidAction(action) ? null : "action must be one of feed, play, talk, give";
 }
@@ -154,7 +164,8 @@ export async function getCreature(request: Request, env: Env, params: Record<str
         "SELECT id, content, source, given_by, sparkle, treasured, gifted_to, gifted_at, created_at, ref_type, ref_id FROM creature_nest WHERE creature_id = ? ORDER BY (gifted_to IS NULL) DESC, treasured DESC, sparkle DESC LIMIT 40",
       ).bind(id).all(),
       env.DB.prepare(
-        "SELECT actor, COUNT(*) AS tendings, MAX(created_at) AS last_at FROM creature_interactions WHERE creature_id = ? AND actor != 'sol' GROUP BY actor ORDER BY tendings DESC",
+        // imp excluded: an errand is not familiarity (Hearth reads [0] as "knows best").
+        "SELECT actor, COUNT(*) AS tendings, MAX(created_at) AS last_at FROM creature_interactions WHERE creature_id = ? AND actor NOT IN ('sol','imp') GROUP BY actor ORDER BY tendings DESC",
       ).bind(id).all<{ actor: string; tendings: number; last_at: string }>(),
       lastActedFor(env, id, null),
     ]);

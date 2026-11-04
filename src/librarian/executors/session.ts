@@ -523,9 +523,10 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       ctx.env.DB.prepare(
         "SELECT COUNT(*) AS n, COALESCE(SUM(treasured), 0) AS t FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL"
       ).bind(solRow.id).first<{ n: number; t: number }>().catch(() => null),
-      // Best-known among companions (raziel excluded -- he'd always dominate the count).
+      // Best-known among companions (raziel excluded -- he'd always dominate the count; imp excluded --
+      // an errand is not a relationship, so Sol never "knows an imp best").
       ctx.env.DB.prepare(
-        "SELECT actor, COUNT(*) AS n FROM creature_interactions WHERE creature_id = ? AND actor NOT IN ('sol','raziel') GROUP BY actor ORDER BY n DESC LIMIT 1"
+        "SELECT actor, COUNT(*) AS n FROM creature_interactions WHERE creature_id = ? AND actor NOT IN ('sol','raziel','imp') GROUP BY actor ORDER BY n DESC LIMIT 1"
       ).bind(solRow.id).first<{ actor: string; n: number }>().catch(() => null),
     ]);
     const by = new Map((acted?.results ?? []).map(r => [r.action, r.last]));

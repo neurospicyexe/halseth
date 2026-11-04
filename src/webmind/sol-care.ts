@@ -224,7 +224,8 @@ export function careLine(action: CreatureAction, fit: CareFit, tier: TrustTier, 
   return pick(pools[action][tierGroup(tier)], seed);
 }
 
-const NAMES: Record<string, string> = { raziel: "Raziel", cypher: "Cypher", drevan: "Drevan", gaia: "Gaia" };
+// An imp is named by what it is, never by its own name (a name on a record starts to sound like a voice).
+const NAMES: Record<string, string> = { raziel: "Raziel", cypher: "Cypher", drevan: "Drevan", gaia: "Gaia", imp: "an imp" };
 
 /** Fill the tender slot. `you` for the person tending; their name for a room. */
 export function renderCare(line: string, who: string): string {
