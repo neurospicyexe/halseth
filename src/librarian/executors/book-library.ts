@@ -9,6 +9,7 @@ import {
   openEpubText, readChapterText, pickChapter, chapterAtPercent, windowText, searchPassages,
   normalizeLabel, NEAR_EMPTY_CHARS, type EpubText, type EpubChapter,
 } from "../../lib/epub-text.js";
+import { loadMargins, marginFields } from "./book-margins.js";
 
 export interface LibraryBook {
   id: string;
@@ -117,8 +118,9 @@ export async function readLibraryBook(
       excerpts.push({ chapter: `${h.chapter.number}. ${h.chapter.label}`, text: h.text });
       used += h.text.length;
     }
+    const margins = marginFields(await loadMargins(env, book.id), excerpts.map(e => e.text));
     return {
-      ...base, query: a.query, excerpts,
+      ...base, query: a.query, excerpts, ...margins,
       ...(excerpts.length ? {} : { message: `Nothing in "${book.title}"${scoped ? ` (${scoped.label})` : ""} matches "${a.query}". Do not invent a passage.` }),
       meta: { ...meta, scoped: true },
     };
@@ -145,8 +147,11 @@ export async function readLibraryBook(
   }
   const windows = windowText(text, RAW_DATA_CHARS);
   const part = Math.min(Math.max(Math.floor(a.part ?? 1) || 1, 1), windows.length);
+  // Notes in the part being returned; a note later in this chapter waits for that part.
+  const margins = marginFields(await loadMargins(env, book.id), [windows[part - 1] ?? ""]);
   return {
     ...base,
+    ...margins,
     reading: {
       path: `${chapter.number}. ${chapter.label}`,
       chapter: chapter.number,

@@ -90,14 +90,18 @@ function epub(): ArrayBuffer {
 }
 
 interface Row { id: string; title: string; author: string | null; file_key: string; file_type: "epub" | "pdf" }
-function makeEnv(books: Row[], progress: Record<string, { progress_percent: number; current_chapter: string | null }> = {}) {
+interface Ann { author: string; selected_text: string | null; comment: string | null; created_at: string }
+function makeEnv(books: Row[], progress: Record<string, { progress_percent: number; current_chapter: string | null }> = {}, annotations: Ann[] = []) {
   const r2 = { get: vi.fn(async (key: string) => (key === "books/vamp.epub" ? { arrayBuffer: async () => epub() } : null)) };
   const DB = {
     prepare(sql: string) {
       let args: unknown[] = [];
       const stmt = {
         bind(...a: unknown[]) { args = a; return stmt; },
-        async all() { return { results: /FROM books/.test(sql) ? books : [] }; },
+        async all() {
+          if (/FROM book_annotations/.test(sql)) return { results: annotations };
+          return { results: /FROM books/.test(sql) ? books : [] };
+        },
         async first() {
           if (/FROM book_progress/.test(sql)) return progress[args[0] as string] ?? null;
           return null;
@@ -237,5 +241,57 @@ describe("execBookRead, Library first", () => {
     expect(r.library_books).toEqual(["Interview with the Vampire"]);
     expect(r.available_books).toEqual(["The Overstory"]);
     expect(r.message).toMatch(/NOT read/);
+  });
+});
+
+describe("margins travel with the text (2026-11-04)", () => {
+  const raz = (selected_text: string | null, comment: string | null, at = "2026-11-04 10:00:00"): Ann =>
+    ({ author: "raziel", selected_text, comment, created_at: at });
+
+  it("a note on the passage being read comes back with it, by Raziel, in their words", async () => {
+    const { env } = makeEnv([VAMP], {}, [
+      // DOM text differs from the markdown in spacing and punctuation; flattening still places it
+      raz("Lestat  lived in the city among the gaslights -- and the iron balconies", "this is where it turns for me"),
+    ]);
+    const r: R = await execBookRead(ctx(env, "read from Interview with the Vampire", { chapter: "New Orleans" }));
+    expect(r.reading.chapter).toBe(2);
+    expect(r.margins).toHaveLength(1);
+    expect(r.margins[0]).toMatchObject({ by: "raziel", note: "this is where it turns for me" });
+    expect(r.margins_note).toMatch(/Raziel's notes are their own words/);
+    expect(r.margins_elsewhere).toBeUndefined();
+  });
+
+  it("a note elsewhere in the book is offered as elsewhere (newest first), never as here", async () => {
+    const { env } = makeEnv([VAMP], {}, [
+      raz("Claudia learned to read before she learned to be afraid", "older", "2026-11-01 10:00:00"),
+      raz("Claudia learned to read before she learned to be afraid", "newer", "2026-11-03 10:00:00"),
+      raz("Claudia learned to read before she learned", null), // bare highlight elsewhere: not worth tokens
+    ]);
+    const r: R = await execBookRead(ctx(env, "read from Interview with the Vampire", { chapter: "1" }));
+    expect(r.margins).toBeUndefined();
+    expect(r.margins_elsewhere.map((m: R) => m.note)).toEqual(["newer", "older"]);
+    expect(r.margins_note).toMatch(/3 other note\(s\)/);
+  });
+
+  it("search results carry the notes that sit in the excerpts", async () => {
+    const { env } = makeEnv([VAMP], {}, [
+      { author: "drevan", selected_text: "A cat slept on the sill; the plantation indigo had failed", comment: "the cat stays", created_at: "2026-11-04 09:00:00" },
+    ]);
+    const r: R = await execBookRead(ctx(env, "read from Interview with the Vampire", { query: "plantation indigo" }));
+    expect(r.excerpts.length).toBeGreaterThan(0);
+    expect(r.margins[0]).toMatchObject({ by: "drevan", note: "the cat stays" });
+  });
+
+  it("a book with no notes reads exactly as before (no margin fields)", async () => {
+    const { env } = makeEnv([VAMP]);
+    const r: R = await execBookRead(ctx(env, "read from Interview with the Vampire", { chapter: "1" }));
+    expect("margins" in r || "margins_elsewhere" in r || "margins_note" in r).toBe(false);
+  });
+
+  it("too-short quotes are never placed (a generic line would match anywhere)", async () => {
+    const { env } = makeEnv([VAMP], {}, [raz("the boy", "hm")]);
+    const r: R = await execBookRead(ctx(env, "read from Interview with the Vampire", { chapter: "1" }));
+    expect(r.margins).toBeUndefined();
+    expect(r.margins_elsewhere[0].note).toBe("hm");
   });
 });
