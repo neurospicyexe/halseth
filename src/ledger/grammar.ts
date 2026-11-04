@@ -617,6 +617,11 @@ export function validateLedger(
   const unlabeled = nums.filter((n) => n.unlabeled).map((n) => n.text);
   const rowParts = kind === "row" ? ROW_RE.exec(ref) : null;
   if (rider !== null) {
+    // The imp's name lives in the column, never in the text (Drevan 11-04). A title or interest name that
+    // happens to be an imp's name ("Rock Bottom", "rock music") would put it there, so ANY imp name as a
+    // whole word refuses the line (review 11-04).
+    const impName = LEDGER_RIDERS.find((n) => new RegExp(`(?<![\\p{L}\\p{N}])${n}(?![\\p{L}\\p{N}])`, "iu").test(body));
+    if (impName) return fail("rider", "an imp's name never appears in a ledger line (it lives in the rider column)");
     // An imp line never carries a care word, a health keyword, or any number beyond the existing plural count
     // forms ("3 entries", "2 times", "45 minutes"; a single digit also passes). Reuses the care guard and
     // this grammar's own health/number scan; no new word list. Scanned over the WHOLE body, quotes included.

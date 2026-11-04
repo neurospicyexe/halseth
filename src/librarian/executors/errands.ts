@@ -24,7 +24,7 @@
 import type { ExecutorContext, ExecutorResult } from "./types.js";
 import { COMPANION_ID_SET } from "../../companions.js";
 import { writeLedger, riderColumnPresent } from "../../ledger/door.js";
-import type { LedgerRider } from "../../ledger/grammar.js";
+import { validateLedger, type LedgerRider } from "../../ledger/grammar.js";
 import { careCategory } from "../../people/care-guard.js";
 import { readPendingCare } from "../../care/pending.js";
 import { PENDING_DECAY_HOURS } from "../../care/rules.js";
@@ -62,8 +62,9 @@ export function parseErrand(request: string): ParsedErrand | null {
   switch (imp) {
     case "mossling":
       if (/\bsort\b/.test(low)) return { imp, errand: "sort" };
+      // Tend before care: "take care of sol" is a tend, not the care-lane check (review 11-04).
+      if (/\b(?:feed|play|talk|tend|pet|sol)\b/.test(low)) return { imp, errand: "tend", action: tendAction(), arg: rest };
       if (/\bcare\b/.test(low)) return { imp, errand: "care" };
-      if (/\b(?:feed|play|talk|tend|pet)\b/.test(low)) return { imp, errand: "tend", action: tendAction(), arg: rest };
       return { imp, errand: null };
     case "iris":
       if (/\b(?:feed|tend)\b/.test(low)) return { imp, errand: "tend", action: "feed", arg: rest };
@@ -169,11 +170,28 @@ async function runTend(ctx: ExecutorContext, rider: LedgerRider, action: TendAct
   const sol = all.find((c) => new RegExp(`(?<![\\p{L}\\p{N}])${c.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(low))
     ?? all.find((c) => c.name.toLowerCase() === "sol") ?? all[0];
   if (!sol) return empty("no creature to tend");
+  const body = `Logged: ${TEND_LINE[action]} ${sol.name}.`;
+  const who = ctx.req.companion_id;
+  // Check the line BEFORE the tend (review 11-04): a tend is a side effect on Sol (trust, milestones), so a
+  // line the grammar would refuse stops the errand before Sol is touched. The ref is a placeholder of the
+  // same shape; the real interaction id replaces it below.
+  const pre = validateLedger(
+    { companion_id: who, function: FN.tend, body, source_kind: "row", source_ref: "creature_interactions:pending" },
+    today(), { rider, requester: who },
+  );
+  if (!pre.ok) return empty(`the errand's line would be refused (${pre.rule}), so Sol was not tended`);
   // The actor is `imp` (commit 1ed93d7); the note is ALWAYS null: an imp authors nothing.
   const outcome = await performTend(db, sol, "imp", action, null);
   const acc = empty();
-  await put(ctx, rider, FN.tend, `Logged: ${TEND_LINE[action]} ${sol.name}.`, "row", `creature_interactions:${outcome.interaction_id}`,
-    `errand:${rider}:tend:${outcome.interaction_id}`, acc);
+  try {
+    await put(ctx, rider, FN.tend, body, "row", `creature_interactions:${outcome.interaction_id}`,
+      `errand:${rider}:tend:${outcome.interaction_id}`, acc);
+  } catch (e) {
+    // The tend landed; never report the errand as failed after it did.
+    console.error("[errand] tend landed, ledger line failed", { rider, error: String(e).slice(0, 200) });
+    acc.skipped++;
+    acc.note = "Sol was tended; the ledger line did not write";
+  }
   return acc;
 }
 

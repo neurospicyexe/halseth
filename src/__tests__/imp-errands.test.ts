@@ -411,3 +411,32 @@ describe("orient: something waiting (N)", () => {
     expect(ms.meta.degraded ?? []).not.toContain("ledger");
   });
 });
+
+describe("review fixes (11-04)", () => {
+  it("an imp's name never appears in a rider line, even via a title or an interest name", () => {
+    for (const body of ["Found: Rock Bottom.", "Found: iris petals is cooling.", "Logged: fed Mossling."]) {
+      const v = validateLedger({ ...base, function: "fetch", body, companion_id: "drevan" }, "2026-11-04", { rider: "rock", requester: "drevan" });
+      expect(v.ok ? "ok" : v.rule).toBe("rider");
+    }
+    // a word that merely contains an imp name is fine ("rocky", "irises" are not the name)
+    const ok = validateLedger({ ...base, function: "fetch", body: "Found: rocky shore.", companion_id: "drevan" }, "2026-11-04", { rider: "rock", requester: "drevan" });
+    expect(ok.ok).toBe(true);
+    // a nameless clerk line may still say "rock"
+    expect(validateLedger({ ...base, function: "fetch", body: "Found: Rock Bottom.", companion_id: "drevan" }, "2026-11-04").ok).toBe(true);
+  });
+
+  it("a tend whose line would be refused never touches the creature", async () => {
+    const { db, env } = setup();
+    db.prepare("DELETE FROM creatures").run();
+    db.prepare("INSERT INTO creatures (id, name, kind, trust) VALUES ('c-iris', 'Iris', 'companion_pet', 0.5)").run();
+    const out = await send(env, "drevan", "send mossling to feed iris");
+    expect(rows(db, "SELECT * FROM creature_interactions")).toHaveLength(0);
+    expect(rows(db)).toHaveLength(0);
+    expect(JSON.stringify(out)).toMatch(/not tended/);
+  });
+
+  it("'take care of sol' is a tend, not the care-lane check", () => {
+    expect(parseErrand("send mossling to take care of sol")).toMatchObject({ errand: "tend" });
+    expect(parseErrand("send mossling to check the care lane")).toMatchObject({ errand: "care" });
+  });
+});
