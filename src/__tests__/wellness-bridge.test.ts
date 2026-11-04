@@ -85,11 +85,14 @@ describe("PUT /biometrics/wellness/:day", () => {
 });
 
 describe("machine rows never read as a check-in", () => {
+  // The wearable DAY must be today: the tick only fires on a day under 24h old, and the PUT clamps
+  // recorded_at into that day. A hardcoded day decayed these two tests to red on 2026-11-03.
+  const TODAY = new Date().toISOString().slice(0, 10);
   async function seed() {
     const s = setup();
     const t = new Date(Date.now() - 5 * 3600e3).toISOString();
     await s.DB.prepare(`INSERT INTO biometric_snapshots (id, recorded_at, logged_at, source, spoons, mood) VALUES ('h1', ?, ?, 'hearth', 2, 'low')`).bind(t, t).run();
-    await s.put("2026-11-01", { hrv_resting: 20, resting_hr: 85, stress_score: 90, recorded_at: new Date().toISOString() });
+    await s.put(TODAY, { hrv_resting: 20, resting_hr: 85, stress_score: 90, recorded_at: new Date().toISOString() });
     return s;
   }
   it("Hearth's latest/list skip them; ?source=wellness reads them", async () => {
@@ -97,7 +100,7 @@ describe("machine rows never read as a check-in", () => {
     expect(((await (await handleBiometricsLatest(req("GET"), env)).json()) as any).id).toBe("h1");
     expect(((await (await handleBiometricsList(req("GET"), env)).json()) as any[]).map(r => r.id)).toEqual(["h1"]);
     const w = (await (await handleBiometricsList(req("GET", undefined, "http://x/biometrics?source=wellness"), env)).json()) as any[];
-    expect(w.map(r => r.id)).toEqual(["wellness_2026-11-01"]);
+    expect(w.map(r => r.id)).toEqual([`wellness_${TODAY}`]);
   });
   it("a bridge write is not owner activity", async () => {
     const { DB, put, env } = setup();
