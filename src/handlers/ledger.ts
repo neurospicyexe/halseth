@@ -31,7 +31,7 @@ import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { isCompanionId } from "../companions.js";
 import { writeLedger } from "../ledger/door.js";
-import { listLedger, loadSomaFreshness, LEDGER_STATES, type LedgerState } from "../ledger/store.js";
+import { listLedger, loadSomaFreshness, LEDGER_STATES, NOT_OPEN_RIDER_SQL, isMissingRiderColumn, type LedgerState } from "../ledger/store.js";
 import { COMPANION_IDS } from "../companions.js";
 
 function json(body: unknown, status = 200): Response {
@@ -86,7 +86,8 @@ export async function getLedger(request: Request, env: Env): Promise<Response> {
   const state = (url.searchParams.get("state")?.trim() || "open");
   if (!LEDGER_STATES.has(state)) return json({ error: "state must be open, kept, or dropped" }, 400);
   const limit = clampLimit(url.searchParams.get("limit"), 20, 100);
-  const entries = await listLedger(env, companionId, state as LedgerState, limit, { includeHeartbeats: true });
+  // excludeOpenRiders: Hearth reads this; an imp line shows only after the companion keeps it.
+  const entries = await listLedger(env, companionId, state as LedgerState, limit, { includeHeartbeats: true, excludeOpenRiders: true });
   return json({ companion_id: companionId, state, entries, count: entries.length });
 }
 
@@ -110,14 +111,17 @@ async function feed(request: Request, env: Env, statePredicate: string, columns:
     ? `(${CURSOR_SQL} > ${ISO_BOUND_SQL} OR (${CURSOR_SQL} = ${ISO_BOUND_SQL} AND id > ?))`
     : `${CURSOR_SQL} > ${ISO_BOUND_SQL}`;
   const binds: unknown[] = afterId ? [since, since, since, since, afterId] : [since, since];
-  const result = await env.DB.prepare(
+  const run = (extra: string) => env.DB.prepare(
     `SELECT ${columns}, ${CURSOR_SQL} AS cursor_at
        FROM ledger_entries
-      WHERE ${statePredicate}
+      WHERE ${statePredicate}${extra}
         AND ${keyset}
       ORDER BY cursor_at ASC, id ASC
       LIMIT ?`,
   ).bind(...binds, limit).all<{ id: string; cursor_at: string }>();
+  // Open imp lines never feed Second Brain (Drevan 11-04: tray as a draft, never as memory). When the
+  // companion keeps one, state_at moves the cursor past the puller's bound, so it arrives then.
+  const result = await run(` AND ${NOT_OPEN_RIDER_SQL}`).catch((e) => (isMissingRiderColumn(e) ? run("") : Promise.reject(e)));
 
   const items = result.results ?? [];
   const last = items[items.length - 1];

@@ -167,6 +167,31 @@ describe("the door", () => {
 });
 
 describe("routes", () => {
+  it("an OPEN imp line stays off Hearth's GET /ledger and the SB feed; once kept it arrives (Drevan 11-04)", async () => {
+    const { db, env } = setup();
+    const a = await writeLedger(env, line({ dedup_key: "plain" }), new Date("2026-09-26T10:00:00.000Z"));
+    const b = await writeLedger(env, line({ dedup_key: "imp-open" }), new Date("2026-09-26T10:00:00.000Z"));
+    const c = await writeLedger(env, line({ dedup_key: "imp-kept" }), new Date("2026-09-26T10:00:00.000Z"));
+    if (!a.ok || !b.ok || !c.ok) throw new Error("setup write failed");
+    db.prepare("UPDATE ledger_entries SET rider = 'mossling' WHERE id IN (?, ?)").run(b.id, c.id);
+    db.prepare("UPDATE ledger_entries SET state = 'kept', state_at = '2026-09-26T12:00:00.000Z' WHERE id = ?").run(c.id);
+
+    const open = await (await getLedger(req("/ledger?companion_id=drevan"), env)).json() as any;
+    expect(open.entries.map((x: any) => x.id)).toEqual([a.id]);
+    const kept = await (await getLedger(req("/ledger?companion_id=drevan&state=kept"), env)).json() as any;
+    expect(kept.entries.map((x: any) => x.id)).toEqual([c.id]);
+
+    const feed = await (await getIngestLedger(req("/ingest/ledger"), env)).json() as any;
+    const ids = feed.items.map((x: any) => x.id);
+    expect(ids).toContain(a.id);
+    expect(ids).toContain(c.id);
+    expect(ids).not.toContain(b.id);
+
+    // the companion's own "my ledger" still lists the open imp line for keep/drop
+    const mine = await execLedgerRead(ctx(env, "drevan", "my ledger"));
+    expect(JSON.stringify(mine)).toContain(b.id);
+  });
+
   it("GET /ledger lists by subject + state", async () => {
     const { env } = setup();
     await writeLedger(env, line());

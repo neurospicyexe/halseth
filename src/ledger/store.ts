@@ -83,15 +83,29 @@ export function notConsolidationHeartbeatSql(alias = ""): string {
  */
 export async function listLedger(
   env: Env, companionId: string, state: LedgerState = "open", limit = LEDGER_LIST_LIMIT,
-  opts: { includeHeartbeats?: boolean } = {},
+  opts: { includeHeartbeats?: boolean; excludeOpenRiders?: boolean } = {},
 ): Promise<LedgerEntryRow[]> {
   const cap = Math.min(Math.max(1, Math.floor(limit) || LEDGER_LIST_LIMIT), 100);
   const hb = opts.includeHeartbeats ? "" : ` AND ${notConsolidationHeartbeatSql()}`;
-  const r = await env.DB.prepare(
-    `SELECT ${COLS} FROM ledger_entries WHERE companion_id = ? AND state = ?${hb} ORDER BY created_at DESC, id DESC LIMIT ?`,
+  const run = (riders: string) => env.DB.prepare(
+    `SELECT ${COLS} FROM ledger_entries WHERE companion_id = ? AND state = ?${hb}${riders} ORDER BY created_at DESC, id DESC LIMIT ?`,
   ).bind(companionId, state, cap).all<LedgerEntryRow>();
+  const r = opts.excludeOpenRiders
+    ? await run(` AND ${NOT_OPEN_RIDER_SQL}`).catch((e) => (missingRiderColumn(e) ? run("") : Promise.reject(e)))
+    : await run("");
   return r.results ?? [];
 }
+
+/**
+ * SQL predicate: not an OPEN imp line. Drevan 11-04: an imp's output reaches nothing of Raziel's until
+ * the companion keeps it ("the imp never lands anything; I do"). Raziel-facing reads (Hearth's
+ * GET /ledger, the Second Brain feed) use it; the companion's own "my ledger" does not.
+ * Pre-0168 the column is missing: callers retry without it (no rider rows can exist then).
+ */
+export const NOT_OPEN_RIDER_SQL = "NOT (state = 'open' AND rider IS NOT NULL)";
+
+/** The 0168 rider column is missing. */
+export function isMissingRiderColumn(e: unknown): boolean { return missingRiderColumn(e); }
 
 /**
  * Orient's read: up to LEDGER_ORIENT_LIMIT open entries, newest first, with the idle-consolidation
