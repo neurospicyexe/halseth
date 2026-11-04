@@ -597,7 +597,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // as announced changes, not mysteries. Empty renders nothing.
   const changeNotesBlock = B.changeNotesBlock(mindState.world.change_notes);
   // 0.17.0 (ledger lane): clerk records ABOUT this companion, their own block, mark intact on every line.
-  const ledgerBlock = B.ledgerBlock(mindState.ledger?.open ?? []);
+  const ledgerBlock = B.ledgerBlock(mindState.ledger?.open ?? [], mindState.ledger?.waiting ?? 0);
 
   // The vocabulary the three authored on 09-19, rendered from versioned rows instead of the
   // hand-authored cue text in interoceptionLine -- two of whose fallbacks are live violations of

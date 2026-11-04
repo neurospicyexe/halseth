@@ -9,7 +9,7 @@ import { matchFastPath } from "../librarian/router.js";
 import { loadBotFeelingLine, feelingLineFrom, wireFeelingLine } from "../webmind/feeling-line-loader.js";
 import { botWireFromMindState } from "../mind/adapters/bot-wire.js";
 import { MINDSTATE_CONTRACT_VERSION } from "../mind/contract.js";
-import { CONTRACT_CHANGELOG } from "../mind/changelog.js";
+import { CONTRACT_CHANGELOG, cmpVersion } from "../mind/changelog.js";
 import type { MindState } from "../mind/contract.js";
 
 const ctx = (env: any, request: string, companion_id = "cypher") =>
@@ -221,7 +221,7 @@ describe("bot wire feeling_line", () => {
       growth: { journal_recent: [], patterns: [], markers: [], reflection: null, seeds: [], clearing_count: 0, drifts_open: [], projects: [], budget: null },
       oversight: { pressure_flags: [], growth_confirmed: [], guardian_cards: [], tripwires: [], questions: [], answered_questions: [], growth_unconfirmed: [] },
       world: { home_recent: [], club: null, commons: [], commons_life: [], change_notes: [], shelf: [], collection: { forage: [], media: [], top: [] }, forage: { pool: [], active: [] }, listens: [], motifs: { active: [], resurrection_candidates: [] }, sol: null, creatures: [], imps_active: [], watching: [], departures: [], raziel_state: null },
-      graph: { neighborhoods: [], seeds: [] }, ledger: { open: [] },
+      graph: { neighborhoods: [], seeds: [] }, ledger: { open: [], waiting: 0 },
       meta: { datetime_iso: "2026-11-01T00:00:00Z", datetime_local: "2026-11-01", not_yet_loaded: [], degraded: [] } } as unknown as MindState;
     const base = { synthesis_summary: null, rag_excerpts: [], history_excerpts: [], continuity_notes: [], owner: "Raziel" };
     expect(botWireFromMindState(ms, { ...base, feeling_line: "a made-up line" }, "cypher").feeling_line).toBe("a made-up line");
@@ -229,7 +229,7 @@ describe("bot wire feeling_line", () => {
     expect(botWireFromMindState(ms, { ...base, feeling_line: null }, "cypher")).toHaveProperty("feeling_line", null);
   });
   it("contract 0.26.0 with a changelog note", () => {
-    expect(MINDSTATE_CONTRACT_VERSION).toBe("0.26.0");
+    expect(cmpVersion(MINDSTATE_CONTRACT_VERSION, "0.26.0")).toBeGreaterThanOrEqual(0);
     expect(CONTRACT_CHANGELOG["0.26.0"]).toMatch(/feeling word/);
   });
 });

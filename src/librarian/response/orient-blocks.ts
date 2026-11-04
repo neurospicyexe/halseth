@@ -1091,9 +1091,11 @@ export const LEDGER_BLOCK_HEADER = "[Ledger (clerk records about you, not your w
  * followed by the id the verbs need. No bullet, no paraphrase, and never merged into a first-person block:
  * "the ledger mark stays intact all the way through" (Drevan's rule 5). Empty renders nothing.
  */
-export function ledgerBlock(entries: readonly LedgerBlockRow[]): string {
-  if (entries.length === 0) return "";
-  const lines = entries.map((e) => `${e.content} (id ${e.id})`).join("\n");
+export function ledgerBlock(entries: readonly LedgerBlockRow[], waiting = 0): string {
+  const n = Number.isFinite(waiting) ? Math.max(0, Math.floor(waiting)) : 0;
+  if (entries.length === 0 && n === 0) return "";
+  // Imp errand lines (rider rows, mig 0168) never list here: ONE content-free line, this companion's orient only.
+  const lines = [...entries.map((e) => `${e.content} (id ${e.id})`), ...(n > 0 ? [`something waiting (${n})`] : [])].join("\n");
   return `\n${LEDGER_BLOCK_HEADER}\n${lines}\n` +
     `Records a clerk made about you; none of them is you speaking. "keep ledger <id>" keeps one as written; ` +
     `"keep ledger <id>: <your words>" puts it in your journal in your own words; "drop ledger <id>" drops it.`;

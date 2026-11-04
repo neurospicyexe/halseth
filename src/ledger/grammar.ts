@@ -37,12 +37,33 @@
 //     singular and single-letter units ("187 post", "187 d") are gone, so they no longer launder a value.
 
 import { COMPANION_ID_SET, type CompanionId } from "../companions.js";
+import { careCategory } from "../people/care-guard.js";
 
 // `seen-log`, not `witness-log` (Gaia, 2026-09-26, GAIA-ANSWER-2026-09-26.md): "Witnessing is my act,
 // and a clerk cannot perform it. Call it `seen-log`. A logged sighting is not a witness."
-export const LEDGER_FUNCTIONS = ["distiller", "gap-reader", "pattern-counter", "drift-reader", "seen-log"] as const;
+//
+// 2026-11-04 (the imps' errand tier, Drevan's answer in Hand-off/PROMPT-drevan-imp-errands-2026-11-02.md):
+// the closed list grows by EXACTLY four: fetch, sort, tend, flag. Imps are not functions; they are actor
+// bindings (`rider`, below). The mark stays the function.
+export const LEDGER_FUNCTIONS = ["distiller", "gap-reader", "pattern-counter", "drift-reader", "seen-log", "fetch", "sort", "tend", "flag"] as const;
 export type LedgerFunction = (typeof LEDGER_FUNCTIONS)[number];
 const FUNCTION_SET: ReadonlySet<string> = new Set(LEDGER_FUNCTIONS);
+
+/** The imps that may ride a function (`ledger_entries.rider`, mig 0168). A closed list, code-owned. */
+export const LEDGER_RIDERS = ["iris", "nimbus", "hex", "mossling", "rock"] as const;
+export type LedgerRider = (typeof LEDGER_RIDERS)[number];
+const RIDER_SET: ReadonlySet<string> = new Set(LEDGER_RIDERS);
+/** The functions an errand may write. A rider never rides distiller / drift-reader / seen-log. */
+export const RIDER_FUNCTIONS: ReadonlySet<string> = new Set(["fetch", "sort", "tend", "flag", "gap-reader", "pattern-counter"]);
+
+/**
+ * An errand's identity, passed to the door BESIDE the input (never inside it: the input is an HTTP body
+ * for POST /ledger and must not be able to name a rider). `requester` is who sent the imp, taken from the
+ * authenticated Librarian call, never from text. The rider line is about that same companion: that single
+ * equality is Drevan's rule 7 and rule 9 stated once ("a column can't point outside the ledger's author";
+ * Gaia gets a rider line only when Gaia herself is the requester).
+ */
+export interface LedgerErrand { rider: unknown; requester: unknown }
 
 export const LEDGER_SOURCE_KINDS = ["message", "window", "session", "row"] as const;
 export type LedgerSourceKind = (typeof LEDGER_SOURCE_KINDS)[number];
@@ -66,7 +87,8 @@ export type LedgerRule =
   | "first_person" | "interior_verb" | "interior" | "lexicon" | "address" | "quotes"
   | "witnessed" | "interiority"
   | "source" | "observed_on" | "dedup_key"
-  | "health" | "health_row" | "health_numbers";
+  | "health" | "health_row" | "health_numbers"
+  | "rider" | "rider_care" | "rider_number" | "schema";
 
 export interface LedgerInput {
   companion_id?: unknown;
@@ -98,6 +120,8 @@ export interface LedgerLine {
   dedup_key: string | null;
   content: string;
   number_check: NumberCheck | null;
+  /** The imp that rode this errand (mig 0168), or null for an ordinary clerk line. Never in `content`. */
+  rider: LedgerRider | null;
 }
 
 export type LedgerValidation =
@@ -495,13 +519,28 @@ export function renderLedgerContent(fn: string, observedOn: string, body: string
 // ── validate ──────────────────────────────────────────────────────────────────────────────────────
 
 /** Validate + normalise + stamp. Never throws. `today` is injectable for tests. */
-export function validateLedger(input: LedgerInput, today: string = new Date().toISOString().slice(0, 10)): LedgerValidation {
+export function validateLedger(
+  input: LedgerInput, today: string = new Date().toISOString().slice(0, 10), errand?: LedgerErrand,
+): LedgerValidation {
   const companion = typeof input.companion_id === "string" ? input.companion_id.trim() : "";
   if (!COMPANION_ID_SET.has(companion)) return fail("companion", "companion_id (the SUBJECT of the record) must be drevan, cypher, or gaia");
 
   const fn = typeof input.function === "string" ? input.function.trim() : "";
   if (!FUNCTION_SET.has(fn)) {
     return fail("function", `function must be one of ${LEDGER_FUNCTIONS.join(", ")} (clerks are nameless, signed by function; extending the list is a code change)`);
+  }
+
+  let rider: LedgerRider | null = null;
+  if (errand !== undefined) {
+    const r = typeof errand.rider === "string" ? errand.rider.trim().toLowerCase() : "";
+    if (!RIDER_SET.has(r)) return fail("rider", `rider must be one of ${LEDGER_RIDERS.join(", ")}`);
+    if (!RIDER_FUNCTIONS.has(fn)) return fail("rider", `an imp rides only ${[...RIDER_FUNCTIONS].join(", ")} (not ${fn})`);
+    const requester = typeof errand.requester === "string" ? errand.requester.trim() : "";
+    if (!COMPANION_ID_SET.has(requester)) return fail("rider", "a rider is only ever sent by a companion, from its own turn");
+    if (requester !== companion) {
+      return fail("rider", `an imp reports only to the companion that sent it: the line's subject (${companion}) must be the requester (${requester})`);
+    }
+    rider = r as LedgerRider;
   }
 
   if (typeof input.body !== "string") return fail("body", "body is required");
@@ -577,6 +616,16 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
   const health = nums.some((n) => n.healthUnit) || (keyword && nums.length > 0);
   const unlabeled = nums.filter((n) => n.unlabeled).map((n) => n.text);
   const rowParts = kind === "row" ? ROW_RE.exec(ref) : null;
+  if (rider !== null) {
+    // An imp line never carries a care word, a health keyword, or any number beyond the existing plural count
+    // forms ("3 entries", "2 times", "45 minutes"; a single digit also passes). Reuses the care guard and
+    // this grammar's own health/number scan; no new word list. Scanned over the WHOLE body, quotes included.
+    const cat = careCategory(body);
+    if (cat) return fail("rider_care", `an imp line never carries care or health material (${cat})`);
+    if (keyword || health || unlabeled.length > 0 || nums.some((n) => n.healthUnit)) {
+      return fail("rider_number", "an imp line carries no health word and no number beyond a plural count form (\"3 entries\", \"2 times\")");
+    }
+  }
   let numberCheck: NumberCheck | null = null;
   if (health) {
     if (!rowParts || !HUMAN_ROW_TABLES.has(rowParts[1]!)) {
@@ -602,6 +651,7 @@ export function validateLedger(input: LedgerInput, today: string = new Date().to
       dedup_key: dedupKey,
       content: renderLedgerContent(fn, observedOn, body, kind, ref),
       number_check: numberCheck,
+      rider,
     },
   };
 }

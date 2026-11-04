@@ -39,6 +39,10 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.27.0 -- the imps' errand tier (2026-11-04, mig 0168): `ledger.waiting`, the number of OPEN rider lines
+ *  (ledger_entries.rider set: an imp's errand output) waiting on this companion. Rider rows are removed from
+ *  `ledger.open`; renderers show ONE content-free line, "something waiting (N)", in that companion's own
+ *  orient and nowhere else (never Raziel's surfaces). 0 pre-0168. MINOR: additive only. */
 /** 0.26.0 -- feeling line on the bot wire (2026-11-01): the Discord bot wire gains `feeling_line`
  *  (string | null), the companion's own authored feeling word exactly as the Claude.ai orient renders
  *  it; a string only when FEELING_LINE_MODE is `live`. NOT a MindState field: it needs reads
@@ -156,7 +160,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.26.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.27.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -363,6 +367,8 @@ export interface MindState {
    *  `content` is verbatim and begins with the mark; renderers print it whole or not at all. */
   ledger: {
     open: LedgerOpenEntry[];
+    /** 0.27.0: open imp-errand lines (rider rows) waiting on this companion; a count, never content. */
+    waiting: number;
   };
 
   meta: {

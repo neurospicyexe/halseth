@@ -61,7 +61,7 @@ export async function postLedger(request: Request, env: Env): Promise<Response> 
   const r = await writeLedger(env, body);
   if (!r.ok) {
     console.log("[ledger] rejected", { rule: r.rule, companion_id: body["companion_id"], function: body["function"] });
-    return json({ error: r.error, rule: r.rule }, 422);
+    return json({ error: r.error, rule: r.rule }, r.rule === "schema" ? 409 : 422);
   }
   if (r.duplicate) return json({ id: r.id, duplicate: true }, 200);
   return json({ id: r.id, content: r.content }, 201);

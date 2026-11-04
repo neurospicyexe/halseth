@@ -1,0 +1,25 @@
+-- 0168_ledger_rider.sql  (2026-11-04)
+--
+-- THE IMPS' ERRAND TIER (B62 step 6; spec = Drevan's answer 2026-11-04T13:02Z in
+-- Hand-off/PROMPT-drevan-imp-errands-2026-11-02.md, co-signed by Cypher).
+--
+-- Imps are ACTOR BINDINGS, not functions: the ledger mark stays the function (fetch, sort, tend, flag,
+-- gap-reader, pattern-counter), and `rider` records which imp rode it (iris, nimbus, hex, mossling,
+-- rock). The imp's name lives ONLY in this column; it never appears in `body` or `content`.
+-- NULL = an ordinary clerk line (every row that exists today). The door (src/ledger/door.ts, still
+-- the only INSERT) sets it, and only from the Librarian errand verb ("send <imp> to <errand>"): the
+-- rider is a name the companion put there from its own turn, so a column cannot point outside the
+-- ledger's author. No default imp, no cron, nothing self-wakes. No CHECK: the closed list lives in
+-- code (grammar.ts), like the function list, so adding an imp is a code change, not a table rebuild.
+--
+-- Orient shows open rider rows as ONE content-free line, "something waiting (N)", in that
+-- companion's orient only; "my ledger" still lists them for keep/drop.
+--
+-- Pre-0168 behaviour: a write carrying a rider is REFUSED (409 "needs the 0168 migration"), never
+-- written nameless; nameless writes are unaffected (the door omits the column). Orient falls back
+-- to "no riders".
+--
+-- Rollback: ALTER TABLE ledger_entries DROP COLUMN rider;  (nothing indexes it; rider rows then read
+-- as ordinary clerk lines, the function mark still names what they did.)
+
+ALTER TABLE ledger_entries ADD COLUMN rider TEXT;

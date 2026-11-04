@@ -27,7 +27,7 @@ import { loadRelationalBlocks } from "./blocks/relational.js";
 import { loadBeliefExtras } from "./blocks/beliefs.js";
 import { loadCareBlocks, deriveRazielState, EMPTY_CARE } from "./blocks/care.js";
 import { loadGraphBlocks, EMPTY_GRAPH } from "./blocks/graph.js";
-import { loadLedgerOpen } from "../ledger/store.js";
+import { loadLedgerOpen, countLedgerWaiting } from "../ledger/store.js";
 import type { GraphSeed } from "../graph/traverse.js";
 
 /**
@@ -99,7 +99,7 @@ export async function loadMindState(
   // `mindOrient` is already captured because `orientPromise` itself is a promise, never a thunk.
   const orientPromise = opts.orient ?? mindOrient(env, companionId, { readOnly: true });
 
-  const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras, care, graph, ledgerOpen] = await Promise.all([
+  const [orientRes, groundRes, identity, felt, growth, world, oversight, narrative, relational, beliefExtras, care, graph, ledgerOpen, ledgerWaiting] = await Promise.all([
     orientPromise.catch((err: unknown) => {
       console.error("[mind/loader] mindOrient failed, degrading", { companionId, error: String(err) });
       degraded.push("orient");
@@ -161,6 +161,8 @@ export async function loadMindState(
     guard("ledger", async () => (await loadLedgerOpen(env, companionId)).map((r) => ({
       id: r.id, function: r.function, content: r.content, observed_on: r.observed_on, created_at: r.created_at,
     })), []),
+    // 0.27.0 (mig 0168): how many open imp-errand lines wait on this companion. A count only; 0 pre-0168.
+    guard("ledger_waiting", () => countLedgerWaiting(env, companionId), 0),
   ]);
 
   // Non-null views. `orient`/`ground` are the only two sources that can be wholly absent (the blocks each
@@ -269,7 +271,7 @@ export async function loadMindState(
     graph,
 
     // 0.17.0: clerk records about this companion -- its own block, never merged into a first-person one.
-    ledger: { open: ledgerOpen },
+    ledger: { open: ledgerOpen, waiting: ledgerWaiting },
 
     meta: {
       // Time is the one field with no acceptable empty: a companion that does not know when it is will

@@ -1734,6 +1734,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // People pull-lookup (2026-11-02): Raziel's list and his notes about people, read on demand. The REAL match is
   // the anchored guard in router.ts ANCHORED_GUARDS plus the router's list check (a name not on the list falls
   // through to the route it had before: roster_who_is, front, search). The trigger below is a formality.
+  // The imps' errands (mig 0168): "send <imp> to <errand>". The REAL match is the anchored guard at the top of
+  // router.ts ANCHORED_GUARDS (without it "send iris to feed sol" hits creature_interact's "feed sol" trigger and
+  // routes to the companion tending Sol AS THEMSELF); this trigger is a formality no sentence says by accident.
+  imp_errand: { triggers: ["imp_errand"], tools: ["imp_errand"], response_key: "witness" },
   person_who_is: { triggers: ["person_who_is"], tools: ["person_who_is"], response_key: "data" },
   // Making (mig 0164, B62). `make a <kind> called <title> [for <interest>] because <why>` is anchored in router.ts
   // ANCHORED_GUARDS (needs "called"; "made X for Y because Z" stays the interest event, "make an image of" stays

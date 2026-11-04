@@ -136,6 +136,11 @@ export interface AnchoredGuard {
 }
 
 export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
+  // FIRST: an errand sentence names its own verb target ("feed sol", "my tray", "care lane") and every one of those
+  // is an earlier substring trigger. The head ("send <imp>") decides the route, same class of bug as H7b.
+  { pattern_key: "imp_errand",
+    regex: /^(?:please\s+)?send\s+(?:iris|nimbus|hex|mossling|rock)\b/i,
+    note: "Imps' errands (2026-11-04, mig 0168): 'send iris to feed sol' hit creature_interact's 'feed sol' trigger (insertion order) and silently ran as the COMPANION tending Sol; the same sentence shape with 'my tray' / 'care lane' / 'fetch ...' collides with other triggers. The head decides: start-anchored on 'send <imp>'." },
   // FIRST on purpose: the clause text names floats and numbers ("warmth above 0.7"), which the H8b soma-write
   // guard below would otherwise read as a state_update, and a note: may contain "companion note".
   { pattern_key: "feeling_word_propose",
@@ -478,6 +483,7 @@ import { INTEREST_BORN_RE, INTEREST_RETURN_RE, INTEREST_MADE_RE, INTEREST_PUT_DO
 import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPutDown, execInterestPickUp, execInterestsRead, execInterestTrail } from "./executors/interests.js";
 import { MAKE_VERB_RE, MAKES_READ_RE } from "../webmind/makes.js";
 import { execMake, execMakesRead } from "./executors/makes.js";
+import { execImpErrand } from "./executors/errands.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
 
@@ -609,6 +615,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   make_artifact: execMake,
   makes_read: execMakesRead,
   person_who_is: execPersonWhoIs,
+  imp_errand: execImpErrand,
 
   // Weekly budget (consequence layer C3, mig 0124).
   budget_read: execBudgetRead,

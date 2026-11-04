@@ -29,6 +29,8 @@ export interface TendTarget {
 }
 
 export interface TendOutcome {
+  /** The creature_interactions row this tend wrote (an imp errand's ledger line points at it). */
+  interaction_id: string;
   trust: number | null;
   state_json: string | null;
   milestones_fired: Array<{ id: string; text: string }>;
@@ -107,6 +109,7 @@ export async function performTend(
   }
 
   return {
+    interaction_id: interactionId,
     trust: updated?.trust ?? null,
     state_json: updated?.state_json ?? null,
     milestones_fired: fired,

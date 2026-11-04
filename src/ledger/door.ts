@@ -27,7 +27,7 @@
 // statement. Idempotent on dedup_key (ON CONFLICT DO NOTHING, then the existing id is returned).
 
 import type { Env } from "../types.js";
-import { validateLedger, rowNumbers, rowHasNumber, biometricColumnsFor, type LedgerInput, type LedgerRule, type NumberCheck } from "./grammar.js";
+import { validateLedger, rowNumbers, rowHasNumber, biometricColumnsFor, type LedgerErrand, type LedgerInput, type LedgerRule, type NumberCheck } from "./grammar.js";
 
 export type LedgerWriteResult =
   | { ok: true; duplicate: false; id: string; content: string }
@@ -102,9 +102,29 @@ export function missingNumbers(check: NumberCheck, body: string, src: SourceRow)
   return missing;
 }
 
-/** Validate, check the source row, and INSERT one ledger line. Never throws on bad input. */
-export async function writeLedger(env: Env, input: LedgerInput, now: Date = new Date()): Promise<LedgerWriteResult> {
-  const v = validateLedger(input, now.toISOString().slice(0, 10));
+/** The 0168 column is missing (the code is deployed ahead of the migration). */
+export const missingRider = (e: unknown) => /(no such column|has no column named):?\s*\S*rider/i.test(String(e));
+
+/** Does ledger_entries have the rider column (mig 0168)? Errands probe this BEFORE any side effect. */
+export async function riderColumnPresent(env: Env): Promise<boolean> {
+  try {
+    await env.DB.prepare("SELECT rider FROM ledger_entries LIMIT 0").all();
+    return true;
+  } catch (e) {
+    if (missingRider(e)) return false;
+    throw e;
+  }
+}
+
+/**
+ * Validate, check the source row, and INSERT one ledger line. Never throws on bad input.
+ * `errand` (mig 0168) names the imp that rode the line and the companion that sent it; it is a separate
+ * argument because `input` can be an HTTP body, and no HTTP body may name a rider. Pre-0168 a rider write
+ * is REFUSED (rule `schema`, handlers map it to 409), never written nameless; nameless writes omit the
+ * column and keep working.
+ */
+export async function writeLedger(env: Env, input: LedgerInput, now: Date = new Date(), errand?: LedgerErrand): Promise<LedgerWriteResult> {
+  const v = validateLedger(input, now.toISOString().slice(0, 10), errand);
   if (!v.ok) return v;
   const line = v.line;
 
@@ -136,15 +156,27 @@ export async function writeLedger(env: Env, input: LedgerInput, now: Date = new 
   }
 
   const id = newLedgerId();
-  const res = await env.DB.prepare(
-    `INSERT INTO ledger_entries
-       (id, companion_id, function, body, content, source_kind, source_ref, observed_on, created_at, dedup_key, state)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+  // One statement, one literal INSERT (the sweep greps it). The rider column rides only a rider line, so a
+  // nameless write is byte-identical to the pre-0168 statement and works before the migration.
+  const riderCol = line.rider !== null ? ", rider" : "";
+  const riderVal = line.rider !== null ? ", ?" : "";
+  let res: D1Result;
+  try {
+    res = await env.DB.prepare(
+      `INSERT INTO ledger_entries
+       (id, companion_id, function, body, content, source_kind, source_ref, observed_on, created_at, dedup_key, state${riderCol})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open'${riderVal})
      ON CONFLICT(dedup_key) DO NOTHING`,
-  ).bind(
-    id, line.companion_id, line.function, line.body, line.content, line.source_kind, line.source_ref,
-    line.observed_on, now.toISOString(), line.dedup_key,
-  ).run();
+    ).bind(
+      id, line.companion_id, line.function, line.body, line.content, line.source_kind, line.source_ref,
+      line.observed_on, now.toISOString(), line.dedup_key, ...(line.rider !== null ? [line.rider] : []),
+    ).run();
+  } catch (e) {
+    if (line.rider !== null && missingRider(e)) {
+      return { ok: false, rule: "schema", error: "needs the 0168 migration (ledger_entries.rider): an errand line is never written without its rider" };
+    }
+    throw e;
+  }
 
   if ((res.meta?.changes ?? 0) === 0) {
     // Lost a race to the same dedup_key between the lookup and the INSERT.

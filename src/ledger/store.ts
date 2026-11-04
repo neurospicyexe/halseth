@@ -106,9 +106,11 @@ export async function listLedger(
  * worth one line. `listLedger` ("my ledger") is untouched -- that is the inspection surface.
  */
 export async function loadLedgerOpen(env: Env, companionId: string): Promise<LedgerEntryRow[]> {
-  const r = await env.DB.prepare(
+  // Rider rows (mig 0168, the imps' errands) never list here: they surface as ONE content-free
+  // "something waiting (N)" line (countLedgerWaiting). Pre-0168 there are no riders, so the old text is the same read.
+  const run = (riderClause: string) => env.DB.prepare(
     `SELECT ${COLS} FROM ledger_entries
-      WHERE companion_id = ? AND state = 'open'
+      WHERE companion_id = ? AND state = 'open'${riderClause}
         AND (dedup_key IS NULL OR substr(dedup_key, 1, ?) != ?
              OR id = (SELECT id FROM ledger_entries
                        WHERE companion_id = ? AND state = 'open' AND substr(dedup_key, 1, ?) = ?
@@ -119,7 +121,28 @@ export async function loadLedgerOpen(env: Env, companionId: string): Promise<Led
     companionId, CONSOLIDATION_DEDUP_PREFIX.length, CONSOLIDATION_DEDUP_PREFIX,
     LEDGER_ORIENT_LIMIT,
   ).all<LedgerEntryRow>();
+  const r = await run(" AND rider IS NULL").catch((e) => (missingRiderColumn(e) ? run("") : Promise.reject(e)));
   return r.results ?? [];
+}
+
+/** The 0168 rider column is missing (same shape as door.ts missingRider; kept here so store.ts imports nothing from the door). */
+const missingRiderColumn = (e: unknown) => /(no such column|has no column named):?\s*\S*rider/i.test(String(e));
+
+/**
+ * How many OPEN rider lines (an imp's errand output) wait on this companion. A count and nothing else:
+ * orient shows "something waiting (N)" in that companion's own orient only, never on Raziel's surfaces.
+ * Pre-0168: 0.
+ */
+export async function countLedgerWaiting(env: Env, companionId: string): Promise<number> {
+  try {
+    const r = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM ledger_entries WHERE companion_id = ? AND state = 'open' AND rider IS NOT NULL",
+    ).bind(companionId).first<{ n: number }>();
+    return Number(r?.n ?? 0);
+  } catch (e) {
+    if (missingRiderColumn(e)) return 0;
+    throw e;
+  }
 }
 
 export interface LedgerMatch { id: string; state: string; created_at: string }
