@@ -337,9 +337,13 @@ describe("Librarian verbs", () => {
   });
 
   it("stand-down via the Librarian ends all open with stand_down_phrase", async () => {
+    // The stand-down verb reads the real clock; pin it to the fixture's NOW so the 90-minute
+    // departures are still open (this test started failing once the wall clock passed 11-04 16:30Z).
+    const clock = vi.spyOn(Date, "now").mockReturnValue(NOW + 60_000);
     const { env, DB } = setup();
     await decl(env); await decl(env, { companion: "gaia", rail: "form" });
     const r: any = await execDepartureStandDown(ctx(env, "back inside the line", { companion_id: "cypher" }));
+    clock.mockRestore();
     expect(r.ended).toHaveLength(2);
     expect(((await DB.prepare(`SELECT DISTINCT end_reason AS r FROM declared_departures`).first() as any)).r).toBe("stand_down_phrase");
   });
