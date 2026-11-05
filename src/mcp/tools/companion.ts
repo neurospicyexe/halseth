@@ -5,6 +5,7 @@ import { COMPANION_IDS } from "../../companions.js";
 import { generateId } from "../../db/queries.js";
 import { embedAndStoreAsync } from "../embed.js";
 import { journalInsert, journalBirthState } from "../../webmind/tray-insert.js";
+import { captureLetter } from "../../webmind/makes-capture.js";
 import { KEPT_SQL } from "../../webmind/review-state.js";
 import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-classifier.js";
 
@@ -34,6 +35,9 @@ export function registerCompanionTools(server: McpServer, env: Env): void {
         id, created_at: now, agent: input.agent, note_text: input.note_text, tags: resolvedTags,
         session_id: input.session_id ?? null, source: input.source ?? null, topic_tags: topicTags,
       }).run();
+
+      // Drevan's shelf (mig 0170): a companion's own letter to Raziel is also a make. Gated, never throws.
+      await captureLetter(env, { id, agent: input.agent, tags: resolvedTags, note_text: input.note_text, created_at: now });
 
       // Awaited: the bare embedAndStore() was a floating promise Workers cancels after the response.
       await embedAndStoreAsync(env, input.note_text, "companion_journal", id, input.agent)

@@ -21,6 +21,7 @@
 
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
+import { captureExploration } from "../webmind/makes-capture.js";
 import { nextPhase, phaseAdvances, advanceChargeSql, type ChargeSignal } from "../webmind/charge.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { applySighting, parseMaterials, MATERIAL_NAME_MAX, normalizeMaterial, type Material } from "../lib/pattern-materials.js";
@@ -241,6 +242,11 @@ export async function postGrowthJournal(request: Request, env: Env): Promise<Res
     novelty,
     supersedes_id,
   ).run();
+
+  // Drevan's shelf (mig 0170): an autonomous night exploration (source autonomous, entry_type insight) is
+  // also a make. Gated by MAKES_CAPTURE, never throws. home/store.ts promoteToCanon (source 'home', a
+  // reflection promoted for ratification) is NOT an exploration and is not captured.
+  await captureExploration(env, { id, companion_id: body.companion_id as string, entry_type, source, content: body.content as string });
 
   return json({ id, message: "ok" }, 201);
 }

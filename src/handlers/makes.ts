@@ -26,6 +26,7 @@ import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { applyInterestAction, findInterestByName, type InterestRow } from "./interests.js";
 import { fireStimulus } from "./fermentation.js";
 import { sqliteTs } from "../webmind/interests.js";
+import { originKind } from "../webmind/makes-capture.js";
 import {
   MAKE_KINDS, MAKE_COMPANIONS, SOURCE_KINDS, READY_AT_ONCE, MAX_SOURCE_BYTES, MAX_TITLE, MAX_MAKE_WHY,
   MAX_HEARD_BACK, MAX_FAIL_REASON, MAX_RENDER_FILE_BYTES, MAX_RENDER_PREVIEW_BYTES, DAILY_CAP_TOTAL,
@@ -50,6 +51,7 @@ interface MakeRow {
   file_mime: string | null; preview_key: string | null; status: string; fail_reason: string | null;
   heard_back: string | null; parent_id: string | null; version: number; created_at: string; rendered_at: string | null;
   interest_name?: string | null;
+  origin?: string | null;
 }
 
 export interface MakeFile { mime: string; ext?: string }
@@ -60,6 +62,8 @@ export interface MakeItem {
   fail_reason: string | null;
   /** The recipe a model was handed (music_audio / video: prompt, duration...). Null for code kinds and images. */
   params: Record<string, unknown> | null;
+  /** Where a captured writing came from (mig 0170): letter | exploration | kept; null = composed directly. */
+  origin_kind: "letter" | "exploration" | "kept" | null;
 }
 
 export interface CreateMakeInput {
@@ -88,6 +92,7 @@ function toItem(r: MakeRow, revealPrivate = false): MakeItem {
     version: r.version, parent_id: r.parent_id, created_at: r.created_at, files,
     fail_reason: r.status === "failed" ? r.fail_reason : null,
     params: parseParams(r.params),
+    origin_kind: originKind(r.origin),
   };
   return item;
 }
@@ -108,7 +113,7 @@ function imageItem(r: ImageCallRow): MakeItem {
   const mime = (r.result_summary ?? "").startsWith("image/") ? (r.result_summary as string) : "image/png";
   return {
     id: IMAGE_ID_PREFIX + r.id, kind: "image", title: r.args_summary ?? "image", why: null, interest_name: null,
-    status: "ready", heard_back: null, version: 1, parent_id: null, created_at: r.created_at, files: { file: { mime } }, fail_reason: null, params: null,
+    status: "ready", heard_back: null, version: 1, parent_id: null, created_at: r.created_at, files: { file: { mime } }, fail_reason: null, params: null, origin_kind: null,
   };
 }
 

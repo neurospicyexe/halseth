@@ -48,6 +48,10 @@ FEELING_LINE_MODE    = "live"
 # Per-companion override wins: TRAY_MERGE_MODE_DREVAN / _CYPHER / _GAIA. Junk = shadow. Apply mig 0156 first.
 # (Commented: unset means the code default, shadow.)
 # TRAY_MERGE_MODE    = "shadow"
+# Drevan's shelf (mig 0170): whose letters to Raziel + night explorations are captured as makes.
+# Comma list of companions; unset = "drevan"; "off" = none. (Commented: unset means the code default.
+# Deliberately not in wrangler.prod.toml, so prod runs the default until a line is added there.)
+# MAKES_CAPTURE      = "drevan"
 
 # PluralKit system id for the roster lookup (mig 0117). Public, unauthenticated -- not a secret.
 # Leave blank to disable: lookups then answer "unavailable", never "not found".

@@ -167,6 +167,8 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "B62: 'interest trail <name>'." },
   { pattern_key: "make_artifact", regex: MAKE_VERB_RE,
     note: "B62 making: 'make a <kind words> called <title> [for <interest>] because <why>'. Needs 'called', so 'made X for Y because Z' (past tense, the interest event) and 'make an image of ...' (generate_image) are untouched; anchored so the why can never be routed by a trigger it contains." },
+  { pattern_key: "make_keep", regex: KEEP_VERB_RE,
+    note: "Drevan's shelf (mig 0170): 'keep as made <id | \"opening words\"> [called <title>] [for <interest>] [because <why>]' / 'keep this as made'. Start-anchored so the title, interest and why can never be routed by a trigger they contain. Own rows only." },
   { pattern_key: "makes_read", regex: MAKES_READ_RE,
     note: "B62 making: 'my makes' / 'list my makes', whole request." },
   { pattern_key: "person_who_is", regex: PERSON_LOOKUP_RE,
@@ -482,7 +484,8 @@ import { execFeelingWordPropose, execMyFeelingWords } from "./executors/feeling-
 import { INTEREST_BORN_RE, INTEREST_RETURN_RE, INTEREST_MADE_RE, INTEREST_PUT_DOWN_RE, INTEREST_PICK_UP_RE, INTERESTS_READ_RE, INTEREST_TRAIL_RE } from "../webmind/interests.js";
 import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPutDown, execInterestPickUp, execInterestsRead, execInterestTrail } from "./executors/interests.js";
 import { MAKE_VERB_RE, MAKES_READ_RE } from "../webmind/makes.js";
-import { execMake, execMakesRead } from "./executors/makes.js";
+import { KEEP_VERB_RE } from "../webmind/makes-capture.js";
+import { execMake, execMakesRead, execMakeKeep } from "./executors/makes.js";
 import { execImpErrand } from "./executors/errands.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
@@ -614,6 +617,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   interest_trail: execInterestTrail,
   make_artifact: execMake,
   makes_read: execMakesRead,
+  make_keep: execMakeKeep,
   person_who_is: execPersonWhoIs,
   imp_errand: execImpErrand,
 

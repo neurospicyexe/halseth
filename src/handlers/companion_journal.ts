@@ -7,6 +7,7 @@ import { classifyDomainTags, classifyKeywordTags } from "../synthesis/tag-classi
 import { MACHINE_SOURCES } from "../webmind/notes.js";
 import { noveltyCheck } from "../webmind/novelty.js";
 import { trayAwareJournalInsert, RETIRED_JOURNAL_SOURCES, RETIRED_SOURCE_MESSAGE } from "../webmind/tray-insert.js";
+import { captureLetter } from "../webmind/makes-capture.js";
 
 interface CompanionJournalEntry {
   id: string;
@@ -144,6 +145,9 @@ export async function postCompanionJournal(
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  // Drevan's shelf (mig 0170): a companion's own letter to Raziel is also a make. Gated, never throws.
+  await captureLetter(env as any, { id, agent, tags: safeTags, note_text: trimmedText, created_at: now });
 
   // AWAIT the embed. `embedAndStore()` is `void (async () => ...)()` -- a floating promise with no
   // ctx.waitUntil, so once the Response returns, Workers cancels the pending work. It survives an

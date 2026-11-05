@@ -16,6 +16,7 @@ import { classifyDomainTags, classifyKeywordTags } from "../../synthesis/tag-cla
 import { MACHINE_SOURCES } from "../../webmind/notes.js";
 import { noveltyCheck } from "../../webmind/novelty.js";
 import { journalInsert, assertJournalSourceOpen } from "../../webmind/tray-insert.js";
+import { captureLetter } from "../../webmind/makes-capture.js";
 import { dropSomaGapLedger } from "../../ledger/store.js";
 import { completeTask, TASK_STATUSES, type TaskStatus } from "../../lib/task-completion.js";
 import { edgeForNote, edgeForNoteRef, edgesForSomaEvent, insertEdgeStatements, writeEdgesBestEffort } from "../../graph/live.js";
@@ -939,6 +940,9 @@ export async function companionJournalAdd(
     id, created_at: now, agent, note_text, tags: resolvedTags, session_id: sessionId ?? null,
     source: source ?? null, topic_tags: topicTags,
   }).run();
+
+  // Drevan's shelf (mig 0170): a companion's own letter to Raziel is also a make. Gated, never throws.
+  await captureLetter(env, { id, agent, tags: resolvedTags, note_text, created_at: now });
 
   // AWAIT the embed (2026-07-20, Task 12: fixed a known fire-and-forget hazard -- this writer
   // used bare `embedAndStore()`, a floating promise Workers cancels once the response returns;

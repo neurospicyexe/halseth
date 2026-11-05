@@ -73,6 +73,9 @@ export interface Env {
   // B62: the `repetition` stimulus (boredom, felt). "off" | "shadow" | "on"; unset = shadow (log a
   // would-fire row, touch no float). Generic: see SHADOWABLE in webmind/fermentation.ts.
   REPETITION_MODE?: string;
+  // Drevan's shelf (mig 0170): which companions' letters to Raziel and night explorations are captured as
+  // makes automatically. Comma list; unset = "drevan"; "off" = none. The `keep as made` verb is not gated.
+  MAKES_CAPTURE?: string;
   TRAY_MERGE_MODE?: string;
   TRAY_MERGE_MODE_DREVAN?: string;
   TRAY_MERGE_MODE_CYPHER?: string;

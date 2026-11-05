@@ -14,6 +14,7 @@ import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { parseMakeVerb, MAKE_KINDS, SOURCE_KINDS, type MakeKind } from "../../webmind/makes.js";
 import { createMake, listMakes } from "../../handlers/makes.js";
 import { findInterestByName } from "../../handlers/interests.js";
+import { parseKeepVerb, keepAsMade, resolveKeepInterest, KEEP_TEACH } from "../../webmind/makes-capture.js";
 
 interface Ctx {
   source?: string; prompt?: string; lyrics?: string; duration?: number; instrumental?: boolean; aspect?: string;
@@ -78,5 +79,35 @@ export async function execMakesRead(ctx: ExecutorContext): Promise<ExecutorResul
       })),
       footer: `make: "${TEACH}"`,
     },
+  };
+}
+
+/**
+ * "keep as made <id | "opening words"> [called <title>] [for <interest>] [because <why>]" / "keep this as made"
+ * (context { ref } names the id or quoted words for "this"). The companion is ALWAYS ctx.req.companion_id and
+ * only that companion's OWN rows are reachable; several matches return candidates (table, id prefix, date; no text).
+ */
+export async function execMakeKeep(ctx: ExecutorContext): Promise<ExecutorResult> {
+  const c = parseContext<{ ref?: string; title?: string; interest?: string; why?: string }>(ctx.req.context) ?? {};
+  const p = parseKeepVerb(ctx.req.request);
+  if (!p) return fail(`say: ${KEEP_TEACH}`, "bad_input");
+  let ref = p.ref;
+  if (ref.kind === "this" && typeof c.ref === "string" && c.ref.trim()) {
+    const r = c.ref.trim();
+    const q = /^["“]([^"”]+)["”]$/.exec(r);
+    ref = q ? { kind: "words", words: q[1]! } : { kind: "id", id: r.toLowerCase() };
+  }
+  const { title, interest } = await resolveKeepInterest(ctx.env, ctx.req.companion_id, p);
+  const r = await keepAsMade(ctx.env, {
+    companion_id: ctx.req.companion_id, ref, title: (c.title ?? title ?? "").trim() || null,
+    interest_name: (c.interest ?? interest ?? "").trim() || null, why: (c.why ?? p.why ?? "").trim() || null,
+  });
+  if (!r.ok) {
+    const cands = r.candidates?.length ? ` Candidates: ${r.candidates.join("; ")}.` : "";
+    return { ...fail(`${r.message}${cands}`, r.code), ...(r.candidates ? { candidates: r.candidates } : {}) };
+  }
+  return {
+    response_key: "witness", ack: true, id: r.id, title: r.title, existed: r.outcome === "exists",
+    witness: r.outcome === "exists" ? `already on your shelf: ${r.title} (make ${r.id}).` : `kept as made: ${r.title} (make ${r.id}). It is on your shelf.`,
   };
 }

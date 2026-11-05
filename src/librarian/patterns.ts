@@ -1743,6 +1743,7 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   // ANCHORED_GUARDS (needs "called"; "made X for Y because Z" stays the interest event, "make an image of" stays
   // generate_image). These triggers are formalities no sentence says by accident.
   make_artifact: { triggers: ["make_artifact"], tools: ["make_artifact"], response_key: "witness" },
+  make_keep: { triggers: ["make_keep"], tools: ["make_keep"], response_key: "witness" },
   makes_read: { triggers: ["makes_read"], tools: ["makes_read"], response_key: "data" },
   // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
   voice_lessons_list: {
