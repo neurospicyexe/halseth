@@ -17,8 +17,8 @@ describe("recallOrDegrade", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const r = await recallOrDegrade(configured, "vault excerpts", async () => null);
     expect(r).toEqual({ value: null, degraded: true });
-    expect(warn.mock.calls[0][0]).toContain("recall degraded: Second Brain unreachable");
-    expect(warn.mock.calls[0][0]).toContain("vault excerpts");
+    expect(String(warn.mock.calls[0]?.[0])).toContain("recall degraded: Second Brain unreachable");
+    expect(String(warn.mock.calls[0]?.[0])).toContain("vault excerpts");
   });
 
   it("a thrown read is degraded too", async () => {

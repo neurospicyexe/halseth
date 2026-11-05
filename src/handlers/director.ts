@@ -204,7 +204,7 @@ export async function getDirectorHealth(request: Request, env: Env): Promise<Res
     const issued = await count(`SELECT companion_id AS k, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} GROUP BY companion_id`);
     const outcomes = await count(`SELECT outcome AS k, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} GROUP BY outcome`);
     const floor = await count(`SELECT reason AS k, COUNT(*) AS n FROM director_invitations WHERE issued_at > ${sinceExpr} AND reason = 'open'`);
-    const forage = await count(`SELECT 'forage' AS k, COUNT(*) AS n FROM forage_finds WHERE consumed_at IS NULL`);
+    const forage = await count(`SELECT 'forage' AS k, COUNT(*) AS n FROM forage_finds WHERE consumed_at IS NULL AND expired_at IS NULL`);
     const questions = await count(`SELECT 'question' AS k, COUNT(*) AS n FROM companion_questions WHERE status='open' AND delivered_at IS NULL`);
     const projects = await count(`SELECT 'project' AS k, COUNT(*) AS n FROM companion_projects WHERE status='open'`);
     const tensions = await count(`SELECT 'tension' AS k, COUNT(*) AS n FROM companion_tensions WHERE status IN ('simmering','crystallized')`);

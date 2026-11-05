@@ -385,7 +385,7 @@ function extractForageId(ctx: ExecutorContext): string | null {
 export async function execForageRead(ctx: ExecutorContext): Promise<ExecutorResult> {
   if (!ctx.req.companion_id) return { error: "forage_read_failed", reason: "companion_id required" };
   const rows = await ctx.env.DB.prepare(
-    "SELECT id, domain, title, source_url, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT 5"
+    "SELECT id, domain, title, source_url, summary, gathered_at FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL AND expired_at IS NULL ORDER BY gathered_at DESC LIMIT 5"
   ).bind(ctx.req.companion_id).all<{
     id: string; domain: string; title: string; source_url: string | null; summary: string; gathered_at: string;
   }>();

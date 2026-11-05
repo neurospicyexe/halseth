@@ -264,12 +264,12 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
         env.DB.prepare(
           `SELECT id, title, domain, summary, at FROM (
              SELECT id, title, domain, summary, gathered_at AS at FROM forage_finds
-              WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
+              WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL AND expired_at IS NULL
               ORDER BY gathered_at DESC LIMIT 1)
            UNION
            SELECT id, title, domain, summary, at FROM (
              SELECT id, title, domain, summary, gathered_at AS at FROM forage_finds
-              WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL
+              WHERE (companion_id = ?1 OR companion_id IS NULL) AND consumed_at IS NULL AND expired_at IS NULL
               ORDER BY gathered_at ASC LIMIT 1)
            ORDER BY at DESC`
         ).bind(companionId).all<ForageFind>(),

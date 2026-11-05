@@ -114,6 +114,7 @@ import { recordKickHeartbeat, runDeadmanCheck } from "./deadman.js";
 import { postSiblingSend, getSiblingUnread, postSiblingRead, postSiblingDisclose } from "./handlers/siblings.js";
 import { getBudget, postBudgetSpend } from "./handlers/budget.js";
 import { postStaleSessionSweep, runStaleSessionSweep } from "./webmind/stale-session-sweep.js";
+import { runHousekeeping, postHousekeeping } from "./maintenance/housekeeping.js";
 import { postSomaRefresh, runSomaRefresh } from "./synthesis/soma-refresh.js";
 import { postNarrativeRefresh, runNarrativeRefresh } from "./synthesis/narrative-refresh.js";
 import { getCollection, postSparkle } from "./handlers/collection.js";
@@ -498,6 +499,7 @@ const router = new Router()
   // Stale-session sweep: closes sessions left open past 48h with a counted, non-interpretive close.
   // ?dry=1 reports what would close and writes nothing.
   .on("POST",  "/mind/sessions/sweep",               (request, env)         => postStaleSessionSweep(request, env))
+  .on("POST",  "/admin/housekeeping",                (request, env)         => postHousekeeping(request, env))
   // SOMA refresh: rebuilds each companion's felt-state register on a time trigger rather than
   // waiting for an authored session close. ?force=1 ignores the 20h staleness gate.
   .on("POST",  "/mind/soma/refresh",                 (request, env)         => postSomaRefresh(request, env))
@@ -825,6 +827,10 @@ export async function runScheduledWork(env: Env): Promise<void> {
     (async () => {
       try { await runStaleSessionSweep(env); }
       catch (err) { console.error("stale session sweep failed", err); }
+    })(),
+    (async () => {
+      try { await runHousekeeping(env); }
+      catch (err) { console.error("housekeeping failed", err); }
     })(),
     (async () => {
       try { await runSomaRefresh(env); }

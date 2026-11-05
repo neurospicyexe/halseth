@@ -158,7 +158,7 @@ export async function detectStarvedOrgans(env: Env): Promise<CandidateFlag[]> {
 
   const forage = await env.DB.prepare(
     `SELECT COUNT(*) AS unconsumed, MIN(gathered_at) AS oldest
-     FROM forage_finds WHERE consumed_at IS NULL`
+     FROM forage_finds WHERE consumed_at IS NULL AND expired_at IS NULL`
   ).first<{ unconsumed: number; oldest: string | null }>();
   if ((forage?.unconsumed ?? 0) === 0) {
     flags.push({

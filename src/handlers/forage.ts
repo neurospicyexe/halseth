@@ -93,7 +93,7 @@ export async function getForageFinds(
 
   try {
     const rows = await env.DB.prepare(
-      "SELECT * FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL ORDER BY gathered_at DESC LIMIT ?"
+      "SELECT * FROM forage_finds WHERE (companion_id = ? OR companion_id IS NULL) AND consumed_at IS NULL AND expired_at IS NULL ORDER BY gathered_at DESC LIMIT ?"
     ).bind(companionId, limit).all();
     return json({ finds: rows.results ?? [] });
   } catch (err) {

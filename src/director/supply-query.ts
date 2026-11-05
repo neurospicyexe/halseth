@@ -60,7 +60,7 @@ const CURSOR_PREDICATE = (col: string, idCol: string) =>
 export const SUPPLY_SOURCES: SupplySource[] = [
   { kind: "forage", table: "forage_finds", sql:
     `SELECT id, companion_id AS owner, title, summary AS body, ${NORM("gathered_at")} AS created_at, NULL AS heat
-       FROM forage_finds WHERE consumed_at IS NULL AND ${CURSOR_PREDICATE("gathered_at", "id")}
+       FROM forage_finds WHERE consumed_at IS NULL AND expired_at IS NULL AND ${CURSOR_PREDICATE("gathered_at", "id")}
        ORDER BY ${NORM("gathered_at")} ASC, id ASC LIMIT ?` },
   { kind: "listen", table: "media_experiences", sql:
     `SELECT id, shared_by AS owner, title, coalesce(artist,'') AS body, ${NORM("created_at")} AS created_at, NULL AS heat
