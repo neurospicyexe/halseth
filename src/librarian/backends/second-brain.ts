@@ -256,6 +256,44 @@ async function callTool(env: Env, toolName: string, args: Record<string, unknown
   }
 }
 
+// ── Outage visibility (2026-11-05) ────────────────────────────────────────────
+//
+// callTool returns null for BOTH "Second Brain answered with nothing" (never null: it returns the text,
+// `{"chunks":[]}` or "") and "Second Brain failed" (timeout, 5xx, id mismatch, isError, no session). The
+// orient executors then `.catch(() => null)` and the block simply vanished, so an outage rendered as
+// "nothing relevant in the vault". A null from a CONFIGURED Second Brain is therefore always a failure.
+
+/** True when an endpoint + token are configured (an unconfigured public default is not an outage). */
+export function secondBrainConfigured(env: Env): boolean {
+  return resolveSecondBrainUrl(env) !== null;
+}
+
+export interface Recalled {
+  value: string | null;
+  /** true only when a configured Second Brain failed; false for an honest empty answer or "not configured". */
+  degraded: boolean;
+}
+
+/** Run a Second Brain read for an orient block; never throws; distinguishes failure from empty. */
+export async function recallOrDegrade(
+  env: Env,
+  label: string,
+  read: () => Promise<string | null>,
+): Promise<Recalled> {
+  if (!secondBrainConfigured(env)) return { value: null, degraded: false };
+  try {
+    const value = await read();
+    if (value === null) {
+      console.warn(`[orient] recall degraded: Second Brain unreachable block=${label}`);
+      return { value: null, degraded: true };
+    }
+    return { value, degraded: false };
+  } catch (e) {
+    console.warn(`[orient] recall degraded: Second Brain unreachable block=${label} err=${String(e).slice(0, 120)}`);
+    return { value: null, degraded: true };
+  }
+}
+
 // ── Reads (return raw string -- companion parses) ─────────────────────────────
 
 // Mood-to-term map. Appended to query text for BM25 augmentation at search time.

@@ -76,6 +76,15 @@ export function narrativeBlock(sbNarrative: string | null): string {
     : "";
 }
 
+/**
+ * An orient block whose Second Brain read FAILED renders this instead of nothing, so an outage is not
+ * read as "nothing relevant". Distinct from an honest empty answer, which still renders as no block.
+ */
+export function recallDegradedLine(label: string): string {
+  return `
+(recall degraded: Second Brain unreachable -- ${label} not loaded)`;
+}
+
 /** Sibling lane block: spine + motion_state for each sibling so self can stay in lane. */
 export function siblingBlock(siblings: readonly string[], siblingRows: ReadonlyArray<SiblingLaneRow | null>): string {
   return siblings.some((_, i) => siblingRows[i]?.lane_spine)

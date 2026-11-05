@@ -13,7 +13,7 @@ import {
   sessionLightGround, updateCompanionState, type CompanionStateUpdate,
 } from "../backends/halseth.js";
 import { wmOrient, wmGround, wmWriteHandoff } from "../backends/webmind.js";
-import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent } from "../backends/second-brain.js";
+import { semanticSearch, sbRead, sbSaveDocument, sbExtractContent, recallOrDegrade } from "../backends/second-brain.js";
 import { buildResponse, buildOrientPrompt, buildContinuityBlock, nowCstBlock } from "../response/builder.js";
 import { feelingLineMode, fetchFeelingLineInputs, feelingLineFrom, logFeelingShadow, loadBotFeelingLine } from "../../webmind/feeling-line-loader.js";
 import type { CompanionId as FeelingCompanionId } from "../../webmind/fermentation.js";
@@ -156,7 +156,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // this project is round trips, and Phase 1 spent real work cutting this path 38 -> 31 queries.
   const flMode = feelingLineMode(ctx.env as unknown as Record<string, unknown>);
 
-  const [payload, wmResult, sbNarrative, ragRaw, historyRaw, solRow, mindState, feelingInputs] = await Promise.all([
+  const [payload, wmResult, sbNarrativeR, ragR, historyR, solRow, mindState, feelingInputs] = await Promise.all([
     sessionOrient(ctx.env, {
       companion_id: ctx.req.companion_id,
       front_state: ctx.frontState ?? "unknown",
@@ -170,12 +170,14 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       // never surface a narrative here. See mind/blocks/continuity.ts loadSessionNarrative.
       "SELECT full_ref FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(agentId).first<{ full_ref: string }>()
-      .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref) : null)
-      .catch(() => null),
-    semanticSearch(ctx.env, ragQuery).catch(() => null),
+      .then(row => row?.full_ref
+        ? recallOrDegrade(ctx.env, "last session narrative", () => sbRead(ctx.env, row.full_ref))
+        : { value: null, degraded: false })
+      .catch(() => ({ value: null, degraded: false })),
+    recallOrDegrade(ctx.env, "vault excerpts", () => semanticSearch(ctx.env, ragQuery)),
     // Historical vault search -- reaches into long files, ChatGPT history, background context.
     // Separate query so it doesn't crowd out recent-session RAG excerpts.
-    semanticSearch(ctx.env, historyQuery).catch(() => null),
+    recallOrDegrade(ctx.env, "vault history", () => semanticSearch(ctx.env, historyQuery)),
     // Sol (0078): the companion corvid. Fetched by name so orient knows Sol's current disposition.
     ctx.env.DB.prepare(
       "SELECT id, name, species, trust, last_interaction_at, created_at FROM creatures WHERE name = 'Sol' OR kind = 'companion_pet' LIMIT 1"
@@ -188,6 +190,9 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     // because the confirm verb sets caleth_confirmed=1 without rewriting drift_type.
     loadMindState(ctx.env, agentId, "claude", { orient: wmOrientPromise }),
     fetchFeelingLineInputs(ctx.env.DB, agentId as FeelingCompanionId, flMode),]);
+  const sbNarrative = sbNarrativeR.value;
+  const ragRaw = ragR.value;
+  const historyRaw = historyR.value;
   const unacceptedGrowth = mindState.growth.clearing_count;
   // STEP 2, resolved 2026-08-01. Repointing this at the loader first EMPTIED the block for drevan and gaia
   // (the gate caught it) because the loader was excluding questions already VOICED. That exclusion is now a
@@ -344,7 +349,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // Session narrative: generous cap for Claude.ai (full context window available)
   // sbExtractContent, not a bare regex: sbRead hands back a JSON envelope, so stripping frontmatter off the
   // raw string never matched and this block has been rendering JSON at Claude.ai boot.
-  const narrativeBlock = B.narrativeBlock(sbNarrative);
+  const narrativeBlock = sbNarrativeR.degraded ? B.recallDegradedLine("last session narrative") : B.narrativeBlock(sbNarrative);
 
   // Sibling lane block: spine + motion_state for each sibling companion so self can stay in lane.
   // STEP 2: lanes from the loader, looked up BY ID rather than by position -- the renderer pairs
@@ -355,12 +360,12 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   const siblingBlock = B.siblingBlock(siblings, siblingRows);
 
   // RAG excerpts: 5 chunks × 400 chars for deep-work surface
-  const ragBlock = B.ragBlock(ragRaw);
+  const ragBlock = ragR.degraded ? B.recallDegradedLine("vault excerpts") : B.ragBlock(ragRaw);
 
   // Historical vault: long files, ChatGPT history, background -- the photo album.
   // Capped at 3 × 350 chars so it doesn't crowd the growth block. Dated chunks get a
   // relative-age prefix so the date survives the slice.
-  const historyBlock = B.historyBlock(historyRaw);
+  const historyBlock = historyR.degraded ? B.recallDegradedLine("vault history") : B.historyBlock(historyRaw);
 
   // Growth block: autonomous journal + patterns + last reflection.
   // Only rendered when data exists -- no block for companions with no autonomous history yet.
@@ -394,7 +399,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
     } : null,
     sb_rag: { query: ragQuery.slice(0, 150), hit_count: ragHitCount },
     sb_history: { query: historyQuery.slice(0, 150), hit_count: historyBlock ? 1 : 0 },
-    sb_narrative: sbNarrative ? "loaded" : "none",
+    sb_narrative: sbNarrativeR.degraded ? "degraded" : sbNarrative ? "loaded" : "none",
     growth: {
       journal_entries: journalRows.length,
       patterns:        patternRows.length,
@@ -1200,7 +1205,7 @@ export async function execBotOrient(
   // Proof of equivalence before the switch (GET /mind/parity/bot/:id?full=1, all 40 keys against the live
   // payload): cypher 39/40, drevan 38/40, gaia 38/40, with zero dropped and zero added keys. Every remaining
   // difference was identified and deliberate, not discovered afterwards -- see docs/CONTINUITY.md.
-  const [ms, synthRow, ragRaw, historyRaw, botFeelingLine] = await Promise.all([
+  const [ms, synthRowR, ragR, historyR, botFeelingLine] = await Promise.all([
     loadMindState(ctx.env, agentId, "discord"),
     // The session narrative's TEXT, which is NOT what the contract carries. MindState holds the `full_ref`
     // (a vault path); the wire holds the prose. Both are `string | null`, so nothing but this comment and
@@ -1209,10 +1214,14 @@ export async function execBotOrient(
       // 'session' OR 'day' -- see the sibling read above and continuity.ts loadSessionNarrative.
       "SELECT id, full_ref FROM synthesis_summary WHERE summary_type IN ('session', 'day') AND companion_id = ? AND full_ref IS NOT NULL ORDER BY COALESCE(session_created_at, created_at) DESC LIMIT 1"
     ).bind(agentId).first<{ id: string; full_ref: string }>()
-      .then(row => row?.full_ref ? sbRead(ctx.env, row.full_ref).then(t => t ? { content: t, id: row.id } : null) : null)
-      .catch(() => null),
-    semanticSearch(ctx.env, `companion state presence recent context ${agentId}`).catch(() => null),
-    semanticSearch(ctx.env, `${agentId} history background origin memory`).catch(() => null),
+      .then(async row => {
+        if (!row?.full_ref) return { row: null as { content: string; id: string } | null, degraded: false };
+        const r = await recallOrDegrade(ctx.env, "last session narrative", () => sbRead(ctx.env, row.full_ref));
+        return { row: r.value ? { content: r.value, id: row.id } : null, degraded: r.degraded };
+      })
+      .catch(() => ({ row: null as { content: string; id: string } | null, degraded: false })),
+    recallOrDegrade(ctx.env, "vault excerpts", () => semanticSearch(ctx.env, `companion state presence recent context ${agentId}`)),
+    recallOrDegrade(ctx.env, "vault history", () => semanticSearch(ctx.env, `${agentId} history background origin memory`)),
     // 0.26.0 `feeling_line`: the same word the Claude.ai orient renders (live mode only; null in
     // shadow/off/silence). Its own reads, here and not in loadMindState, which stays pure-D1.
     loadBotFeelingLine(
@@ -1221,6 +1230,16 @@ export async function execBotOrient(
       feelingLineMode(ctx.env as unknown as Record<string, unknown>),
     ).catch(() => null),
   ]);
+
+  const synthRow = synthRowR.row;
+  const ragRaw = ragR.value;
+  const historyRaw = historyR.value;
+  // Outage visibility: names which Second Brain reads FAILED (as opposed to answering empty).
+  const recallDegraded = [
+    synthRowR.degraded ? "last session narrative" : null,
+    ragR.degraded ? "vault excerpts" : null,
+    historyR.degraded ? "vault history" : null,
+  ].filter((x): x is string => x !== null);
 
   // ── Note surfacing: the bot's own policy, kept here on purpose ───────────────────────────────────────
   // Two hottest/highest-salience from the recency window, PLUS one reserved slot for a note the companion
@@ -1324,6 +1343,7 @@ export async function execBotOrient(
       open_drifts: ms.growth.drifts_open.length,
       answered_questions: ms.oversight.answered_questions.length,
       recent_witness: ms.relational.recent_witness.length,
+      recall_degraded: recallDegraded,
     },
   };
 }
