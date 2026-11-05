@@ -17,6 +17,22 @@ import { readCareHold } from "../care/hold.js";
 
 const COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
 
+/**
+ * An unreadable care hold still fails OPEN (no hold: the 0137 rules apply), but it is named now
+ * (11-05 quiet-drop sweep): once per 10 minutes per companion per isolate, error class only.
+ */
+const CARE_HOLD_WARN_MS = 10 * 60_000;
+const careHoldWarnedAt = new Map<string, number>();
+export function warnCareHoldReadFailed(companion: string, err: unknown, nowMs: number = Date.now()): boolean {
+  const last = careHoldWarnedAt.get(companion);
+  if (last !== undefined && nowMs - last < CARE_HOLD_WARN_MS) return false;
+  careHoldWarnedAt.set(companion, nowMs);
+  console.warn(`[reach-cap] care-hold read failed (failing open) companion=${companion} error=${err instanceof Error ? err.name : typeof err}`);
+  return true;
+}
+/** Test seam. */
+export function __resetCareHoldWarn(): void { careHoldWarnedAt.clear(); }
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -52,7 +68,7 @@ export async function postReachReserve(request: Request, env: Env): Promise<Resp
     // takes a LOOSER path and the bot's word alone must never loosen the cap. The bot's flag still
     // counts toward the stricter daily total (it may lag the owner phrase by one 5-min refresh, but
     // only in the strict direction). An unreadable hold is no hold: the 0137 rules apply.
-    const hold = await readCareHold(env.DB, nowMs).catch(() => null);
+    const hold = await readCareHold(env.DB, nowMs).catch((e: unknown) => { warnCareHoldReadFailed(p.companion, e); return null; });
     const careHold = (hold?.care_hold ?? false) || p.body.care_hold === true;
     const result = await reserveReach(env.DB, {
       companion: p.companion, actionType, careHold,
@@ -113,7 +129,7 @@ export async function getReachToday(request: Request, env: Env): Promise<Respons
   if (!Number.isFinite(t)) return json({ error: "now must be an ISO timestamp" }, 400);
   try {
     const companion = new URL(request.url).searchParams.get("companion_id") ?? undefined;
-    const hold = companion && COMPANIONS.has(companion) ? await readCareHold(env.DB, t).catch(() => null) : null;
+    const hold = companion && COMPANIONS.has(companion) ? await readCareHold(env.DB, t).catch((e: unknown) => { warnCareHoldReadFailed(companion, e); return null; }) : null;
     return json(await reachLaneVerdict(env.DB, new Date(t).toISOString(), reachConfigFrom(env), { companion, hold }));
   } catch (err) {
     console.error("[mind/reach/today] error", { error: String(err) });
