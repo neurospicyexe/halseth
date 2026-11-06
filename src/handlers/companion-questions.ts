@@ -7,6 +7,7 @@
 //
 // All routes require ADMIN_SECRET Bearer auth.
 
+import { fireIntellectualReward } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 
@@ -173,6 +174,13 @@ export async function patchQuestion(
     // Only an OPEN question moves. A stale tap or a replayed queue write on one already answered or
     // dismissed must not erase or overwrite the answer; Hearth reads this 404 as "Already handled."
     if (!result.meta.changes) return json({ error: "Question not found or already handled" }, 404);
+    if (status === "answered") {
+      // B63: only reached on the open -> answered transition (the UPDATE above is open-guarded).
+      try {
+        const q = await env.DB.prepare("SELECT companion_id FROM companion_questions WHERE id = ?").bind(id).first<{ companion_id: string }>();
+        if (q) await fireIntellectualReward(env, q.companion_id, id, answer);
+      } catch (err) { console.error("[mind/questions] reward fire failed", { id, error: String(err) }); }
+    }
     return json({ ok: true });
   } catch (err) {
     console.error("[mind/questions] patch error", { id, error: String(err) });

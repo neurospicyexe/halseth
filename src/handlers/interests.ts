@@ -18,6 +18,7 @@
 // companion_preferences, companion_refusals, and nothing else. No journal, care, health or notes
 // table is joined or named here, and no model decides what is "about Raziel".
 
+import { fireForageCross } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import {
@@ -150,6 +151,8 @@ export async function applyInterestAction(env: Env, input: ActionInput, nowMs: n
   await env.DB.prepare(
     "INSERT INTO companion_interest_events (id, interest_id, companion_id, kind, why, why_private, ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(eventId, interestId, input.companion_id, input.action, why, priv, ref, ts).run();
+  // B63: a find from a new domain fed to an interest (shadow-gated; never fails the act).
+  await fireForageCross(env, input.companion_id, interestId, eventId, ref);
 
   const trail = await getInterestTrail(env, input.companion_id, interestId, { revealPrivate: true, nowMs });
   const event = trail!.events.find((e) => e.id === eventId)!;

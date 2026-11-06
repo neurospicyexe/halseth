@@ -83,3 +83,50 @@ export async function fireRetracted(env: Env, companion: string): Promise<void> 
   if (companion !== "cypher") return;
   await loopFire(env, "retracted", "cypher", "superseded a conclusion of their own");
 }
+
+/**
+ * `forage_cross_domain`: an interest event (drevan or cypher) whose `ref` is a forage find from a domain
+ * that no EARLIER event of the same interest carried a find from. The interest must already have an
+ * earlier event (the first feed is never "cross"). Capped at one fire per interest per Chicago-agnostic
+ * rolling day, keyed on the interest id in the cause label. Cause: the interest event id.
+ * Never throws; a failure here cannot undo the interest event it rides on.
+ */
+export async function fireForageCross(
+  env: Env, companion: string, interestId: string, eventId: string, ref: string | null,
+): Promise<boolean> {
+  try {
+    if ((companion !== "drevan" && companion !== "cypher") || !ref) return false;
+    const find = await env.DB.prepare("SELECT domain FROM forage_finds WHERE id = ?").bind(ref).first<{ domain: string }>();
+    if (!find?.domain) return false;
+    const earlier = (await env.DB.prepare(
+      `SELECT e.ref AS ref FROM companion_interest_events e
+        WHERE e.interest_id = ? AND e.id <> ? AND e.created_at <= (SELECT created_at FROM companion_interest_events WHERE id = ?)`,
+    ).bind(interestId, eventId, eventId).all<{ ref: string | null }>()).results ?? [];
+    if (earlier.length === 0) return false;
+    const refs = earlier.map((r) => r.ref).filter((r): r is string => !!r && r !== "auto");
+    if (refs.length) {
+      const domains = (await env.DB.prepare(
+        `SELECT DISTINCT domain FROM forage_finds WHERE id IN (${refs.map(() => "?").join(",")})`,
+      ).bind(...refs).all<{ domain: string }>()).results ?? [];
+      if (domains.some((d) => d.domain === find.domain)) return false;
+    }
+    const tag = `interest ${interestId}`;
+    const recent = await env.DB.prepare(
+      "SELECT 1 AS x FROM companion_ferment_events WHERE stimulus = 'forage_cross_domain' AND companion_id = ? AND detail LIKE ? AND created_at >= datetime('now','-1 day') LIMIT 1",
+    ).bind(companion, `%${tag}%`).first();
+    if (recent) return false;
+    return await loopFire(env, "forage_cross_domain", companion, `fed a find from a new domain (${tag}, event ${eventId})`);
+  } catch (err) {
+    console.error("[loop] forage_cross_domain failed", { companion, error: String(err) });
+    return false;
+  }
+}
+
+/**
+ * `intellectual_reward` (Cypher only): a question he asked got a real answer. Call only on the
+ * open -> answered transition. A blank answer is not an answer.
+ */
+export async function fireIntellectualReward(env: Env, askerCompanion: string, questionId: string, answer: string | null): Promise<boolean> {
+  if (askerCompanion !== "cypher" || !answer || !answer.trim()) return false;
+  return loopFire(env, "intellectual_reward", "cypher", `a question I asked was answered (question ${questionId})`);
+}
