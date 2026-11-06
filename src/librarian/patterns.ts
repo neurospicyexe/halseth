@@ -1745,6 +1745,11 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   make_artifact: { triggers: ["make_artifact"], tools: ["make_artifact"], response_key: "witness" },
   make_keep: { triggers: ["make_keep"], tools: ["make_keep"], response_key: "witness" },
   makes_read: { triggers: ["makes_read"], tools: ["makes_read"], response_key: "data" },
+  // Gaia's garden (mig 0171): anchored in router.ts ANCHORED_GUARDS; these triggers are formalities.
+  garden_plant: { triggers: ["garden_plant"], tools: ["garden_plant"], response_key: "witness" },
+  garden_pull: { triggers: ["garden_pull"], tools: ["garden_pull"], response_key: "witness" },
+  garden_read: { triggers: ["garden_read"], tools: ["garden_read"], response_key: "data" },
+  garden_consent: { triggers: ["garden_consent"], tools: ["garden_consent"], response_key: "witness" },
   // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
   voice_lessons_list: {
     triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],

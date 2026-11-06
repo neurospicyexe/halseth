@@ -169,6 +169,14 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "B62 making: 'make a <kind words> called <title> [for <interest>] because <why>'. Needs 'called', so 'made X for Y because Z' (past tense, the interest event) and 'make an image of ...' (generate_image) are untouched; anchored so the why can never be routed by a trigger it contains." },
   { pattern_key: "make_keep", regex: KEEP_VERB_RE,
     note: "Drevan's shelf (mig 0170): 'keep as made <id | \"opening words\"> [called <title>] [for <interest>] [because <why>]' / 'keep this as made'. Start-anchored so the title, interest and why can never be routed by a trigger they contain. Own rows only." },
+  { pattern_key: "garden_plant", regex: PLANT_VERB_RE,
+    note: "Gaia's garden (mig 0171): 'plant the witness' / 'plant <id-prefix>' / 'plant \"opening words\"'. Start-anchored on those shapes so the quoted words can never be routed by a trigger they contain. Gaia only (the executor refuses anyone else)." },
+  { pattern_key: "garden_pull", regex: PULL_VERB_RE,
+    note: "Gaia's garden: 'pull <planting id-prefix>', the whole request, so ordinary 'pull ...' speech never matches." },
+  { pattern_key: "garden_read", regex: GARDEN_READ_RE,
+    note: "Gaia's garden: 'my garden', whole request." },
+  { pattern_key: "garden_consent", regex: GARDEN_CONSENT_RE,
+    note: "Gaia's garden: 'garden yes|no <planting id-prefix>', the sibling's answer on a one-sibling note. Callable only by the planting's consent_from companion (the executor checks)." },
   { pattern_key: "makes_read", regex: MAKES_READ_RE,
     note: "B62 making: 'my makes' / 'list my makes', whole request." },
   { pattern_key: "person_who_is", regex: PERSON_LOOKUP_RE,
@@ -486,6 +494,8 @@ import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPut
 import { MAKE_VERB_RE, MAKES_READ_RE } from "../webmind/makes.js";
 import { KEEP_VERB_RE } from "../webmind/makes-capture.js";
 import { execMake, execMakesRead, execMakeKeep } from "./executors/makes.js";
+import { PLANT_VERB_RE, PULL_VERB_RE, GARDEN_READ_RE, GARDEN_CONSENT_RE } from "../webmind/garden.js";
+import { execGardenPlant, execGardenPull, execGardenRead, execGardenConsent } from "./executors/garden.js";
 import { execImpErrand } from "./executors/errands.js";
 import { execDepartureDeclare, execDepartureEnd, execDepartureObject, execDepartureList, execDepartureStandDown } from "./executors/departure.js";
 import { execVoiceLessonsList, execVoiceLessonDecide } from "./executors/voice-lessons.js";
@@ -618,6 +628,10 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   make_artifact: execMake,
   makes_read: execMakesRead,
   make_keep: execMakeKeep,
+  garden_plant: execGardenPlant,
+  garden_pull: execGardenPull,
+  garden_read: execGardenRead,
+  garden_consent: execGardenConsent,
   person_who_is: execPersonWhoIs,
   imp_errand: execImpErrand,
 

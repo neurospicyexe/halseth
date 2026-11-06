@@ -100,6 +100,7 @@ import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature } from "./handlers/creatures.js";
+import { getGardenGaia } from "./handlers/garden.js";
 import { postMake, getMakes, getMakeItemHttp, serveMakeFile, getPendingMakes, getMakeSource, postMakeRendered, patchMake } from "./handlers/makes.js";
 import { getInterests, getInterestTrailHttp, getThinking, postInterest } from "./handlers/interests.js";
 import { tickFermentation, postFermentStimulus, getFermentation, runFermentTick } from "./handlers/fermentation.js";
@@ -492,6 +493,7 @@ const router = new Router()
   .on("GET",   "/mind/makes/source/:id",             (request, env, params) => getMakeSource(request, env, params ?? {}))
   .on("POST",  "/mind/makes/:id/rendered",           (request, env, params) => postMakeRendered(request, env, params ?? {}))
   .on("PATCH", "/mind/makes/:id",                    (request, env, params) => patchMake(request, env, params ?? {}))
+  .on("GET",   "/mind/garden/gaia",                  (request, env)         => getGardenGaia(request, env))
   .on("GET",   "/mind/makes/:companion_id",          (request, env, params) => getMakes(request, env, params ?? {}))
 
   // Salience prune (0105, task 20) -- cold machine-source journal rows self-archive; manual/test trigger
