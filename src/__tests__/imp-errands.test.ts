@@ -440,3 +440,49 @@ describe("review fixes (11-04)", () => {
     expect(parseErrand("send mossling to check the care lane")).toMatchObject({ errand: "care" });
   });
 });
+
+// Gaia's addition to rule 9 (note 7f978971, 2026-11-06T02:32Z): "when I ask for an imp, the ask covers that one
+// errand and ends with it. It never becomes standing permission, and no clerk reads one ask as a pattern of wanting."
+describe("rule 9: one ask is one errand (Gaia, 11-06)", () => {
+  it("Gaia's own send writes her line; nothing it leaves becomes permission or a pattern read back to her", async () => {
+    const { db, env } = setup();
+    seedSession(db, { id: "sess-gaia-old1", companion_id: "gaia", created_at: ago(3 * DAY) });
+    const tablesBefore = rows(db, "SELECT name FROM sqlite_master WHERE type='table'").map((t) => t.name);
+    const counts = () => Object.fromEntries(tablesBefore.map((t) => [t, (rows(db, `SELECT COUNT(*) AS n FROM "${t}"`)[0] as any).n]));
+    const before = counts();
+    const out = await send(env, "gaia", "send nimbus to check for gaps");
+    expect(out.lines_written).toBe(1);
+    const after = counts();
+    // the ask leaves its one ledger line and the instrument's log row; no permission row, no preference
+    const changed = tablesBefore.filter((t) => before[t] !== after[t]);
+    expect(changed).toEqual(["imp_activations", "ledger_entries"]);
+    // and the log is never counted back to her as a pattern ("Nimbus rode with you once this week")
+    const ms: any = await loadMindState(env, "gaia", "claude-ai" as any);
+    expect(ms.world.imps_active).toEqual([]);
+    expect(rows(db)[0]).toMatchObject({ companion_id: "gaia", rider: "nimbus", function: "gap-reader" });
+    // the next turn without a named imp is not an errand at all: no default, no carried ask
+    expect(matchFastPath("check for gaps")?.key).not.toBe("imp_errand");
+    expect(parseErrand("check for gaps")).toBeNull();
+  });
+
+  it("no clerk reads the rider column: only the lane itself (door, grammar, store, the errand executor) names it", () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const SRC = path.resolve(__dirname, "..");
+    const ALLOWED = new Set(["ledger/door.ts", "ledger/grammar.ts", "ledger/store.ts", "librarian/executors/errands.ts"]);
+    const strip = (c: string) => c.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== "__tests__") walk(p); continue; }
+        if (!e.name.endsWith(".ts") || e.name.endsWith(".d.ts")) continue;
+        const rel = path.relative(SRC, p).split(path.sep).join("/");
+        const code = strip(fs.readFileSync(p, "utf8"));
+        if (/ledger_entries/.test(code) && /\brider\b/.test(code) && !ALLOWED.has(rel)) offenders.push(rel);
+      }
+    };
+    walk(SRC);
+    expect(offenders).toEqual([]);
+  });
+});

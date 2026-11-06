@@ -14,7 +14,10 @@
 // WHO. The companion is ALWAYS ctx.req.companion_id and is both the requester and the line's subject (the
 // grammar enforces the equality). No default imp: the imp is named in the sentence or nothing goes. Nothing
 // here is scheduled; an errand runs only inside the companion's own turn. Gaia is exempt in the only way that
-// matters: a line for her exists only when she is the requester.
+// matters: a line for her exists only when she is the requester. Her addition (note 7f978971, 2026-11-06):
+// "the ask covers that one errand and ends with it. It never becomes standing permission, and no clerk reads
+// one ask as a pattern of wanting." So nothing here stores consent, and her errand log rows are never counted
+// back to her (src/mind/blocks/world.ts). Only the lane's own files read `rider` (imp-errands.test.ts).
 //
 // WHAT AN ERRAND NEVER DOES. Authors a note (performTend's note is always null), carries care or health
 // material (the grammar refuses a care word, a health keyword, or a number beyond a plural count form), reads

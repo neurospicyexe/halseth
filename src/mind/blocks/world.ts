@@ -300,7 +300,11 @@ export async function loadWorldBlocks(env: Env, companionId: WmAgentId): Promise
           "SELECT id, name, species, kind, state_json, trust, last_interaction_at, created_at FROM creatures ORDER BY kind ASC, name ASC LIMIT 8"
         ).all<{ id: string; name: string; species: string | null; kind: string; state_json: string | null; trust: number; last_interaction_at: string | null; created_at: string | null }>(),
         env.DB.prepare(
-          "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
+          // Gaia's rule 9 addition (note 7f978971, 2026-11-06): "when I ask for an imp, the ask covers that one
+          // errand and ends with it ... no clerk reads one ask as a pattern of wanting." Her errands are logged
+          // (the instrument) but never counted back to her as "rode with you"; she rides no reply, so for Gaia
+          // this read is always empty.
+          "SELECT imp, COUNT(*) AS n, MAX(created_at) AS last_at FROM imp_activations WHERE companion_id = ? AND created_at >= datetime('now', '-7 days') AND NOT (companion_id = 'gaia' AND trigger LIKE 'errand:%') GROUP BY imp ORDER BY n DESC, last_at DESC LIMIT 3"
         ).bind(companionId).all<ImpActivity>(),
         // Wave 9. One ranked view across BOTH source tables; `sparkle > 0` is the condition that matters,
         // because the sidecar only holds things that earned shine.
