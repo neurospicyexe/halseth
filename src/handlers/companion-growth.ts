@@ -4,6 +4,7 @@
 // Covers: basins (CRUD + list) and tensions (CRUD + list).
 // All routes require ADMIN_SECRET Bearer auth.
 
+import { onlyIf, schemaGap } from "../care/schema-gap.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { embedText, embedAndStoreAsync } from "../mcp/embed.js";
@@ -35,9 +36,14 @@ export async function getBasins(
   const { companion_id } = params;
   if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
 
+  // Live rows only (mig 0172); pre-0172 the status column is missing, fall back on that gap only.
+  // The second-brain evaluator reads this route, so its drift readings follow a revised basin from here.
+  const cols = "id, companion_id, basin_name, basin_description, embedding, created_at, updated_at";
   const rows = await env.DB.prepare(
-    "SELECT id, companion_id, basin_name, basin_description, embedding, created_at, updated_at FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC"
-  ).bind(companion_id).all();
+    `SELECT ${cols} FROM companion_basins WHERE companion_id = ? AND status = 'live' ORDER BY created_at ASC`
+  ).bind(companion_id).all().catch(onlyIf(schemaGap, () => env.DB.prepare(
+    `SELECT ${cols} FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC`
+  ).bind(companion_id).all()));
   return json({ basins: rows.results });
 }
 
