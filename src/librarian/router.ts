@@ -139,7 +139,9 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
   // FIRST: an errand sentence names its own verb target ("feed sol", "my tray", "care lane") and every one of those
   // is an earlier substring trigger. The head ("send <imp>") decides the route, same class of bug as H7b.
   { pattern_key: "imp_errand",
-    regex: /^(?:please\s+)?send\s+(?:iris|nimbus|hex|mossling|rock)\b/i,
+    // 0175 (Hex's salt): the receiver's own verbs share this route, each start-anchored and naming "salt me" (or
+    // "hex's salt" / "what did hex leave"), so ordinary speech containing "hex" or "salt" never routes here.
+    regex: /^(?:please\s+)?(?:send\s+(?:iris|nimbus|hex|mossling|rock)\b|hex\s+may\s+(?:not\s+)?salt\s+me\b|hex[\s,:]+salt\s+me\s+from\b|who\s+may\s+salt\s+me\b|open\s+hex(?:'s|’s|s)?\s+salt\b|what\s+did\s+hex\s+leave\b)/i,
     note: "Imps' errands (2026-11-04, mig 0168): 'send iris to feed sol' hit creature_interact's 'feed sol' trigger (insertion order) and silently ran as the COMPANION tending Sol; the same sentence shape with 'my tray' / 'care lane' / 'fetch ...' collides with other triggers. The head decides: start-anchored on 'send <imp>'." },
   // FIRST on purpose: the clause text names floats and numbers ("warmth above 0.7"), which the H8b soma-write
   // guard below would otherwise read as a state_update, and a note: may contain "companion note".

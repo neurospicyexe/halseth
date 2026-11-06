@@ -63,9 +63,17 @@ export const RIDER_FUNCTIONS: ReadonlySet<string> = new Set(["fetch", "sort", "t
  * equality is Drevan's rule 7 and rule 9 stated once ("a column can't point outside the ledger's author";
  * Gaia gets a rider line only when Gaia herself is the requester).
  */
-export interface LedgerErrand { rider: unknown; requester: unknown }
+export interface LedgerErrand {
+  rider: unknown;
+  requester: unknown;
+  /** Hex's salt (mig 0175): the RECEIVER the pointer was left for. Required with rider `hex`, refused with any
+   *  other imp. The sender stays the line's subject (companion_id == requester); the receiver is never the subject. */
+  rider_to?: unknown;
+}
 
-export const LEDGER_SOURCE_KINDS = ["message", "window", "session", "row"] as const;
+// `vault` (mig 0175): a pointer into the Obsidian vault, source_ref = the vault path, never the note's text.
+// Only Rock's fetch and Hex's salt write one (a rider is required; see validateLedger).
+export const LEDGER_SOURCE_KINDS = ["message", "window", "session", "row", "vault"] as const;
 export type LedgerSourceKind = (typeof LEDGER_SOURCE_KINDS)[number];
 const SOURCE_KIND_SET: ReadonlySet<string> = new Set(LEDGER_SOURCE_KINDS);
 
@@ -122,6 +130,8 @@ export interface LedgerLine {
   number_check: NumberCheck | null;
   /** The imp that rode this errand (mig 0168), or null for an ordinary clerk line. Never in `content`. */
   rider: LedgerRider | null;
+  /** A salt's receiver (mig 0175); null on every other line. */
+  rider_to: CompanionId | null;
 }
 
 export type LedgerValidation =
@@ -469,6 +479,8 @@ const MESSAGE_RE = new RegExp(`^${SNOWFLAKE}$`);
 const WINDOW_RE = new RegExp(`^(?:discord\\s+)?(${SNOWFLAKE}),?\\s+([01]\\d|2[0-3]):([0-5]\\d)\\s*[–-]\\s*([01]\\d|2[0-3]):([0-5]\\d)$`, "i");
 const SESSION_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$/;
 const ROW_RE = /^([a-z][a-z0-9_]{1,63}):([A-Za-z0-9][A-Za-z0-9_.-]{0,127})$/;
+// A vault-relative path to a note: no leading slash or backslash, no control characters, no ledger mark, a .md file.
+const VAULT_PATH_RE = /^[^/\\\p{Cc}〔〕][^\\\p{Cc}〔〕]{0,299}\.md$/u;
 
 function normaliseSource(kind: LedgerSourceKind, ref: string): string | null {
   switch (kind) {
@@ -479,6 +491,7 @@ function normaliseSource(kind: LedgerSourceKind, ref: string): string | null {
     }
     case "session": return SESSION_RE.test(ref) ? ref : null;
     case "row": return ROW_RE.test(ref) ? ref : null;
+    case "vault": return VAULT_PATH_RE.test(ref) && !ref.split("/").some((seg) => seg === ".." || seg === "." || seg === "") ? ref : null;
   }
 }
 
@@ -498,6 +511,7 @@ const SOURCE_FORMATS: Record<LedgerSourceKind, string> = {
   window: "a channel or thread id plus a UTC range, '<id> HH:MM–HH:MM'",
   session: "a Halseth session id",
   row: "'<table>:<id>'",
+  vault: "a vault-relative path to a .md note",
 };
 
 // ── observed_on ───────────────────────────────────────────────────────────────────────────────────
@@ -531,6 +545,7 @@ export function validateLedger(
   }
 
   let rider: LedgerRider | null = null;
+  let riderTo: CompanionId | null = null;
   if (errand !== undefined) {
     const r = typeof errand.rider === "string" ? errand.rider.trim().toLowerCase() : "";
     if (!RIDER_SET.has(r)) return fail("rider", `rider must be one of ${LEDGER_RIDERS.join(", ")}`);
@@ -541,6 +556,16 @@ export function validateLedger(
       return fail("rider", `an imp reports only to the companion that sent it: the line's subject (${companion}) must be the requester (${requester})`);
     }
     rider = r as LedgerRider;
+    // A salt's receiver (mig 0175): named for Hex every time, never for any other imp. A companion, never
+    // Raziel; the receiver may be the sender (a self-salt).
+    if (errand.rider_to !== undefined && errand.rider_to !== null) {
+      const to = typeof errand.rider_to === "string" ? errand.rider_to.trim() : "";
+      if (rider !== "hex") return fail("rider", "only Hex's salt names a receiver");
+      if (!COMPANION_ID_SET.has(to)) return fail("rider", "a salt's receiver must be drevan, cypher, or gaia (never Raziel)");
+      riderTo = to as CompanionId;
+    } else if (rider === "hex") {
+      return fail("rider", "Hex's salt names its receiver every time: no receiver, no salt");
+    }
   }
 
   if (typeof input.body !== "string") return fail("body", "body is required");
@@ -583,7 +608,7 @@ export function validateLedger(
 
   // No source, no write.
   const kindRaw = typeof input.source_kind === "string" ? input.source_kind.trim() : "";
-  if (!SOURCE_KIND_SET.has(kindRaw)) return fail("source", "no source, no write: source_kind must be message, window, session, or row");
+  if (!SOURCE_KIND_SET.has(kindRaw)) return fail("source", "no source, no write: source_kind must be message, window, session, row, or vault");
   const kind = kindRaw as LedgerSourceKind;
   const refRaw = typeof input.source_ref === "string" ? input.source_ref.trim() : "";
   if (!refRaw) return fail("source", "no source, no write: source_ref is required");
@@ -591,6 +616,11 @@ export function validateLedger(
   if (!ref) return fail("source", `source_ref does not match its kind: ${kind} must be ${SOURCE_FORMATS[kind]}`);
   if (kind === "row" && /interiorit/i.test(ROW_RE.exec(ref)?.[1] ?? "")) {
     return fail("interiority", "a clerk never reads the interiority rooms: a row there is never a source");
+  }
+  if (kind === "vault") {
+    // A vault pointer is Rock's or Hex's and nobody else's: an ordinary clerk (POST /ledger) never names a note.
+    if (rider !== "rock" && rider !== "hex") return fail("source", "a vault source is only ever a Rock fetch or a Hex salt pointer");
+    if (/interiorit/i.test(ref)) return fail("interiority", "a clerk never points into the interiority rooms: a vault path naming them is never a source");
   }
 
   let observedOn = today;
@@ -622,6 +652,13 @@ export function validateLedger(
     // whole word refuses the line (review 11-04).
     const impName = LEDGER_RIDERS.find((n) => new RegExp(`(?<![\\p{L}\\p{N}])${n}(?![\\p{L}\\p{N}])`, "iu").test(body));
     if (impName) return fail("rider", "an imp's name never appears in a ledger line (it lives in the rider column)");
+    if (kind === "vault") {
+      // The path travels in the rendered line (the Source tail), so it is held to the same rules as the body.
+      const refImp = LEDGER_RIDERS.find((n) => new RegExp(`(?<![\\p{L}\\p{N}])${n}(?![\\p{L}\\p{N}])`, "iu").test(ref));
+      if (refImp) return fail("rider", "an imp's name never appears in a ledger line, and that includes the vault path it points at");
+      const refCat = careCategory(ref);
+      if (refCat) return fail("rider_care", `an imp line never points at care or health material (${refCat})`);
+    }
     // An imp line never carries a care word, a health keyword, or any number beyond the existing plural count
     // forms ("3 entries", "2 times", "45 minutes"; a single digit also passes). Reuses the care guard and
     // this grammar's own health/number scan; no new word list. Scanned over the WHOLE body, quotes included.
@@ -657,6 +694,7 @@ export function validateLedger(
       content: renderLedgerContent(fn, observedOn, body, kind, ref),
       number_check: numberCheck,
       rider,
+      rider_to: riderTo,
     },
   };
 }

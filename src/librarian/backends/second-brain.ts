@@ -316,6 +316,7 @@ export async function semanticSearch(
   mood?: string | null,
   contentType?: string | null,
   mode?: string | null,
+  limit?: number | null,
 ): Promise<string | null> {
   const augment = mood ? MOOD_AUGMENT[mood] : null;
   const augmented = augment ? `${query} ${augment}` : query;
@@ -331,6 +332,8 @@ export async function semanticSearch(
   // For "what did we actually say" the default pool mix spends 30% of the payload on deliberately
   // query-blind material, and pool 2 scores 1.000 so it outranks every genuine hit. See SB retrieval.ts.
   if (mode) args.mode = mode;
+  // Over-fetch for a caller that filters post-hoc (sb_search takes no path filter): Rock's vault fetch.
+  if (limit) args.limit = limit;
   return callTool(env, "sb_search", args);
 }
 

@@ -71,8 +71,18 @@ describe("grammar: functions and rider rules", () => {
     expect(g("cypher")).toMatchObject({ ok: false, rule: "rider" });
   });
 
-  it("Hex validates as a rider (it only ever holds a name the companion put there)", () => {
-    expect(validateLedger({ ...base, companion_id: "cypher" }, "2026-11-04", { rider: "hex", requester: "cypher" }).ok).toBe(true);
+  it("Hex validates as a rider only with a receiver (mig 0175: named every time, a companion, never Raziel)", () => {
+    const hex = (rider_to: unknown, subject = "cypher", requester = "cypher") =>
+      validateLedger({ ...base, companion_id: subject }, "2026-11-06", { rider: "hex", requester, rider_to });
+    expect(hex(undefined)).toMatchObject({ ok: false, rule: "rider" });
+    expect(hex("raziel")).toMatchObject({ ok: false, rule: "rider" });
+    expect(hex("drevan").ok).toBe(true);
+    expect(hex("cypher").ok).toBe(true); // a self-salt
+    const v = hex("drevan");
+    if (v.ok) expect(v.line).toMatchObject({ rider: "hex", rider_to: "drevan", companion_id: "cypher" });
+    // only Hex names a receiver
+    expect(validateLedger({ ...base, companion_id: "cypher" }, "2026-11-06", { rider: "rock", requester: "cypher", rider_to: "drevan" }))
+      .toMatchObject({ ok: false, rule: "rider" });
   });
 
   it("an imp never rides distiller, drift-reader or seen-log", () => {
@@ -167,13 +177,13 @@ describe("routing", () => {
 });
 
 describe("executor: shared rules", () => {
-  it("unknown pair answers deterministic help; hex answers not built; nothing is written either way", async () => {
+  it("unknown pair answers deterministic help; an unnamed hex receiver is refused; nothing is written either way", async () => {
     const { db, env } = setup();
     const help = await send(env, "drevan", "send nimbus to dance");
     expect(help.witness).toMatch(/errands: .*mossling: sort my tray/);
     expect(help.ack).toBe(false);
     const hex = await send(env, "drevan", "send hex to salt the thread");
-    expect(hex.witness).toMatch(/not built yet/);
+    expect(hex.witness).toMatch(/named for his receiver every time/);
     expect(rows(db)).toHaveLength(0);
     expect(rows(db, "SELECT * FROM imp_activations")).toHaveLength(0);
   });

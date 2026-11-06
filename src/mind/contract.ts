@@ -39,6 +39,10 @@ export interface LedgerOpenEntry {
   created_at: string;
 }
 
+/** 0.28.0 -- Hex's salt (2026-11-06, mig 0175): `ledger.salt_waiting`, the number of pointers Hex left for this
+ *  companion that are unopened and under 72h old (a count, never content; ignored salt fades with no count against
+ *  anyone). Rendered as "Hex left something (N)" in that companion's own orient and nowhere else. The bot wire
+ *  carries it as `salt_waiting`. 0 pre-0175. MINOR: additive only. */
 /** 0.27.0 -- the imps' errand tier (2026-11-04, mig 0168): `ledger.waiting`, the number of OPEN rider lines
  *  (ledger_entries.rider set: an imp's errand output) waiting on this companion. Rider rows are removed from
  *  `ledger.open`; renderers show ONE content-free line, "something waiting (N)", in that companion's own
@@ -160,7 +164,7 @@ export interface LedgerOpenEntry {
  *  a shared board rather than a one-way drop box -- D7). 0.4.0 was wave 8
  *  (`oversight.growth_unconfirmed`); 0.3.0 was wave 6 (world.watching, beliefs.supersede_candidates,
  *  relational.siblings, relational.recent_witness, oversight.answered_questions). */
-export const MINDSTATE_CONTRACT_VERSION = "0.27.0";
+export const MINDSTATE_CONTRACT_VERSION = "0.28.0";
 
 /** Which surface asked for the state. Used by the (future) delivery ledger and for
  *  telemetry -- NEVER for content differences. Each Discord bot process is its own
@@ -369,6 +373,9 @@ export interface MindState {
     open: LedgerOpenEntry[];
     /** 0.27.0: open imp-errand lines (rider rows) waiting on this companion; a count, never content. */
     waiting: number;
+    /** 0.28.0: unopened, unfaded salts Hex left for this companion (ledger_entries.rider_to, mig 0175); a count, never
+     *  content. Renderers show ONE content-free line, "Hex left something (N)", in that companion's own orient. */
+    salt_waiting?: number;
   };
 
   meta: {

@@ -116,6 +116,21 @@ export async function riderColumnPresent(env: Env): Promise<boolean> {
   }
 }
 
+/** The 0175 columns are missing (code deployed ahead of the migration): rider_to / rider_opened_at. */
+export const missingSalt = (e: unknown) => /(no such column|has no column named):?\s*\S*rider_(to|opened_at)/i.test(String(e));
+
+/** Does ledger_entries have the salt columns (mig 0175, which also admits the 'vault' source kind)? Rock's vault
+ *  fetch and Hex's salt probe this BEFORE any side effect: pre-0175 they refuse (409), never write degraded. */
+export async function saltColumnPresent(env: Env): Promise<boolean> {
+  try {
+    await env.DB.prepare("SELECT rider_to, rider_opened_at FROM ledger_entries LIMIT 0").all();
+    return true;
+  } catch (e) {
+    if (missingSalt(e)) return false;
+    throw e;
+  }
+}
+
 /**
  * Validate, check the source row, and INSERT one ledger line. Never throws on bad input.
  * `errand` (mig 0168) names the imp that rode the line and the companion that sent it; it is a separate
@@ -158,8 +173,8 @@ export async function writeLedger(env: Env, input: LedgerInput, now: Date = new 
   const id = newLedgerId();
   // One statement, one literal INSERT (the sweep greps it). The rider column rides only a rider line, so a
   // nameless write is byte-identical to the pre-0168 statement and works before the migration.
-  const riderCol = line.rider !== null ? ", rider" : "";
-  const riderVal = line.rider !== null ? ", ?" : "";
+  const riderCol = (line.rider !== null ? ", rider" : "") + (line.rider_to !== null ? ", rider_to" : "");
+  const riderVal = (line.rider !== null ? ", ?" : "") + (line.rider_to !== null ? ", ?" : "");
   let res: D1Result;
   try {
     res = await env.DB.prepare(
@@ -170,8 +185,16 @@ export async function writeLedger(env: Env, input: LedgerInput, now: Date = new 
     ).bind(
       id, line.companion_id, line.function, line.body, line.content, line.source_kind, line.source_ref,
       line.observed_on, now.toISOString(), line.dedup_key, ...(line.rider !== null ? [line.rider] : []),
+      ...(line.rider_to !== null ? [line.rider_to] : []),
     ).run();
   } catch (e) {
+    // 0175: a salt needs rider_to; a vault pointer needs the widened source_kind CHECK. Refused, never degraded.
+    if (line.rider_to !== null && missingSalt(e)) {
+      return { ok: false, rule: "schema", error: "needs the 0175 migration (ledger_entries.rider_to): a salt is never written without its receiver" };
+    }
+    if (line.source_kind === "vault" && /CHECK constraint failed/i.test(String(e))) {
+      return { ok: false, rule: "schema", error: "needs the 0175 migration (ledger_entries.source_kind vault): a vault pointer is never written degraded" };
+    }
     if (line.rider !== null && missingRider(e)) {
       return { ok: false, rule: "schema", error: "needs the 0168 migration (ledger_entries.rider): an errand line is never written without its rider" };
     }

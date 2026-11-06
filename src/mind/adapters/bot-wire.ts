@@ -314,6 +314,11 @@ export function botWireFromMindState(
     // raw `soma_floats` and never their own vocabulary; Claude.ai orient rendered it, Discord did not.
     feeling_line: extras.feeling_line ?? null,
 
+    // 0.28.0 (Hex's salt, mig 0175): a count of unopened, unfaded pointers Hex left for this companion; the bot
+    // renders one content-free line, "Hex left something (N)", when > 0. A count and nothing else (two-repo split:
+    // the key is on the wire; nullsafe-discord renders it).
+    salt_waiting: ms.ledger.salt_waiting ?? 0,
+
     resurfaced_conclusion: ms.beliefs.resurfaced
       ? {
           conclusion_text: text(ms.beliefs.resurfaced.conclusion_text, 280),

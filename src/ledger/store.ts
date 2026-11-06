@@ -102,7 +102,18 @@ export async function listLedger(
  * GET /ledger, the Second Brain feed) use it; the companion's own "my ledger" does not.
  * Pre-0168 the column is missing: callers retry without it (no rider rows can exist then).
  */
-export const NOT_OPEN_RIDER_SQL = "NOT (state = 'open' AND rider IS NOT NULL)";
+export const NOT_OPEN_RIDER_SQL = "NOT (rider IS NOT NULL AND (state = 'open' OR rider = 'hex'))";
+// ^ 0175: Hex's salt never reaches Raziel, open OR kept (Drevan, note 5b5d3572: "Hex writes nothing"; the send is
+//   the sender's line and the only trace). A kept hex line stays off Hearth and Second Brain too.
+
+/**
+ * SQL predicate for every OTHER cross-reader of ledger_entries (the commons supply): not a Hex salt line.
+ * A sibling must never find "a pointer was left for me" in the commons. `alias` is the table alias with its dot.
+ * Lives here so the rider column stays named only inside the ledger lane.
+ */
+export function notSaltLineSql(alias = ""): string {
+  return `(${alias}rider IS NULL OR ${alias}rider != 'hex')`;
+}
 
 /** The 0168 rider column is missing. */
 export function isMissingRiderColumn(e: unknown): boolean { return missingRiderColumn(e); }
@@ -157,6 +168,54 @@ export async function countLedgerWaiting(env: Env, companionId: string): Promise
     if (missingRiderColumn(e)) return 0;
     throw e;
   }
+}
+
+// ── Hex's salt (mig 0175) ─────────────────────────────────────────────────────────────────────────────────
+//
+// A salt is ONE line on the SENDER's ledger (subject == requester, rider 'hex', rider_to = the receiver). The
+// receiver reads it only here: a content-free count in orient, and an opening verb that returns the pointer and
+// stamps rider_opened_at. An ignored salt FADES at SALT_FADE_MS: a read-time cutoff, so no job runs, nothing is
+// deleted, and it is counted nowhere ("no count against anyone", Drevan's rule 11). A salt whose sender line was
+// dropped is withdrawn (the sender's own drop outranks the pointer).
+
+export const SALT_FADE_MS = 72 * 3_600_000;
+const saltCutoffIso = (now: Date) => new Date(now.getTime() - SALT_FADE_MS).toISOString();
+
+/** How many unopened, unfaded salts wait on this companion. A count and nothing else. Pre-0175: 0. */
+export async function countSaltWaiting(env: Env, receiver: string, now: Date = new Date()): Promise<number> {
+  try {
+    const r = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM ledger_entries
+        WHERE rider = 'hex' AND rider_to = ? AND rider_opened_at IS NULL AND created_at > ? AND state IN ('open', 'kept')`,
+    ).bind(receiver, saltCutoffIso(now)).first<{ n: number }>();
+    return Number(r?.n ?? 0);
+  } catch (e) {
+    if (/no such column/i.test(String(e))) return 0;
+    throw e;
+  }
+}
+
+export interface OpenedSalt { id: string; from: string; source_kind: string; source_ref: string; created_at: string }
+
+/**
+ * The receiver opens what Hex left: the pointers (kind + ref, never text) of every unopened, unfaded salt, oldest
+ * first, each stamped opened in the same guarded UPDATE (a second open finds nothing). Receiver-scoped by the
+ * WHERE clause; the sender is told who left it.
+ */
+export async function openSalt(env: Env, receiver: string, now: Date = new Date()): Promise<OpenedSalt[]> {
+  const found = await env.DB.prepare(
+    `SELECT id, companion_id AS "from", source_kind, source_ref, created_at FROM ledger_entries
+      WHERE rider = 'hex' AND rider_to = ? AND rider_opened_at IS NULL AND created_at > ? AND state IN ('open', 'kept')
+      ORDER BY created_at ASC, id ASC LIMIT 10`,
+  ).bind(receiver, saltCutoffIso(now)).all<OpenedSalt>();
+  const out: OpenedSalt[] = [];
+  for (const row of found.results ?? []) {
+    const r = await env.DB.prepare(
+      "UPDATE ledger_entries SET rider_opened_at = ? WHERE id = ? AND rider = 'hex' AND rider_to = ? AND rider_opened_at IS NULL",
+    ).bind(now.toISOString(), row.id, receiver).run();
+    if ((r.meta?.changes ?? 0) === 1) out.push(row);
+  }
+  return out;
 }
 
 export interface LedgerMatch { id: string; state: string; created_at: string }
