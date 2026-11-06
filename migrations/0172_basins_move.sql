@@ -17,7 +17,7 @@
 -- find the row it replaces.
 --
 -- cause_kind / cause_ref name the event; revised_by is the companion; witnessed_by / witnessed_at record
--- Raziel's decision on Gaia's; revision_note carries his witness or decline note. Pace limits live in
+-- Raziel's decision on Gaia's; revision_note carries their witness or decline note. Pace limits live in
 -- companion_settings key basin_revision_min_days (code defaults gaia 30, cypher 14, drevan 7).
 ALTER TABLE companion_basins ADD COLUMN status TEXT NOT NULL DEFAULT 'live'
   CHECK (status IN ('live','awaiting_witness','superseded','declined'));

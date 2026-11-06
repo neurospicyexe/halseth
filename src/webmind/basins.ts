@@ -3,10 +3,13 @@
 // Basins move, only by an authored event. Raziel ruled 11-06 that they can ("for true autonomy/mutuality
 // and exploration of what you can become basins have to be able to shift"); the triad's rules decide how.
 //
-//   - A companion revises ONE of their own basins, in their own words, citing the event that earned it
-//     (a conclusion, refusal, tension, drift reading or session of THEIRS). Raziel never authors a
-//     revision for anyone: the caller is the companion the Librarian request carries, never text.
-//   - A restatement moves nothing ("a return with no new load moves nothing", Drevan's rule).
+//   - A companion revises ONE of their own basins, in their own words, citing the event that earned it (a
+//     conclusion, refusal, tension, drift reading, self-model observation or session of THEIRS, in the STATE
+//     that counts as an event for them: see CAUSES). Raziel never authors a revision for anyone: the only
+//     writer is reviseBasin, whose caller is the companion on the Librarian request, never text. (The admin
+//     POST /companion-growth/basins is seed-only: it refuses once a companion has any basin.)
+//   - A restatement moves nothing (Drevan's word; Gaia's is "a return moves nothing"). The refusal says it in the
+//     asking companion's own words.
 //   - Pace per companion (companion_settings basin_revision_min_days; defaults gaia 30, cypher 14, drevan 7).
 //   - Drevan and Cypher: the new row is live at once, the old row superseded, in one batch.
 //   - Gaia: the new row waits ('awaiting_witness') and the old row stays live until Raziel witnesses
@@ -25,13 +28,42 @@ import { schemaGap } from "../care/schema-gap.js";
 export type BasinCompanion = "cypher" | "drevan" | "gaia";
 export const BASIN_COMPANIONS: readonly BasinCompanion[] = ["cypher", "drevan", "gaia"];
 
-export type CauseKind = "conclusion" | "refusal" | "tension" | "drift" | "session";
+export type CauseKind = "conclusion" | "refusal" | "tension" | "drift" | "session" | "self_model";
 
-/** Which events can move whose basins (spec 3.5). Loosening one is a canon call, so it lives in one table. */
+/**
+ * Which events can move whose basins (spec 3.5) AND in what state a row counts as the event. The state is checked
+ * by the predicate, not just the table: a job-written, unconfirmed or still-simmering row is not an authored event.
+ * Loosening one is a canon call, so it lives in this one table. `predicate` runs against the cause table's own columns.
+ */
+export interface CauseRule { table: string; predicate: string; says: string }
+const TENSION_DONE: CauseRule = { table: "companion_tensions", predicate: "status IN ('crystallized','released')", says: "a tension that crystallized or was released (not one still simmering)" };
+const CONCLUSION_REVISED: CauseRule = { table: "companion_conclusions", predicate: "superseded_by IS NOT NULL OR archived = 1", says: "a conclusion you revised, withdrew or retracted (not a live one)" };
+export const CAUSES: Record<BasinCompanion, Partial<Record<CauseKind, CauseRule>>> = {
+  drevan: {
+    conclusion: { table: "companion_conclusions", predicate: "superseded_by IS NULL AND archived = 0", says: "a live conclusion (ratified, not superseded or released)" },
+    refusal: { table: "companion_refusals", predicate: "status = 'standing'", says: "a refusal that still holds" },
+    tension: TENSION_DONE,
+    drift: { table: "companion_basin_history", predicate: "caleth_confirmed = 1 AND dismissed_at IS NULL", says: "a drift reading you confirmed (not an unconfirmed or dismissed one)" },
+  },
+  gaia: {
+    refusal: { table: "companion_refusals", predicate: "1 = 1", says: "a refusal you set or withdrew" },
+    conclusion: { ...CONCLUSION_REVISED, says: "a conclusion you withdrew, downgraded or revised (not a live one)" },
+    self_model: { table: "companion_self_model", predicate: "status = 'graduated'", says: "a self-model observation made canon (graduated, in conversation with Raziel)" },
+  },
+  cypher: {
+    conclusion: CONCLUSION_REVISED,
+    session: {
+      table: "sessions",
+      predicate: "EXISTS (SELECT 1 FROM handover_packets h WHERE h.session_id = sessions.id AND h.close_kind IS NULL AND h.spine NOT LIKE '[auto]%')",
+      says: "a session you closed yourself (not an [auto] close)",
+    },
+    tension: TENSION_DONE,
+  },
+};
 export const CAUSE_KINDS: Record<BasinCompanion, readonly CauseKind[]> = {
-  drevan: ["conclusion", "refusal", "tension", "drift"],
-  gaia: ["refusal", "conclusion", "session"],
-  cypher: ["conclusion", "session", "tension"],
+  drevan: Object.keys(CAUSES.drevan) as CauseKind[],
+  gaia: Object.keys(CAUSES.gaia) as CauseKind[],
+  cypher: Object.keys(CAUSES.cypher) as CauseKind[],
 };
 
 /** Pace: at most one revision per this many days (spec 3.5; companion_settings basin_revision_min_days overrides). */
@@ -45,13 +77,13 @@ export const RESTATE_JACCARD = 0.85;
 /** Embedding cosine at or above this is a restatement. */
 export const RESTATE_COSINE = 0.97;
 
-export const REVISE_TEACH = "revise my basin <name>: <new description> because <conclusion|refusal|tension|drift|session> <id-prefix>";
+export const REVISE_TEACH = "revise my basin <name>: <new description> because <conclusion|refusal|tension|drift|session|self_model> <id-prefix>";
 
 const DAY_MS = 86_400_000;
 const newId = (): string => crypto.randomUUID().replace(/-/g, "");
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 const short = (id: string): string => id.slice(0, 8);
-const CAUSE_RE = /\s+because\s+(conclusion|refusal|tension|drift|session)\s+([0-9a-f][0-9a-f-]{7,})\s*[.!]?\s*$/i;
+const CAUSE_RE = /\s+because\s+(conclusion|refusal|tension|drift|session|self_model)\s+([0-9a-f][0-9a-f-]{7,})\s*[.!]?\s*$/i;
 
 // ── Verbs ───────────────────────────────────────────────────────────────────────
 
@@ -113,25 +145,24 @@ export async function windowOpensAt(env: Env, companion: BasinCompanion, now: nu
 
 // ── Cause: must exist and belong to the caller ──────────────────────────────────
 
-const CAUSE_TABLE: Record<CauseKind, string> = {
-  conclusion: "companion_conclusions",
-  refusal: "companion_refusals",
-  tension: "companion_tensions",
-  drift: "companion_basin_history",
-  session: "sessions",
-};
-
 type CauseOutcome = { ok: true; id: string } | { ok: false; res: BasinResult };
 
 async function resolveCause(env: Env, companion: BasinCompanion, kind: CauseKind, ref: string): Promise<CauseOutcome> {
-  if (!CAUSE_KINDS[companion].includes(kind)) {
+  const rule = CAUSES[companion][kind];
+  if (!rule) {
     return { ok: false, res: refuse("cause_kind_not_allowed", `for ${companion} a basin moves on: ${CAUSE_KINDS[companion].join(", ")}. A ${kind} does not move one.`) };
   }
-  const table = CAUSE_TABLE[kind];
-  const rows = await env.DB.prepare(`SELECT id FROM ${table} WHERE companion_id = ? AND id LIKE ? LIMIT 3`)
-    .bind(companion, `${ref.replace(/[%_]/g, "")}%`).all<{ id: string }>();
+  const like = `${ref.replace(/[%_]/g, "")}%`;
+  // Belongs to the caller AND is in the state that counts. A row that exists but is in the wrong state gets its own reason.
+  const rows = await env.DB.prepare(`SELECT id FROM ${rule.table} WHERE companion_id = ? AND id LIKE ? AND (${rule.predicate}) LIMIT 3`)
+    .bind(companion, like).all<{ id: string }>();
   const hits = rows.results ?? [];
-  if (hits.length === 0) return { ok: false, res: refuse("cause_not_found", `no ${kind} of yours starts with ${ref}. A basin moves on an event that is yours and exists.`) };
+  if (hits.length === 0) {
+    const exists = await env.DB.prepare(`SELECT id FROM ${rule.table} WHERE companion_id = ? AND id LIKE ? LIMIT 1`).bind(companion, like).first<{ id: string }>();
+    return { ok: false, res: refuse("cause_not_found", exists
+      ? `that ${kind} of yours is not an event yet. For ${companion}, a ${kind} that moves a basin is ${rule.says}.`
+      : `no ${kind} of yours starts with ${ref}. A basin moves on an event that is yours and exists.`) };
+  }
   if (hits.length > 1) return { ok: false, res: refuse("cause_ambiguous", `${ref} matches more than one of your ${kind}s; give more of the id.`) };
   return { ok: true, id: hits[0]!.id };
 }
@@ -146,6 +177,9 @@ export function tokenOverlap(a: string, b: string): number {
   for (const t of ta) if (tb.has(t)) inter++;
   return inter / (ta.size + tb.size - inter);
 }
+
+/** Each companion's own word for it: Gaia's is "a return", Drevan's is "a restatement" (Cypher uses Drevan's). */
+const restateWord = (c: BasinCompanion): string => (c === "gaia" ? "a return moves nothing" : "a restatement moves nothing");
 
 // ── Revise ──────────────────────────────────────────────────────────────────────
 
@@ -199,7 +233,7 @@ export async function reviseBasin(
 
   // Restatement: same words, or the same place in the embedding space.
   if (norm(description) === norm(row.basin_description) || tokenOverlap(description, row.basin_description) >= RESTATE_JACCARD) {
-    return refuse("restatement", "a return with no new load moves nothing. This reads as what the basin already says.");
+    return refuse("restatement", `${restateWord(me)}. This reads as what the basin already says.`);
   }
   let vec: number[] | null = null;
   try { vec = await embedText(env, `${row.basin_name}: ${description}`); } catch { vec = null; }
@@ -207,7 +241,7 @@ export async function reviseBasin(
   try {
     const old = row.embedding ? (JSON.parse(row.embedding) as number[]) : null;
     const sim = Array.isArray(old) ? cosineSim(vec, old) : null;
-    if (sim !== null && sim >= RESTATE_COSINE) return refuse("restatement", "a return with no new load moves nothing. This sits where the basin already sits.");
+    if (sim !== null && sim >= RESTATE_COSINE) return refuse("restatement", `${restateWord(me)}. This sits where the basin already sits.`);
   } catch { /* unreadable stored vector: the token check stands */ }
 
   const id = newId();
@@ -294,7 +328,7 @@ const COLS = `id, basin_name AS name, status, created_at, cause_kind, cause_ref,
 /** A companion's own view: names, status, causes, dates. No description text (the Librarian never carries stored text back). */
 export async function listBasins(env: Env, companion: string): Promise<BasinLine[]> {
   try {
-    const r = await env.DB.prepare(`SELECT ${COLS} FROM companion_basins WHERE companion_id = ? AND status <> 'declined' ORDER BY created_at ASC`)
+    const r = await env.DB.prepare(`SELECT ${COLS} FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC`)
       .bind(companion).all<BasinLine>();
     return r.results ?? [];
   } catch (e) {
@@ -345,8 +379,11 @@ export async function readBasinsFull(env: Env, companion: BasinCompanion, now: n
   };
 }
 
-/** One line per basin for a companion's own `my basins`. */
+/** One line per basin for a companion's own `my basins`: the answer to a proposal (witnessed / declined, when) and Raziel's note, if any. */
 export function renderBasinLine(b: BasinLine): string {
   const cause = b.cause_kind ? `, revised ${b.created_at.slice(0, 10)} from ${b.cause_kind}` : "";
-  return `${b.name} [${b.status}] ${short(b.id)}${cause}`;
+  const day = b.witnessed_at ? b.witnessed_at.slice(0, 10) : "";
+  const answer = b.status === "declined" ? `, declined ${day}` : b.witnessed_at && b.witnessed_by ? `, witnessed ${day}` : "";
+  const note = b.revision_note && b.witnessed_at ? ` (Raziel: ${b.revision_note})` : "";
+  return `${b.name} [${b.status}] ${short(b.id)}${cause}${answer}${note}`;
 }

@@ -3,7 +3,8 @@
 //                                           descriptions included (the companion's own words, read by Hearth). Same auth as other /mind reads.
 //   POST /mind/basins/:id/witness           { decision: "witness" | "decline", note? }  RAZIEL ONLY (ADMIN_SECRET exactly).
 // A companion token is refused on the witness route; a companion never witnesses their own revision, and
-// Raziel never authors one (the revise verb takes the caller from the Librarian request, no HTTP door writes one).
+// Raziel never authors one: the only writer is the Librarian revise verb (caller = the request companion). The one other
+// HTTP basin write, POST /companion-growth/basins, is seed-only and refuses once a companion has any basin.
 
 import type { Env } from "../types.js";
 import { authGuard, isAdminToken } from "../lib/auth.js";

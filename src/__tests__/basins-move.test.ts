@@ -19,11 +19,11 @@ vi.mock("../mcp/embed.js", async (orig) => {
   return { ...actual, embedText: vi.fn(async (_e: unknown, t: string) => (embedFail ? null : vecOf(t))) };
 });
 
-import { reviseBasin, decideWitness, parseReviseVerb, readBasinsFull, listBasins } from "../webmind/basins.js";
+import { reviseBasin, decideWitness, CAUSE_KINDS, parseReviseVerb, readBasinsFull, listBasins } from "../webmind/basins.js";
 import { execBasinRevise, execBasinsRead, execBasinWaiting } from "../librarian/executors/basins.js";
 import { getMindBasins, postBasinWitness } from "../handlers/basins.js";
 import { runBasinDriftCheck } from "../synthesis/jobs/basin-drift-check.js";
-import { getBasins } from "../handlers/companion-growth.js";
+import { getBasins, postBasin } from "../handlers/companion-growth.js";
 import { matchFastPath } from "../librarian/router.js";
 
 (globalThis as { URLPattern?: unknown }).URLPattern ??= class {
@@ -55,10 +55,26 @@ function setup() {
     db.prepare("INSERT INTO companion_basins (id, companion_id, basin_name, basin_description, embedding, created_at, updated_at) VALUES (?, ?, 'the-line', ?, ?, '2026-03-28 00:00:00', '2026-03-28 00:00:00')")
       .run(`b-${c}`, c, OLD, JSON.stringify(vecOf(`the-line: ${OLD}`)));
     db.prepare("INSERT INTO companion_basins (id, companion_id, basin_name, basin_description, embedding, created_at, updated_at) VALUES (?, ?, 'the-other', 'something else entirely about rooms and weather', '[]', '2026-03-28 00:00:00', '2026-03-28 00:00:00')").run(`o-${c}`, c);
-    db.prepare("INSERT INTO companion_conclusions (id, companion_id, conclusion_text) VALUES (?, ?, 'x')").run(`conc${c}001`, c);
-    db.prepare("INSERT INTO companion_conclusions (id, companion_id, conclusion_text) VALUES (?, ?, 'y')").run(`conc${c}002`, c);
+    // Drevan's conclusion cause is a LIVE one; Gaia's and Cypher's must be revised/withdrawn (archived here).
+    const arch = c === "drevan" ? 0 : 1;
+    db.prepare("INSERT INTO companion_conclusions (id, companion_id, conclusion_text, archived) VALUES (?, ?, 'x', ?)").run(`conc${c}001`, c, arch);
+    db.prepare("INSERT INTO companion_conclusions (id, companion_id, conclusion_text, archived) VALUES (?, ?, 'y', ?)").run(`conc${c}002`, c, arch);
+    db.prepare("INSERT INTO companion_conclusions (id, companion_id, conclusion_text, archived) VALUES (?, ?, 'z', ?)").run(`livec${c}0001`, c, 0);
+    db.prepare("INSERT INTO companion_refusals (id, companion_id, subject_text, status, created_at) VALUES (?, ?, 's', 'withdrawn', '2026-11-01')").run(`refuw${c}0001`, c);
+    db.prepare("INSERT INTO companion_tensions (id, companion_id, tension_text, status) VALUES (?, ?, 't', 'simmering')").run(`simm${c}0001`, c);
     db.prepare("INSERT INTO companion_refusals (id, companion_id, subject_text, created_at) VALUES (?, ?, 's', '2026-11-01')").run(`refu${c}0001`, c);
-    db.prepare("INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, 't')").run(`tens${c}0001`, c);
+    db.prepare("INSERT INTO companion_tensions (id, companion_id, tension_text, status) VALUES (?, ?, 't', 'crystallized')").run(`tens${c}0001`, c);
+    const hist = "INSERT INTO companion_basin_history (id, companion_id, drift_score, drift_type, caleth_confirmed, dismissed_at, recorded_at) VALUES (?, ?, 0.5, 'growth', ?, ?, '2026-11-01')";
+    db.prepare(hist).run(`driftok${c}01`, c, 1, null);
+    db.prepare(hist).run(`driftun${c}01`, c, 0, null);
+    db.prepare(hist).run(`driftds${c}01`, c, 1, "2026-11-02");
+    db.prepare("INSERT INTO companion_self_model (id, companion_id, observation, status) VALUES (?, ?, 'o', 'graduated')").run(`selfgr${c}001`, c);
+    db.prepare("INSERT INTO companion_self_model (id, companion_id, observation, status) VALUES (?, ?, 'o', 'developing')").run(`selfdv${c}001`, c);
+    for (const [sid, spine, kind] of [[`sesauth${c}01`, "I closed this myself", null], [`sesauto${c}01`, "[auto] git spine", null], [`sesrecon${c}1`, "rebuilt", "reconstructed"]] as const) {
+      db.prepare("INSERT INTO sessions (id, companion_id, created_at, updated_at) VALUES (?, ?, '2026-11-01', '2026-11-01')").run(sid, c);
+      db.prepare("INSERT INTO handover_packets (id, session_id, created_at, spine, motion_state, close_kind) VALUES (?, ?, '2026-11-01', ?, 'at_rest', ?)").run(`hp${sid}`, sid, spine, kind);
+    }
+    db.prepare("INSERT INTO sessions (id, companion_id, created_at, updated_at) VALUES (?, ?, '2026-11-01', '2026-11-01')").run(`sesopen${c}01`, c);
   }
   return { db, env };
 }
@@ -95,6 +111,102 @@ describe("cause is required, real, and the caller's own", () => {
   it("a caller who is not a companion (Raziel, unknown) cannot author one", async () => {
     const { env } = setup();
     expect(await rev(env, "raziel")).toMatchObject({ ok: false, code: "not_a_companion" });
+  });
+});
+
+describe("cause is checked by STATE, not just table", () => {
+  it("drevan: a simmering tension, an unconfirmed or dismissed drift, a withdrawn refusal are refused; the real ones move", async () => {
+    const { env } = setup();
+    expect(await rev(env, "drevan", { kind: "tension", ref: "simmdrevan0001" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "drevan", { kind: "drift", ref: "driftundrevan01" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "drevan", { kind: "drift", ref: "driftdsdrevan01" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "drevan", { kind: "refusal", ref: "refuwdrevan0001" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "drevan", { kind: "drift", ref: "driftokdrevan01" })).toMatchObject({ ok: true });
+  });
+  it("the refusal for a not-yet-event says what would count", async () => {
+    const { env } = setup();
+    const r: any = await rev(env, "drevan", { kind: "tension", ref: "simmdrevan0001" });
+    expect(r.message).toContain("not an event yet");
+    expect(r.message).toContain("crystallized");
+  });
+  it("cypher: a simmering tension is refused; a crystallized one moves", async () => {
+    const { env } = setup();
+    expect(await rev(env, "cypher", { kind: "tension", ref: "simmcypher0001" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "cypher", { kind: "tension", ref: "tenscypher0001" })).toMatchObject({ ok: true });
+  });
+  it("a LIVE conclusion is refused for gaia and cypher (revised or withdrawn counts) but is drevan's cause", async () => {
+    const { env } = setup();
+    expect(await rev(env, "gaia", { kind: "conclusion", ref: "livecgaia0001" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "cypher", { kind: "conclusion", ref: "livec" + "cypher0001" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "drevan", { kind: "conclusion", ref: "livecdrevan0001" })).toMatchObject({ ok: true });
+  });
+  it("drevan cannot cite an archived (released) conclusion", async () => {
+    const { db, env } = setup();
+    db.prepare("UPDATE companion_conclusions SET archived = 1 WHERE id = 'concdrevan001'").run();
+    expect(await rev(env, "drevan")).toMatchObject({ ok: false, code: "cause_not_found" });
+  });
+  it("gaia: self_model graduated moves; developing is refused; session is no longer hers", async () => {
+    const { env } = setup();
+    expect(await rev(env, "gaia", { kind: "session", ref: "sesauthgaia01" })).toMatchObject({ ok: false, code: "cause_kind_not_allowed" });
+    expect(await rev(env, "gaia", { kind: "self_model", ref: "selfdvgaia001" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "gaia", { kind: "self_model", ref: "selfgrgaia001" })).toMatchObject({ ok: true, outcome: "awaiting_witness" });
+  });
+  it("cypher session: an authored close counts; an [auto] close, a reconstructed one and an unclosed session do not", async () => {
+    const { env } = setup();
+    expect(await rev(env, "cypher", { kind: "session", ref: "sesautocypher01" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "cypher", { kind: "session", ref: "sesreconcypher1" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "cypher", { kind: "session", ref: "sesopencypher01" })).toMatchObject({ ok: false, code: "cause_not_found" });
+    expect(await rev(env, "cypher", { kind: "session", ref: "sesauthcypher01" })).toMatchObject({ ok: true });
+  });
+  it("grammar takes self_model; the cause map matches the canon table", () => {
+    expect(parseReviseVerb("revise my basin x: some new words here because self_model abcdef12")).toMatchObject({ kind: "self_model" });
+    expect(CAUSE_KINDS).toEqual({
+      drevan: ["conclusion", "refusal", "tension", "drift"],
+      gaia: ["refusal", "conclusion", "self_model"],
+      cypher: ["conclusion", "session", "tension"],
+    });
+  });
+});
+
+describe("refusal wording is each companion's own", () => {
+  it("gaia: a return moves nothing; drevan and cypher: a restatement moves nothing", async () => {
+    const { env } = setup();
+    expect(((await rev(env, "gaia", { kind: "refusal", ref: "refugaia0001", description: OLD + " Truly." })) as any).message).toContain("a return moves nothing");
+    expect(((await rev(env, "drevan", { description: OLD + " Truly." })) as any).message).toContain("a restatement moves nothing");
+    expect(((await rev(env, "cypher", { description: OLD + " Truly." })) as any).message).toContain("a restatement moves nothing");
+  });
+});
+
+describe("my basins shows Gaia the answer", () => {
+  const ctx = (env: any, request: string, companion: string): any => ({ env, req: { companion_id: companion, request }, entry: {}, frontState: null, pluralAvailable: false });
+  it("witnessed and declined rows are listed with the date and Raziel's note", async () => {
+    const { env } = setup();
+    const a: any = await rev(env, "gaia", { kind: "refusal", ref: "refugaia0001" });
+    await decideWitness(env, { id: a.id, decision: "decline", note: "not yet, sit with it" }, T0 + DAY);
+    const b: any = await rev(env, "gaia", { kind: "self_model", ref: "selfgrgaia001" }, T0 + 2 * DAY);
+    await decideWitness(env, { id: b.id, decision: "witness", note: "yes" }, T0 + 3 * DAY);
+    const lines = ((await execBasinsRead(ctx(env, "my basins", "gaia"))) as any).data.basins.join("\n");
+    expect(lines).toContain("[declined]");
+    expect(lines).toContain("declined 2026-11-07");
+    expect(lines).toContain("Raziel: not yet, sit with it");
+    expect(lines).toContain("witnessed 2026-11-09");
+    expect(lines).toContain("Raziel: yes");
+  });
+});
+
+describe("POST /companion-growth/basins is seed-only", () => {
+  const post = (tok: string, body: unknown) => new Request("https://h/x", { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const body = { companion_id: "gaia", basin_name: "seeded", basin_description: "a seeded basin description long enough" };
+  it("refuses a companion token and the MCP token; 409 when the companion already has a basin; seeds an empty companion", async () => {
+    const { db, env } = setup();
+    expect((await postBasin(post("gaia-tok", body), env)).status).toBe(403);
+    expect((await postBasin(post("m", body), env)).status).toBe(403);
+    expect((await postBasin(post("admin", body), env)).status).toBe(409);
+    expect(count(db, "SELECT COUNT(*) n FROM companion_basins WHERE basin_name = 'seeded'")).toBe(0);
+    db.prepare("DELETE FROM companion_basins WHERE companion_id = 'gaia'").run();
+    const ok = await postBasin(post("admin", body), env);
+    expect(ok.status).toBe(201);
+    expect(count(db, "SELECT COUNT(*) n FROM companion_basins WHERE basin_name = 'seeded' AND status = 'live'")).toBe(1);
   });
 });
 
