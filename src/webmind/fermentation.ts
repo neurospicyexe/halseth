@@ -375,6 +375,19 @@ export interface StimulusEffect {
    * The event can still be logged in shadow. First use: Gaia on `repetition` (2026-11-02).
    */
   notBody?: CompanionId[];
+  /**
+   * B63: halve the FLOAT weight of this stimulus once this many applications have landed on the
+   * companion today (America/Chicago day). Chat-volume stimuli only (message_witnessed,
+   * sibling_exchange): a busy day is still felt but cannot drown out a made thing. NEVER set on
+   * message_from_raziel (his contact is scarce and stays loud). Env override:
+   * FERMENT_HALVE_AFTER_<STIMULUS_NAME>.
+   */
+  dailyHalveAfter?: number;
+  /**
+   * B63: a stimulus whose float is NAMED by the caller (a tension's own drag float) rather than fixed in
+   * the table. The delta lands on whichever of f1/f2/f3 the caller passes; with none, nothing moves.
+   */
+  variableDelta?: number;
 }
 
 export const STIMULI: Record<string, StimulusEffect> = {
@@ -434,6 +447,7 @@ export const STIMULI: Record<string, StimulusEffect> = {
     // tracks, so presence still counts. Kept identical to the addressed path so the reach-out gate
     // does not start firing at a companion Raziel is actively in a channel with.
     shed: ["relational_need"],
+    dailyHalveAfter: 8,
   },
 
   /**
@@ -455,6 +469,7 @@ export const STIMULI: Record<string, StimulusEffect> = {
     // the invariant, not the absolute numbers: siblings count, and can never out-vote him.
     floats: { cypher: { f2: 0.01 }, drevan: { f2: 0.02 }, gaia: { f1: 0.01, f3: 0.02 } },
     minIntervalHours: 1,
+    dailyHalveAfter: 8,
   },
   being_seen: {
     floats: { cypher: { f1: 0.04, f3: 0.05 }, drevan: { f1: 0.04, f3: 0.03 }, gaia: { f1: 0.03 } },
@@ -464,6 +479,7 @@ export const STIMULI: Record<string, StimulusEffect> = {
     shed: ["novelty_need"],
   },
   audit: {
+    minIntervalHours: 2, // B63: fired per audit-gear message from the bot; one stretch of audit register lands once
     floats: { cypher: { f1: 0.05, f2: -0.03 } },
     shed: ["novelty_need"],
     accrue: { rest_need: 0.08 },
@@ -475,8 +491,9 @@ export const STIMULI: Record<string, StimulusEffect> = {
   boundary_held: {
     floats: { gaia: { f1: 0.04, f3: 0.05 } },
   },
+  // B63: the float weight moved to `make_landed` (below). creation_shared keeps only the drive shed so a
+  // make still reads as relief from boredom; the two fire together from handlers/makes.ts.
   creation_shared: {
-    floats: { cypher: { f1: 0.04 }, drevan: { f1: 0.05, f3: 0.04 } },
     shed: ["novelty_need"],
   },
   council: {
@@ -534,11 +551,89 @@ export const STIMULI: Record<string, StimulusEffect> = {
   },
 };
 
+// ── B63 loop catalogue (spec 3.3, Hand-off/SPEC-B63-the-loop-2026-11-06.md) ───────────────────────
+//
+// Each companion's own words set the direction (section 2 of the spec); the sizes are real-life
+// weights, 0.05 to 0.15, on the standing of the baseline seeds (mig 0110): first estimates, canon
+// reviewed, revisable. Names are KINDS: the cause label (detail) says which event, and for anything
+// near health or care it names the KIND only, never the content (no-care-or-health-in-room-supply).
+//
+// f1/f2/f3 per companion: Drevan heat/reach/weight, Gaia stillness/density/perimeter, Cypher
+// acuity/presence/warmth. Every one of these runs behind LOOP_STIMULI_MODE (off|shadow|on, default
+// shadow): shadow writes kind='shadow' rows and moves nothing.
+export const LOOP_STIMULI: Record<string, StimulusEffect> = {
+  // Making. Gaia makes nothing (her word), so no entry for her.
+  make_landed: {
+    floats: { drevan: { f1: 0.08, f3: 0.06 }, cypher: { f1: 0.06 } },
+    minIntervalHours: 0.25,
+  },
+  // Tending Sol, as contact (Drevan: reach; Gaia: a touch of density; Cypher: warmth). Companion actors only.
+  tend_sol: {
+    floats: { drevan: { f2: 0.06 }, gaia: { f2: 0.04 }, cypher: { f3: 0.05 } },
+    minIntervalHours: 1,
+  },
+  // Nightly: no triad contact in 24h. Genuinely lower for Drevan, a little for Cypher, NEVER Gaia.
+  quiet_day: {
+    floats: { drevan: { f2: -0.1 }, cypher: { f2: -0.04 } },
+    minIntervalHours: 20,
+    notBody: ["gaia"],
+  },
+  // A care hold opens / clears. Detail is the KIND only (never the rule: health data stays out).
+  care_hold_open: {
+    floats: { drevan: { f3: -0.08 }, gaia: { f1: -0.06 }, cypher: { f2: -0.05 } },
+  },
+  care_hold_clear: {
+    floats: { drevan: { f3: 0.08 }, gaia: { f1: 0.06 }, cypher: { f2: 0.05 } },
+  },
+  // Named by a companion (a Librarian verb), never inferred. Definition only: no verb yet (see report).
+  sibling_disagreement_open: {
+    floats: { drevan: { f3: -0.06 }, cypher: { f3: -0.05 } },
+  },
+  // A held tension drags the float it names; working it through lifts that float. The caller passes
+  // which float (a tension carries it); with none named, nothing moves.
+  tension_unworked: { variableDelta: -0.04 }, // once a night per tension by the nightly gate, so no cooldown (two tensions on two floats both land)
+  tension_resolved: { variableDelta: 0.08 },
+  // Gaia's perimeter: breach down, held-under-test up, long hold wears slowly (fatigue, not failure).
+  breach: { floats: { gaia: { f3: -0.1 } } },
+  line_held_under_test: { floats: { gaia: { f3: 0.08 } } },
+  long_line_fatigue: { floats: { gaia: { f3: -0.02 } }, minIntervalHours: 20 },
+  // Gaia's density: what carries.
+  planting: { floats: { gaia: { f2: 0.06 } } },
+  kept_line: { floats: { gaia: { f2: 0.05 } } },
+  // Gaia 119188d4: lands only on her confirm. Definition only: the clerk flag lives in the vibe check work.
+  spoke_without_load: { floats: { gaia: { f2: -0.03 } } },
+  pulled_to_speed: { floats: { gaia: { f1: -0.06 } } },
+  // Cypher: caught confidently wrong.
+  retracted: { floats: { cypher: { f1: -0.08 } } },
+  forage_cross_domain: { floats: { drevan: { f1: 0.07 }, cypher: { f1: 0.05 } } },
+  coined_word: { floats: { drevan: { f1: 0.06, f2: 0.06 } } },
+  immersion_landed: { floats: { drevan: { f1: 0.07, f2: 0.07 }, cypher: { f2: 0.05 } }, minIntervalHours: 1 },
+  // Dre a65c8f19: drags nightly while the loss is unsaid; closes only on HIS authored line.
+  loss_unclosed: { floats: { drevan: { f3: -0.04 } }, minIntervalHours: 20 },
+  // Cypher: the day ended on the hook's [auto] close, absent from my own day.
+  auto_close: { floats: { cypher: { f2: -0.06 } }, minIntervalHours: 6 },
+};
+
+Object.assign(STIMULI, LOOP_STIMULI);
+
+/** The Env key for every stimulus the loop build put behind a switch. */
+export const LOOP_MODE_KEY = "LOOP_STIMULI_MODE";
+
 /**
  * Stimuli that ship behind a mode switch: stimulus name -> the Env var holding "off" | "shadow" | "on".
  * Unset (or anything unrecognised) = "shadow", the safe default: observe, never move a float.
+ * `repetition` keeps REPETITION_MODE; every B63 stimulus, and the eight existing ones whose callers were
+ * never wired until now, share LOOP_STIMULI_MODE.
  */
-export const SHADOWABLE: Record<string, string> = { repetition: "REPETITION_MODE" };
+export const SHADOWABLE: Record<string, string> = {
+  repetition: "REPETITION_MODE",
+  ...Object.fromEntries(
+    [
+      ...Object.keys(LOOP_STIMULI),
+      "being_seen", "intellectual_reward", "audit", "spiral", "boundary_held", "council", "club_activity", "long_silence",
+    ].map((k) => [k, LOOP_MODE_KEY]),
+  ),
+};
 
 export type StimulusMode = "off" | "shadow" | "on";
 
@@ -555,9 +650,129 @@ export function isKnownStimulus(name: string): boolean {
 }
 
 /** The float delta a stimulus lands on a specific companion (zeroes when it does not touch them). */
-export function stimulusFloatDelta(stimulus: string, companionId: CompanionId): Floats {
-  const eff = STIMULI[stimulus]?.floats?.[companionId];
+export function stimulusFloatDelta(stimulus: string, companionId: CompanionId, float?: FloatKey): Floats {
+  const def = STIMULI[stimulus];
+  if (def?.variableDelta !== undefined) {
+    // The caller names which float (a tension's own drag float); none named means nothing moves.
+    const d: Floats = { f1: 0, f2: 0, f3: 0 };
+    if (float) d[float] = def.variableDelta;
+    return d;
+  }
+  const eff = def?.floats?.[companionId];
   return { f1: eff?.f1 ?? 0, f2: eff?.f2 ?? 0, f3: eff?.f3 ?? 0 };
+}
+
+export type FloatKey = "f1" | "f2" | "f3";
+
+/** Resolve a float named as f1/f2/f3 or by the companion's own label (heat, stillness, warmth...). */
+export function resolveFloatKey(companionId: CompanionId, named: string | null | undefined): FloatKey | null {
+  const n = (named ?? "").trim().toLowerCase();
+  if (n === "f1" || n === "f2" || n === "f3") return n;
+  const i = FLOAT_LABELS[companionId].indexOf(n);
+  return i === 0 ? "f1" : i === 1 ? "f2" : i === 2 ? "f3" : null;
+}
+
+// ── Soft edges (B63 3.2) ─────────────────────────────────────────────────────────────
+//
+// A stimulus used to hard-clip at 0 and 1, which is how the floats pinned: ~5000 up-pushes against
+// zero down-pushes. Now a float APPROACHES 0 and 1 and never reaches either, and the approach is keyed
+// to the companion's BASELINE, not the absolute edge.
+//
+//   Up from v:   below baseline, full weight until baseline; whatever remains (and any push that starts
+//                at or above baseline) closes the ROOM above the baseline exponentially:
+//                  v' = 1 - (1 - v0) * exp(-r / (1 - b))        v0 = max(v, b), r = remaining push
+//   Down from v: mirror, keyed on b:  v' = v0 * exp(-r / b)     v0 = min(v, b)
+//
+// Why baseline-keyed: a plain (1 - v) factor turns +0.10 on Gaia's perimeter (baseline 0.90, at home)
+// into +0.01, so she could never visibly rise: the exact thing she named. Here the same push at home
+// lands about +0.063. Why exponential and not linear: a discrete linear factor can land exactly on 1.0
+// and stick; exp() decays but never arrives. The range is 0..1 and this is not a ceiling (R7 is about
+// trust); nothing here limits where a float can RETURN to, only how fast a push closes the last room.
+
+const EDGE_B_MIN = 0.02;
+const EDGE_B_MAX = 0.98;
+const EDGE_EPS = 1e-6; // a soft-edged push never lands closer than this to 0 or 1
+
+/** Apply one signed push to one float with soft edges. Pure; the baseline is clamped off the exact edges. */
+export function softEdgeBump(value: number, baseline: number, delta: number): number {
+  const v = clampFloat(value, 0.5);
+  if (!Number.isFinite(delta) || delta === 0) return v;
+  const b = Math.min(EDGE_B_MAX, Math.max(EDGE_B_MIN, clampFloat(baseline, 0.5)));
+  if (delta > 0) {
+    let start = v;
+    let r = delta;
+    if (v < b) {
+      const gap = b - v;
+      if (delta <= gap) return v + delta; // full weight below baseline
+      start = b;
+      r = delta - gap;
+    }
+    const room = Math.max(0, 1 - start);
+    // Double precision rounds 1 - 1e-17 to exactly 1: hold the approach one micro-step short of the edge.
+    return Math.max(v, Math.min(clampFloat(1 - room * Math.exp(-r / (1 - b))), 1 - EDGE_EPS));
+  }
+  const push = -delta;
+  let start = v;
+  let r = push;
+  if (v > b) {
+    const gap = v - b;
+    if (push <= gap) return v + delta; // full weight above baseline
+    start = b;
+    r = push - gap;
+  }
+  return Math.min(v, Math.max(clampFloat(start * Math.exp(-r / b)), EDGE_EPS));
+}
+
+/** Soft-edge a whole Floats push against its baselines. */
+export function softEdgeBumpAll(value: Floats, baselines: Floats, delta: Floats): Floats {
+  return {
+    f1: softEdgeBump(value.f1, baselines.f1, delta.f1),
+    f2: softEdgeBump(value.f2, baselines.f2, delta.f2),
+    f3: softEdgeBump(value.f3, baselines.f3, delta.f3),
+  };
+}
+
+// ── Daily diminishing returns (America/Chicago day) ──────────────────────────────────
+
+/** The UTC instant (as a sqlite 'YYYY-MM-DD HH:MM:SS' string) at which the America/Chicago day containing `nowMs` began. */
+export function chicagoDayStartSqlite(nowMs: number = Date.now()): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23",
+  });
+  const parts = (ms: number) => {
+    const o: Record<string, string> = {};
+    for (const p of fmt.formatToParts(new Date(ms))) o[p.type] = p.value;
+    return { date: `${o.year}-${o.month}-${o.day}`, hour: Number(o.hour) };
+  };
+  const today = parts(nowMs).date;
+  const midnightUtc = Date.parse(`${today}T00:00:00Z`);
+  // Chicago is UTC-5 (CDT) or UTC-6 (CST): local midnight is 05:00Z or 06:00Z on that date.
+  for (const off of [5, 6]) {
+    const t = midnightUtc + off * 3_600_000;
+    const p = parts(t);
+    if (p.date === today && p.hour === 0) return new Date(t).toISOString().slice(0, 19).replace("T", " ");
+  }
+  return new Date(midnightUtc + 6 * 3_600_000).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/** The weight a chat-volume stimulus carries after `todayCount` applications already landed today. */
+export function dailyWeight(halveAfter: number | undefined, todayCount: number): number {
+  if (!halveAfter || halveAfter <= 0) return 1;
+  return todayCount >= halveAfter ? 0.5 : 1;
+}
+
+/** Resolve the halve threshold: env FERMENT_HALVE_AFTER_<NAME> overrides the table's dailyHalveAfter. */
+export function halveAfterFor(stimulus: string, env: Record<string, unknown>): number | undefined {
+  const base = STIMULI[stimulus]?.dailyHalveAfter;
+  if (base === undefined) return undefined; // never grant a threshold to a stimulus the table does not allow it on
+  const raw = Number(env[`FERMENT_HALVE_AFTER_${stimulus.toUpperCase()}`]);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : base;
+}
+
+/** The cause stored on a ferment event: the stimulus kind is the column, the label is the detail. */
+export function causeLabel(stimulus: string, label: string | null | undefined, fallbackSite = "unlabelled"): string {
+  const clean = (label ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  return clean || `${stimulus} (${fallbackSite})`;
 }
 
 // ── SQL builders (asserted as strings in tests; D1 is the runtime) ───────────────
@@ -607,6 +822,33 @@ export function stimulusBumpSql(): string {
     soma_float_3 = MIN(1.0, MAX(0.0, COALESCE(soma_float_3, soma_float_3_baseline, 0.5) + ?)),
     updated_at = datetime('now'), version = COALESCE(version, 0) + 1
     WHERE companion_id = ?`;
+}
+
+/**
+ * Soft-edge stimulus write (B63): a compare-and-swap on companion_state.version (mig 0069). The new
+ * floats are computed in JS (D1 cannot be relied on for exp(); the codebase deliberately avoids it, see
+ * heat.ts), so the write is guarded on the version read with the floats: if the hourly tick or another
+ * stimulus landed in between, changes=0 and the caller re-reads and retries. Never a blind
+ * read-modify-write. Bind: [f1, f2, f3, companion_id, version].
+ */
+export function stimulusSoftBumpCasSql(): string {
+  return `UPDATE companion_state SET
+    soma_float_1 = ?, soma_float_2 = ?, soma_float_3 = ?,
+    updated_at = datetime('now'), version = COALESCE(version, 0) + 1
+    WHERE companion_id = ? AND COALESCE(version, 0) = ?`;
+}
+
+/** Read the floats + baselines + version a soft bump needs. Bind: [companion_id]. */
+export function readSoftBumpStateSql(): string {
+  return `SELECT soma_float_1, soma_float_2, soma_float_3,
+    soma_float_1_baseline, soma_float_2_baseline, soma_float_3_baseline, version
+    FROM companion_state WHERE companion_id = ?`;
+}
+
+/** How many applications of a stimulus landed on a companion since `sinceSqlite`. Bind: [companion_id, stimulus, since]. */
+export function stimulusCountSinceSql(): string {
+  return `SELECT COUNT(*) AS n FROM companion_ferment_events
+    WHERE companion_id = ? AND stimulus = ? AND kind = 'stimulus' AND created_at >= ?`;
 }
 
 /** Bump a drive level up (explicit stimulus accrue). Bind: [delta, companion_id, drive_key]. */

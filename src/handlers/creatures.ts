@@ -43,6 +43,7 @@ import {
   type LastActed,
 } from "../webmind/creatures.js";
 import { performTend, evictForRoom } from "../webmind/creature-interact.js";
+import { fireTendSol } from "../webmind/loop-stimuli.js";
 import { KEPT_LIVE_SQL } from "../webmind/review-state.js";
 import {
   hoardSkipReason,
@@ -229,6 +230,7 @@ export async function interactCreature(request: Request, env: Env, params: Recor
     // milestone firing + give-notes into the nest. Same code the Librarian
     // tend_creature executor runs, so no side effect can miss a writer.
     const outcome = await performTend(env.DB, exists, actor, action, note);
+    await fireTendSol(env, exists.kind, actor, action);
     return json({ interacted: true, action, ...outcome });
   } catch (err) {
     console.error("[mind/creatures] interact error", { error: String(err) });

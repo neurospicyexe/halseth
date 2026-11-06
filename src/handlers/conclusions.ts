@@ -5,6 +5,7 @@
 // GET  /companion-conclusions/:agent_id — read active (non-superseded) conclusions
 // POST /companion-conclusions/:id/supersede — mark a conclusion superseded by a later one
 
+import { fireRetracted } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import type { WmAgentId } from "../webmind/types.js";
@@ -150,6 +151,7 @@ export async function postConclusion(request: Request, env: Env): Promise<Respon
   }
 
   await env.DB.batch(stmts);
+  if (supersededIds.length > 0) await fireRetracted(env, companion_id);
 
   // Best-effort delete of the superseded row's vector so a dead conclusion can never
   // resurface as a novelty-gate match (2026-07-20 review: noveltyCheck's D1 post-filter
@@ -289,5 +291,7 @@ export async function supersedeConclusionById(
     ).bind(superseded_by.trim(), id, companion_id),
   ]);
 
-  return json({ ok: (result?.meta.changes ?? 0) > 0 });
+  const retired = (result?.meta.changes ?? 0) > 0;
+  if (retired) await fireRetracted(env, companion_id);
+  return json({ ok: retired });
 }

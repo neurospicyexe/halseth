@@ -34,7 +34,7 @@ describe("repetition: table + mode", () => {
     expect(stimulusMode("repetition", { REPETITION_MODE: "banana" })).toBe("shadow");
     expect(stimulusMode("repetition", { REPETITION_MODE: " OFF " })).toBe("off");
     expect(stimulusMode("repetition", { REPETITION_MODE: "on" })).toBe("on");
-    expect(stimulusMode("council", { REPETITION_MODE: "off" })).toBe("on");
+    expect(stimulusMode("message_witnessed", { REPETITION_MODE: "off" })).toBe("on");
   });
   it("recent events read excludes shadow rows", () => {
     expect(recentFermentEventsSql()).toContain("kind != 'shadow'");
@@ -135,7 +135,9 @@ describe("repetition: off and on", () => {
     const f0 = floats(db, "cypher"); const n0 = novelty(db, "cypher").level;
     const r = await fire(env, { stimulus: "repetition", companion_id: "cypher" });
     expect(r.body.applied).toEqual(["cypher"]);
-    expect(floats(db, "cypher").a).toBeCloseTo(f0.a - 0.02, 5);
+    // B63 soft edges: below baseline a down-push closes the room asymptotically, a hair under the nominal 0.02
+    expect(f0.a - floats(db, "cypher").a).toBeGreaterThan(0.0195);
+    expect(f0.a - floats(db, "cypher").a).toBeLessThanOrEqual(0.02);
     expect(novelty(db, "cypher").level).toBeCloseTo(n0 + 0.05, 5);
     expect(events(db, "cypher", "stimulus")).toHaveLength(1);
     expect(events(db, "cypher", "shadow")).toHaveLength(0);
@@ -145,7 +147,7 @@ describe("repetition: off and on", () => {
 
   it("other stimuli are untouched by the new path", async () => {
     const { env } = setup();
-    const r = await fire(env, { stimulus: "council", companion_id: "cypher" });
+    const r = await fire(env, { stimulus: "message_witnessed", companion_id: "cypher" });
     expect(r.body.applied).toEqual(["cypher"]);
   });
 });

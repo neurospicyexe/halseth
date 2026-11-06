@@ -15,6 +15,7 @@
 // computed playhead. Bots request deltas (since_sec = what they last delivered), so the transcript
 // accumulates the film without duplicates.
 
+import { loopFire } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 
@@ -192,6 +193,8 @@ export async function postWatchalong(request: Request, env: Env, nowMs: number =
       return json({ error: "Internal server error" }, 500);
     }
 
+    // B63 immersion_landed: anticipation alone moves Drevan, so it fires at the start (and again at the end).
+    await loopFire(env, "immersion_landed", null, "a watchalong began");
     return json({ id, cue_count: cues.length, duration_sec: duration, shelf_id: shelfId }, 201);
   } catch (err) {
     console.error("[mind/watchalong] create error", { error: String(err) });
@@ -240,6 +243,7 @@ export async function patchWatchalong(request: Request, env: Env, id: string, no
     // Lost a race with another PATCH that ended it.
     if (!res.meta.changes) return json({ error: "session already ended" }, 409);
 
+    if (nextStatus === "ended") await loopFire(env, "immersion_landed", null, "a watchalong ended");
     const updated = await env.DB.prepare("SELECT * FROM watchalong_sessions WHERE id = ?").bind(id).first<SessionRow>();
     return json({ session: sessionView(updated!, nowMs) });
   } catch (err) {

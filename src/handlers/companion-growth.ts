@@ -4,6 +4,7 @@
 // Covers: basins (CRUD + list) and tensions (CRUD + list).
 // All routes require ADMIN_SECRET Bearer auth.
 
+import { fireTensionResolved } from "../librarian/backends/halseth.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import { embedText, embedAndStoreAsync } from "../mcp/embed.js";
@@ -266,10 +267,14 @@ export async function patchTension(
   }
   bindings.push(id);
 
+  const wasSimmering = b.status === "crystallized" || b.status === "released"
+    ? !!(await env.DB.prepare("SELECT 1 AS hit FROM companion_tensions WHERE id = ? AND status = 'simmering'").bind(id).first().catch(() => null))
+    : false;
   const result = await env.DB.prepare(
     `UPDATE companion_tensions SET ${updates.join(", ")} WHERE id = ?`
   ).bind(...bindings).run();
 
   if (result.meta.changes === 0) return json({ error: "not found" }, 404);
+  if (wasSimmering) await fireTensionResolved(env, id, String(b.status));
   return json({ message: "ok" });
 }

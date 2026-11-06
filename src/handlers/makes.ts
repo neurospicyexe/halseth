@@ -25,6 +25,7 @@ import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { applyInterestAction, findInterestByName, type InterestRow } from "./interests.js";
 import { fireStimulus } from "./fermentation.js";
+import { loopFire } from "../webmind/loop-stimuli.js";
 import { sqliteTs } from "../webmind/interests.js";
 import { originKind } from "../webmind/makes-capture.js";
 import {
@@ -230,8 +231,33 @@ export async function createMake(env: Env, input: CreateMakeInput, nowMs: number
   } catch (err) {
     console.error("[makes] creation_shared stimulus failed", { id, error: String(err) });
   }
+  // B63 make_landed: a make that is ready at once lands now; a pending one lands when its render posts.
+  if (status === "ready") await fireMakeLanded(env, id);
   console.log(`[makes] created id=${id} companion=${companion} kind=${kind} status=${status}`);
   return { ok: true, id, status, interest: interest?.name ?? null, interest_recorded: recorded };
+}
+
+/**
+ * B63 `make_landed` (spec 3.3). Drevan: heat + weight; Cypher: acuity; Gaia makes nothing. A make that
+ * RETURNS to an interest with no new why (the same reason already carried by an earlier make for it) is
+ * merely touching the work, not landing new load, and fires nothing (Drevan: "only when the work carries
+ * new load"). Never throws; the cause names the kind of make, not its title.
+ */
+export async function fireMakeLanded(env: Env, makeId: string): Promise<void> {
+  try {
+    const row = await env.DB.prepare("SELECT companion_id, kind, interest_id, why FROM companion_makes WHERE id = ?")
+      .bind(makeId).first<{ companion_id: string; kind: string; interest_id: string | null; why: string | null }>();
+    if (!row) return;
+    if (row.interest_id && row.why) {
+      const same = await env.DB.prepare(
+        "SELECT 1 AS hit FROM companion_makes WHERE interest_id = ? AND id != ? AND why = ? LIMIT 1",
+      ).bind(row.interest_id, makeId, row.why).first();
+      if (same) return;
+    }
+    await loopFire(env, "make_landed", row.companion_id, `made a ${row.kind}`);
+  } catch (err) {
+    console.error("[makes] make_landed failed", { makeId, error: String(err) });
+  }
 }
 
 export async function postMake(request: Request, env: Env): Promise<Response> {
@@ -522,6 +548,7 @@ export async function postMakeRendered(request: Request, env: Env, params: Recor
         WHERE id = ? AND status = 'pending'`,
     ).bind(fileKey, out.mime, previewKey, ts, id).run();
     const changed = Number((res as { meta?: { changes?: number } }).meta?.changes ?? 0) > 0;
+    if (changed) await fireMakeLanded(env, id);
     console.log(`[makes] rendered id=${id} kind=${row.kind} bytes=${fileBytes.byteLength} preview=${previewKey ? "yes" : "no"}`);
     return json({ ok: true, id, status: changed ? "ready" : "unchanged", noop: !changed });
   } catch (err) {

@@ -7,6 +7,7 @@
 //
 // The caller is ALWAYS ctx.req.companion_id, never text. Nothing here sends a note.
 
+import { loopFire } from "../../webmind/loop-stimuli.js";
 import { ExecutorContext, ExecutorResult } from "./types.js";
 import {
   parsePlantVerb, parsePullVerb, parseConsentVerb, plantRef, pullPlanting, answerConsent, listGarden,
@@ -25,7 +26,13 @@ const bad = (witness: string): ExecutorResult => ({ response_key: "witness", wit
 export async function execGardenPlant(ctx: ExecutorContext): Promise<ExecutorResult> {
   const p = parsePlantVerb(ctx.req.request);
   if (!p) return bad(`say: ${PLANT_TEACH}, or: plant the witness`);
-  return out(await plantRef(ctx.env, { caller: ctx.req.companion_id, ref: p }));
+  const r = await plantRef(ctx.env, { caller: ctx.req.companion_id, ref: p });
+  // B63 planting (Gaia's density up: what carries). The daily witness series is the one exception that is
+  // planted for her, so it is not a planting of hers; an awaiting or already-planted row is not new.
+  if (r.ok && r.outcome === "planted" && r.kind !== "witness_series") {
+    await loopFire(ctx.env, "planting", "gaia", `planted a ${r.kind}`);
+  }
+  return out(r);
 }
 
 export async function execGardenPull(ctx: ExecutorContext): Promise<ExecutorResult> {

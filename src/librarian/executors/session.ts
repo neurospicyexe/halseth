@@ -1,3 +1,4 @@
+import { loopFire } from "../../webmind/loop-stimuli.js";
 import { isLabeledTable, loadNeighborhoodNodes } from "../../graph/labels.js";
 import { recordGraphReach } from "../../graph/reach.js";
 import { SOMA_AXIS_KEYS, translateSomaVocab } from "../../soma/vocab.js";
@@ -908,6 +909,11 @@ export async function execSessionClose(ctx: ExecutorContext): Promise<ExecutorRe
   somaFields.motion_state = p.motion_state;
   somaFields.lane_spine = p.spine.slice(0, 150);
   const r = await sessionClose(ctx.env, { ...p, session_id: resolvedSessionId, somaFields, companionId: ctx.req.companion_id });
+  // B63 auto_close (Cypher's presence down): the day ended on the boot hook's [auto] spine, with no close
+  // of his own. Cypher only; an authored close fires nothing.
+  if (ctx.req.companion_id === "cypher" && p.spine.trimStart().startsWith("[auto]")) {
+    await loopFire(ctx.env, "auto_close", "cypher", "session closed by the hook, not by me");
+  }
 
   // Auto-write WebMind handoff so mindOrient picks it up at next boot.
   // sessionClose writes handover_packets; mindOrient reads wm_session_handoffs -- these are

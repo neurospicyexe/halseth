@@ -12,6 +12,7 @@
 //   - tick: a single deterministic server-side pass (no concurrency) reading each row, computing
 //     the fermented floats + drifted baselines with the pure helpers, writing them back.
 
+import { runLoopNightly } from "../webmind/loop-nightly.js";
 import { coolIdleInterests } from "./interests.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
@@ -32,12 +33,22 @@ import {
   updateOffSince,
   STIMULI,
   stimulusMode,
+  resolveFloatKey,
   type StimulusMode,
   TICK_MAX_HOURS,
   readFermentStateSql,
   readFermentStateOneSql,
   fermentTickUpdateSql,
   stimulusBumpSql,
+  stimulusSoftBumpCasSql,
+  readSoftBumpStateSql,
+  stimulusCountSinceSql,
+  softEdgeBumpAll,
+  chicagoDayStartSqlite,
+  dailyWeight,
+  halveAfterFor,
+  causeLabel,
+  type FloatKey,
   driveAccrueBumpSql,
   insertFermentEventSql,
   recentFermentEventsSql,
@@ -338,6 +349,9 @@ export async function runFermentTick(env: Env): Promise<{ ticked: number }> {
   // B62: the one automatic interest event (cooled). Cheap single query, never breaks the tick.
   await coolIdleInterests(env).catch(() => 0);
 
+  // B63: the once-a-day loop pass (losses, quiet_day, tension_unworked). Self-gated; never breaks the tick.
+  await runLoopNightly(env).catch((err) => console.error("[mind/ferment] loop nightly failed", String(err)));
+
   return { ticked };
 }
 
@@ -356,28 +370,91 @@ export async function tickFermentation(request: Request, env: Env): Promise<Resp
 
 // ── Stimulus application ───────────────────────────────────────────────────────────
 
-/** Apply a stimulus's FLOAT deltas to one companion (SQL-atomic) and log it. No drive ops. */
-export async function bumpFloatsForStimulus(env: Env, companionId: CompanionId, stimulus: string): Promise<Floats | null> {
-  const d = stimulusFloatDelta(stimulus, companionId);
-  if (d.f1 === 0 && d.f2 === 0 && d.f3 === 0) return null;
-  // Read before AND after: stimulusBumpSql clamps in SQL, so the realized move can be smaller
-  // than the nominal delta (a float already at 1.0 does not move at all). The history records
-  // what happened to the column, not what was asked for.
+/**
+ * Land a float push with soft edges (B63 3.2) under a compare-and-swap on companion_state.version, so a
+ * concurrent hourly tick or sibling stimulus can never be silently overwritten by a JS read-modify-write.
+ * Retries on a lost race; after the retries are spent it falls back to the atomic linear SQL bump
+ * (stimulusBumpSql) so a push is never dropped. Returns the before/after rows for the soma event diff.
+ */
+async function softBumpFloats(
+  env: Env,
+  companionId: string,
+  d: Floats,
+): Promise<{ before: FloatsRow; after: FloatsRow } | null> {
+  type StateRow = {
+    soma_float_1: number | null; soma_float_2: number | null; soma_float_3: number | null;
+    soma_float_1_baseline: number | null; soma_float_2_baseline: number | null; soma_float_3_baseline: number | null;
+    version: number | null;
+  };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const row = await env.DB.prepare(readSoftBumpStateSql()).bind(companionId).first<StateRow>().catch(() => null);
+    if (!row) return null;
+    const base: Floats = {
+      f1: row.soma_float_1_baseline ?? 0.5, f2: row.soma_float_2_baseline ?? 0.5, f3: row.soma_float_3_baseline ?? 0.5,
+    };
+    const cur: Floats = {
+      f1: row.soma_float_1 ?? base.f1, f2: row.soma_float_2 ?? base.f2, f3: row.soma_float_3 ?? base.f3,
+    };
+    const next = softEdgeBumpAll(cur, base, d);
+    const res = await env.DB.prepare(stimulusSoftBumpCasSql())
+      .bind(next.f1, next.f2, next.f3, companionId, row.version ?? 0).run();
+    if ((res.meta?.changes ?? 0) > 0) {
+      return {
+        before: { soma_float_1: row.soma_float_1, soma_float_2: row.soma_float_2, soma_float_3: row.soma_float_3, version: row.version },
+        after: { soma_float_1: next.f1, soma_float_2: next.f2, soma_float_3: next.f3, version: (row.version ?? 0) + 1 },
+      };
+    }
+  }
+  console.warn(`[ferment] soft bump lost the race 5x, falling back to the atomic linear bump companion=${companionId}`);
   const before = await readFloatsRow(env, companionId);
   await env.DB.prepare(stimulusBumpSql()).bind(d.f1, d.f2, d.f3, companionId).run();
   const after = await readFloatsRow(env, companionId);
-  const fermentEventId = await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: d });
+  return before && after ? { before, after } : null;
+}
+
+/** Applications of a stimulus that already landed on this companion today (America/Chicago). Best effort: 0 on error. */
+async function todaysCount(env: Env, companionId: string, stimulus: string): Promise<number> {
+  const row = await env.DB.prepare(stimulusCountSinceSql())
+    .bind(companionId, stimulus, chicagoDayStartSqlite()).first<{ n: number }>().catch(() => null);
+  return row?.n ?? 0;
+}
+
+function scaleFloats(d: Floats, w: number): Floats {
+  return w === 1 ? d : { f1: d.f1 * w, f2: d.f2 * w, f3: d.f3 * w };
+}
+
+/**
+ * Apply a stimulus's FLOAT deltas to one companion (soft edges, CAS-guarded) and log it with its named
+ * cause. No drive ops. Chat-volume stimuli (`dailyHalveAfter`) carry half weight once enough of them
+ * have landed today; `message_from_raziel` never does.
+ */
+export async function bumpFloatsForStimulus(
+  env: Env,
+  companionId: CompanionId,
+  stimulus: string,
+  detail: string | null = null,
+  float?: FloatKey,
+): Promise<Floats | null> {
+  const nominal = stimulusFloatDelta(stimulus, companionId, float);
+  if (nominal.f1 === 0 && nominal.f2 === 0 && nominal.f3 === 0) return null;
+  const halve = halveAfterFor(stimulus, env as unknown as Record<string, unknown>);
+  const w = halve ? dailyWeight(halve, await todaysCount(env, companionId, stimulus)) : 1;
+  const d = scaleFloats(nominal, w);
+  const moved = await softBumpFloats(env, companionId, d);
+  if (!moved) return null;
+  const cause = causeLabel(stimulus, detail, "contact");
+  const fermentEventId = await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: d, detail: w < 1 ? `${cause} (halved: busy day)` : cause });
   await appendFermentSomaEvents(
     env,
-    diffFloats(rowFloatMap(before), rowFloatMap(after), {
+    diffFloats(rowFloatMap(moved.before), rowFloatMap(moved.after), {
       companion_id: companionId,
       kind: "stimulus",
       writer: "system",
       cause_table: "companion_ferment_events",
       cause_id: fermentEventId,
       session_id: null,
-      version_after: after?.version ?? null,
-      detail: stimulus,
+      version_after: moved.after.version ?? null,
+      detail: `${stimulus}: ${cause}`,
     }),
     fermentEventId,
   );
@@ -441,14 +518,22 @@ async function shadowStimulusForCompanion(
   companionId: CompanionId,
   stimulus: string,
   detail: string | null,
+  float?: FloatKey,
 ): Promise<boolean> {
   const eff = STIMULI[stimulus];
   if (!eff) return false;
+  // A stimulus that has nothing to say about this companion (no float, no drive, not a `never` entry)
+  // writes no row: the shadow log must read as the live log would, not as noise for every sibling.
+  const touchesAnything = !!eff.notBody?.includes(companionId)
+    || (eff.variableDelta !== undefined ? !!float : false)
+    || Object.values(stimulusFloatDelta(stimulus, companionId, float)).some((x) => x !== 0)
+    || (eff.shed?.length ?? 0) > 0 || Object.keys(eff.accrue ?? {}).length > 0;
+  if (!touchesAnything) return false;
   if (eff.minIntervalHours && await inCooldown(env, companionId, stimulus, eff.minIntervalHours, ["stimulus", "shadow"])) {
     console.log(`[ferment] ${stimulus} shadow cooldown companion=${companionId}`);
     return false;
   }
-  const d = stimulusFloatDelta(stimulus, companionId);
+  const d = stimulusFloatDelta(stimulus, companionId, float);
   const notBody = !!eff.notBody?.includes(companionId);
   const touchesFloats = !notBody && (d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0);
   const driveDeltas: Record<string, number> = {};
@@ -466,25 +551,35 @@ async function shadowStimulusForCompanion(
 }
 
 /** Full stimulus: floats + drive sheds + drive accrues, for one companion. */
-async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stimulus: string): Promise<boolean> {
+async function applyStimulusToCompanion(
+  env: Env,
+  companionId: CompanionId,
+  stimulus: string,
+  detail: string | null = null,
+  float?: FloatKey,
+): Promise<boolean> {
   const eff = STIMULI[stimulus];
   if (!eff) return false;
   if (eff.notBody?.includes(companionId)) return false; // by their own word: never moves this body
   if (eff.minIntervalHours && await inCooldown(env, companionId, stimulus, eff.minIntervalHours)) {
     return false;
   }
-  const d = stimulusFloatDelta(stimulus, companionId);
+  const nominal = stimulusFloatDelta(stimulus, companionId, float);
   const driveDeltas: Record<string, number> = {};
-  const touchesFloats = d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0;
+  const touchesFloats = nominal.f1 !== 0 || nominal.f2 !== 0 || nominal.f3 !== 0;
+  const halve = touchesFloats ? halveAfterFor(stimulus, env as unknown as Record<string, unknown>) : undefined;
+  const w = halve ? dailyWeight(halve, await todaysCount(env, companionId, stimulus)) : 1;
+  const d = scaleFloats(nominal, w);
+  const cause = causeLabel(stimulus, detail, "caller");
 
-  // Float reads bracket the bump ONLY when the stimulus actually touches floats -- a drive-only
-  // stimulus must not pay for two extra reads (mig 0128 read diet).
+  // The CAS bump reads the row itself (floats, baselines, version), so no separate bracketing reads and a
+  // drive-only stimulus still pays nothing (mig 0128 read diet).
   let beforeFloats: FloatsRow | null = null;
   let afterFloats: FloatsRow | null = null;
   if (touchesFloats) {
-    beforeFloats = await readFloatsRow(env, companionId);
-    await env.DB.prepare(stimulusBumpSql()).bind(d.f1, d.f2, d.f3, companionId).run();
-    afterFloats = await readFloatsRow(env, companionId);
+    const moved = await softBumpFloats(env, companionId, d);
+    beforeFloats = moved?.before ?? null;
+    afterFloats = moved?.after ?? null;
   }
   // Shed drives on contact (compute effective first, like contactDrive).
   for (const key of eff.shed ?? []) {
@@ -506,7 +601,9 @@ async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stim
 
   const changed = touchesFloats || Object.keys(driveDeltas).length > 0;
   if (changed) {
-    const fermentEventId = await logEvent(env, companionId, "stimulus", { stimulus, floatDeltas: touchesFloats ? d : null, driveDeltas });
+    const fermentEventId = await logEvent(env, companionId, "stimulus", {
+      stimulus, floatDeltas: touchesFloats ? d : null, driveDeltas, detail: w < 1 ? `${cause} (halved: busy day)` : cause,
+    });
     if (touchesFloats) {
       await appendFermentSomaEvents(
         env,
@@ -518,7 +615,7 @@ async function applyStimulusToCompanion(env: Env, companionId: CompanionId, stim
           cause_id: fermentEventId,
           session_id: null,
           version_after: afterFloats?.version ?? null,
-          detail: stimulus,
+          detail: `${stimulus}: ${cause}`,
         }),
         fermentEventId,
       );
@@ -536,13 +633,15 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
   let stimulus = "";
   let companionId: string | undefined;
   let detail: string | null = null;
+  let floatNamed: string | null = null;
   try {
-    const body = (await request.json()) as { stimulus?: string; companion_id?: string; detail?: unknown };
+    const body = (await request.json()) as { stimulus?: string; companion_id?: string; detail?: unknown; float?: unknown };
     stimulus = (body.stimulus ?? "").trim();
     companionId = body.companion_id?.trim();
     // Optional free-text rail/score from the caller (B62 repetition). Capped; whitespace and
     // newlines collapsed so it stays one log line.
     if (typeof body.detail === "string") detail = body.detail.replace(/\s+/g, " ").trim().slice(0, 200) || null;
+    if (typeof body.float === "string") floatNamed = body.float;
   } catch {
     return json({ error: "body must be JSON { stimulus, companion_id? }" }, 400);
   }
@@ -554,7 +653,10 @@ export async function postFermentStimulus(request: Request, env: Env): Promise<R
   }
 
   try {
-    return json(await fireStimulus(env, stimulus, companionId as CompanionId | undefined, detail));
+    // Every move carries a named cause (B63 3.1). A caller that sent no label gets one derived from the
+    // site (the route), so no move is anonymous; the stimulus kind itself is always present (validated above).
+    const float = floatNamed && companionId ? resolveFloatKey(companionId as CompanionId, floatNamed) ?? undefined : undefined;
+    return json(await fireStimulus(env, stimulus, companionId as CompanionId | undefined, detail ?? `${stimulus} (via http)`, { float }));
   } catch (err) {
     console.error("[mind/ferment] stimulus error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);
@@ -572,6 +674,7 @@ export async function fireStimulus(
   stimulus: string,
   companionId?: CompanionId,
   detail: string | null = null,
+  opts: { float?: FloatKey } = {},
 ): Promise<Record<string, unknown>> {
   const targets = companionId ? [companionId] : COMPANIONS;
   const mode: StimulusMode = stimulusMode(stimulus, env as unknown as Record<string, unknown>);
@@ -579,13 +682,13 @@ export async function fireStimulus(
   if (mode === "shadow") {
     const wouldFire: string[] = [];
     for (const c of targets) {
-      if (await shadowStimulusForCompanion(env, c, stimulus, detail)) wouldFire.push(c);
+      if (await shadowStimulusForCompanion(env, c, stimulus, detail, opts.float)) wouldFire.push(c);
     }
     return { ok: true, stimulus, shadow: true, would_fire: wouldFire.length > 0, would_fire_for: wouldFire };
   }
   const applied: string[] = [];
   for (const c of targets) {
-    if (await applyStimulusToCompanion(env, c, stimulus)) applied.push(c);
+    if (await applyStimulusToCompanion(env, c, stimulus, detail, opts.float)) applied.push(c);
   }
   return { ok: true, stimulus, applied };
 }

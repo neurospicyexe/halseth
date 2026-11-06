@@ -10,6 +10,7 @@
 // stay untouched, or the detector becomes a phantom contact and silences itself. The only writes
 // here are care_actions INSERTs and the tick's own gate stamp, which no rule reads.
 
+import { loopFire } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { hoursSinceIso } from "../webmind/drives.js";
 import { readOwnerLastSeen } from "./owner-activity.js";
@@ -250,6 +251,9 @@ async function runEscalationPass(
         `INSERT INTO care_escalations (id, rule, companion_id, detail, detected_at) VALUES (?, ?, ?, ?, ?)`,
       ).bind(newId(), f.rule, companion, f.detail, detectedAt).run();
       console.log(`[care] ESCALATION fired: ${f.rule} -> ${companion} (${f.detail})`);
+      // B63 pulled_to_speed: an escalation firing pulls Gaia toward speed (stillness down). Cause names the
+      // KIND, never the rule (the rule is health data).
+      await loopFire(env, "pulled_to_speed", "gaia", "a care escalation fired");
     }
     return escalations.length;
   } catch (e) {

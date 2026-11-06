@@ -13,6 +13,7 @@
 // candidates listed, never resolved by guessing (store.ts locate()). Fields come from `context` JSON
 // when present ({ id, content? }); the request text is parsed only as a fallback.
 
+import { loopFire } from "../../webmind/loop-stimuli.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { LEDGER_ID_TOKEN, listLedger, keepLedger, dropLedger, promoteLedger, LEDGER_LIST_LIMIT, type LedgerMoveResult } from "../../ledger/store.js";
 
@@ -74,6 +75,8 @@ async function act(ctx: ExecutorContext, verb: "keep" | "drop"): Promise<Executo
       ? await promoteLedger(ctx.env, companion, id, words)
       : await keepLedger(ctx.env, companion, id);
   if (!r.ok) return refusal(verb, id, r);
+  // B63 kept_line (Gaia's density up: a kept line from soil). Keeping only; a drop is not a keep.
+  if (verb === "keep" && companion === "gaia") await loopFire(ctx.env, "kept_line", "gaia", "kept a line");
 
   const witness = verb === "drop"
     ? `dropped -- that record is not recalled, and its search copy is purged (ledger ${r.id})`

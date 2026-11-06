@@ -104,7 +104,7 @@ export async function contactDrive(request: Request, env: Env, params: Record<st
       // STIMULI.message_witnessed for the measurement. His messages still land at FULL weight with
       // no cooldown on whoever he addressed; only the bystanders are downgraded.
       const stimulus = addressed ? "message_from_raziel" : "message_witnessed";
-      try { await bumpFloatsForStimulus(env, companionId as CompanionId, stimulus); }
+      try { await bumpFloatsForStimulus(env, companionId as CompanionId, stimulus, addressed ? "raziel spoke to them" : "raziel in the room"); }
       catch (err) { console.error("[mind/drives] ferment stimulus failed", { stimulus, error: String(err) }); }
     }
     return json({ contacted: true, drive_key: driveKey, level: Number(shed.toFixed(4)) });

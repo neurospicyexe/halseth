@@ -16,6 +16,7 @@
 //
 // Auth: authGuard.
 
+import { loopFire } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 import {
@@ -133,6 +134,8 @@ export async function postAnswer(request: Request, env: Env): Promise<Response> 
   if (!VALID_COMPANIONS.has(companionId)) return json({ error: "companion_id must be cypher, drevan, gaia" }, 400);
   try {
     await env.DB.prepare(insertAnswerSql()).bind(crypto.randomUUID().replace(/-/g, ""), questionId, companionId, answer.slice(0, 6000)).run();
+    // B63: a council answer is the signal for the (never-wired) `council` stimulus. Kind only, never the answer.
+    await loopFire(env, "council", companionId, "answered a council question");
     return json({ ok: true }, 201);
   } catch (err) {
     if (String(err).includes("UNIQUE")) return json({ deduped: true });

@@ -11,6 +11,7 @@
 // the companion. A refusal is 422 with EVERY gate's reason and evidence; nothing is renamed or fixed.
 // FEELING_LINE_MODE is not read or changed here.
 
+import { loopFire } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
 import { COMPANIONS, proposeVocabularyRow, type ProposeInput } from "../webmind/vocabulary-write.js";
@@ -49,7 +50,10 @@ export async function postFeelingVocabulary(request: Request, env: Env): Promise
   };
   try {
     const r = await proposeVocabularyRow(env.DB as never, input);
-    if (r.ok) return json(r, r.dry_run ? 200 : 201);
+    if (r.ok) {
+      if (!r.dry_run && input.word && !input.supersedes) await loopFire(env, "coined_word", companion, "coined a feeling word");
+      return json(r, r.dry_run ? 200 : 201);
+    }
     if (r.code === "refused") return json(r, 422);
     return json({ ok: false, code: r.code, error: r.message }, 503);
   } catch (err) {

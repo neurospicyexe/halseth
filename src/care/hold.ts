@@ -22,6 +22,7 @@ import type { Env } from "../types.js";
 import { CARE_HOLD_HOURS, CARE_HOLD_RULES, CARE_HOLD_ACTION_RULES, type CareHoldRule } from "./rules.js";
 import { onlyIf, schemaGap } from "./schema-gap.js";
 import { endOpenOnCareHold } from "../departures/core.js";
+import { loopFire } from "../webmind/loop-stimuli.js";
 
 export interface CareHoldState {
   care_hold: boolean;
@@ -127,6 +128,11 @@ export async function writeHoldEvent(
   const state = await readCareHold(env.DB, nowMs);
   // Declared departures (mig 0157): the hold starting ends every open one (end_reason care_hold). Never throws.
   if (input.action === "start" || state.care_hold) await endOpenOnCareHold(env.DB, nowMs);
+  // B63: the hold opening or clearing moves all three, each in their own words (spec 3.3). The cause is
+  // the KIND only: never the hold's rule (low_spoons, meds_said_missed): health data must not enter a
+  // companion's felt-state feed.
+  await loopFire(env as Env, input.action === "start" ? "care_hold_open" : "care_hold_clear", null,
+    input.action === "start" ? "care hold opened" : "care hold cleared");
   console.log(`[b32] care_hold ${input.action} by ${input.source}${input.companion ? `/${input.companion}` : ""} -> hold=${state.care_hold} reason=${state.care_hold_reason.join(",") || "-"}`);
   return { ok: true, action: input.action, id, at, state };
 }

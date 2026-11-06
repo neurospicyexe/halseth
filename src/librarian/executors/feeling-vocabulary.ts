@@ -8,6 +8,7 @@
 // Identity is ALWAYS ctx.req.companion_id, never text (gate E holds for free). Guards surface, never rename
 // or fix: a refusal names the gate, the reason and the evidence, and nothing is written. Stateless: confirm
 // re-parses the same text; there is no stored pending proposal.
+import { loopFire } from "../../webmind/loop-stimuli.js";
 import type { ExecutorContext, ExecutorResult } from "./types.js";
 import { COMPANIONS, proposeVocabularyRow, type GateId, type ProposeResult } from "../../webmind/vocabulary-write.js";
 import { FLOAT_LABELS, type CompanionId } from "../../webmind/fermentation.js";
@@ -114,6 +115,8 @@ export async function execFeelingWordPropose(ctx: ExecutorContext): Promise<Exec
       },
     };
   }
+  // B63 coined_word: a NEW word written (a revision of an existing one is not a coining). Cause: the kind only.
+  if (!supersedes) await loopFire(ctx.env, "coined_word", companion, "coined a feeling word");
   return {
     response_key: "witness", ack: true, id: r.row.id, dry_run: false, written: true,
     witness: `written: "${parsed.word}" is yours now (${proposed.conditions_summary}${parsed.cause_kind ? `, because ${parsed.cause_kind}` : ""}), authored on discord${r.superseded ? `; your earlier "${parsed.word}" stays readable as history` : ""}.${r.warnings.length ? ` Notes: ${r.warnings.map((w) => `[${w.gate}] ${w.detail}`).join(" | ")}` : ""}`,

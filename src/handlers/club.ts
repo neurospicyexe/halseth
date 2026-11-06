@@ -15,6 +15,7 @@
 //
 // Auth: authGuard, matching handlers/media.ts.
 
+import { loopFire } from "../webmind/loop-stimuli.js";
 import type { Env } from "../types.js";
 import { authGuard } from "../lib/auth.js";
 
@@ -169,6 +170,7 @@ export async function postClubRecommend(request: Request, env: Env): Promise<Res
       body.source_ref?.trim() || null,
       recommender, body.pitch?.trim()?.slice(0, 1000) || null,
     ).run();
+    if (recommender !== "raziel") await loopFire(env, "club_activity", recommender, "made a club recommendation");
     return json({ recommendation: { id, round_id: round.id, title } }, 201);
   } catch (err) {
     console.error("[mind/club] recommend error", { error: String(err) });
@@ -385,6 +387,7 @@ export async function postClubDiscuss(
     await env.DB.prepare(
       "INSERT INTO club_discussions (id, round_id, companion_id, reflection) VALUES (?, ?, ?, ?)"
     ).bind(rowId, id, companion, reflection.slice(0, 3000)).run();
+    await loopFire(env, "club_activity", companion, "wrote a club reflection");
     return json({ discussion: { id: rowId, round_id: id } }, 201);
   } catch (err) {
     console.error("[mind/club] discuss error", { error: String(err) });

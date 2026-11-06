@@ -3,6 +3,7 @@
 // Internal D1 function calls. Imports directly from src/mcp/tools/.
 // No HTTP, no MCP protocol. Zero latency.
 
+import { loopFire, tensionDragFloat } from "../../webmind/loop-stimuli.js";
 import { Env } from "../../types.js";
 import { embedAndStoreAsync, storeVector, composeHandoverText } from "../../mcp/embed.js";
 import {
@@ -715,6 +716,12 @@ export async function tensionEdit(
   return { ok: true };
 }
 
+/** Fire `tension_resolved` on the float the tension names (nothing moves when it names none). Never throws. */
+export async function fireTensionResolved(env: Env, id: string, how: string): Promise<void> {
+  const link = await tensionDragFloat(env, id);
+  if (link) await loopFire(env, "tension_resolved", link.companion, `tension ${how}`, { float: link.float });
+}
+
 export async function tensionStatus(
   env: Env,
   id: string,
@@ -723,10 +730,16 @@ export async function tensionStatus(
 ): Promise<{ ok: boolean; error?: string }> {
   const valid = ["simmering", "crystallized", "released"];
   if (!valid.includes(status)) return { ok: false, error: "invalid_status" };
+  const wasSimmering = status !== "simmering"
+    ? !!(await env.DB.prepare("SELECT 1 AS hit FROM companion_tensions WHERE id = ? AND companion_id = ? AND status = 'simmering'")
+        .bind(id, companionId).first().catch(() => null))
+    : false;
   const r = await env.DB.prepare(
     "UPDATE companion_tensions SET status = ?, last_surfaced_at = datetime('now') WHERE id = ? AND companion_id = ?"
   ).bind(status, id, companionId).run();
   if (!r.meta.changes) return { ok: false, error: "not_found_or_not_owner" };
+  // B63 tension_resolved: working a simmering tension through (crystallize / release) lifts the float it drags.
+  if (wasSimmering) await fireTensionResolved(env, id, status);
   return { ok: true };
 }
 

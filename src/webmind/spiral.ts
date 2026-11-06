@@ -6,6 +6,7 @@
 // TURN -> wm_continuity_notes (note_type = 'spiral_turn', salience = 'high')
 // RESIDUE -> companion_open_loops (weight = 0.6)
 
+import { loopFire } from "./loop-stimuli.js";
 import { Env } from '../types.js';
 import type { WmAgentId, WmSpiralRun, WmSpiralInput, WmRecentSpiralTurn } from './types.js';
 import { complete } from '../synthesis/deepseek.js';
@@ -122,6 +123,8 @@ export async function executeSpiralRun(env: Env, runId: string): Promise<WmSpira
     await env.DB.prepare(
       "UPDATE companion_spiral_runs SET status = 'completed', completed_at = ?, turn_note_id = ?, residue_loop_id = ? WHERE id = ?"
     ).bind(completedAt, turnNoteId, residueLoopId, runId).run();
+    // B63: a completed spiral run is the signal for the (never-wired) `spiral` stimulus (Drevan only in the table).
+    await loopFire(env, "spiral", run.companion_id, "a spiral run completed");
 
     return await env.DB.prepare(
       'SELECT * FROM companion_spiral_runs WHERE id = ?'

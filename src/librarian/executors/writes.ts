@@ -1,3 +1,4 @@
+import { fireRetracted } from "../../webmind/loop-stimuli.js";
 import { ExecutorContext, ExecutorResult, parseContext } from "./types.js";
 import { findOpenSession, findSessionForMoment } from "../../db/queries.js";
 import { translateSomaVocab } from "../../soma/vocab.js";
@@ -764,6 +765,7 @@ export async function execConclusionAdd(ctx: ExecutorContext): Promise<ExecutorR
     );
   }
   await ctx.env.DB.batch(stmts);
+  if (supersededIds.length > 0) await fireRetracted(ctx.env, ctx.req.companion_id);
 
   // Best-effort delete of the superseded row's vector so a dead conclusion can never
   // resurface as a novelty-gate match (2026-07-20 review). Mirrors salience-prune.ts's

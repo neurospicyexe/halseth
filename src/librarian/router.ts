@@ -177,6 +177,8 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "Gaia's garden: 'my garden', whole request." },
   { pattern_key: "garden_consent", regex: GARDEN_CONSENT_RE,
     note: "Gaia's garden: 'garden yes|no <planting id-prefix>', the sibling's answer on a one-sibling note. Callable only by the planting's consent_from companion (the executor checks)." },
+  { pattern_key: "loss_log", regex: LOSS_RE,
+    note: "B63 (mig 0174): 'loss: <what>' / 'loss for <companion>: <what>'. Start-anchored with the colon, so ordinary speech about a loss never matches and the text after the colon can never be routed by a trigger it contains." },
   { pattern_key: "makes_read", regex: MAKES_READ_RE,
     note: "B62 making: 'my makes' / 'list my makes', whole request." },
   { pattern_key: "person_who_is", regex: PERSON_LOOKUP_RE,
@@ -493,6 +495,8 @@ import { INTEREST_BORN_RE, INTEREST_RETURN_RE, INTEREST_MADE_RE, INTEREST_PUT_DO
 import { execInterestBorn, execInterestReturn, execInterestMade, execInterestPutDown, execInterestPickUp, execInterestsRead, execInterestTrail } from "./executors/interests.js";
 import { MAKE_VERB_RE, MAKES_READ_RE } from "../webmind/makes.js";
 import { KEEP_VERB_RE } from "../webmind/makes-capture.js";
+import { LOSS_RE } from "../webmind/losses.js";
+import { execLossLog } from "./executors/losses.js";
 import { execMake, execMakesRead, execMakeKeep } from "./executors/makes.js";
 import { PLANT_VERB_RE, PULL_VERB_RE, GARDEN_READ_RE, GARDEN_CONSENT_RE } from "../webmind/garden.js";
 import { execGardenPlant, execGardenPull, execGardenRead, execGardenConsent } from "./executors/garden.js";
@@ -632,6 +636,7 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   garden_pull: execGardenPull,
   garden_read: execGardenRead,
   garden_consent: execGardenConsent,
+  loss_log: execLossLog,
   person_who_is: execPersonWhoIs,
   imp_errand: execImpErrand,
 
