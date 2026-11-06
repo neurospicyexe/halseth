@@ -28,7 +28,12 @@ export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResu
   // tension_text and a stripper was bolted on. Same root error both times: deriving memory
   // content from the request string rather than the structured payload. ask_librarian's own
   // description says "pass long content in `context`, not here" (request caps at 2000 chars).
-  const parsed = parseContext<{ tension_text?: string }>(ctx.req.context);
+  const parsed = parseContext<{ tension_text?: string; drags_float?: string }>(ctx.req.context);
+  const dragsFloat = typeof parsed?.drags_float === "string" && parsed.drags_float
+    ? parsed.drags_float : null;
+  if (dragsFloat && !["soma_float_1", "soma_float_2", "soma_float_3"].includes(dragsFloat)) {
+    return { error: "add_tension_failed", reason: "drags_float must be soma_float_1, soma_float_2 or soma_float_3" };
+  }
   const fromContext = typeof parsed?.tension_text === "string" ? parsed.tension_text.trim() : "";
 
   // Back-compat: a companion may still type the whole tension inline after a colon
@@ -49,9 +54,20 @@ export async function execTensionAdd(ctx: ExecutorContext): Promise<ExecutorResu
   }
 
   const id = crypto.randomUUID();
-  await ctx.env.DB.prepare(
-    "INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, ?)"
-  ).bind(id, ctx.req.companion_id, tensionText).run();
+  if (dragsFloat) {
+    try {
+      await ctx.env.DB.prepare(
+        "INSERT INTO companion_tensions (id, companion_id, tension_text, drags_float) VALUES (?, ?, ?, ?)"
+      ).bind(id, ctx.req.companion_id, tensionText, dragsFloat).run();
+    } catch (e) {
+      if (/no such column|has no column named/i.test(String(e))) return { error: "add_tension_failed", reason: "needs the 0173 migration" };
+      throw e;
+    }
+  } else {
+    await ctx.env.DB.prepare(
+      "INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES (?, ?, ?)"
+    ).bind(id, ctx.req.companion_id, tensionText).run();
+  }
   // Embed so tensions are reachable by meaning (2026-07-19). Awaited + caught:
   // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
   try {

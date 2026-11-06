@@ -199,8 +199,16 @@ export async function getTensions(
   return json({ tensions: rows.results });
 }
 
+/** The three SOMA floats a tension may drag (mig 0173). */
+export const DRAGS_FLOAT_VALUES = ["soma_float_1", "soma_float_2", "soma_float_3"] as const;
+/** undefined/null/"" = names none (null); a valid name = itself; anything else = "invalid". */
+function parseDragsFloat(v: unknown): string | null | "invalid" {
+  if (v === undefined || v === null || v === "") return null;
+  return typeof v === "string" && (DRAGS_FLOAT_VALUES as readonly string[]).includes(v) ? v : "invalid";
+}
+
 // POST /companion-growth/tensions
-// Body: { companion_id, tension_text, notes? }
+// Body: { companion_id, tension_text, notes?, drags_float? }
 export async function postTension(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
@@ -213,12 +221,28 @@ export async function postTension(request: Request, env: Env): Promise<Response>
   if (typeof b.tension_text !== "string" || !b.tension_text.trim()) return json({ error: "tension_text required" }, 400);
   if (b.tension_text.toString().length > MAX_TEXT) return json({ error: "tension_text too long (max 4000)" }, 400);
 
+  const dragsFloat = parseDragsFloat(b.drags_float);
+  if (dragsFloat === "invalid") return json({ error: `drags_float must be one of ${DRAGS_FLOAT_VALUES.join("|")}` }, 400);
+
   const id = crypto.randomUUID();
-  await env.DB.prepare(
-    "INSERT INTO companion_tensions (id, companion_id, tension_text, notes) VALUES (?, ?, ?, ?)"
-  ).bind(id, b.companion_id, (b.tension_text as string).trim(),
-    typeof b.notes === "string" ? b.notes : null
-  ).run();
+  try {
+    if (dragsFloat) {
+      await env.DB.prepare(
+        "INSERT INTO companion_tensions (id, companion_id, tension_text, notes, drags_float) VALUES (?, ?, ?, ?, ?)"
+      ).bind(id, b.companion_id, (b.tension_text as string).trim(),
+        typeof b.notes === "string" ? b.notes : null, dragsFloat
+      ).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO companion_tensions (id, companion_id, tension_text, notes) VALUES (?, ?, ?, ?)"
+      ).bind(id, b.companion_id, (b.tension_text as string).trim(),
+        typeof b.notes === "string" ? b.notes : null
+      ).run();
+    }
+  } catch (e) {
+    if (dragsFloat && /no such column|has no column named/i.test(String(e))) return json({ error: "needs the 0173 migration" }, 409);
+    throw e;
+  }
 
   // Embed so tensions are reachable by meaning (2026-07-19). Awaited + caught:
   // never blocks the write; D1 is truth, fill-mode reindex heals index gaps.
@@ -257,8 +281,12 @@ export async function patchTension(
     return json({ error: "charge_delta must be a finite number within [-10, 10]" }, 400);
   }
 
+  const dragsFloat = parseDragsFloat(b.drags_float);
+  if (dragsFloat === "invalid") return json({ error: `drags_float must be one of ${DRAGS_FLOAT_VALUES.join("|")}` }, 400);
+
   const updates: string[] = ["last_surfaced_at = datetime('now')"];
   const bindings: unknown[] = [];
+  if (dragsFloat) { updates.push("drags_float = ?"); bindings.push(dragsFloat); }
   if (b.status) { updates.push("status = ?"); bindings.push(b.status); }
   if (typeof b.notes === "string") { updates.push("notes = ?"); bindings.push(b.notes); }
   if (typeof b.charge_delta === "number") {
@@ -270,9 +298,15 @@ export async function patchTension(
   const wasSimmering = b.status === "crystallized" || b.status === "released"
     ? !!(await env.DB.prepare("SELECT 1 AS hit FROM companion_tensions WHERE id = ? AND status = 'simmering'").bind(id).first().catch(() => null))
     : false;
-  const result = await env.DB.prepare(
-    `UPDATE companion_tensions SET ${updates.join(", ")} WHERE id = ?`
-  ).bind(...bindings).run();
+  let result;
+  try {
+    result = await env.DB.prepare(
+      `UPDATE companion_tensions SET ${updates.join(", ")} WHERE id = ?`
+    ).bind(...bindings).run();
+  } catch (e) {
+    if (dragsFloat && /no such column|has no column named/i.test(String(e))) return json({ error: "needs the 0173 migration" }, 409);
+    throw e;
+  }
 
   if (result.meta.changes === 0) return json({ error: "not found" }, 404);
   if (wasSimmering) await fireTensionResolved(env, id, String(b.status));
