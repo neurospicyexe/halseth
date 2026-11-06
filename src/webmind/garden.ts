@@ -113,12 +113,14 @@ function kindOfRef(ref: string): { kind: SourceKind; id: string } | null {
 }
 
 /** A note's addressee as the garden reads it. */
-export function noteAudience(toId: string | null | undefined): { to: "raziel" | "triad" | "cypher" | "drevan"; sibling: "cypher" | "drevan" | null } {
+export function noteAudience(toId: string | null | undefined): { to: "raziel" | "triad" | "cypher" | "drevan"; sibling: "cypher" | "drevan" | null } | null {
   const t = (toId ?? "").trim().toLowerCase();
   if (!t) return { to: "triad", sibling: null };
   if (t === "cypher" || t === "drevan") return { to: t, sibling: t };
-  // Anything else (raziel, or a name that is not a sibling) reads as a note to Raziel.
-  return { to: "raziel", sibling: null };
+  if (t === "raziel") return { to: "raziel", sibling: null };
+  // A note to herself (95 rows on 11-05) or to anyone else is not a kind she named (notes to Raziel,
+  // broadcasts, a one-sibling note on that sibling's yes). Not plantable; never relabelled.
+  return null;
 }
 
 const letterOk = (tags: unknown): boolean => parseTags(tags).includes("letter_to_raziel");
@@ -272,6 +274,7 @@ export async function plantRef(env: Env, input: { caller: string; ref: ParsedPla
   }
   const f = found[0]!;
   const aud = f.kind === "note" ? noteAudience(f.to_id) : { to: null, sibling: null };
+  if (!aud) return no(who, "plant", "not_plantable", "a note to yourself is not one of the kinds you named (notes to Raziel, broadcasts, a note to one sibling on their yes)");
   const { row, outcome } = await upsertPlanting(env, f.kind, refOf(f), aud.sibling, nowMs);
   logLine(who, "plant", row.id, outcome);
   const idp = short(row.id);
@@ -407,14 +410,16 @@ async function loadSourceText(env: Env, p: PlantingRow): Promise<SourceText | nu
       .bind(k.id, GARDEN_COMPANION).first<{ content: string; to_id: string | null; created_at: string }>();
     if (!r) return null;
     const aud = noteAudience(r.to_id);
+    if (!aud) return null;
     // A note to one sibling renders only on that sibling's recorded yes, whatever the status column says.
     if (aud.sibling && !(p.consent === "yes" && p.consent_from === aud.sibling)) return null;
     return { text: r.content, written_at: r.created_at, to: aud.to, interest_name: null };
   }
   if (k.kind === "kept_line") {
-    const r = await env.DB.prepare("SELECT content, created_at FROM ledger_entries WHERE id = ? AND companion_id = ? AND state = 'kept'")
-      .bind(k.id, GARDEN_COMPANION).first<{ content: string; created_at: string }>();
-    return r ? { text: r.content, written_at: r.created_at, to: null, interest_name: null } : null;
+    const r = await env.DB.prepare("SELECT body, created_at FROM ledger_entries WHERE id = ? AND companion_id = ? AND state = 'kept'")
+      .bind(k.id, GARDEN_COMPANION).first<{ body: string; created_at: string }>();
+    // body = the line itself; content carries the ledger mark and the Source: tail.
+    return r ? { text: r.body, written_at: r.created_at, to: null, interest_name: null } : null;
   }
   const r = await env.DB.prepare(
     "SELECT e.why AS why, e.created_at AS created_at, i.name AS name FROM companion_interest_events e LEFT JOIN companion_interests i ON i.id = e.interest_id WHERE e.id = ? AND e.companion_id = ? AND e.why_private = 0 AND e.why IS NOT NULL AND TRIM(e.why) <> ''",

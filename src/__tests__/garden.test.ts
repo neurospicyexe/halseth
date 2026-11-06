@@ -146,7 +146,7 @@ describe("planting: opening words and multi-match", () => {
 });
 
 describe("notes and consent", () => {
-  it("broadcast -> planted; note to Raziel (or anything not a sibling) -> planted", async () => {
+  it("broadcast -> planted; note to Raziel -> planted", async () => {
     const { db, env } = setup();
     note(db, "b0000000-1", "gaia", null, "to all of you");
     note(db, "b0000000-2", "gaia", "raziel", "to you");
@@ -155,6 +155,20 @@ describe("notes and consent", () => {
     const g = await readGarden(env, T0);
     expect(g.planted.map((p) => p.to).sort()).toEqual(["raziel", "triad"]);
     expect(g.awaiting).toBe(0);
+  });
+
+  it("a note to herself is not a kind she named: refused, never relabelled", async () => {
+    const { db, env } = setup();
+    note(db, "b0000000-3", "gaia", "gaia", "to me");
+    expect(await plant(env, { kind: "id", id: "b0000000-3" })).toMatchObject({ ok: false, code: "not_plantable" });
+    expect((await readGarden(env, T0)).planted).toHaveLength(0);
+  });
+
+  it("a kept line renders as the line itself, without the ledger mark or Source tail", async () => {
+    const { db, env } = setup();
+    ledger(db, "led_55555555-aaaa", "gaia", "kept", "the roots went deeper than the frost");
+    expect(await plant(env, { kind: "id", id: "55555555" })).toMatchObject({ ok: true });
+    expect((await readGarden(env, T0)).planted[0]!.text).toBe("the roots went deeper than the frost");
   });
 
   it("one-sibling note -> awaiting, tells Gaia to ask; only that sibling can answer; yes renders, no blocks", async () => {
