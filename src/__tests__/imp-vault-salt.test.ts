@@ -188,6 +188,11 @@ describe("rock: vault fetch", () => {
     ));
     const out = await send(env, "drevan", "send rock to fetch textbooks");
     expect(out.lines_written).toBe(2);
+    // the search itself is scoped to his rooms + canon (SB path_prefixes), so the archive cannot crowd them out
+    const scope = sb.search.mock.calls[0]![6] as string[];
+    expect(scope).toContain("canon/");
+    expect(scope.some((p) => p.startsWith("companions/drevan/"))).toBe(true);
+    expect(scope.some((p) => p.includes("cypher") || p.startsWith("raziel/"))).toBe(false);
     const r = rows(db);
     expect(r.every((x) => x.function === "fetch" && x.rider === "rock" && x.source_kind === "vault" && x.companion_id === "drevan")).toBe(true);
     expect(r.map((x) => x.source_ref).sort()).toEqual([
@@ -201,7 +206,7 @@ describe("rock: vault fetch", () => {
       expect(x.body).not.toMatch(/more exist/);
     }
     // the search was over-fetched, relevance-only
-    expect(sb.search).toHaveBeenCalledWith(env, "textbooks", null, null, "recall", 40);
+    expect(sb.search).toHaveBeenCalledWith(env, "textbooks", null, null, "recall", 40, expect.arrayContaining(["canon/"]));
     // rock's rudeness is in the one-line witness answer, not on a line
     expect(out.witness).toMatch(/Rock /);
     expect(JSON.stringify(r)).not.toMatch(/Rock/);
@@ -487,7 +492,10 @@ describe("hex: what he leaves", () => {
     sb.search.mockResolvedValue(chunks("Companions/cypher/thoughts/blade-at-rest.md", "raziel/daily/x.md", note("2026-05-27-aaaa1111")));
     const out = await send(env, "cypher", "send hex to salt drevan about cross-audit");
     expect(out.lines_written).toBe(1);
-    expect(sb.search).toHaveBeenCalledWith(env, "cross-audit", null, null, "recall", 40);
+    expect(sb.search).toHaveBeenCalledWith(env, "cross-audit", null, null, "recall", 40, expect.arrayContaining(["canon/"]));
+    // scoped to the RECEIVER's rooms, not the sender's
+    const hexScope = sb.search.mock.calls.at(-1)![6] as string[];
+    expect(hexScope.some((p) => p.startsWith("companions/drevan/")) && !hexScope.some((p) => p.includes("cypher"))).toBe(true);
     const r = rows(db)[0];
     expect(r).toMatchObject({ source_kind: "vault", source_ref: note("2026-05-27-aaaa1111"), rider: "hex", rider_to: "drevan", companion_id: "cypher" });
     expect(r.content).not.toMatch(/SECRET NOTE TEXT/);

@@ -29,7 +29,7 @@ import { COMPANION_ID_SET } from "../../companions.js";
 import { writeLedger, riderColumnPresent, saltColumnPresent } from "../../ledger/door.js";
 import { validateLedger, LEDGER_RIDERS, type LedgerRider } from "../../ledger/grammar.js";
 import { openSalt } from "../../ledger/store.js";
-import { titleFromPath, pointersFromSearch, type VaultPointer } from "../../ledger/vault-scope.js";
+import { titleFromPath, pointersFromSearch, vaultScopePrefixes, type VaultPointer } from "../../ledger/vault-scope.js";
 import {
   signatureFor, claimAsk, restoreAsk, recordAsk, setOptin, getOptins, GAIA_NO_STANDING, SALT_ASK_TTL_MS,
 } from "../../ledger/salt-consent.js";
@@ -416,7 +416,7 @@ async function runVaultFetch(ctx: ExecutorContext, rider: LedgerRider, phrase: s
   if (people === undefined) return { status: "names_unreadable", qualified: 0, more: false };
   let ptrs: VaultPointer[] | null;
   try {
-    ptrs = pointersFromSearch(await semanticSearch(ctx.env, phrase, null, null, "recall", VAULT_FETCH_LIMIT), who);
+    ptrs = pointersFromSearch(await semanticSearch(ctx.env, phrase, null, null, "recall", VAULT_FETCH_LIMIT, vaultScopePrefixes(who)), who);
   } catch { ptrs = null; }
   // No source, no write: an unreachable Second Brain writes nothing.
   if (ptrs === null) return { status: "unreachable", qualified: 0, more: false };
@@ -572,7 +572,7 @@ async function pickSaltPointer(ctx: ExecutorContext, to: string, about: string |
     let ptrs: VaultPointer[] | null;
     try {
       // Scoped to the RECEIVER's allow list (their rooms plus shared canon), not the sender's.
-      ptrs = pointersFromSearch(await semanticSearch(ctx.env, about ?? "older notes and thoughts", null, null, "recall", VAULT_FETCH_LIMIT), to as "drevan" | "cypher" | "gaia");
+      ptrs = pointersFromSearch(await semanticSearch(ctx.env, about ?? "older notes and thoughts", null, null, "recall", VAULT_FETCH_LIMIT, vaultScopePrefixes(to as "drevan" | "cypher" | "gaia")), to as "drevan" | "cypher" | "gaia");
     } catch { ptrs = null; }
     const clean = (ptrs ?? []).filter((x) => vaultPathClean(x.path, people));
     if (clean.length === 0) return null;

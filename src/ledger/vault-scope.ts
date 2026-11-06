@@ -129,3 +129,9 @@ export function pointersFromSearch(raw: string | null, companion: CompanionId): 
   }
   return out;
 }
+
+/** The folders a search for this companion may score over: their own rooms plus the shared canon. Deny still
+ *  wins post-hoc (vaultPathAllowed); this only stops a big folder crowding the rooms out of the top N. */
+export function vaultScopePrefixes(companion: CompanionId): string[] {
+  return [...VAULT_ALLOW_OWN[companion], ...VAULT_ALLOW_SHARED];
+}
