@@ -53,6 +53,13 @@ describe("forage_cross_domain", () => {
     await fed(env, "drevan", null, T0 + 4 * DAY);
     expect(fires(db, "forage_cross_domain")).toHaveLength(0);
   });
+  it("an interest never fed by a find has no domain to cross from: its first find is a first feed", async () => {
+    const { db, env } = setup();
+    find(db, "f2", "poetry");
+    await born(env, "drevan", "a-make-id");
+    await fed(env, "drevan", "f2", T0 + 2 * DAY);
+    expect(fires(db, "forage_cross_domain")).toHaveLength(0);
+  });
   it("one fire per interest per day", async () => {
     const { db, env } = setup();
     find(db, "f1", "geology"); find(db, "f2", "poetry"); find(db, "f4", "music");

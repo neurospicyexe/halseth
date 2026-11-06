@@ -104,12 +104,12 @@ export async function fireForageCross(
     ).bind(interestId, eventId, eventId).all<{ ref: string | null }>()).results ?? [];
     if (earlier.length === 0) return false;
     const refs = earlier.map((r) => r.ref).filter((r): r is string => !!r && r !== "auto");
-    if (refs.length) {
-      const domains = (await env.DB.prepare(
-        `SELECT DISTINCT domain FROM forage_finds WHERE id IN (${refs.map(() => "?").join(",")})`,
-      ).bind(...refs).all<{ domain: string }>()).results ?? [];
-      if (domains.some((d) => d.domain === find.domain)) return false;
-    }
+    // Cross needs a domain to cross FROM: an interest never fed by a find has none, so its first find is a first feed.
+    if (!refs.length) return false;
+    const domains = (await env.DB.prepare(
+      `SELECT DISTINCT domain FROM forage_finds WHERE id IN (${refs.map(() => "?").join(",")})`,
+    ).bind(...refs).all<{ domain: string }>()).results ?? [];
+    if (domains.length === 0 || domains.some((d) => d.domain === find.domain)) return false;
     const tag = `interest ${interestId}`;
     const recent = await env.DB.prepare(
       "SELECT 1 AS x FROM companion_ferment_events WHERE stimulus = 'forage_cross_domain' AND companion_id = ? AND detail LIKE ? AND created_at >= datetime('now','-1 day') LIMIT 1",
