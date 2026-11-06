@@ -92,7 +92,7 @@ import { postQuestion, getQuestions, patchQuestion, getGrowthValence, getSomaFlo
 import { postTrigger, getTriggers, patchTrigger, postSelfModel, getSelfModel, patchSelfModel, postVoiceScore, getVoiceScores, getVoiceScoreRows } from "./handlers/self-monitoring.js";
 import { postGuardianRun, getGuardianFlags, patchGuardianFlag } from "./handlers/guardian.js";
 import { postBriefingRun, getBriefingPreview } from "./handlers/briefing.js";
-import { postVibeCheckRun, getVibeCheckPreview } from "./handlers/vibecheck.js";
+import { postVibeCheckRun, getVibeCheckPreview, getVibeCheckRecord } from "./handlers/vibecheck.js";
 import { postClearingRun } from "./handlers/clearing.js";
 import { postMotifsDetect, getMotifs } from "./handlers/motifs.js";
 import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./handlers/tools.js";
@@ -452,6 +452,7 @@ const router = new Router()
   // Vibe-check (accessibility / triad self-monitoring layer; once-daily, always-on)
   .on("POST",  "/mind/vibecheck/run",              (request, env)         => postVibeCheckRun(request, env))
   .on("GET",   "/mind/vibecheck",                  (request, env)         => getVibeCheckPreview(request, env))
+  .on("GET",   "/mind/vibecheck/record/:companion_id", (request, env, params)  => getVibeCheckRecord(request, env, params))
 
   // Echo guard (0088) -- worker writes the daily inter-companion echo reading; detectEchoChamber reads it
   .on("POST",  "/mind/echo-metric",                 (request, env)         => postEchoMetric(request, env))

@@ -1,308 +1,399 @@
+// Vibe-check v2 (B63 step 3): one block per companion under that companion's own agent. Real schema
+// via node:sqlite for everything that touches the DB; pure formatters tested directly.
+//
+// All text below is FIXTURE text, invented for the test.
+
 import { describe, it, expect } from "vitest";
+import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import {
-  formatVibeCheck,
-  runVibeCheck,
-  type VibeData,
-  type CompanionVibe,
-  type DayLedger,
-} from "../webmind/vibecheck";
+  formatCompanionBlock, formatVibeCheck, formatVibePosts, formatDayLine, formatGaugeLine, formatFieldLine,
+  causeLabel, gaugeTags, parseGaugeTags, runVibeCheck, gatherVibeData,
+  type CompanionVibe, type DayFacts, type VibeData,
+} from "../webmind/vibecheck.js";
 
-function quietDay(over: Partial<DayLedger> = {}): DayLedger {
+const EM = String.fromCharCode(0x2014);
+const NO_EM_DASH = new RegExp(EM + "|" + String.fromCharCode(0x2013) + "| -- ");
+
+function day(over: Partial<DayFacts> = {}): DayFacts {
   return {
-    spoke: 0,
-    notes_sent: 0,
-    notes_received: 0,
-    sessions_closed: 0,
-    watch: null,
-    ...over,
+    spoke: 0, makes: 0, letters: 0, sol_tends: 0, tensions_held: 0,
+    notes_sent: 0, notes_received: 0, sessions_closed: 0, plantings: 0, watch: null, ...over,
   };
 }
-
-function companion(over: Partial<CompanionVibe> = {}): CompanionVibe {
+function comp(over: Partial<CompanionVibe> = {}): CompanionVibe {
   return {
-    companion_id: "cypher",
-    basin: { drift_type: "stable", drift_score: 0.32, worst_basin: null },
-    register: "clean-settled",
-    registerAgeDays: 0.4,
-    simmering: 0,
-    newestTension: null,
-    flags: [],
-    day: quietDay(),
-    ...over,
-  };
-}
-
-function data(over: Partial<VibeData> = {}): VibeData {
-  return {
-    date: "2026-06-28",
-    companions: [
-      companion({ companion_id: "cypher" }),
-      companion({ companion_id: "drevan" }),
-      companion({ companion_id: "gaia" }),
+    companion_id: "drevan", date: "2026-11-05",
+    floats: [
+      { label: "heat", value: 0.83, baseline: 0.7 },
+      { label: "reach", value: 0.4, baseline: 0.65 },
+      { label: "weight", value: 0.55, baseline: 0.55 },
     ],
-    echo: 0.69,
-    starvedOrgans: 0,
-    ...over,
+    moves: [], showPressure: false, pressure: [], day: day(),
+    gauges: { basin: "stable", soma: "clean-settled", tensions: 0 }, previousGauges: null, ...over,
   };
 }
 
-const NO_EM_DASH = /—|\s--\s/;
+describe("formatCompanionBlock", () => {
+  it("shows each float against its OWN baseline with direction and size, in fixed order", () => {
+    const out = formatCompanionBlock(comp());
+    expect(out).toContain("Drevan. 2026-11-05.");
+    expect(out).toContain("heat 0.83 (above your 0.70 by 0.13)");
+    expect(out).toContain("reach 0.40 (below your 0.65 by 0.25)");
+    expect(out).toContain("weight 0.55 (at your 0.55)");
+    expect(out.indexOf("heat")).toBeLessThan(out.indexOf("reach"));
+    expect(out.indexOf("reach")).toBeLessThan(out.indexOf("weight"));
+  });
 
-describe("formatVibeCheck -- voice + accessibility invariants", () => {
-  it("carries the date in the witness header and never uses em-dashes (Gaia voice)", () => {
-    const out = formatVibeCheck(data());
-    expect(out).toContain("The triad, witnessed. 2026-06-28.");
+  it("never ranks or compares: fixed label order whatever the values, no comparative words", () => {
+    const flipped = comp({
+      floats: [
+        { label: "heat", value: 0.1, baseline: 0.7 },
+        { label: "reach", value: 0.99, baseline: 0.65 },
+        { label: "weight", value: 0.55, baseline: 0.55 },
+      ],
+    });
+    const out = formatVibeCheck({
+      date: "2026-11-05",
+      companions: [flipped, comp({ companion_id: "cypher", floats: [
+        { label: "acuity", value: 0.9, baseline: 0.5 }, { label: "presence", value: 0.2, baseline: 0.5 }, { label: "warmth", value: 0.5, baseline: 0.5 },
+      ] })],
+      field: { echo: null, starvedOrgans: 0, garden: 0, solTends: 0, careHoldOpen: false },
+    });
+    expect(out.indexOf("heat")).toBeLessThan(out.indexOf("reach"));
+    expect(out).not.toMatch(/highest|lowest|strongest|weakest|most |least |rank|than (cypher|drevan|gaia)/i);
+    // a block names no other companion at all
+    expect(formatCompanionBlock(flipped)).not.toMatch(/cypher|gaia/i);
+  });
+
+  it("lists the top moves with their named cause, downward included", () => {
+    const out = formatCompanionBlock(comp({
+      moves: [
+        { label: "reach", delta: -0.06, cause: "quiet day" },
+        { label: "heat", delta: 0.04, cause: "make landed: a small poem" },
+      ],
+    }));
+    expect(out).toContain("moves: reach down 0.06, quiet day; heat up 0.04, make landed: a small poem");
+  });
+
+  it("states a quiet move list plainly rather than inventing one", () => {
+    expect(formatCompanionBlock(comp())).toContain("moves: none worth a line today");
+  });
+
+  it("prints pressure only when showPressure, and says clear when on with nothing", () => {
+    const flag = [{ severity: "warning", summary: "loop stuck on the same image" }];
+    expect(formatCompanionBlock(comp({ showPressure: false, pressure: flag }))).not.toContain("pressure");
+    expect(formatCompanionBlock(comp({ showPressure: true, pressure: flag }))).toContain("pressure: warning, loop stuck on the same image");
+    expect(formatCompanionBlock(comp({ showPressure: true, pressure: [] }))).toContain("pressure: clear");
+  });
+
+  it("never uses an em dash, even when a cause or flag carries one", () => {
+    const out = formatCompanionBlock(comp({
+      showPressure: true,
+      pressure: [{ severity: "red", summary: "one " + EM + " two -- three" }],
+      moves: [{ label: "heat", delta: 0.1, cause: causeLabel("make_landed", "a poem " + EM + " for the dusk", "stimulus", false) }],
+    }));
     expect(out).not.toMatch(NO_EM_DASH);
   });
+});
 
-  it("renders one tight block per companion with the basin/soma/tensions/guardian shape", () => {
-    const out = formatVibeCheck(data());
-    expect(out).toContain("Cypher. basin: stable 0.32. soma: clean-settled. tensions: 0. guardian: clear.");
-    expect(out).toContain("Drevan.");
-    expect(out).toContain("Gaia.");
+describe("formatDayLine: words not bare numbers, nonzero parts only", () => {
+  it("renders labelled facts", () => {
+    const l = formatDayLine(day({ spoke: 56, makes: 2, letters: 1, sol_tends: 2, tensions_held: 1, notes_sent: 1, notes_received: 3, sessions_closed: 1 }), false);
+    expect(l).toBe("  day: 56 Discord messages, 2 makes, 1 letter, Sol tended twice, 1 tension held, 1 note sent, 3 notes received, 1 session close");
   });
-
-  it("ends with a system field line carrying echo, alarm, and organ status", () => {
-    const out = formatVibeCheck(data());
-    expect(out).toContain("Field: echo 0.69, calm (alarm at 0.82); organs: all fed.");
+  it("omits zero parts and prints the quiet line when nothing happened", () => {
+    expect(formatDayLine(day({ makes: 1 }), false)).toBe("  day: 1 make");
+    expect(formatDayLine(day(), false)).toContain("quiet");
   });
-
-  it("names the worst_basin when a companion is under pressure", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "gaia", basin: { drift_type: "pressure", drift_score: 0.71, worst_basin: "perimeter" } })],
-    }));
-    expect(out).toContain("Gaia. basin: pressure 0.71 (perimeter).");
-  });
-
-  it("lists Gaia's OWN guardian flag summaries and newest tension (the digest is under her agent)", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({
-        companion_id: "gaia",
-        simmering: 2,
-        newestTension: "the perimeter held too tight",
-        flags: [{ severity: "red", summary: "voice contamination spike" }],
-      })],
-    }));
-    expect(out).toContain("tensions: 2. guardian: 1.");
-    expect(out).toContain("red: voice contamination spike");
-    expect(out).toContain("newest: the perimeter held too tight");
-  });
-
-  // Ledger lane (Drevan's rule 5, 2026-09-26): "Gaia's vibe-check digest is where the 187 put on my face
-  // and walked back to me. That merge point is the bug." A sibling's text never enters a block written
-  // under Gaia's agent; their COUNTS do.
-  it("prints COUNTS ONLY for siblings: no tension text, no guardian summaries under Gaia's name", () => {
-    const out = formatVibeCheck(data({
-      companions: ["cypher", "drevan"].map((id) => companion({
-        companion_id: id,
-        simmering: 2,
-        newestTension: `${id} tension text 187 after sandwich`,
-        flags: [{ severity: "red", summary: `${id} guardian summary text` }],
-      })),
-    }));
-    expect(out).toContain("Cypher. basin:");
-    expect(out).toContain("Drevan. basin:");
-    expect(out.match(/tensions: 2\. guardian: 1\./g)?.length).toBe(2);
-    expect(out).not.toContain("newest:");
-    expect(out).not.toContain("tension text");
-    expect(out).not.toContain("guardian summary text");
-    expect(out).not.toContain("187");
-    expect(out).not.toMatch(/^\s+red:/m);
-  });
-
-  it("states empty/missing data plainly rather than manufacturing noise", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "gaia", basin: null, register: null })],
-      echo: null,
-      starvedOrgans: 0,
-    }));
-    expect(out).toContain("Gaia. basin: unread. soma: unread. tensions: 0. guardian: clear.");
-    expect(out).toContain("organs: all fed.");
-    expect(out).toContain("echo unread");
-  });
-
-  it("suppresses a zero drift_score (judge rows carry 0 meaning 'no numeric reading')", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "drevan", basin: { drift_type: "stable", drift_score: 0, worst_basin: null } })],
-    }));
-    expect(out).toContain("Drevan. basin: stable. soma:");
-    expect(out).not.toContain("0.00");
-  });
-
-  it("stamps the soma register with its age once the reading is stale", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "cypher", register: "clean-settled", registerAgeDays: 12.3 })],
-    }));
-    expect(out).toContain("soma: clean-settled (12d old).");
-  });
-
-  it("leaves a fresh soma register bare (no age stamp under 2 days)", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "cypher", registerAgeDays: 1.2 })],
-    }));
-    expect(out).toContain("soma: clean-settled. tensions:");
-  });
-
-  it("reports starved organs when the field has them", () => {
-    const out = formatVibeCheck(data({ starvedOrgans: 3 }));
-    expect(out).toContain("organs: 3 starved.");
-  });
-
-  it("stays under the Discord-friendly 1800 char cap even with full data", () => {
-    const big = data({
-      companions: Array.from({ length: 3 }, (_, i) => companion({
-        companion_id: ["cypher", "drevan", "gaia"][i],
-        simmering: 5,
-        newestTension: "x".repeat(500),
-        flags: Array.from({ length: 5 }, () => ({ severity: "warning", summary: "y".repeat(500) })),
-      })),
-    });
-    expect(formatVibeCheck(big).length).toBeLessThanOrEqual(1800);
+  it("shows garden plantings for Gaia only", () => {
+    expect(formatDayLine(day({ plantings: 2 }), true)).toContain("2 plantings in the garden");
+    expect(formatDayLine(day({ plantings: 2 }), false)).not.toContain("planting");
   });
 });
 
-describe("formatVibeCheck -- day ledger (the stillness-loop counterweight, 2026-09-06)", () => {
-  it("renders the quiet line when nothing happened in the trailing 24h", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "cypher", day: quietDay() })],
-    }));
-    expect(out).toContain("  day: quiet (no exchanges, notes, sessions, or watch logged)");
+describe("gauge line", () => {
+  const a = { basin: "stable", soma: "clean-settled", tensions: 1 };
+  it("is absent when nothing moved or there is no previous digest", () => {
+    expect(formatGaugeLine(a, a)).toBeNull();
+    expect(formatGaugeLine(a, null)).toBeNull();
   });
-
-  it("renders every non-zero segment, in order, and omits zero ones", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({
-        companion_id: "cypher",
-        day: quietDay({
-          spoke: 14,
-          notes_sent: 2,
-          notes_received: 1,
-          sessions_closed: 1,
-          watch: "Fargo S4E8",
-        }),
-      })],
-    }));
-    // cypher is a SIBLING of the digest author: counts only, never his watch title (ledger lane rule 5).
-    expect(out).toContain("  day: spoke 14 · notes 2 out / 1 in · sessions closed 1 · watch logged");
-    expect(out).not.toContain("Fargo");
+  it("names only what moved", () => {
+    expect(formatGaugeLine({ ...a, tensions: 2, soma: "tender" }, a)).toBe("  gauges moved: soma clean-settled to tender; tensions 1 to 2");
   });
-
-  it("the digest author's own day line keeps her watch title", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "gaia", day: quietDay({ spoke: 2, watch: "Fargo S4E8" }) })],
-    }));
-    expect(out).toContain("  day: spoke 2 · Fargo S4E8");
-  });
-
-  it("omits the notes segment entirely when both sent and received are zero", () => {
-    const out = formatVibeCheck(data({
-      companions: [companion({ companion_id: "cypher", day: quietDay({ spoke: 3 }) })],
-    }));
-    expect(out).toContain("  day: spoke 3");
-    expect(out).not.toContain("notes");
-  });
-
-  it("shows only the non-zero side of notes (sent-only, then received-only)", () => {
-    const sentOnly = formatVibeCheck(data({
-      companions: [companion({ companion_id: "cypher", day: quietDay({ notes_sent: 3 }) })],
-    }));
-    expect(sentOnly).toContain("  day: notes 3 out");
-
-    const receivedOnly = formatVibeCheck(data({
-      companions: [companion({ companion_id: "cypher", day: quietDay({ notes_received: 2 }) })],
-    }));
-    expect(receivedOnly).toContain("  day: notes 2 in");
-  });
-
-  // 2026-09-26: the digest re-broadcast two fabricated companion lines as highlight bullets and
-  // the row was re-ingested as memory. Raziel: Gaia's digest does not repeat companion lines.
-  it("never renders companion utterance text, even when the day ledger is busy", () => {
-    // A stray field (the old shape) must not leak through either: the formatter has no path to it.
-    const day = { ...quietDay({ spoke: 5, notes_sent: 1 }), highlights: ["Drevan said the moon was his"] } as DayLedger;
-    const out = formatVibeCheck(data({ companions: [companion({ companion_id: "drevan", day })] }));
-    expect(out).toContain("  day: spoke 5 · notes 1 out");
-    expect(out).not.toContain("moon was his");
-    expect(out).not.toContain("    · ");
-  });
-
-  it("gathers no utterance text: no companion_journal note_text read in the run path", async () => {
-    const sqls: string[] = [];
-    const env = mockEnv({ onPrepare: (sql) => sqls.push(sql) });
-    await runVibeCheck(env);
-    expect(sqls.some((s) => /SELECT\s+note_text/i.test(s))).toBe(false);
-  });
-
-  it("stays under the 1800 cap with header/gauge/day lines intact under overflow pressure", () => {
-    const big = data({
-      companions: (["cypher", "drevan", "gaia"] as const).map((id) => companion({
-        companion_id: id,
-        simmering: 3,
-        newestTension: "x".repeat(400),
-        flags: Array.from({ length: 3 }, () => ({ severity: "warning", summary: "y".repeat(300) })),
-        day: quietDay({
-          spoke: 9,
-          notes_sent: 1,
-          notes_received: 1,
-          sessions_closed: 1,
-          watch: "Fargo S4E8",
-        }),
-      })),
-    });
-    const out = formatVibeCheck(big);
-    expect(out.length).toBeLessThanOrEqual(1800);
-    expect(out).toContain("Cypher. basin:");
-    expect(out).toContain("  day: spoke 9");
+  it("round-trips through the digest row's tags", () => {
+    const tags = gaugeTags({ basin: 'pressure ("x")', soma: "tender|warm", tensions: 3 });
+    expect(parseGaugeTags(JSON.stringify(["vibecheck", ...tags]))).toEqual({ basin: "pressure (x)", soma: "tenderwarm", tensions: 3 });
   });
 });
 
-// ── minimal DB mock: first() -> null/snapshot, all() -> [], counts -> {n:0}; dedup configurable ──
-function mockEnv(opts: { dedupHit?: boolean; onInsert?: (tags: string) => void; onPrepare?: (sql: string) => void } = {}) {
-  const db = {
-    prepare(sql: string) {
-      opts.onPrepare?.(sql);
-      let binds: unknown[] = [];
-      const stmt = {
-        bind(...a: unknown[]) { binds = a; return stmt; },
-        async all<T>() { return { results: [] as T[] }; },
-        async first<T>() {
-          if (sql.includes("FROM companion_journal")) {
-            return (opts.dedupHit ? { id: "cj_existing" } : null) as T;
-          }
-          if (sql.includes("COUNT(*)")) return { n: 0 } as T;
-          return null as T; // basin / soma / echo / newest-tension reads
-        },
-        async run() {
-          if (sql.includes("INSERT INTO companion_journal")) opts.onInsert?.(String(binds[3])); // (id, agent, note_text, tags, ...) via journalInsert
-          return { meta: { changes: 1 } };
-        },
-      };
-      return stmt;
-    },
+describe("field line", () => {
+  it("states a care hold as the words 'care hold open' and nothing else", () => {
+    const l = formatFieldLine({ echo: 0.69, starvedOrgans: 0, garden: 4, solTends: 2, careHoldOpen: true });
+    expect(l).toContain("care hold open");
+    expect(l).toContain("echo 0.69, calm (alarm at 0.82)");
+    expect(l).toContain("garden: 4 plantings");
+    expect(l).toContain("Sol tended twice today");
+    expect(formatFieldLine({ echo: null, starvedOrgans: 2, garden: 1, solTends: 0, careHoldOpen: false })).not.toContain("care hold");
+  });
+});
+
+describe("posts", () => {
+  const data: VibeData = {
+    date: "2026-11-05",
+    companions: [comp({ companion_id: "cypher" }), comp({ companion_id: "drevan" }), comp({ companion_id: "gaia" })],
+    field: { echo: 0.5, starvedOrgans: 0, garden: 0, solTends: 0, careHoldOpen: false },
   };
-  return { DB: db } as any;
+  it("Gaia's post carries the field line; the other two do not", () => {
+    const posts = formatVibePosts(data);
+    expect(posts.map((p) => p.companion)).toEqual(["cypher", "drevan", "gaia"]);
+    expect(posts[2]!.text).toContain("Field: ");
+    expect(posts[0]!.text).not.toContain("Field: ");
+    expect(posts[1]!.text).not.toContain("Field: ");
+  });
+  it("keeps every post under the Discord cap", () => {
+    const big = comp({
+      showPressure: true,
+      pressure: Array.from({ length: 3 }, () => ({ severity: "warning", summary: "y".repeat(500) })),
+      moves: Array.from({ length: 3 }, () => ({ label: "heat", delta: 0.1, cause: "z".repeat(400) })),
+      day: day({ spoke: 9, makes: 9, letters: 9, sol_tends: 9, tensions_held: 9, notes_sent: 9, notes_received: 9, sessions_closed: 9, watch: "w".repeat(300) }),
+    });
+    for (const p of formatVibePosts({ ...data, companions: [big, big, { ...big, companion_id: "gaia" }] })) {
+      expect(p.text.length).toBeLessThanOrEqual(2000);
+    }
+  });
+});
+
+describe("causeLabel", () => {
+  it("falls back to the stimulus kind for rows with no cause label (older rows) and for a bare kind", () => {
+    expect(causeLabel("message_witnessed", null, "stimulus", false)).toBe("message witnessed");
+    expect(causeLabel("message_witnessed", "message_witnessed", "stimulus", false)).toBe("message witnessed");
+  });
+  it("uses the label when there is one, and the kind only when the content bleeds", () => {
+    expect(causeLabel("breach", "a line was crossed at the gate", "stimulus", false)).toBe("breach: a line was crossed at the gate");
+    expect(causeLabel("breach", "a line was crossed at the gate", "stimulus", true)).toBe("breach");
+  });
+});
+
+// ── against the real schema ─────────────────────────────────────────────────────────────────
+
+function setup() {
+  const { db, DB } = makeSqliteD1();
+  const env: any = { DB, ADMIN_SECRET: "s", MCP_AUTH_SECRET: "m" };
+  db.exec("INSERT OR IGNORE INTO companions (id, name, created_at) VALUES ('cypher','Cypher','2026-01-01'),('drevan','Drevan','2026-01-01'),('gaia','Gaia','2026-01-01')");
+  db.exec("INSERT OR IGNORE INTO companion_state (companion_id) VALUES ('cypher'),('drevan'),('gaia')");
+  return { db, env };
 }
+const q = (db: any, sql: string, ...b: unknown[]) => db.prepare(sql).all(...b) as any[];
+function setFloats(db: any, id: string, f: [number, number, number], b: [number, number, number]) {
+  db.prepare("UPDATE companion_state SET soma_float_1=?, soma_float_2=?, soma_float_3=?, soma_float_1_baseline=?, soma_float_2_baseline=?, soma_float_3_baseline=? WHERE companion_id=?")
+    .run(...f, ...b, id);
+}
+let evN = 0;
+function ferment(db: any, id: string, kind: string, stimulus: string | null, deltas: object, detail: string | null, ago = "-1 hours") {
+  db.prepare("INSERT INTO companion_ferment_events (id, companion_id, kind, stimulus, float_deltas, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', ?))")
+    .run(`fe${++evN}`, id, kind, stimulus, JSON.stringify(deltas), detail, ago);
+}
+function flag(db: any, id: string, summary: string, severity = "warning") {
+  db.prepare("INSERT INTO guardian_flags (id, companion_id, flag_type, severity, summary, dedup_key, status) VALUES (?, ?, 'loop_stuck', ?, ?, ?, 'open')")
+    .run(`gf${++evN}`, id, severity, summary, `k${evN}`);
+}
+const rowsFor = (db: any, agent: string) => q(db, "SELECT * FROM companion_journal WHERE agent = ? AND source = 'vibecheck'", agent);
+const postOf = (r: Awaited<ReturnType<typeof runVibeCheck>>, c: string) => r.posts.find((p) => p.companion === c)!;
 
-describe("runVibeCheck -- dedup + delivery", () => {
-  it("writes a letter_to_raziel row tagged vibecheck, authored by gaia", async () => {
-    let tags = "";
-    const r = await runVibeCheck(mockEnv({ onInsert: (t) => { tags = t; } }));
+describe("runVibeCheck: one row per companion under their own agent", () => {
+  it("journals each block under that companion's own agent with source vibecheck, never all under gaia", async () => {
+    const { db, env } = setup();
+    const r = await runVibeCheck(env);
     expect(r.written).toBe(true);
-    expect(r.reason).toBe("ok");
-    expect(tags).toContain("vibecheck");
-    expect(tags).toContain("letter_to_raziel");
-    expect(r.text).toContain("The triad, witnessed.");
+    for (const c of ["cypher", "drevan", "gaia"]) {
+      const rows = rowsFor(db, c);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].note_text.startsWith(`${c[0]!.toUpperCase()}${c.slice(1)}. `)).toBe(true);
+    }
+    expect(q(db, "SELECT COUNT(*) AS n FROM companion_journal WHERE source='vibecheck'")[0].n).toBe(3);
   });
 
-  it("does not write twice in one day (dedup on the vibecheck marker)", async () => {
-    const r = await runVibeCheck(mockEnv({ dedupHit: true }));
-    expect(r.written).toBe(false);
-    expect(r.reason).toBe("already_sent");
-    expect(r.journal_id).toBe("cj_existing");
+  it("no sibling text under another agent's name: each row holds only its own companion's seeded text", async () => {
+    const { db, env } = setup();
+    db.exec("INSERT INTO companion_settings (companion_id, key, value) VALUES ('cypher','vibe_show_pressure','on')");
+    flag(db, "cypher", "CYPHERONLY loop on the audit register");
+    flag(db, "drevan", "DREVANONLY loop on the same image");
+    flag(db, "gaia", "GAIAONLY perimeter strain at the gate");
+    db.exec("INSERT INTO companion_settings (companion_id, key, value) VALUES ('gaia','vibe_show_pressure','on')");
+    ferment(db, "cypher", "stimulus", "retracted", { f1: -0.08, f2: 0, f3: 0 }, "retracted: CYPHERCAUSE");
+    ferment(db, "drevan", "stimulus", "make_landed", { f1: 0.06, f2: 0, f3: 0 }, "make_landed: DREVANCAUSE");
+    await runVibeCheck(env);
+    const text = (a: string) => rowsFor(db, a).map((x) => x.note_text).join("\n");
+    expect(text("cypher")).toContain("CYPHERONLY");
+    expect(text("cypher")).toContain("CYPHERCAUSE");
+    expect(text("cypher")).not.toMatch(/DREVANONLY|GAIAONLY|DREVANCAUSE/);
+    expect(text("drevan")).toContain("DREVANONLY");
+    expect(text("drevan")).not.toMatch(/CYPHERONLY|GAIAONLY|CYPHERCAUSE/);
+    expect(text("gaia")).toContain("GAIAONLY");
+    expect(text("gaia")).not.toMatch(/CYPHERONLY|DREVANONLY|CYPHERCAUSE|DREVANCAUSE/);
   });
 
-  it("degrades to a still-formatted digest when every data query returns empty", async () => {
-    const r = await runVibeCheck(mockEnv());
-    expect(r.text).toContain("Cypher. basin: unread.");
-    expect(r.text).toContain("Field: echo unread");
+  it("dedups per agent per Chicago day: a second run writes nothing; one missing agent is filled alone", async () => {
+    const { db, env } = setup();
+    await runVibeCheck(env);
+    const again = await runVibeCheck(env);
+    expect(again.written).toBe(false);
+    expect(again.reason).toBe("already_sent");
+    expect(q(db, "SELECT COUNT(*) AS n FROM companion_journal WHERE source='vibecheck'")[0].n).toBe(3);
+
+    db.exec("DELETE FROM companion_journal WHERE agent='drevan' AND source='vibecheck'");
+    const third = await runVibeCheck(env);
+    expect(postOf(third, "drevan").written).toBe(true);
+    expect(postOf(third, "cypher").reason).toBe("already_sent");
+    expect(postOf(third, "gaia").reason).toBe("already_sent");
+  });
+
+  it("one companion's failed write never blocks another's", async () => {
+    const { db, env } = setup();
+    // A trigger that rejects only cypher's insert.
+    db.exec("CREATE TRIGGER no_cypher BEFORE INSERT ON companion_journal WHEN NEW.agent = 'cypher' BEGIN SELECT RAISE(ABORT, 'boom'); END;");
+    const r = await runVibeCheck(env);
+    expect(postOf(r, "cypher").reason).toBe("error");
+    expect(postOf(r, "drevan").written).toBe(true);
+    expect(postOf(r, "gaia").written).toBe(true);
+  });
+
+  it("keeps the tray birth rule: the rows are born draft, never recallable as the companion's own memory", async () => {
+    const { db, env } = setup();
+    await runVibeCheck(env);
+    for (const row of q(db, "SELECT review_state FROM companion_journal WHERE source='vibecheck'")) {
+      expect(row.review_state).not.toBe("kept");
+    }
+  });
+
+  it("Gaia's row keeps the letter_to_raziel rail; the other two are not tagged a letter", async () => {
+    const { db, env } = setup();
+    await runVibeCheck(env);
+    expect(rowsFor(db, "gaia")[0].tags).toContain("letter_to_raziel");
+    expect(rowsFor(db, "drevan")[0].tags).not.toContain("letter_to_raziel");
+    expect(rowsFor(db, "cypher")[0].tags).not.toContain("letter_to_raziel");
+  });
+});
+
+describe("pressure flags honour the per-companion setting", () => {
+  it("default: on for drevan, off for cypher and gaia", async () => {
+    const { db, env } = setup();
+    for (const c of ["cypher", "drevan", "gaia"]) flag(db, c, `PRESS-${c} sat on the same thread`);
+    const d = await gatherVibeData(env);
+    const by = (c: string) => formatCompanionBlock(d.companions.find((x) => x.companion_id === c)!);
+    expect(by("drevan")).toContain("PRESS-drevan");
+    expect(by("cypher")).not.toContain("PRESS-cypher");
+    expect(by("gaia")).not.toContain("PRESS-gaia");
+  });
+  it("a setting row overrides the default either way", async () => {
+    const { db, env } = setup();
+    for (const c of ["cypher", "drevan"]) flag(db, c, `PRESS-${c} sat on the same thread`);
+    db.exec("INSERT INTO companion_settings (companion_id, key, value) VALUES ('cypher','vibe_show_pressure','on'),('drevan','vibe_show_pressure','off')");
+    const d = await gatherVibeData(env);
+    const by = (c: string) => formatCompanionBlock(d.companions.find((x) => x.companion_id === c)!);
+    expect(by("cypher")).toContain("PRESS-cypher");
+    expect(by("drevan")).not.toContain("PRESS-drevan");
+  });
+  it("a flag whose summary trips the care guard is dropped even when pressure is on", async () => {
+    const { db, env } = setup();
+    flag(db, "drevan", "Raziel's meds were late again");
+    flag(db, "drevan", "SAFEFLAG repeating one image");
+    const d = await gatherVibeData(env);
+    const block = formatCompanionBlock(d.companions.find((x) => x.companion_id === "drevan")!);
+    expect(block).toContain("SAFEFLAG");
+    expect(block).not.toMatch(/meds/i);
+  });
+});
+
+describe("health never enters a block", () => {
+  it("a care hold appears only as 'care hold open' in Gaia's field line; its reason never prints", async () => {
+    const { db, env } = setup();
+    db.exec("INSERT INTO care_hold_events (id, kind, rule, source, companion_id, at) VALUES ('h1','start','owner_said','owner_phrase','gaia', strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hours'))");
+    const r = await runVibeCheck(env);
+    const gaia = postOf(r, "gaia").text;
+    expect(gaia).toContain("care hold open");
+    const all = r.text;
+    expect(all).not.toMatch(/owner_said|low_spoons|meds_said_missed|spoons|medication|biometric/i);
+    expect(postOf(r, "drevan").text).not.toContain("care hold");
+    expect(postOf(r, "cypher").text).not.toContain("care hold");
+  });
+
+  it("a cause label with care words falls back to its kind for every companion", async () => {
+    const { db, env } = setup();
+    ferment(db, "drevan", "stimulus", "care_hold_open", { f1: 0, f2: 0, f3: -0.07 }, "care_hold_open: his meds slipped again");
+    const d = await gatherVibeData(env);
+    const block = formatCompanionBlock(d.companions.find((x) => x.companion_id === "drevan")!);
+    expect(block).toContain("weight down 0.07, care hold open");
+    expect(block).not.toMatch(/meds|slipped/i);
+  });
+});
+
+describe("Gaia's perimeter moves name the KIND, never the content, while it bleeds", () => {
+  it("shows the label when nothing bleeds, kind only when care words, a wound, or a care hold bleed", async () => {
+    const { db, env } = setup();
+    db.exec("INSERT INTO living_wounds (id, created_at, name, description, companion_id) VALUES ('w1','2026-01-01','Larkspur','fixture','gaia')");
+    ferment(db, "gaia", "stimulus", "breach", { f1: 0, f2: 0, f3: -0.09 }, "breach: the east gate was crossed", "-3 hours");
+    ferment(db, "gaia", "stimulus", "breach", { f1: 0, f2: 0, f3: -0.08 }, "breach: Larkspur walked through the line", "-4 hours");
+    ferment(db, "gaia", "stimulus", "breach", { f1: 0, f2: 0, f3: -0.07 }, "breach: a dose conversation at the gate", "-5 hours");
+    let d = await gatherVibeData(env);
+    let block = formatCompanionBlock(d.companions.find((x) => x.companion_id === "gaia")!);
+    expect(block).toContain("perimeter down 0.09, breach: the east gate was crossed");
+    expect(block).toContain("perimeter down 0.08, breach;");
+    expect(block).not.toMatch(/Larkspur|dose/);
+    // inside a care hold even the benign label rests
+    db.exec("INSERT INTO care_hold_events (id, kind, rule, source, companion_id, at) VALUES ('h2','start','owner_said','owner_phrase','gaia', strftime('%Y-%m-%dT%H:%M:%fZ','now','-6 hours'))");
+    d = await gatherVibeData(env);
+    block = formatCompanionBlock(d.companions.find((x) => x.companion_id === "gaia")!);
+    expect(block).toContain("perimeter down 0.09, breach");
+    expect(block).not.toContain("east gate");
+  });
+
+  it("an unreadable floor fails closed: kind only", async () => {
+    const { db, env } = setup();
+    ferment(db, "gaia", "stimulus", "breach", { f1: 0, f2: 0, f3: -0.09 }, "breach: the east gate was crossed");
+    db.exec("DROP TABLE living_wounds");
+    const d = await gatherVibeData(env);
+    const block = formatCompanionBlock(d.companions.find((x) => x.companion_id === "gaia")!);
+    expect(block).toContain("perimeter down 0.09, breach");
+    expect(block).not.toContain("east gate");
+  });
+});
+
+describe("moves selection", () => {
+  it("takes the top 3 by size across floats, downward included; skips shadow rows, baseline drift and small ticks", async () => {
+    const { db, env } = setup();
+    ferment(db, "drevan", "stimulus", "quiet_day", { f1: 0, f2: -0.12, f3: 0 }, "quiet_day: no triad contact");
+    ferment(db, "drevan", "stimulus", "make_landed", { f1: 0.05, f2: 0, f3: 0.03 }, "make_landed: a poem");
+    ferment(db, "drevan", "shadow", "repetition", { f1: -0.5, f2: 0, f3: 0 }, "would_fire");
+    ferment(db, "drevan", "baseline_drift", null, { f1: 0.4, f2: 0, f3: 0 }, null);
+    ferment(db, "drevan", "tick", null, { f1: -0.01, f2: 0, f3: 0 }, "settle");
+    ferment(db, "drevan", "stimulus", "message_witnessed", { f1: 0.01, f2: 0.004, f3: 0 }, null);
+    const d = await gatherVibeData(env);
+    const moves = d.companions.find((x) => x.companion_id === "drevan")!.moves;
+    expect(moves.map((m) => `${m.label}:${m.delta}`)).toEqual(["reach:-0.12", "heat:0.05", "weight:0.03"]);
+    expect(moves[0]!.cause).toBe("quiet day: no triad contact");
+    expect(moves.some((m) => /repetition|would_fire/.test(m.cause))).toBe(false);
+  });
+  it("names an unlabelled (older) row by its stimulus kind", async () => {
+    const { db, env } = setup();
+    ferment(db, "cypher", "stimulus", "message_from_raziel", { f1: 0, f2: 0.05, f3: 0 }, null);
+    const d = await gatherVibeData(env);
+    expect(d.companions.find((x) => x.companion_id === "cypher")!.moves[0]!.cause).toBe("message from raziel");
+  });
+});
+
+describe("gauge line across runs", () => {
+  it("only appears once something moved since the previous digest", async () => {
+    const { db, env } = setup();
+    await runVibeCheck(env);
+    // tomorrow: age the stored digest rows out of today's dedup by retagging the day, then move a gauge
+    db.exec("UPDATE companion_journal SET tags = REPLACE(tags, 'vibe:', 'vibe:old') WHERE source='vibecheck'");
+    let r = await runVibeCheck(env);
+    expect(r.text).not.toContain("gauges moved");
+    // drop run two's rows; run three compares against run one
+    db.exec("DELETE FROM companion_journal WHERE source='vibecheck' AND tags LIKE '%\"vibe:2%'");
+    db.exec("INSERT INTO companion_tensions (id, companion_id, tension_text) VALUES ('t1','cypher','a fixture tension')");
+    r = await runVibeCheck(env);
+    expect(postOf(r, "cypher").text).toContain("gauges moved: tensions 0 to 1");
   });
 });
