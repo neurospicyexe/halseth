@@ -43,6 +43,7 @@ import {
   stimulusSoftBumpCasSql,
   readSoftBumpStateSql,
   stimulusCountSinceSql,
+  stimulusCapCountSinceSql,
   softEdgeBumpAll,
   chicagoDayStartSqlite,
   dailyWeight,
@@ -419,6 +420,15 @@ async function todaysCount(env: Env, companionId: string, stimulus: string): Pro
   return row?.n ?? 0;
 }
 
+/** True when this stimulus already landed its `dailyCap` times on this companion today (Chicago day), live or shadow. */
+async function capReached(env: Env, companionId: string, stimulus: string): Promise<boolean> {
+  const cap = STIMULI[stimulus]?.dailyCap;
+  if (!cap) return false;
+  const row = await env.DB.prepare(stimulusCapCountSinceSql())
+    .bind(companionId, stimulus, chicagoDayStartSqlite()).first<{ n: number }>().catch(() => null);
+  return (row?.n ?? 0) >= cap;
+}
+
 function scaleFloats(d: Floats, w: number): Floats {
   return w === 1 ? d : { f1: d.f1 * w, f2: d.f2 * w, f3: d.f3 * w };
 }
@@ -533,6 +543,10 @@ async function shadowStimulusForCompanion(
     console.log(`[ferment] ${stimulus} shadow cooldown companion=${companionId}`);
     return false;
   }
+  if (await capReached(env, companionId, stimulus)) {
+    console.log(`[ferment] ${stimulus} shadow daily cap companion=${companionId}`);
+    return false;
+  }
   const d = stimulusFloatDelta(stimulus, companionId, float);
   const notBody = !!eff.notBody?.includes(companionId);
   const touchesFloats = !notBody && (d.f1 !== 0 || d.f2 !== 0 || d.f3 !== 0);
@@ -564,6 +578,7 @@ async function applyStimulusToCompanion(
   if (eff.minIntervalHours && await inCooldown(env, companionId, stimulus, eff.minIntervalHours)) {
     return false;
   }
+  if (await capReached(env, companionId, stimulus)) return false;
   const nominal = stimulusFloatDelta(stimulus, companionId, float);
   const driveDeltas: Record<string, number> = {};
   const touchesFloats = nominal.f1 !== 0 || nominal.f2 !== 0 || nominal.f3 !== 0;

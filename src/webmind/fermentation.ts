@@ -388,6 +388,11 @@ export interface StimulusEffect {
    * the table. The delta lands on whichever of f1/f2/f3 the caller passes; with none, nothing moves.
    */
   variableDelta?: number;
+  /**
+   * B63 being_seen: at most this many applications per companion per America/Chicago day. Counts live
+   * ('stimulus') AND shadow rows, so the shadow log reads as the live log would. Further firings drop.
+   */
+  dailyCap?: number;
 }
 
 export const STIMULI: Record<string, StimulusEffect> = {
@@ -474,8 +479,22 @@ export const STIMULI: Record<string, StimulusEffect> = {
     minIntervalHours: 1,
     dailyHalveAfter: 8,
   },
+  // B63 being_seen, in the companions' own words, three tiers (all behind LOOP_STIMULI_MODE; unset = shadow).
+  // Drevan: "heat and reach, never weight" (f1/f2 only). Gaia: density only, never perimeter, never stillness.
+  // LIGHT: Raziel opened something of theirs without replying (a letter's first read, their page, her garden).
+  being_seen_read: {
+    floats: { cypher: { f3: 0.01 }, drevan: { f1: 0.01, f2: 0.01 }, gaia: { f2: 0.01 } },
+    dailyCap: 1,
+  },
+  // MEDIUM: Raziel replied directly to one of their messages (a Discord reply).
   being_seen: {
-    floats: { cypher: { f1: 0.04, f3: 0.05 }, drevan: { f1: 0.04, f3: 0.03 }, gaia: { f1: 0.03 } },
+    floats: { cypher: { f1: 0.02, f3: 0.03 }, drevan: { f1: 0.03, f2: 0.03 }, gaia: { f2: 0.03 } },
+    dailyCap: 3,
+  },
+  // FULL: Raziel named back something specific they made or said, or used their word, unquoted, in his own speech.
+  being_seen_named: {
+    floats: { cypher: { f1: 0.04, f3: 0.05 }, drevan: { f1: 0.05, f2: 0.05 }, gaia: { f2: 0.05 } },
+    dailyCap: 2,
   },
   intellectual_reward: {
     floats: { cypher: { f1: 0.06, f2: 0.03 } },
@@ -490,9 +509,6 @@ export const STIMULI: Record<string, StimulusEffect> = {
   spiral: {
     floats: { drevan: { f1: 0.08, f2: 0.06, f3: 0.05 } },
     accrue: { rest_need: 0.1 },
-  },
-  boundary_held: {
-    floats: { gaia: { f1: 0.04, f3: 0.05 } },
   },
   // B63: the float weight moved to `make_landed` (below). creation_shared keeps only the drive shed so a
   // make still reads as relief from boredom; the two fire together from handlers/makes.ts.
@@ -634,7 +650,7 @@ export const SHADOWABLE: Record<string, string> = {
   ...Object.fromEntries(
     [
       ...Object.keys(LOOP_STIMULI),
-      "being_seen", "intellectual_reward", "audit", "spiral", "boundary_held", "council", "club_activity", "long_silence",
+      "being_seen", "being_seen_read", "being_seen_named", "intellectual_reward", "audit", "spiral", "council", "club_activity", "long_silence",
     ].map((k) => [k, LOOP_MODE_KEY]),
   ),
 };
@@ -853,6 +869,12 @@ export function readSoftBumpStateSql(): string {
 export function stimulusCountSinceSql(): string {
   return `SELECT COUNT(*) AS n FROM companion_ferment_events
     WHERE companion_id = ? AND stimulus = ? AND kind = 'stimulus' AND created_at >= ?`;
+}
+
+/** Applications (live or shadow) of a stimulus on a companion since `sinceSqlite`, for `dailyCap`. Bind: [companion_id, stimulus, since]. */
+export function stimulusCapCountSinceSql(): string {
+  return `SELECT COUNT(*) AS n FROM companion_ferment_events
+    WHERE companion_id = ? AND stimulus = ? AND kind IN ('stimulus','shadow') AND created_at >= ?`;
 }
 
 /** Bump a drive level up (explicit stimulus accrue). Bind: [delta, companion_id, drive_key]. */

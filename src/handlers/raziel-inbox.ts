@@ -1,5 +1,7 @@
 import { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
+import { fireStimulus } from "./fermentation.js";
+import type { CompanionId } from "../webmind/fermentation.js";
 import { COMPANION_ID_SET } from "../companions.js";
 
 // Raziel's inbox: every letter a companion or system writer (steward, guardian) left for him.
@@ -114,5 +116,22 @@ export async function postRazielInboxRead(
       ).bind(id)),
   );
   const marked = results.reduce((n: number, r: any) => n + (r?.meta?.changes ?? 0), 0);
+  // B63 being_seen LIGHT: a letter's FIRST read (the insert actually inserted) lands on its author; a re-open
+  // inserts nothing and fires nothing. Admin-tier callers only (a companion token cannot speak as Raziel).
+  if (identifyCallerCompanion(request, env) === null) {
+    try {
+      const fresh = unique.filter((_, i) => ((results[i] as any)?.meta?.changes ?? 0) > 0);
+      if (fresh.length > 0) {
+        const authors = await env.DB.prepare(
+          `SELECT DISTINCT agent FROM companion_journal WHERE id IN (${fresh.map(() => "?").join(",")})`,
+        ).bind(...fresh).all<{ agent: string }>();
+        for (const a of authors.results ?? []) {
+          if (COMPANION_ID_SET.has(a.agent)) await fireStimulus(env, "being_seen_read", a.agent as CompanionId, "opened a letter (first read)");
+        }
+      }
+    } catch (e) {
+      console.warn("[being-seen] letter fire failed", String(e));
+    }
+  }
   return jsonRes({ ok: true, marked });
 }

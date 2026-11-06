@@ -153,7 +153,7 @@ describe("LOOP_STIMULI_MODE", () => {
   it("every new stimulus and the eight never-wired ones sit behind it; repetition keeps its own switch", () => {
     for (const k of ["make_landed", "tend_sol", "quiet_day", "care_hold_open", "care_hold_clear", "tension_resolved", "tension_unworked",
       "breach", "planting", "kept_line", "pulled_to_speed", "retracted", "coined_word", "immersion_landed", "loss_unclosed", "auto_close",
-      "being_seen", "intellectual_reward", "audit", "spiral", "boundary_held", "council", "club_activity", "long_silence"]) {
+      "being_seen", "being_seen_read", "being_seen_named", "intellectual_reward", "audit", "spiral", "council", "club_activity", "long_silence"]) {
       expect(SHADOWABLE[k]).toBe("LOOP_STIMULI_MODE");
       expect(stimulusMode(k, {})).toBe("shadow");
       expect(stimulusMode(k, { LOOP_STIMULI_MODE: "on" })).toBe("on");

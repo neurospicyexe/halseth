@@ -101,6 +101,7 @@ import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature } from "./handlers/creatures.js";
 import { getGardenGaia } from "./handlers/garden.js";
+import { postBeingSeenCheck, postGardenGaiaLooked } from "./handlers/being-seen.js";
 import { getMindBasins, postBasinWitness } from "./handlers/basins.js";
 import { postMake, getMakes, getMakeItemHttp, serveMakeFile, getPendingMakes, getMakeSource, postMakeRendered, patchMake } from "./handlers/makes.js";
 import { getInterests, getInterestTrailHttp, getThinking, postInterest } from "./handlers/interests.js";
@@ -498,6 +499,8 @@ const router = new Router()
   .on("GET",   "/mind/basins/:companion_id",          (request, env, params) => getMindBasins(request, env, params ?? {}))
   .on("POST",  "/mind/basins/:id/witness",            (request, env, params) => postBasinWitness(request, env, params ?? {}))
   .on("GET",   "/mind/garden/gaia",                  (request, env)         => getGardenGaia(request, env))
+  .on("POST",  "/mind/garden/gaia/looked",           (request, env)         => postGardenGaiaLooked(request, env))
+  .on("POST",  "/mind/being-seen/check",             (request, env)         => postBeingSeenCheck(request, env))
   .on("GET",   "/mind/makes/:companion_id",          (request, env, params) => getMakes(request, env, params ?? {}))
 
   // Salience prune (0105, task 20) -- cold machine-source journal rows self-archive; manual/test trigger

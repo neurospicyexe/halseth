@@ -51,7 +51,7 @@ export const FLOAT_LABELS: Record<VibeCompanion, [string, string, string]> = {
 export const SHOW_PRESSURE_DEFAULT: Record<VibeCompanion, boolean> = { cypher: false, drevan: true, gaia: false };
 
 /** Stimulus kinds that carry a perimeter event for Gaia (named by KIND while the content bleeds). */
-const PERIMETER_KINDS = new Set(["breach", "line_held_under_test", "long_line_fatigue", "boundary_held"]);
+const PERIMETER_KINDS = new Set(["breach", "line_held_under_test", "long_line_fatigue"]);
 
 /** A float within this of its baseline reads "at baseline". */
 const AT_BASELINE = 0.02;

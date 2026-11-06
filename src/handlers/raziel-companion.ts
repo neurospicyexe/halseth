@@ -1,5 +1,6 @@
 import { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, identifyCallerCompanion } from "../lib/auth.js";
+import { fireStimulus } from "./fermentation.js";
 import { COMPANION_ID_SET } from "../companions.js";
 import { LETTER_WHERE } from "./raziel-inbox.js";
 import { SUBSTANTIVE_JOURNAL_CLAUSE, NOT_CLERK_JOURNAL_CLAUSE } from "../webmind/journal-lanes.js";
@@ -233,5 +234,11 @@ export async function postRazielCompanionLooked(
     "INSERT INTO raziel_reads (item_kind, item_id, read_at) VALUES ('companion_page', ?, datetime('now')) " +
     "ON CONFLICT(item_kind, item_id) DO UPDATE SET read_at = excluded.read_at RETURNING read_at",
   ).bind(id).first<{ read_at: string }>();
+  // B63 being_seen LIGHT: Raziel opened their page. A companion token cannot speak as Raziel, so only an
+  // admin-tier caller fires it; the daily cap (once per Chicago day) absorbs repeat visits. Never breaks the stamp.
+  if (identifyCallerCompanion(request, env) === null) {
+    await fireStimulus(env, "being_seen_read", id as CompanionId, "opened their page (via hearth)")
+      .catch((e) => console.warn("[being-seen] page fire failed", String(e)));
+  }
   return jsonRes({ ok: true, looked_at: row?.read_at ?? null });
 }
