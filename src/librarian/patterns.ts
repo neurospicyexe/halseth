@@ -1745,6 +1745,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   make_artifact: { triggers: ["make_artifact"], tools: ["make_artifact"], response_key: "witness" },
   make_keep: { triggers: ["make_keep"], tools: ["make_keep"], response_key: "witness" },
   makes_read: { triggers: ["makes_read"], tools: ["makes_read"], response_key: "data" },
+  // Basins that move (mig 0172): anchored in router.ts ANCHORED_GUARDS; these triggers are formalities.
+  basin_revise: { triggers: ["basin_revise"], tools: ["basin_revise"], response_key: "witness" },
+  basins_read: { triggers: ["basins_read"], tools: ["basins_read"], response_key: "data" },
+  basin_waiting: { triggers: ["basin_waiting"], tools: ["basin_waiting"], response_key: "data" },
   // Gaia's garden (mig 0171): anchored in router.ts ANCHORED_GUARDS; these triggers are formalities.
   garden_plant: { triggers: ["garden_plant"], tools: ["garden_plant"], response_key: "witness" },
   garden_pull: { triggers: ["garden_pull"], tools: ["garden_pull"], response_key: "witness" },

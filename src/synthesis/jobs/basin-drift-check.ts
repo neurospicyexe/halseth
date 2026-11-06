@@ -10,6 +10,7 @@
 import { Env } from "../../types.js";
 import { embedText } from "../../mcp/embed.js";
 import { complete } from "../deepseek.js";
+import { onlyIf, schemaGap } from "../../care/schema-gap.js";
 
 interface BasinRow {
   basin_name: string;
@@ -95,9 +96,13 @@ export async function runBasinDriftCheck(
   // Basins (2026-07-02): until now the prompt never told the model what this companion's
   // basins ARE -- worst_basin was free-guessed and the basins table was decorative. The
   // named basins + descriptions are now the vocabulary the verdict must use.
+  // Live rows only (mig 0172): a superseded, declined or awaiting-witness row is not what drift measures
+  // against. Pre-0172 the status column is missing; fall back on that gap only.
   const basinRows = await env.DB.prepare(
+    "SELECT basin_name, basin_description, embedding FROM companion_basins WHERE companion_id = ? AND status = 'live' ORDER BY created_at ASC"
+  ).bind(companionId).all<BasinRow>().catch(onlyIf(schemaGap, () => env.DB.prepare(
     "SELECT basin_name, basin_description, embedding FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC"
-  ).bind(companionId).all<BasinRow>();
+  ).bind(companionId).all<BasinRow>()));
   const basins = basinRows.results ?? [];
 
   const somaRow = await env.DB.prepare(

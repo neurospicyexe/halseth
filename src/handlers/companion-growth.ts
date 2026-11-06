@@ -5,8 +5,9 @@
 // All routes require ADMIN_SECRET Bearer auth.
 
 import { fireTensionResolved } from "../librarian/backends/halseth.js";
+import { onlyIf, schemaGap } from "../care/schema-gap.js";
 import type { Env } from "../types.js";
-import { authGuard } from "../lib/auth.js";
+import { authGuard, isAdminToken } from "../lib/auth.js";
 import { embedText, embedAndStoreAsync } from "../mcp/embed.js";
 
 const VALID_COMPANIONS = new Set(["cypher", "drevan", "gaia"]);
@@ -36,17 +37,26 @@ export async function getBasins(
   const { companion_id } = params;
   if (!validateCompanion(companion_id)) return json({ error: "invalid companion_id" }, 400);
 
+  // Live rows only (mig 0172); pre-0172 the status column is missing, fall back on that gap only.
+  // The second-brain evaluator reads this route, so its drift readings follow a revised basin from here.
+  const cols = "id, companion_id, basin_name, basin_description, embedding, created_at, updated_at";
   const rows = await env.DB.prepare(
-    "SELECT id, companion_id, basin_name, basin_description, embedding, created_at, updated_at FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC"
-  ).bind(companion_id).all();
+    `SELECT ${cols} FROM companion_basins WHERE companion_id = ? AND status = 'live' ORDER BY created_at ASC`
+  ).bind(companion_id).all().catch(onlyIf(schemaGap, () => env.DB.prepare(
+    `SELECT ${cols} FROM companion_basins WHERE companion_id = ? ORDER BY created_at ASC`
+  ).bind(companion_id).all()));
   return json({ basins: rows.results });
 }
 
 // POST /companion-growth/basins
 // Body: { companion_id, basin_name, basin_description, embedding: number[] }
+// SEED-ONLY (mig 0172, B63): Raziel's admin token exactly, and only for a companion that has NO basin row yet. Once
+// basins exist they move only by the companion's own revision (Librarian `revise my basin`), so this route can never
+// write a live basin around the cause, pace and witness gates.
 export async function postBasin(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
+  if (!isAdminToken(request, env)) return json({ error: "forbidden: basins are seeded by Raziel only" }, 403);
 
   let body: unknown;
   try { body = await request.json(); } catch { return json({ error: "bad JSON" }, 400); }
@@ -55,6 +65,8 @@ export async function postBasin(request: Request, env: Env): Promise<Response> {
   if (!validateCompanion(b.companion_id)) return json({ error: "invalid companion_id" }, 400);
   if (typeof b.basin_name !== "string" || !b.basin_name.trim()) return json({ error: "basin_name required" }, 400);
   if (typeof b.basin_description !== "string" || b.basin_description.length > MAX_TEXT) return json({ error: "basin_description required (max 4000 chars)" }, 400);
+  const have = await env.DB.prepare("SELECT COUNT(*) AS n FROM companion_basins WHERE companion_id = ?").bind(b.companion_id).first<{ n: number }>();
+  if ((have?.n ?? 0) > 0) return json({ error: "this companion already has basins; they move only by the companion's own revision" }, 409);
 
   // Embedding (2026-07-02): server-side via Workers AI when the caller doesn't supply one.
   // Caller-supplied embeddings had unknown provenance (any model, any dims) which made the

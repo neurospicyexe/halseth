@@ -185,6 +185,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "B63: 'settled with <sibling>', the whole request." },
   { pattern_key: "loss_log", regex: LOSS_RE,
     note: "B63 (mig 0174): 'loss: <what>' / 'loss for <companion>: <what>'. Start-anchored with the colon, so ordinary speech about a loss never matches and the text after the colon can never be routed by a trigger it contains." },
+  { pattern_key: "basin_revise", regex: REVISE_VERB_RE,
+    note: "Basins that move (mig 0172): 'revise my basin <name>: <new description> because <kind> <id-prefix>'. Start-anchored on 'revise my basin' so the description (free text) can never be routed by a trigger it contains, and so it beats self_model_revise's 'revise' triggers. Own basins only (the executor takes the caller from the request)." },
+  { pattern_key: "basins_read", regex: BASINS_READ_RE,
+    note: "Basins that move: 'my basins', whole request." },
+  { pattern_key: "basin_waiting", regex: BASIN_WAITING_RE,
+    note: "Basins that move: 'basin moves waiting', whole request: the caller's own revisions awaiting Raziel's witness." },
   { pattern_key: "makes_read", regex: MAKES_READ_RE,
     note: "B62 making: 'my makes' / 'list my makes', whole request." },
   { pattern_key: "person_who_is", regex: PERSON_LOOKUP_RE,
@@ -506,6 +512,8 @@ import { execLossLog } from "./executors/losses.js";
 import { LINE_RE, DISAGREE_RE, SETTLED_RE } from "../webmind/line-events.js";
 import { execLineEvent, execDisagreeOpen, execDisagreeSettle } from "./executors/line-events.js";
 import { execMake, execMakesRead, execMakeKeep } from "./executors/makes.js";
+import { REVISE_VERB_RE, BASINS_READ_RE, BASIN_WAITING_RE } from "../webmind/basins.js";
+import { execBasinRevise, execBasinsRead, execBasinWaiting } from "./executors/basins.js";
 import { PLANT_VERB_RE, PULL_VERB_RE, GARDEN_READ_RE, GARDEN_CONSENT_RE } from "../webmind/garden.js";
 import { execGardenPlant, execGardenPull, execGardenRead, execGardenConsent } from "./executors/garden.js";
 import { execImpErrand } from "./executors/errands.js";
@@ -640,6 +648,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   make_artifact: execMake,
   makes_read: execMakesRead,
   make_keep: execMakeKeep,
+  basin_revise: execBasinRevise,
+  basins_read: execBasinsRead,
+  basin_waiting: execBasinWaiting,
   garden_plant: execGardenPlant,
   garden_pull: execGardenPull,
   garden_read: execGardenRead,
