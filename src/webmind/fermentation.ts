@@ -403,7 +403,7 @@ export const STIMULI: Record<string, StimulusEffect> = {
     // rate a sibling exchange would have outweighed a message from him, recreating the exact
     // drowning-out problem for the one companion it was meant to fix. Canon-adjacent and
     // revisable on the same standing as the baseline seeds (mig 0110).
-    floats: { cypher: { f2: 0.04, f3: 0.03 }, drevan: { f1: 0.05, f2: 0.03 }, gaia: { f1: 0.02, f3: 0.04 } },
+    floats: { cypher: { f2: 0.04, f3: 0.03 }, drevan: { f1: 0.05, f2: 0.03 }, gaia: { f1: 0.02, f2: 0.04 } },
     shed: ["relational_need"],
     // No cooldown, deliberately. Every message TO HIS ADDRESSEE lands -- see message_witnessed for
     // why that qualifier had to be added on 2026-07-30, and why it is not a cooldown on him.
@@ -500,11 +500,11 @@ export const STIMULI: Record<string, StimulusEffect> = {
     shed: ["novelty_need"],
   },
   council: {
-    floats: { cypher: { f2: 0.02 }, drevan: { f2: 0.02 }, gaia: { f3: 0.02 } },
+    floats: { cypher: { f2: 0.02 }, drevan: { f2: 0.02 }, gaia: { f2: 0.02 } },
     shed: ["novelty_need"],
   },
   club_activity: {
-    floats: { cypher: { f2: 0.02 }, drevan: { f2: 0.02 }, gaia: { f3: 0.02 } },
+    floats: { cypher: { f2: 0.02 }, drevan: { f2: 0.02 }, gaia: { f2: 0.02 } },
     shed: ["novelty_need"],
   },
   long_silence: {
