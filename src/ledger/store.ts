@@ -487,3 +487,39 @@ export async function recentLedgerForFriction(env: Env, sinceIso: string, limit:
   ).bind(sinceIso, limit).all<{ id: string; body: string; content: string }>();
   return r.results ?? [];
 }
+
+// ── The Imps page (Hearth, read-only) ─────────────────────────────────────────────────────────────────────
+// Raziel-facing, so Hex never appears: not open, not kept (same line NOT_OPEN_RIDER_SQL draws). Pre-0168: empty.
+
+/** Open imp lines waiting per companion, Hex lines excluded. Counts only; no companion is tallied for asking. */
+export async function countImpWaitingByCompanion(env: Env): Promise<Record<string, number>> {
+  const out: Record<string, number> = { drevan: 0, cypher: 0, gaia: 0 };
+  try {
+    const r = await env.DB.prepare(
+      `SELECT companion_id, COUNT(*) AS n FROM ledger_entries
+        WHERE state = 'open' AND rider IS NOT NULL AND rider != 'hex' GROUP BY companion_id`,
+    ).all<{ companion_id: string; n: number }>();
+    for (const row of r.results ?? []) if (row.companion_id in out) out[row.companion_id] = Number(row.n ?? 0);
+    return out;
+  } catch (e) {
+    if (missingRiderColumn(e)) return out;
+    throw e;
+  }
+}
+
+export interface KeptImpLine { id: string; imp: string; companion_id: string; content: string; state_at: string | null }
+
+/** Imp lines a companion KEPT (never open, never Hex), newest kept first. */
+export async function loadKeptImpLines(env: Env, limit = 20): Promise<KeptImpLine[]> {
+  try {
+    const r = await env.DB.prepare(
+      `SELECT id, rider AS imp, companion_id, content, state_at FROM ledger_entries
+        WHERE state = 'kept' AND rider IS NOT NULL AND rider != 'hex'
+        ORDER BY COALESCE(state_at, created_at) DESC, id DESC LIMIT ?`,
+    ).bind(limit).all<KeptImpLine>();
+    return r.results ?? [];
+  } catch (e) {
+    if (missingRiderColumn(e)) return [];
+    throw e;
+  }
+}

@@ -99,6 +99,7 @@ import { postToolSearch, postToolImage, getToolCalls, serveToolImage } from "./h
 import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
+import { getImpsActivity } from "./handlers/imps-activity.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature } from "./handlers/creatures.js";
 import { getGardenGaia } from "./handlers/garden.js";
 import { postBeingSeenCheck, postGardenGaiaLooked } from "./handlers/being-seen.js";
@@ -463,6 +464,7 @@ const router = new Router()
   // Imp activations log (0091) -- reply-flavor layer instrument; settings live in companion_settings KV
   .on("POST",  "/mind/imp-activations",             (request, env)         => postImpActivation(request, env))
   .on("GET",   "/mind/imp-activations",             (request, env)         => getImpActivations(request, env))
+  .on("GET",   "/mind/imps/activity",               (request, env)         => getImpsActivity(request, env))
 
   // Motif memory + resurrection (0076) -- recurring symbolic threads as memory atoms
   .on("POST",  "/mind/motifs/detect",              (request, env)         => postMotifsDetect(request, env))

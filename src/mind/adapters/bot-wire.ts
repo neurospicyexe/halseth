@@ -319,6 +319,10 @@ export function botWireFromMindState(
     // the key is on the wire; nullsafe-discord renders it).
     salt_waiting: ms.ledger.salt_waiting ?? 0,
 
+    // Imp errand lines waiting on this companion's ledger (open rider rows, mig 0168): a count and nothing else;
+    // the bot renders one content-free line, "something waiting (N)", when > 0. Never the lines themselves.
+    ledger_waiting: ms.ledger.waiting ?? 0,
+
     resurfaced_conclusion: ms.beliefs.resurfaced
       ? {
           conclusion_text: text(ms.beliefs.resurfaced.conclusion_text, 280),
