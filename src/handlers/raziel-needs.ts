@@ -8,7 +8,7 @@ import { RATIFIABLE_PENDING_SQL } from "../lib/ratifiable.js";
 const jsonRes = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
-export type NeedsKind = "question" | "growth" | "guardian" | "basin";
+export type NeedsKind = "question" | "growth" | "guardian" | "basin" | "basin_move";
 
 export interface NeedsItem {
   key: string; // `${kind}:${id}`
@@ -28,6 +28,8 @@ export interface NeedsCounts {
   growth: number;
   guardian: number;
   basin: number;
+  /** A companion basin revision awaiting Raziel's witness (mig 0172; Gaia's only). */
+  basin_move: number;
 }
 
 // Predicates are static strings. growth's comes from ratifiable.ts (one definition of "awaiting review").
@@ -36,6 +38,7 @@ const WHERE = {
   growth: RATIFIABLE_PENDING_SQL,
   guardian: "status IN ('open','surfaced')",
   basin: "drift_type = 'pressure' AND caleth_confirmed = 0 AND dismissed_at IS NULL",
+  basin_move: "status = 'awaiting_witness'",
 } as const;
 
 const SELECT = {
@@ -47,6 +50,9 @@ const SELECT = {
     "SELECT id, companion_id, created_at, summary AS title, flag_type AS detail, severity FROM guardian_flags",
   basin:
     "SELECT id, companion_id, recorded_at AS created_at, worst_basin AS title, notes AS detail, drift_score FROM companion_basin_history",
+  // The basin's NAME and the cause kind only: the description is the companion's own words and is read on Hearth's basins page.
+  basin_move:
+    "SELECT id, companion_id, created_at, basin_name AS title, cause_kind AS detail FROM companion_basins",
 } as const;
 
 const ORDER_COL: Record<NeedsKind, string> = {
@@ -54,6 +60,7 @@ const ORDER_COL: Record<NeedsKind, string> = {
   growth: "created_at",
   guardian: "created_at",
   basin: "recorded_at",
+  basin_move: "created_at",
 };
 
 const TABLE: Record<NeedsKind, string> = {
@@ -61,9 +68,10 @@ const TABLE: Record<NeedsKind, string> = {
   growth: "growth_journal",
   guardian: "guardian_flags",
   basin: "companion_basin_history",
+  basin_move: "companion_basins",
 };
 
-const KINDS: NeedsKind[] = ["question", "growth", "guardian", "basin"];
+const KINDS: NeedsKind[] = ["question", "growth", "guardian", "basin", "basin_move"];
 
 function toItem(kind: NeedsKind, row: any): NeedsItem {
   const item: NeedsItem = {
@@ -80,14 +88,21 @@ function toItem(kind: NeedsKind, row: any): NeedsItem {
   return item;
 }
 
+// Pre-0172 the basin_move table has no status column: that one kind reads as empty on the gap, nothing else is swallowed.
+const gapEmpty = <T>(empty: T) => (e: unknown): T => {
+  if (/no such (column|table)/i.test(String(e))) return empty;
+  throw e;
+};
+
 async function readCounts(env: Env): Promise<NeedsCounts> {
   const rows = await Promise.all(
-    KINDS.map((k) =>
-      env.DB.prepare(`SELECT COUNT(*) AS n FROM ${TABLE[k]} WHERE ${WHERE[k]}`).first<{ n: number }>(),
-    ),
+    KINDS.map((k) => {
+      const q = env.DB.prepare(`SELECT COUNT(*) AS n FROM ${TABLE[k]} WHERE ${WHERE[k]}`).first<{ n: number }>();
+      return k === "basin_move" ? q.catch(gapEmpty<{ n: number } | null>(null)) : q;
+    }),
   );
-  const [question = 0, growth = 0, guardian = 0, basin = 0] = rows.map((r) => r?.n ?? 0);
-  return { total: question + growth + guardian + basin, question, growth, guardian, basin };
+  const [question = 0, growth = 0, guardian = 0, basin = 0, basin_move = 0] = rows.map((r) => r?.n ?? 0);
+  return { total: question + growth + guardian + basin + basin_move, question, growth, guardian, basin, basin_move };
 }
 
 export async function getRazielNeeds(
@@ -101,11 +116,12 @@ export async function getRazielNeeds(
 
   const [counts, ...lists] = await Promise.all([
     readCounts(env),
-    ...KINDS.map((k) =>
-      env.DB.prepare(
+    ...KINDS.map((k) => {
+      const q = env.DB.prepare(
         `${SELECT[k]} WHERE ${WHERE[k]} ORDER BY ${ORDER_COL[k]} DESC, id DESC LIMIT ?`,
-      ).bind(limit).all(),
-    ),
+      ).bind(limit).all();
+      return k === "basin_move" ? q.catch(gapEmpty<{ results: unknown[] }>({ results: [] })) : q;
+    }),
   ]);
 
   const items = lists

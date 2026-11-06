@@ -89,7 +89,7 @@ describe("raziel needs", () => {
     await s.basin("b1", "pressure", 0, null, "w", "2026-10-04 10:00:00");
     const r = await s.list("?limit=2");
     expect(r.items.map((i: any) => i.key)).toEqual(["basin:b1", "guardian:f1"]);
-    expect(r.counts).toEqual({ total: 4, question: 1, growth: 1, guardian: 1, basin: 1 });
+    expect(r.counts).toEqual({ total: 4, question: 1, growth: 1, guardian: 1, basin: 1, basin_move: 0 });
   });
 
   it("count route matches list counts", async () => {
@@ -98,5 +98,30 @@ describe("raziel needs", () => {
     await s.flag("f1", "open", null);
     await s.basin("b1", "pressure", 0, null, null);
     expect(await s.count()).toEqual((await s.list()).counts);
+  });
+
+  it("basin_move lists only a revision awaiting witness: name and cause kind, never the description", async () => {
+    const s = setup();
+    const ins = (id: string, status: string) => (s.env.DB as any).prepare(
+      "INSERT INTO companion_basins (id, companion_id, basin_name, basin_description, embedding, status, cause_kind, created_at) VALUES (?, 'gaia', 'the-line', 'PRIVATE WORDS', '[]', ?, 'refusal', '2026-11-05 10:00:00')").bind(id, status).run();
+    await ins("m1", "awaiting_witness");
+    await ins("m2", "live");
+    await ins("m3", "declined");
+    const r = await s.list();
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0]).toMatchObject({ kind: "basin_move", id: "m1", companion_id: "gaia", title: "the-line", detail: "refusal" });
+    expect(JSON.stringify(r)).not.toContain("PRIVATE WORDS");
+    expect(r.counts.basin_move).toBe(1);
+    expect(r.counts.total).toBe(1);
+    expect(await s.count()).toEqual(r.counts);
+  });
+
+  it("pre-0172: the basin_move kind reads as empty and the rest still answers", async () => {
+    const { DB } = makeSqliteD1({ upTo: 171 }) as { DB: any };
+    const env: any = { DB, ADMIN_SECRET: "s", MCP_AUTH_SECRET: "m" };
+    const res = await getRazielNeeds(new Request("http://x/raziel/needs", { headers: { Authorization: "Bearer s" } }), env, {});
+    const j: any = await res.json();
+    expect(res.status).toBe(200);
+    expect(j.counts.basin_move).toBe(0);
   });
 });
