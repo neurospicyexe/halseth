@@ -177,6 +177,12 @@ export const ANCHORED_GUARDS: readonly AnchoredGuard[] = [
     note: "Gaia's garden: 'my garden', whole request." },
   { pattern_key: "garden_consent", regex: GARDEN_CONSENT_RE,
     note: "Gaia's garden: 'garden yes|no <planting id-prefix>', the sibling's answer on a one-sibling note. Callable only by the planting's consent_from companion (the executor checks)." },
+  { pattern_key: "line_event", regex: LINE_RE,
+    note: "B63: Gaia's authored line events, 'line held: ...' / 'line crossed: <kind>' / 'line fatigue: ...'. Start-anchored with the colon; the executor refuses anyone but Gaia." },
+  { pattern_key: "disagree_open", regex: DISAGREE_RE,
+    note: "B63: 'disagree with <sibling>: <what>', named by the speaker, never inferred. Anchored on a triad name and the colon." },
+  { pattern_key: "disagree_settle", regex: SETTLED_RE,
+    note: "B63: 'settled with <sibling>', the whole request." },
   { pattern_key: "loss_log", regex: LOSS_RE,
     note: "B63 (mig 0174): 'loss: <what>' / 'loss for <companion>: <what>'. Start-anchored with the colon, so ordinary speech about a loss never matches and the text after the colon can never be routed by a trigger it contains." },
   { pattern_key: "makes_read", regex: MAKES_READ_RE,
@@ -497,6 +503,8 @@ import { MAKE_VERB_RE, MAKES_READ_RE } from "../webmind/makes.js";
 import { KEEP_VERB_RE } from "../webmind/makes-capture.js";
 import { LOSS_RE } from "../webmind/losses.js";
 import { execLossLog } from "./executors/losses.js";
+import { LINE_RE, DISAGREE_RE, SETTLED_RE } from "../webmind/line-events.js";
+import { execLineEvent, execDisagreeOpen, execDisagreeSettle } from "./executors/line-events.js";
 import { execMake, execMakesRead, execMakeKeep } from "./executors/makes.js";
 import { PLANT_VERB_RE, PULL_VERB_RE, GARDEN_READ_RE, GARDEN_CONSENT_RE } from "../webmind/garden.js";
 import { execGardenPlant, execGardenPull, execGardenRead, execGardenConsent } from "./executors/garden.js";
@@ -637,6 +645,9 @@ const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   garden_read: execGardenRead,
   garden_consent: execGardenConsent,
   loss_log: execLossLog,
+  line_event: execLineEvent,
+  disagree_open: execDisagreeOpen,
+  disagree_settle: execDisagreeSettle,
   person_who_is: execPersonWhoIs,
   imp_errand: execImpErrand,
 

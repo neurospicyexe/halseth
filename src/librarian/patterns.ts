@@ -1752,6 +1752,10 @@ export const FAST_PATH_PATTERNS: Record<string, PatternEntry> = {
   garden_consent: { triggers: ["garden_consent"], tools: ["garden_consent"], response_key: "witness" },
   // B63 loss (mig 0174): `loss: <what>` / `loss for <companion>: <what>`, anchored in router.ts ANCHORED_GUARDS.
   loss_log: { triggers: ["loss_log"], tools: ["loss_log"], response_key: "witness" },
+  // B63 authored line events (Gaia) + sibling disagreement; anchored in router.ts ANCHORED_GUARDS.
+  line_event: { triggers: ["line_event"], tools: ["line_event"], response_key: "witness" },
+  disagree_open: { triggers: ["disagree_open"], tools: ["disagree_open"], response_key: "witness" },
+  disagree_settle: { triggers: ["disagree_settle"], tools: ["disagree_settle"], response_key: "witness" },
   // Voice lessons (mig 0159): staged by the nightly voice drift job; Raziel decides, nothing auto-applies.
   voice_lessons_list: {
     triggers: ["voice lessons", "staged voice lessons", "list voice lessons", "show voice lessons"],

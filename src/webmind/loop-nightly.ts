@@ -14,6 +14,7 @@ import type { Env } from "../types.js";
 import { chicagoDayStartSqlite, resolveFloatKey, type CompanionId } from "./fermentation.js";
 import { loopFire, tensionDragFloat, isTriad } from "./loop-stimuli.js";
 import { closeAuthoredLosses, dragOpenLosses } from "./losses.js";
+import { dragOpenDisagreements } from "./line-events.js";
 
 export const TENSION_UNWORKED_DAYS = 7;
 const MARKER_COMPANION = "loop";
@@ -48,8 +49,8 @@ export async function hadTriadContact(env: Env, companion: CompanionId): Promise
   return !!ex;
 }
 
-export async function runLoopNightly(env: Env, nowMs: number = Date.now()): Promise<{ losses_closed: number; losses_dragging: number; quiet_days: number; tensions_dragging: number; tensions_unlinked: number }> {
-  const out = { losses_closed: 0, losses_dragging: 0, quiet_days: 0, tensions_dragging: 0, tensions_unlinked: 0 };
+export async function runLoopNightly(env: Env, nowMs: number = Date.now()): Promise<{ losses_closed: number; losses_dragging: number; disagreements_dragging: number; quiet_days: number; tensions_dragging: number; tensions_unlinked: number }> {
+  const out = { losses_closed: 0, losses_dragging: 0, disagreements_dragging: 0, quiet_days: 0, tensions_dragging: 0, tensions_unlinked: 0 };
   if (!(await nightlyDue(env, nowMs))) return out;
   // Stamp first: a failure half way must not make every later tick of the day retry the whole night.
   await env.DB.prepare("INSERT INTO companion_ferment_events (id, companion_id, kind, stimulus, detail) VALUES (?, ?, 'tick', ?, ?)")
@@ -59,6 +60,9 @@ export async function runLoopNightly(env: Env, nowMs: number = Date.now()): Prom
     out.losses_closed = await closeAuthoredLosses(env);
     out.losses_dragging = await dragOpenLosses(env);
   } catch (err) { console.error("[loop-nightly] losses failed", String(err)); }
+
+  try { out.disagreements_dragging = await dragOpenDisagreements(env); }
+  catch (err) { console.error("[loop-nightly] disagreements failed", String(err)); }
 
   try {
     for (const c of ["cypher", "drevan"] as const) { // Gaia never moves on quiet_day, so she is not even asked

@@ -331,7 +331,10 @@ describe("message_witnessed grading", () => {
     for (const c of COMPANIONS) {
       const addressed = STIMULI.message_from_raziel?.floats?.[c] ?? {};
       const witnessed = STIMULI.message_witnessed?.floats?.[c] ?? {};
-      expect(Object.keys(witnessed).sort(), `${c} float keys`).toEqual(Object.keys(addressed).sort());
+      // B63: Gaia's PERIMETER (f3) moves on line events only, never on chat volume (her word: "A perimeter
+      // pinned at 1.00 for a month is not held. It is unread."), so witnessing omits f3 for her.
+      const expected = Object.keys(addressed).filter((k) => !(c === "gaia" && k === "f3")).sort();
+      expect(Object.keys(witnessed).sort(), `${c} float keys`).toEqual(expected);
     }
   });
 
@@ -340,6 +343,7 @@ describe("message_witnessed grading", () => {
       const addressed = STIMULI.message_from_raziel?.floats?.[c] ?? {};
       const witnessed = STIMULI.message_witnessed?.floats?.[c] ?? {};
       for (const [k, a] of Object.entries(addressed)) {
+        if (c === "gaia" && k === "f3") continue; // B63: perimeter is line events only
         const w = witnessed[k as keyof typeof witnessed] ?? 0;
         expect(w, `${c}.${k} witnessed(${w}) must be < addressed(${a})`).toBeLessThan(a as number);
         expect(w, `${c}.${k} witnessed must still be > 0 -- being in the room is real`).toBeGreaterThan(0);

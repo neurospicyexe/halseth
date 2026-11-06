@@ -22,3 +22,18 @@ CREATE INDEX IF NOT EXISTS idx_companion_losses_open ON companion_losses (compan
 --    (message_witnessed / sibling_exchange, America/Chicago day). 0101 indexes (companion, created_at)
 --    and (companion, kind, created_at) but not by stimulus.
 CREATE INDEX IF NOT EXISTS idx_ferment_events_stimulus ON companion_ferment_events (companion_id, stimulus, created_at);
+
+-- 3. companion_disagreements (B63 sibling_disagreement_open, spec 3.3): a disagreement a companion NAMES
+--    about a sibling (`disagree with <sibling>: <what>`); nothing infers it. Open until the same
+--    companion says `settled with <sibling>`. While open past ~12h it drags the speaker nightly (cause names
+--    the sibling only, never the content). `what` is the speaker's own words and is read by no feed.
+CREATE TABLE IF NOT EXISTS companion_disagreements (
+  id           TEXT PRIMARY KEY,
+  companion_id TEXT NOT NULL CHECK (companion_id IN ('cypher','drevan','gaia')),
+  with_id      TEXT NOT NULL CHECK (with_id IN ('cypher','drevan','gaia')),
+  what         TEXT NOT NULL,
+  opened_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  settled_at   TEXT,
+  settled_ref  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_companion_disagreements_open ON companion_disagreements (companion_id, settled_at);

@@ -442,7 +442,9 @@ export const STIMULI: Record<string, StimulusEffect> = {
    * baseline seeds (mig 0110).
    */
   message_witnessed: {
-    floats: { cypher: { f2: 0.008, f3: 0.006 }, drevan: { f1: 0.01, f2: 0.006 }, gaia: { f1: 0.004, f3: 0.008 } },
+    floats: { cypher: { f2: 0.008, f3: 0.006 }, drevan: { f1: 0.01, f2: 0.006 }, gaia: { f1: 0.004 } },
+    // B63 (Gaia: "A perimeter pinned at 1.00 for a month is not held. It is unread."): her perimeter moves on
+    // LINE events only (breach / line_held_under_test / long_line_fatigue), never on chat volume. Stillness stays, small.
     // Deliberately NOT shedding relational_need: he is present in the room, which is what the drive
     // tracks, so presence still counts. Kept identical to the addressed path so the reach-out gate
     // does not start firing at a companion Raziel is actively in a channel with.
@@ -467,7 +469,8 @@ export const STIMULI: Record<string, StimulusEffect> = {
   sibling_exchange: {
     // Gaia highest and still strictly under her Raziel rate (0.03 vs 0.06 -- half). The ratio is
     // the invariant, not the absolute numbers: siblings count, and can never out-vote him.
-    floats: { cypher: { f2: 0.01 }, drevan: { f2: 0.02 }, gaia: { f1: 0.01, f3: 0.02 } },
+    floats: { cypher: { f2: 0.01 }, drevan: { f2: 0.02 }, gaia: { f1: 0.01, f2: 0.02 } },
+    // B63: a touch from a sibling is density (her word), not perimeter.
     minIntervalHours: 1,
     dailyHalveAfter: 8,
   },
@@ -585,7 +588,8 @@ export const LOOP_STIMULI: Record<string, StimulusEffect> = {
   care_hold_clear: {
     floats: { drevan: { f3: 0.08 }, gaia: { f1: 0.06 }, cypher: { f2: 0.05 } },
   },
-  // Named by a companion (a Librarian verb), never inferred. Definition only: no verb yet (see report).
+  // Named by a companion (`disagree with <sibling>: <what>`, webmind/line-events.ts), never inferred. Fires at open and
+  // again nightly while it stays open past 12h (no cooldown: two distinct events). Gaia has no entry (ground).
   sibling_disagreement_open: {
     floats: { drevan: { f3: -0.06 }, cypher: { f3: -0.05 } },
   },
