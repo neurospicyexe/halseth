@@ -57,6 +57,26 @@ describe("voiceMode", () => {
   });
 });
 
+describe("validateLine R27 markup", () => {
+  const people = /(?<![\p{L}\p{N}])(?:raziel|crash|blue)(?![\p{L}\p{N}])/iu;
+  it.each([
+    ["@everyone", "*Sol shrieks at @everyone from the rail.*"],
+    ["<@role>", "*Sol tilts his head at <@&role> on the rail.*"],
+    ["angle", "*Sol hops > onto the sill.*"],
+    ["link", "*Sol drops a [walnut](example) on the sill.*"],
+    ["scheme", "*Sol pecks at https://example on the sill.*"],
+    ["backslash", "*Sol leaves a twig \\ on the sill.*"],
+    ["backtick", "*Sol taps `the glass` once.*"],
+    ["pipe", "*Sol hides ||a walnut|| under the leaf.*"],
+    ["tilde", "*Sol scrapes ~~the rail~~ with his beak.*"],
+  ])("rejects %s with reason markup", (_n, line) => {
+    expect(validateLine(line, people, null)).toEqual({ ok: false, reason: "markup" });
+  });
+  it("a plain crow line still passes", () => {
+    expect(validateLine("*Sol fluffs up on the wire, muttering kraa.*", people, null).ok).toBe(true);
+  });
+});
+
 describe("validateLine", () => {
   const people = /(?<![\p{L}\p{N}])(?:raziel|crash|blue)(?![\p{L}\p{N}])/iu;
   it("accepts one italic action line and normalises _x_ to *x*", () => {

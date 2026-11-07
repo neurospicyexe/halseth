@@ -101,7 +101,7 @@ import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getImpsActivity } from "./handlers/imps-activity.js";
 import { postBackfillAppraisals } from "./pets/backfill.js";
-import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature } from "./handlers/creatures.js";
+import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature, sleepCreature } from "./handlers/creatures.js";
 import { getGardenGaia } from "./handlers/garden.js";
 import { postBeingSeenCheck, postGardenGaiaLooked } from "./handlers/being-seen.js";
 import { getMindBasins, postBasinWitness } from "./handlers/basins.js";
@@ -529,6 +529,7 @@ const router = new Router()
   .on("POST",  "/mind/creatures/:id/moment",         (request, env, params, ctx) => momentCreature(request, env, params ?? {}, { ctx }))
   .on("GET",   "/mind/creatures/:id/nest",           (request, env, params) => getNest(request, env, params ?? {}))
   .on("POST",  "/mind/creatures/:id/hoard",          (request, env, params) => hoardCreature(request, env, params ?? {}))
+  .on("POST",  "/mind/creatures/:id/sleep",          (request, env, params) => sleepCreature(request, env, params ?? {}))
 
   // Collection / sparkle (0079) -- emotional archaeology over forage + listens (take 13)
   .on("GET",   "/mind/collection/:companion_id",     (request, env, params) => getCollection(request, env, params ?? {}))

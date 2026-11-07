@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  stepGrudge, expired, grudgeLabel, GRUDGE_MAX_HOURS,
+  stepGrudge, expired, grudgeLabel, grudgeUnit, GRUDGE_MAX_HOURS,
   type OpenGrudge, type Resolution,
 } from "../pets/grudge.js";
 import type { ActiveQuirk } from "../pets/appraise.js";
@@ -153,5 +153,15 @@ describe("sulk + make-up lines", () => {
     expect(SULK_LINES.mid).toContain(sulkLine("mid", 7));
     expect(sulkLine("mid", 7)).toBe(sulkLine("mid", 7));
     expect(MAKE_UP_LINES).toContain(makeUpLine(3));
+  });
+});
+
+describe("grudgeUnit (R29)", () => {
+  it("names what the count counts", () => {
+    expect(grudgeUnit({ kind: "visits", n: 2 })).toBe("visits");
+    expect(grudgeUnit({ kind: "item", action: "give", n: 1 })).toBe("gives");
+    expect(grudgeUnit({ kind: "item", action: "feed", n: 1 })).toBe("feeds");
+    expect(grudgeUnit({ kind: "quiet", hours: 12 })).toBe("hours");
+    expect(grudgeUnit({ kind: "time", hours: 24 })).toBe("hours");
   });
 });

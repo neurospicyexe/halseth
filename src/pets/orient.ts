@@ -3,7 +3,7 @@
 import type { SolBlockExtras } from "../webmind/creatures.js";
 import { nestTextAllowed } from "../webmind/sol-hoard.js";
 import { loadPersonRegex } from "../webmind/sol-hoard-people.js";
-import { expired, grudgeProgress } from "./grudge.js";
+import { expired, grudgeProgress, grudgeUnit } from "./grudge.js";
 import { loadOpenGrudges } from "./store.js";
 import { SELECT_ORIENT_QUIRKS } from "./sql.js";
 
@@ -28,7 +28,7 @@ export async function loadSolMindExtras(
     // Newest open, not past its limit; several actors can hold one, the most recent is shown.
     const open = grudges.find(g => !expired(g, nowMs)) ?? null;
     const grudge = open && nestTextAllowed(open.label, people)
-      ? { label: open.label, ...grudgeProgress(open, nowMs) }
+      ? { label: open.label, ...grudgeProgress(open, nowMs), actor: open.actor, unit: grudgeUnit(open.resolution) }
       : null;
     return { quirks, grudge };
   } catch {

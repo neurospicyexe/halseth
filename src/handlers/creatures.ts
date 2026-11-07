@@ -58,7 +58,7 @@ import {
 } from "../webmind/sol-hoard.js";
 import { loadPersonRegex } from "../webmind/sol-hoard-people.js";
 import { resolveVia, VIA_WEIGHT } from "../pets/appraise.js";
-import { expired, grudgeProgress } from "../pets/grudge.js";
+import { expired, grudgeProgress, grudgeUnit, type GrudgeUnit } from "../pets/grudge.js";
 import { loadOpenGrudges, writeAppraisal } from "../pets/store.js";
 import { halsethPetModel, hasPetModel, type PetModel } from "../pets/model.js";
 import { notRun, runSleepPass, SLEEP_TEMPERATURE, type SleepResult } from "../pets/sleep.js";
@@ -206,8 +206,8 @@ type MindView = {
   traits_forming: Array<{ slug: string; category: string | null; entrenchment: number }>;
   quirks: Array<{ title: string; behavior: string | null; status: string }>;
   quirks_retired: Array<{ title: string; behavior: string | null }>;
-  grudge: { actor: string; label: string; progress: number; of: number } | null;
-  grudges: Array<{ actor: string; label: string; progress: number; of: number }>;
+  grudge: { actor: string; label: string; progress: number; of: number; unit: GrudgeUnit } | null;
+  grudges: Array<{ actor: string; label: string; progress: number; of: number; unit: GrudgeUnit }>;
 };
 const EMPTY_MIND: MindView = { traits_forming: [], quirks: [], quirks_retired: [], grudge: null, grudges: [] };
 
@@ -222,7 +222,7 @@ async function mindView(db: D1Database, creatureId: string, nowMs: number): Prom
   ]);
   const grudges = open
     .filter(g => !expired(g, nowMs))
-    .map(g => ({ actor: g.actor, label: g.label, ...grudgeProgress(g, nowMs) }));
+    .map(g => ({ actor: g.actor, label: g.label, ...grudgeProgress(g, nowMs), unit: grudgeUnit(g.resolution) }));
   return {
     traits_forming: (traits.results ?? []).map(t => ({ slug: t.slug, category: t.category, entrenchment: t.entrenchment })),
     quirks: (quirks.results ?? []).map(q => ({ title: q.title, behavior: q.behavior, status: q.status })),
@@ -375,7 +375,33 @@ export async function getNest(request: Request, env: Env, params: Record<string,
 }
 
 // POST /mind/creatures/tick   -- daily decay + mood + nest recompute (worker CREATURE_CRON trigger)
-export async function tickCreatures(request: Request, env: Env, deps: { petModel?: PetModel } = {}): Promise<Response> {
+// POST /mind/creatures/:id/sleep   -- B64 sleep pass (spec 5.3, R25). Same auth as the tick. The 20h gate and
+// the CAS claim live in runSleepPass, so a repeat call the same day answers `rested` and writes nothing. Never
+// touches trust. Answers the SleepResult; a thrown error is `error` (200), an unknown creature 404.
+export async function sleepCreature(
+  request: Request, env: Env, params: Record<string, string>, deps: { petModel?: PetModel } = {},
+): Promise<Response> {
+  const denied = authGuard(request, env);
+  if (denied) return denied;
+  const id = params["id"] ?? "";
+  if (!id) return json({ error: "id is required" }, 400);
+  try {
+    const exists = await env.DB.prepare("SELECT id FROM creatures WHERE id = ?").bind(id).first<{ id: string }>();
+    if (!exists) return json({ error: "creature not found" }, 404);
+    const model = deps.petModel ?? (hasPetModel(env) ? halsethPetModel(env, SLEEP_TEMPERATURE) : null);
+    if (!model) {
+      console.log("[pets/sleep] skipped no_model");
+      return json(notRun("no_model"));
+    }
+    const r: SleepResult = await runSleepPass(env, id, model, Date.now());
+    return json(r);
+  } catch (err) {
+    console.log(`[pets/sleep] skipped error: ${String(err).slice(0, 200)}`);
+    return json(notRun("error"));
+  }
+}
+
+export async function tickCreatures(request: Request, env: Env): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
   try {
@@ -449,29 +475,12 @@ export async function tickCreatures(request: Request, env: Env, deps: { petModel
       }
     }
 
-    // B64 sleep pass (spec 5.3): per companion_pet, after the day's maintenance. Never fails the tick and
-    // never touches trust. One pet today, so `sleep` is that pet's result; every pet's is in sleep_all.
-    const sleepAll: Array<SleepResult & { creature_id: string }> = [];
-    for (const c of creatures) {
-      if (c.kind !== "companion_pet") continue;
-      let r: SleepResult;
-      try {
-        const model = deps.petModel ?? (hasPetModel(env) ? halsethPetModel(env, SLEEP_TEMPERATURE) : null);
-        r = model ? await runSleepPass(env, c.id, model, now) : notRun("no_model");
-        if (!model) console.log("[pets/sleep] skipped no_model");
-      } catch (err) {
-        console.log(`[pets/sleep] skipped error: ${String(err).slice(0, 200)}`);
-        r = notRun("error");
-      }
-      sleepAll.push({ creature_id: c.id, ...r });
-    }
-
+    // B64 sleep pass: NOT here (R25). It runs from POST /mind/creatures/:id/sleep, which the worker calls after
+    // this tick with a long timeout, so a slow model night can never hold up or time out the daily tick.
     return json({
       ok: true,
       ticked,
       total: creatures.length,
-      sleep: sleepAll[0] ?? null,
-      sleep_all: sleepAll,
       nest: {
         treasured: treasureRes.meta?.changes ?? 0,
         evicted: evictRes.meta?.changes ?? 0,

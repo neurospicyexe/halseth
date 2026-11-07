@@ -39,6 +39,12 @@ describe("buildSolBlock quirks + grudge", () => {
     expect(g).toContain("\nRight now he is still sore about being poked (1 of 2).");
     expect(g).not.toContain("Quirks:");
   });
+  it("R29: a grudge with actor + unit names who it is with and what the count counts", () => {
+    const g = buildSolBlock(base, now, { grudge: { label: "still sore about being poked", progress: 1, of: 2, actor: "cypher", unit: "visits" } });
+    expect(g).toContain("\nRight now he is still sore about being poked, with Cypher (1 of 2 visits).");
+    const h = buildSolBlock(base, now, { grudge: { label: "still sore about dawn feeds", progress: 5, of: 12, actor: "raziel", unit: "hours" } });
+    expect(h).toContain("\nRight now he is still sore about dawn feeds, with Raziel (5 of 12 hours).");
+  });
   it("renders at most two quirk titles", () => {
     const s = buildSolBlock(base, now, { quirks: [{ title: "a b" }, { title: "c d" }, { title: "e f" }] });
     expect(s).toContain("Quirks: a b, c d.");
@@ -88,7 +94,7 @@ describe("loadSolMindExtras", () => {
     const { db, DB, id } = setup();
     addGrudge(db, "poke", id, "cypher", hoursAgo(5), { kind: "visits", n: 3 }, 1);
     const r = await loadSolMindExtras(DB, id, NOW);
-    expect(r.grudge).toEqual({ label: "still sore about poke", progress: 1, of: 3 });
+    expect(r.grudge).toEqual({ label: "still sore about poke", progress: 1, of: 3, actor: "cypher", unit: "visits" });
   });
   it("quiet grudge: of = hours, progress = whole hours elapsed capped at of", async () => {
     const { db, DB, id } = setup();

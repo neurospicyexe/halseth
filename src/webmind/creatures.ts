@@ -12,6 +12,7 @@
 //     decayed trust + derived mood with the pure helpers below, writes it back.
 
 import { nestTextAllowed } from "./sol-hoard.js";
+import { tenderName } from "./sol-care.js";
 
 export type CreatureAction = "feed" | "play" | "talk" | "give";
 
@@ -478,7 +479,7 @@ export interface SolBlockExtras {
   /** B64: active quirk titles (max 2 rendered). */
   quirks?: Array<{ title: string }>;
   /** B64: the open grudge to show, if any. */
-  grudge?: { label: string; progress: number; of: number } | null;
+  grudge?: { label: string; progress: number; of: number; actor?: string; unit?: string } | null;
 }
 export function buildSolBlock(c: SolRow, nowMs: number = Date.now(), extras?: SolBlockExtras): string {
   const r = restlessness(c.last_interaction_at, c.created_at, nowMs);
@@ -504,7 +505,13 @@ export function buildSolBlock(c: SolRow, nowMs: number = Date.now(), extras?: So
     .slice(0, 2);
   if (quirkTitles.length) block += `\nQuirks: ${quirkTitles.join(", ")}.`;
   const g = extras?.grudge;
-  if (g && g.label && nestTextAllowed(g.label, null)) block += `\nRight now he is ${g.label} (${g.progress} of ${g.of}).`;
+  // R29: who it is with and what the count counts, so a reader can tell whether it is about them. An older
+  // extras shape (no actor/unit) renders exactly as before.
+  if (g && g.label && nestTextAllowed(g.label, null)) {
+    const with_ = g.actor ? `, with ${tenderName(g.actor)}` : "";
+    const unit = g.unit ? ` ${g.unit}` : "";
+    block += `\nRight now he is ${g.label}${with_} (${g.progress} of ${g.of}${unit}).`;
+  }
   block += (disp === "absent" || disp === "aloof")
     ? `\nSol is keeping his distance; a little tending would bring him back.`
     : `\nSol is around; you can mention him to Raziel or tend him yourself.`;

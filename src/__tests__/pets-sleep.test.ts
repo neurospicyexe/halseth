@@ -9,7 +9,7 @@ import {
 import { buildSleepInput, buildSleepSystem, runSleepPass } from "../pets/sleep.js";
 import type { PetModel } from "../pets/model.js";
 import { personRegex } from "../webmind/sol-hoard.js";
-import { tickCreatures } from "../handlers/creatures.js";
+import { sleepCreature, tickCreatures } from "../handlers/creatures.js";
 
 const DAY = 86_400_000;
 const H = 3_600_000;
@@ -490,30 +490,99 @@ describe("runSleepPass", () => {
   });
 });
 
-describe("tickCreatures runs the sleep pass and never fails on it", () => {
+describe("R25: the sleep pass has its own route; the tick never runs it", () => {
   const tickReq = () => new Request("https://h.example/mind/creatures/tick", {
     method: "POST", headers: { Authorization: "Bearer admin-tok" },
   });
-  it("a throwing model -> tick still 200, sleep.ran false", async () => {
+  const sleepReq = (auth = "Bearer admin-tok") => new Request("https://h.example/mind/creatures/x/sleep", {
+    method: "POST", headers: { Authorization: auth },
+  });
+  it("the tick answers with no sleep, writes no night, and leaves the appraisals for the sleep route", async () => {
     const { db, DB, solId } = setup();
-    seedAppr(db, solId, { createdMs: Date.now() - H }); seedAppr(db, solId, { createdMs: Date.now() - H }); seedAppr(db, solId, { createdMs: Date.now() - H });
-    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
-    const quietLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const res = await tickCreatures(tickReq(), env(DB), { petModel: { complete: async () => { throw new Error("boom"); } } });
-    quiet.mockRestore(); quietLog.mockRestore();
+    [1, 2, 3].forEach(() => seedAppr(db, solId, { createdMs: Date.now() - H }));
+    const res = await tickCreatures(tickReq(), env(DB));
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body.sleep).toMatchObject({ ran: false, creature_id: solId });
+    expect(body.ok).toBe(true);
+    expect(body).not.toHaveProperty("sleep");
+    expect(body).not.toHaveProperty("sleep_all");
+    expect(counts(db).unprocessed).toBe(3);
+    expect(lastSleep(db, solId)).toBeNull();
+  });
+  it("POST /mind/creatures/:id/sleep with a good model -> the SleepResult; a second call the same day -> rested", async () => {
+    const { db, DB, solId } = setup();
+    [1, 2, 3].forEach(() => seedAppr(db, solId, { createdMs: Date.now() - H }));
+    const m = fake(JSON.stringify({ items: [
+      { op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light means food", evidence: ["e1", "e2", "e3"] },
+    ] }));
+    const res = await sleepCreature(sleepReq(), env(DB), { id: solId }, { petModel: m });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ran: true, reason: "slept", created: 1, reinforced: 0, decayed: 0, promoted: 0, softened: 0, retired: 0 });
+    expect(counts(db).unprocessed).toBe(0);
+    const again = await sleepCreature(sleepReq(), env(DB), { id: solId }, { petModel: m });
+    expect(await again.json()).toMatchObject({ ran: false, reason: "rested" });
+    expect(m.calls).toBe(1);
+  });
+  it("a throwing model -> 200 reason error, nothing processed", async () => {
+    const { db, DB, solId } = setup();
+    [1, 2, 3].forEach(() => seedAppr(db, solId, { createdMs: Date.now() - H }));
+    const quietLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const res = await sleepCreature(sleepReq(), env(DB), { id: solId }, { petModel: { complete: async () => { throw new Error("boom"); } } });
+    quietLog.mockRestore();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ran: false, reason: "error" });
     expect(counts(db).unprocessed).toBe(3);
   });
-  it("a good model -> sleep result in the tick response", async () => {
+  it("auth: no token -> 401; unknown creature -> 404", async () => {
+    const { DB } = setup();
+    expect((await sleepCreature(sleepReq("Bearer nope"), env(DB), { id: "x" }, { petModel: fake("{}") })).status).toBe(401);
+    expect((await sleepCreature(sleepReq(), env(DB), { id: "nope" }, { petModel: fake("{}") })).status).toBe(404);
+  });
+});
+
+describe("R25: short evidence aliases and the 300-newest cap", () => {
+  it("the model sees e1..eN, never a real id; a cited alias lands as the real id", async () => {
     const { db, DB, solId } = setup();
-    const ids = [1, 2, 3].map(() => seedAppr(db, solId, { createdMs: Date.now() - H }));
-    const res = await tickCreatures(tickReq(), env(DB), { petModel: fake(JSON.stringify({ items: [
-      { op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light means food", evidence: ids },
-    ] })) });
-    const body = await res.json() as any;
-    expect(body.sleep).toMatchObject({ ran: true, reason: "slept", created: 1, reinforced: 0, decayed: 0, promoted: 0, softened: 0, retired: 0 });
+    const ids = [1, 2, 3].map((i) => seedAppr(db, solId, { id: `abcdef0123456789abcdef012345678${i}`, createdMs: NOW - (10 - i) * H }));
+    let seen = "";
+    const m: PetModel = { async complete(_s, u) {
+      seen = u;
+      return JSON.stringify({ items: [{ op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light means food", evidence: ["e2", "e3"] }] });
+    } };
+    const r = await runSleepPass(env(DB), solId, m, NOW);
+    expect(r.created).toBe(1);
+    expect(seen).not.toMatch(/[0-9a-f]{32}/);
+    expect(seen).toMatch(/ids e1,e2,e3/);
+    const ev = db.prepare("SELECT appraisal_ids FROM creature_trait_evidence").get() as any;
+    expect(JSON.parse(ev.appraisal_ids).sort()).toEqual([ids[1], ids[2]].sort());
+  });
+  it("301 unprocessed -> one night digests the newest 300; the oldest stays for a later night", async () => {
+    const { db, DB, solId } = setup();
+    const oldest = seedAppr(db, solId, { id: "oldest", createdMs: NOW - 400 * H });
+    for (let i = 0; i < 300; i++) seedAppr(db, solId, { id: `n${i}`, createdMs: NOW - (300 - i) * 60_000 });
+    let seen = "";
+    const r = await runSleepPass(env(DB), solId, { async complete(_s, u) { seen = u; return "{\"items\":[]}"; } }, NOW);
+    expect(r.ran).toBe(true);
+    expect(seen).toMatch(/\(300 appraisals/);
+    expect(counts(db).unprocessed).toBe(1);
+    expect((db.prepare("SELECT processed_at FROM creature_appraisals WHERE id = ?").get(oldest) as any).processed_at).toBeNull();
+  });
+});
+
+describe("R30: the sleep log carries counts, never a dropped slug", () => {
+  it("a dropped item's slug never reaches console.log", async () => {
+    const { db, DB, solId } = setup();
+    [1, 2, 3].forEach(() => seedAppr(db, solId));
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(" ")); });
+    await runSleepPass(env(DB), solId, fake(JSON.stringify({ items: [
+      { op: "CREATE", slug: "corbin_seeds", category: "preference", perspective: "Corbin brings seeds", evidence: ["e1"] },
+      { op: "CREATE", slug: "no_proof_here", category: "preference", perspective: "something", evidence: ["e99"] },
+    ] })), NOW);
+    spy.mockRestore();
+    const all = logs.join("\n");
+    expect(all).toMatch(/\[pets\/sleep\] dropped 2/);
+    expect(all).not.toMatch(/corbin|no_proof_here/i);
   });
 });
 

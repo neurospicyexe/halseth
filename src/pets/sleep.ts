@@ -1,4 +1,5 @@
-// B64 Sol mind: the nightly sleep pass (spec 5.3 + 5.4). Runs from the daily creatures tick.
+// B64 Sol mind: the nightly sleep pass (spec 5.3 + 5.4). Runs from its own route, POST /mind/creatures/:id/sleep,
+// which the worker calls after the daily tick with a long timeout (R25: never inside the tick response).
 //
 // Gate: once per 20h per creature (creatures.state_json.$.last_sleep_at) and only when the unprocessed
 // appraisal weight is >= 3. Input to the model is AGGREGATES of tends that happened (never a raw row's
@@ -16,7 +17,7 @@ import { loadPersonRegex } from "../webmind/sol-hoard-people.js";
 import { timeBand } from "./appraise.js";
 import {
   ACTORS, ACTIONS, BANDS, FITS, CATEGORIES, SLEEP, clampSleep, dbTimeMs, parseSleepOutput,
-  type NightAppraisal, type QuirkRow, type SleepCounts, type TraitRow,
+  type NightAppraisal, type QuirkRow, type SleepCounts, type SleepOutput, type TraitRow,
 } from "./sleep-clamp.js";
 import {
   CLAIM_SLEEP_NIGHT, SELECT_ARC_QUIRKS, SELECT_PERSONA, SELECT_SLEEP_CREATURE, SELECT_TRAITS,
@@ -26,9 +27,10 @@ import {
 
 export const SLEEP_TEMPERATURE = 0.2;
 export const SLEEP_CONTENT_TOKENS = 4000;
-export const SLEEP_TIMEOUT_MS = 30_000;
-/** Oldest-first slice of unprocessed appraisals one night digests; the rest wait for the next night. */
-export const SLEEP_INPUT_LIMIT = 200;
+/** Below the worker's 90s call timeout (R25), so Halseth answers before the caller gives up. */
+export const SLEEP_TIMEOUT_MS = 75_000;
+/** The newest unprocessed appraisals one night digests (R25); older ones stay unprocessed for later nights. */
+export const SLEEP_INPUT_LIMIT = 300;
 
 export interface PersonaRow {
   creature_id: string; species: string | null; body_json: string | null; voice_rules: string | null; sample_lines: string | null;
@@ -62,14 +64,14 @@ export function buildSleepSystem(persona: PersonaRow): string {
     "- Trigger fields may only use: actor in [" + ACTORS.join(",") + "], action in [" + ACTIONS.join(",") + "], time_band in [" + BANDS.join(",") + "], fit in [" + FITS.join(",") + "]. Anything else is thrown away.",
     "- Never name a person in perspective, behavior, title or reason, and never put an actor's name in that text; use the target_actor field, or a crow's description (\"the dawn one\", \"the loud hand\").",
     "- An opinion formed about an absent party is a draft, not a record. A trait about an actor may only cite that actor's own tends as evidence. Someone not coming is never evidence of anything; you are only shown tends that happened.",
-    "- Cite evidence only by the appraisal ids you were shown. Unknown ids are thrown away.",
+    "- Cite evidence only by the short appraisal ids you were shown (e1, e2, ...). Unknown ids are thrown away.",
     "- No care, health or medicine words. Sol's text is a crow's, about crow things.",
     "",
     "Sol's voice (perspective and behavior are written in it):",
     persona.voice_rules ?? "Third person, present tense. He never speaks words; he makes crow sounds.",
     "",
     "Return JSON only, no prose, in this shape:",
-    `{"items":[{"op":"CREATE|REINFORCE|DECAY","slug":"lower_snake_case","category":"${CATEGORIES.join("|")}","target_actor":null,"perspective":"<=160 chars, Sol's side","delta":1,"evidence":["<appraisal id>"],"reason":"<=160 chars","quirk":{"title":"...","trigger":{"time_band":"dawn"},"behavior":"...","resolution":{"kind":"visits","n":2}}}]}`,
+    `{"items":[{"op":"CREATE|REINFORCE|DECAY","slug":"lower_snake_case","category":"${CATEGORIES.join("|")}","target_actor":null,"perspective":"<=160 chars, Sol's side","delta":1,"evidence":["e1"],"reason":"<=160 chars","quirk":{"title":"...","trigger":{"time_band":"dawn"},"behavior":"...","resolution":{"kind":"visits","n":2}}}]}`,
     "op CREATE is for a new trait (category and perspective required). REINFORCE (delta 0..1) and DECAY (delta 0..1, lowers it) name an existing slug. Include a quirk block only on a trait that has settled deep (entrenchment near 5); the server decides whether it graduates. DECAY on a graduated trait means tonight's tends contradicted its quirk; REINFORCE on one supports it.",
     'If nothing settled tonight, return {"items":[]}.',
   ].join("\n");
@@ -153,6 +155,32 @@ function toNight(r: AppraisalDbRow): NightAppraisal {
   };
 }
 
+/** R25: tonight's appraisals renamed e1..eN (oldest first) for the model, plus the way back to real ids. */
+export function aliasNight(night: NightAppraisal[]): { aliased: NightAppraisal[]; realOf: Map<string, string> } {
+  const realOf = new Map<string, string>();
+  const aliased = night.map((a, i) => {
+    const alias = `e${i + 1}`;
+    realOf.set(alias, a.id);
+    return { ...a, id: alias };
+  });
+  return { aliased, realOf };
+}
+
+/** Map each item's cited aliases back to real ids. A string that is no alias passes through; the clamp drops it. */
+export function unaliasEvidence(out: SleepOutput, realOf: Map<string, string>): void {
+  for (const it of out.items) {
+    if (!Array.isArray(it.evidence)) continue;
+    it.evidence = it.evidence.map((e) => (typeof e === "string" ? realOf.get(e.trim()) ?? e : e));
+  }
+}
+
+/** R30: what a night dropped, as counts per reason. Never a slug or any text (a dropped slug can carry a name). */
+export function droppedCounts(dropped: Array<{ why: string }>): Record<string, number> {
+  const c: Record<string, number> = {};
+  for (const d of dropped) c[d.why] = (c[d.why] ?? 0) + 1;
+  return c;
+}
+
 export async function runSleepPass(env: Env, creatureId: string, model: PetModel, nowMs: number): Promise<SleepResult> {
   const db = env.DB;
   const c = await db.prepare(SELECT_SLEEP_CREATURE).bind(creatureId).first<{ id: string; kind: string; last_sleep_at: string | null }>();
@@ -173,12 +201,16 @@ export async function runSleepPass(env: Env, creatureId: string, model: PetModel
     console.log("[pets/sleep] skipped people_unreadable");
     return notRun("people_unreadable");
   }
-  const night = (apprRes.results ?? []).map(toNight);
+  // The query reads newest first (R25 cap); the night itself is told oldest first.
+  const night = (apprRes.results ?? []).map(toNight).reverse();
   const traits = traitRes.results ?? [];
   const quirks = quirkRes.results ?? [];
+  if (!persona) console.log("[pets/sleep] no persona row; default persona used");
   const p: PersonaRow = persona ?? { creature_id: creatureId, species: "crow", body_json: null, voice_rules: null, sample_lines: null };
 
-  const raw = await model.complete(buildSleepSystem(p), buildSleepInput(night, traits, quirks, p), SLEEP_CONTENT_TOKENS, SLEEP_TIMEOUT_MS);
+  // R25: the model sees short aliases (e1..eN), never the 32-hex ids, so echoing evidence costs a few tokens.
+  const { aliased, realOf } = aliasNight(night);
+  const raw = await model.complete(buildSleepSystem(p), buildSleepInput(aliased, traits, quirks, p), SLEEP_CONTENT_TOKENS, SLEEP_TIMEOUT_MS);
   if (raw === null) {
     console.log("[pets/sleep] skipped model_failed");
     return notRun("model_failed");
@@ -188,13 +220,14 @@ export async function runSleepPass(env: Env, creatureId: string, model: PetModel
     console.log("[pets/sleep] skipped invalid_output");
     return notRun("invalid_output");
   }
+  unaliasEvidence(out, realOf);
 
   const nowDay = chicagoDay(nowMs);
   const nowIso = new Date(nowMs).toISOString();
   const plan = clampSleep(out, {
     traits, quirks, people, nowDay, nowMs, creatureId, night: new Map(night.map((a) => [a.id, a])),
   });
-  if (plan.dropped.length) console.log("[pets/sleep] dropped", JSON.stringify(plan.dropped));
+  if (plan.dropped.length) console.log(`[pets/sleep] dropped ${plan.dropped.length} ${JSON.stringify(droppedCounts(plan.dropped))}`);
 
   // One atomic batch, claimed by CAS: statement 0 stamps the night only if last_sleep_at is still what the
   // gate read; every other write is guarded on this run's token, so a run that lost a race writes nothing.

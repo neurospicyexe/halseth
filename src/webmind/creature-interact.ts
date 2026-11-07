@@ -22,7 +22,7 @@ import {
 import { careResponse, careLine, renderCare, tenderName, SETTLED_WINDOW_MINUTES, type CareFit } from "./sol-care.js";
 import { appraise, resolveVia, type Via } from "../pets/appraise.js";
 import {
-  stepGrudge, expired, grudgeProgress, sulkLine, makeUpLine, type GrudgeStep, type OpenGrudge,
+  stepGrudge, expired, grudgeProgress, grudgeUnit, sulkLine, makeUpLine, type GrudgeStep, type GrudgeUnit, type OpenGrudge,
 } from "../pets/grudge.js";
 import {
   loadActiveQuirks, loadOpenGrudge, writeAppraisal, applyGrudgeStep, type LoadedQuirk,
@@ -50,7 +50,11 @@ export interface TendOutcome {
    * Sol's grudge toward THIS tender, when one was involved in this tend (B64): opened, progressed,
    * resolved, or simply still open ("none"). Null when no grudge touched the tend (and for real animals).
    */
-  grudge: { label: string; progress: number; of: number; step: "open" | "progress" | "resolve" | "none" } | null;
+  grudge: {
+    label: string; progress: number; of: number; step: "open" | "progress" | "resolve" | "none";
+    /** R29: who it is with (the tender) and what the count counts. */
+    actor: string; unit: GrudgeUnit;
+  } | null;
   /** The creature_appraisals row this tend wrote (companion_pet only). */
   appraisal_id: string | null;
 }
@@ -148,25 +152,25 @@ export async function performTend(
         id: "", quirk_id: step.quirk_id, actor, label: step.label, resolution: step.resolution,
         progress: 0, opened_at: new Date(nowMs).toISOString(),
       };
-      grudge = { label: step.label, ...grudgeProgress(shown, nowMs), step: "open" };
+      grudge = { label: step.label, ...grudgeProgress(shown, nowMs), step: "open", actor, unit: grudgeUnit(step.resolution) };
       line = sulkLine(group, seed);
       voiceGrudge = shown; grudgeStep = "sulk";
     } else if (open && step.kind === "progress") {
-      grudge = { label: open.label, ...grudgeProgress({ ...open, progress: step.progress }, nowMs), step: "progress" };
+      grudge = { label: open.label, ...grudgeProgress({ ...open, progress: step.progress }, nowMs), step: "progress", actor, unit: grudgeUnit(open.resolution) };
       line = sulkLine(group, seed);
       voiceGrudge = open; grudgeStep = "sulk";
     } else if (open && step.kind === "resolve") {
       const r0 = open.resolution;
       const done = step.how === "met" && (r0.kind === "visits" || r0.kind === "item") ? { ...open, progress: r0.n } : open;
-      grudge = { label: open.label, ...grudgeProgress(done, nowMs), step: "resolve" };
+      grudge = { label: open.label, ...grudgeProgress(done, nowMs), step: "resolve", actor, unit: grudgeUnit(open.resolution) };
       if (step.how === "met") { line = makeUpLine(seed); voiceGrudge = open; grudgeStep = "make_up"; }
     } else if (open) {
-      grudge = { label: open.label, ...grudgeProgress(open, nowMs), step: "none" };
+      grudge = { label: open.label, ...grudgeProgress(open, nowMs), step: "none", actor, unit: grudgeUnit(open.resolution) };
       line = sulkLine(group, seed);
       voiceGrudge = open; grudgeStep = "sulk";
     } else if (expiredOld) {
       // Resolved by the clock on this tend: the end is shown, the normal care line stays.
-      grudge = { label: expiredOld.label, ...grudgeProgress(expiredOld, nowMs), step: "resolve" };
+      grudge = { label: expiredOld.label, ...grudgeProgress(expiredOld, nowMs), step: "resolve", actor, unit: grudgeUnit(expiredOld.resolution) };
     }
     if (line) care = { fit: r.fit, reaction: renderCare(line, "you"), reaction_named: renderCare(line, tenderName(actor)) };
     // The same line careResponse rendered (same seed), slot still open, so one voiced line re-renders both.

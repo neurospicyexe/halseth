@@ -65,6 +65,15 @@ export function grudgeProgress(open: OpenGrudge, nowMs: number): { progress: num
   return { progress: Math.min(Math.max(0, hours), of), of };
 }
 
+export type GrudgeUnit = "visits" | "gives" | "feeds" | "hours";
+
+/** What the count counts (R29): "1 of 2 visits", "0 of 1 gives", "5 of 12 hours". */
+export function grudgeUnit(r: Resolution): GrudgeUnit {
+  if (r.kind === "visits") return "visits";
+  if (r.kind === "item") return r.action === "feed" ? "feeds" : "gives";
+  return "hours";
+}
+
 // ── What a grudge looks like (authored; Task 6's voice replaces these when SOL_VOICE_MODE is on) ──
 //
 // Sulking is IN VIEW, never leaving: back turned, takes it late, drops it pointedly. He never speaks

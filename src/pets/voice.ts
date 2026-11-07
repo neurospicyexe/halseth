@@ -153,6 +153,8 @@ export function validateLine(
   if (renderCare(line, who ?? "{who}").length > VOICE_MAX_CHARS) return { ok: false, reason: "too_long" };
   if (/["“”„«»]/.test(line)) return { ok: false, reason: "quote" };
   if (/\p{Nd}/u.test(line)) return { ok: false, reason: "digit" };
+  // R27: nothing that Discord can turn into a mention, link, quote block, code or spoiler.
+  if (/[@<>[\]\\`|~]|:\/\//.test(line)) return { ok: false, reason: "markup" };
   let probe = line;
   if (self) probe = probe.replace(new RegExp(`${L}${esc(self)}${R}`, "giu"), " ");
   if (probe.includes("{who}")) {
@@ -268,7 +270,11 @@ export function makeVoice(
     try {
       const db = env.DB;
       const persona = await loadPersona(db, ctx.creatureId);
-      if (!persona) return deterministic;
+      if (!persona) {
+        // I1: a missing seed row is loud, never a quiet "nobody tended" (no shadow rows get written without it).
+        console.log("[pets/voice] no persona row; voice skipped");
+        return deterministic;
+      }
       const [people, selfRow, quirkRows, traitRows, grudge, cb] = await Promise.all([
         loadPersonRegex(db),
         db.prepare(SELECT_CREATURE_NAME).bind(ctx.creatureId).first<{ name: string | null }>(),

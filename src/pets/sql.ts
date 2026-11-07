@@ -15,7 +15,7 @@ export const INSERT_APPRAISAL =
   `INSERT OR IGNORE INTO creature_appraisals (id, creature_id, interaction_id, actor, action, via, fit, valence, arousal, friction, tags, weight, source, created_at)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 export const SELECT_UNPROCESSED_APPRAISALS =
-  `SELECT * FROM creature_appraisals WHERE creature_id = ? AND processed_at IS NULL ORDER BY created_at ASC LIMIT ?`;
+  `SELECT * FROM creature_appraisals WHERE creature_id = ? AND processed_at IS NULL ORDER BY created_at DESC LIMIT ?`;
 export const SUM_UNPROCESSED_WEIGHT =
   `SELECT COALESCE(SUM(weight), 0) AS w FROM creature_appraisals WHERE creature_id = ? AND processed_at IS NULL`;
 

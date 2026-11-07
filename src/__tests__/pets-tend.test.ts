@@ -97,7 +97,7 @@ describe("grudges in the tend path", () => {
     expect(g).toHaveLength(1);
     expect(g[0].actor).toBe("raziel");
     expect(g[0].resolved_at).toBeNull();
-    expect(out.grudge).toEqual({ label: "still sore about being poked", progress: 0, of: 2, step: "open" });
+    expect(out.grudge).toEqual({ label: "still sore about being poked", progress: 0, of: 2, step: "open", actor: "raziel", unit: "visits" });
     const a = appraisals(db)[0];
     expect(a.friction).toBe(1);
     expect(JSON.parse(a.tags)).toContain("quirk:q1");
@@ -111,7 +111,7 @@ describe("grudges in the tend path", () => {
     const now = Date.now();
     seedGrudge(db, solId, "raziel", now - H);
     const o1 = await performTend(DB, target, "raziel", "talk", null, now, "hand");
-    expect(o1.grudge).toEqual({ label: "still sore about being poked", progress: 1, of: 2, step: "progress" });
+    expect(o1.grudge).toEqual({ label: "still sore about being poked", progress: 1, of: 2, step: "progress", actor: "raziel", unit: "visits" });
     expect(ALL_SULK.map((l) => l.replace(/\{who\}/g, "you"))).toContain(o1.care!.reaction);
     const o2 = await performTend(DB, target, "raziel", "feed", null, now + 1000, "hand");
     expect(o2.grudge).toMatchObject({ step: "resolve", progress: 2, of: 2 });
@@ -240,7 +240,7 @@ describe("HTTP", () => {
     seedGrudge(db, solId, "cypher", Date.now() - 80 * H, { id: "g_stale" }); // past 72h: not shown
     const res = await getCreature(req(`/mind/creatures/${solId}`), env(DB), { id: solId });
     const body = await res.json() as any;
-    expect(body.grudge).toEqual({ actor: "raziel", label: "still sore about being poked", progress: 1, of: 2 });
+    expect(body.grudge).toEqual({ actor: "raziel", label: "still sore about being poked", progress: 1, of: 2, unit: "visits" });
     expect(body.grudges).toHaveLength(1);
     expect(body.quirks.map((q: any) => q.title).sort()).toEqual(["Being Poked", "Dawn Feeds"]);
     expect(body.quirks[0]).toHaveProperty("behavior");
