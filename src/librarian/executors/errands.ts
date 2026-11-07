@@ -243,7 +243,7 @@ async function runTend(ctx: ExecutorContext, rider: LedgerRider, action: TendAct
   );
   if (!pre.ok) return empty(`the errand's line would be refused (${pre.rule}), so Sol was not tended`);
   // The actor is `imp` (commit 1ed93d7); the note is ALWAYS null: an imp authors nothing.
-  const outcome = await performTend(db, sol, "imp", action, null);
+  const outcome = await performTend(db, sol, "imp", action, null, Date.now(), "errand");
   const acc = empty();
   try {
     await put(ctx, rider, FN.tend, body, "row", `creature_interactions:${outcome.interaction_id}`,

@@ -95,3 +95,63 @@ describe("stepGrudge", () => {
     expect(stepGrudge(o, ev({ nowMs: T0 + 72 * H }))).toEqual({ kind: "resolve", how: "time" });
   });
 });
+
+// ── Task 4 additions ─────────────────────────────────────────────────────────
+import { sulkLine, makeUpLine, grudgeProgress, SULK_LINES, MAKE_UP_LINES } from "../pets/grudge.js";
+
+describe("expired: fails toward resolving", () => {
+  it("a non-finite opened_at reads as expired (never a stuck grudge)", () => {
+    expect(expired(open({ opened_at: "not a date" }), T0)).toBe(true);
+    expect(expired(open({ opened_at: "" }), T0)).toBe(true);
+  });
+  it("time.hours below 1 is clamped to 1", () => {
+    const o = open({ resolution: { kind: "time", hours: 0 } });
+    expect(expired(o, T0 + 1)).toBe(false);
+    expect(expired(o, T0 + H)).toBe(true);
+    const neg = open({ resolution: { kind: "time", hours: -5 } });
+    expect(expired(neg, T0 + 10)).toBe(false);
+  });
+  it("a D1 'YYYY-MM-DD HH:MM:SS' opened_at is read as UTC", () => {
+    const o = open({ opened_at: "2026-11-06 12:00:00" });
+    expect(expired(o, T0 + 72 * H - 1)).toBe(false);
+    expect(expired(o, T0 + 72 * H)).toBe(true);
+  });
+});
+
+describe("grudgeProgress", () => {
+  it("visits/item: progress of n", () => {
+    expect(grudgeProgress(open({ progress: 1 }), T0)).toEqual({ progress: 1, of: 2 });
+    expect(grudgeProgress(open({ resolution: { kind: "item", action: "give", n: 3 } }), T0)).toEqual({ progress: 0, of: 3 });
+  });
+  it("quiet/time: whole hours since opened, capped at hours (and at 72)", () => {
+    const q = open({ resolution: { kind: "quiet", hours: 24 } });
+    expect(grudgeProgress(q, T0 + 5.5 * H)).toEqual({ progress: 5, of: 24 });
+    expect(grudgeProgress(q, T0 + 40 * H)).toEqual({ progress: 24, of: 24 });
+    expect(grudgeProgress(q, T0 - 3 * H)).toEqual({ progress: 0, of: 24 });
+    const t = open({ resolution: { kind: "time", hours: 500 } });
+    expect(grudgeProgress(t, T0 + 2 * H)).toEqual({ progress: 2, of: 72 });
+  });
+});
+
+describe("sulk + make-up lines", () => {
+  const all = [...SULK_LINES.low, ...SULK_LINES.mid, ...SULK_LINES.high, ...MAKE_UP_LINES];
+  it("3 per tier group, 2 make-up", () => {
+    for (const g of ["low", "mid", "high"] as const) expect(SULK_LINES[g]).toHaveLength(3);
+    expect(MAKE_UP_LINES).toHaveLength(2);
+  });
+  it("every line: italic, {who} slot, no digits, no double quote, <= 220", () => {
+    for (const l of all) {
+      expect(l.startsWith("*")).toBe(true);
+      expect(l.endsWith("*")).toBe(true);
+      expect(l).toContain("{who}");
+      expect(l).not.toMatch(/\d/);
+      expect(l).not.toContain('"');
+      expect(l.length).toBeLessThanOrEqual(220);
+    }
+  });
+  it("picks deterministically from the tier group's pool", () => {
+    expect(SULK_LINES.mid).toContain(sulkLine("mid", 7));
+    expect(sulkLine("mid", 7)).toBe(sulkLine("mid", 7));
+    expect(MAKE_UP_LINES).toContain(makeUpLine(3));
+  });
+});

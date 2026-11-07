@@ -22,7 +22,6 @@ import {
   listCreaturesSql,
   getCreatureSql,
   recentInteractionsSql,
-  insertInteractionSql,
   tickUpdateSql,
   restlessness,
   presenceDisposition,
@@ -58,6 +57,10 @@ import {
   type HoardCandidate,
 } from "../webmind/sol-hoard.js";
 import { loadPersonRegex } from "../webmind/sol-hoard-people.js";
+import { resolveVia, VIA_WEIGHT } from "../pets/appraise.js";
+import { expired, grudgeProgress } from "../pets/grudge.js";
+import { loadOpenGrudges, writeAppraisal } from "../pets/store.js";
+import { INSERT_INTERACTION_VIA, SELECT_TRAITS_FORMING, SELECT_VISIBLE_QUIRKS } from "../pets/sql.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -177,6 +180,7 @@ export async function getCreature(request: Request, env: Env, params: Record<str
       text: MILESTONES.find(d => d.id === m.milestone_id)?.text ?? null,
     }));
     const next = MILESTONES.find(m => !(milestones.results ?? []).some(f => f.milestone_id === m.id) && m.threshold > creature.trust);
+    const mind = creature.kind === "companion_pet" ? await mindView(env.DB, id, Date.now()) : EMPTY_MIND;
     return json({
       creature: { ...creature, ...liveState(creature, last, Date.now()) },
       interactions: interactions.results ?? [],
@@ -184,6 +188,7 @@ export async function getCreature(request: Request, env: Env, params: Record<str
       next_milestone: next ? { id: next.id, threshold: next.threshold } : null,
       nest: nest.results ?? [],
       familiarity: familiarity.results ?? [],
+      ...mind,
     });
   } catch (err) {
     console.error("[mind/creatures] read error", { error: String(err) });
@@ -191,16 +196,44 @@ export async function getCreature(request: Request, env: Env, params: Record<str
   }
 }
 
-// POST /mind/creatures/:id/interact   { actor, action, note? }
+// B64: what Sol's mind shows on Hearth. Forming traits (top 5 candidates), visible quirks (active +
+// softening; retired ones stay in the table as his history), open grudges with legible progress. A grudge
+// past its 72h limit is not shown even before a tend resolves it (no grudge outlives 72h).
+type MindView = {
+  traits_forming: Array<{ slug: string; category: string | null; entrenchment: number }>;
+  quirks: Array<{ title: string; behavior: string | null; status: string }>;
+  grudge: { actor: string; label: string; progress: number; of: number } | null;
+  grudges: Array<{ actor: string; label: string; progress: number; of: number }>;
+};
+const EMPTY_MIND: MindView = { traits_forming: [], quirks: [], grudge: null, grudges: [] };
+
+async function mindView(db: D1Database, creatureId: string, nowMs: number): Promise<MindView> {
+  const [traits, quirks, open] = await Promise.all([
+    db.prepare(SELECT_TRAITS_FORMING).bind(creatureId).all<{ slug: string; category: string | null; entrenchment: number }>(),
+    db.prepare(SELECT_VISIBLE_QUIRKS).bind(creatureId).all<{ title: string; behavior: string | null; status: string }>(),
+    loadOpenGrudges(db, creatureId),
+  ]);
+  const grudges = open
+    .filter(g => !expired(g, nowMs))
+    .map(g => ({ actor: g.actor, label: g.label, ...grudgeProgress(g, nowMs) }));
+  return {
+    traits_forming: (traits.results ?? []).map(t => ({ slug: t.slug, category: t.category, entrenchment: t.entrenchment })),
+    quirks: (quirks.results ?? []).map(q => ({ title: q.title, behavior: q.behavior, status: q.status })),
+    grudge: grudges[0] ?? null,
+    grudges,
+  };
+}
+
+// POST /mind/creatures/:id/interact   { actor, action, note?, via? }
 export async function interactCreature(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
   const id = params["id"] ?? "";
   if (!id) return json({ error: "id is required" }, 400);
 
-  let body: { actor?: string; action?: string; note?: string };
+  let body: { actor?: string; action?: string; note?: string; via?: unknown };
   try {
-    body = await request.json() as { actor?: string; action?: string; note?: string };
+    body = await request.json() as { actor?: string; action?: string; note?: string; via?: unknown };
   } catch {
     return json({ error: "invalid JSON body" }, 400);
   }
@@ -209,6 +242,8 @@ export async function interactCreature(request: Request, env: Env, params: Recor
   const err = validateInteract(actor, action);
   if (err) return json({ error: err }, 400);
   const note = body.note?.trim().slice(0, 500) ?? null;
+  // An unknown or missing via is autonomous (sol = appear, imp = imp), never hand (B64 5.1).
+  const via = resolveVia(body.via, actor);
 
   try {
     const exists = await env.DB.prepare("SELECT id, kind, trust FROM creatures WHERE id = ?").bind(id)
@@ -220,7 +255,7 @@ export async function interactCreature(request: Request, env: Env, params: Recor
     if (actor === "sol") {
       // Sol's appearance is logged WITHOUT a trust bump or last_interaction_at restamp,
       // so a sol-only creature reads last_interaction_at null by design (restlessness falls back to created_at).
-      await env.DB.prepare(insertInteractionSql()).bind(interactionId, id, actor, action, note).run();
+      await env.DB.prepare(INSERT_INTERACTION_VIA).bind(interactionId, id, actor, action, note, via).run();
       return json({ interacted: true, action, trust: null, state_json: null });
     }
     // validateInteract guarantees a real action for non-sol actors; narrow for TS.
@@ -229,7 +264,7 @@ export async function interactCreature(request: Request, env: Env, params: Recor
     // Shared write path (webmind/creature-interact.ts): ledger + trust bump +
     // milestone firing + give-notes into the nest. Same code the Librarian
     // tend_creature executor runs, so no side effect can miss a writer.
-    const outcome = await performTend(env.DB, exists, actor, action, note);
+    const outcome = await performTend(env.DB, exists, actor, action, note, Date.now(), via);
     await fireTendSol(env, exists.kind, actor, action);
     return json({ interacted: true, action, ...outcome });
   } catch (err) {
@@ -415,8 +450,10 @@ export async function hoardCreature(request: Request, env: Env, params: Record<s
   if (denied) return denied;
   const id = params["id"] ?? "";
   if (!id) return json({ error: "id is required" }, 400);
-  let body: { seed?: number } = {};
-  try { body = await request.json() as { seed?: number }; } catch { /* empty body is fine */ }
+  let body: { seed?: number; via?: unknown } = {};
+  try { body = await request.json() as { seed?: number; via?: unknown }; } catch { /* empty body is fine */ }
+  // Sol looking at a make is not a hand tend: autonomous unless the caller names a valid via.
+  const via = resolveVia(body.via, "");
   const seed = Number.isFinite(body.seed) ? Math.abs(Math.floor(body.seed!)) : Math.floor(Date.now() / 1000);
 
   try {
@@ -473,6 +510,13 @@ export async function hoardCreature(request: Request, env: Env, params: Record<s
       await env.DB.prepare(
         "INSERT OR IGNORE INTO creature_nest (id, creature_id, content, source, given_by, sparkle, ref_type, ref_id) VALUES (?, ?, ?, 'make', ?, ?, 'make', ?)",
       ).bind(crypto.randomUUID().replace(/-/g, ""), id, m.title.slice(0, 120), m.companion_id, startingSparkle(m.kind), m.id).run();
+      // B64 5.2: a hoarded make is appraised too (actor = maker), so he can grow tastes in things.
+      // Closed tags only (the kind, never the title). Keyed per creature+make: idempotent.
+      await writeAppraisal(env.DB, {
+        id: crypto.randomUUID().replace(/-/g, ""), creature_id: id, interaction_id: `hoard:${id}:${m.id}`,
+        actor: m.companion_id, action: "hoard", via, fit: null, valence: 0.3, arousal: 0.3, friction: false,
+        tags: [`hoard:${m.kind}`], weight: VIA_WEIGHT[via], source: "live",
+      }).run();
       hoarded.push({ make_id: m.id, companion_id: m.companion_id, kind: m.kind, title: m.title });
       if (react) {
         moment = hoardReaction(m, seed);

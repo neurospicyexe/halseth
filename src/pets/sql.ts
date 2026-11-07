@@ -41,13 +41,27 @@ export const INSERT_QUIRK =
 export const UPDATE_QUIRK =
   `UPDATE creature_quirks SET status = ?, arc = ? WHERE id = ?`;
 
+// interactions (0176 adds via). Bind: [id, creature_id, actor, action, note, via].
+export const INSERT_INTERACTION_VIA =
+  `INSERT INTO creature_interactions (id, creature_id, actor, action, note, via) VALUES (?, ?, ?, ?, ?, ?)`;
+
 // grudges
 export const SELECT_OPEN_GRUDGE =
   `SELECT * FROM creature_grudges WHERE creature_id = ? AND actor = ? AND resolved_at IS NULL ORDER BY opened_at DESC LIMIT 1`;
 export const INSERT_GRUDGE =
   `INSERT INTO creature_grudges (id, creature_id, quirk_id, actor, label, resolution_json, progress) VALUES (?, ?, ?, ?, ?, ?, ?)`;
 export const UPDATE_GRUDGE =
-  `UPDATE creature_grudges SET progress = ?, resolved_at = ?, resolved_how = ? WHERE id = ?`;
+  `UPDATE creature_grudges SET progress = ?, resolved_at = ?, resolved_how = ? WHERE id = ? AND resolved_at IS NULL`;
+// Tend path (Task 4): opened_at bound from the tend's clock (ISO), and OR IGNORE so a racing second open
+// for the same (creature, actor) hits idx_creature_grudges_one_open and drops instead of failing the tend.
+export const INSERT_GRUDGE_AT =
+  `INSERT OR IGNORE INTO creature_grudges (id, creature_id, quirk_id, actor, label, resolution_json, progress, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+export const SELECT_OPEN_GRUDGES =
+  `SELECT * FROM creature_grudges WHERE creature_id = ? AND resolved_at IS NULL ORDER BY opened_at DESC`;
+export const SELECT_VISIBLE_QUIRKS =
+  `SELECT title, behavior, status FROM creature_quirks WHERE creature_id = ? AND status IN ('active','softening') ORDER BY promoted_at DESC`;
+export const SELECT_TRAITS_FORMING =
+  `SELECT slug, category, entrenchment FROM creature_traits WHERE creature_id = ? AND status = 'candidate' ORDER BY entrenchment DESC, slug ASC LIMIT 5`;
 
 // persona + voice shadow
 export const SELECT_PERSONA =

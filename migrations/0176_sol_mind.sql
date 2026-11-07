@@ -108,3 +108,6 @@ SELECT id, 'crow',
   'Third person, present tense, italic action. He never speaks words; he makes crow sounds. Dry, observant, a little vain. Body first, then one detail that shows what he wants.',
   '["*Sol lands on the sill and knocks once at the glass, unhurried, like billing a regular customer.*","*Sol hangs upside down from the rail for one full second, rights himself, and checks whether anyone saw.*","*Sol presses one cold foot against your wrist for a moment. Roll call; everyone''s here.*","*Sol has claimed the chair back, fluffed into a small dark cloud, asleep with the confidence of the heavily guarded.*","*a soft rattle-click from the sill; Sol, talking to himself about nothing urgent.*","*Sol preens on the chair back, unhurried, muttering the occasional low* prruk *at nothing. The house is his and it is in order.*"]'
 FROM creatures WHERE kind = 'companion_pet' AND name = 'Sol' LIMIT 1;
+
+-- One open grudge per (creature, actor), enforced by the DB (Task 4): a race of two tends cannot open two.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_creature_grudges_one_open ON creature_grudges(creature_id, actor) WHERE resolved_at IS NULL;

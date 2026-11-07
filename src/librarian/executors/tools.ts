@@ -128,7 +128,7 @@ export async function execCreatureInteract(ctx: ExecutorContext): Promise<Execut
   // Shared write path (webmind/creature-interact.ts): ledger + trust bump +
   // milestone firing + give-notes into the nest -- identical to the HTTP handler,
   // so a companion tend can land a milestone exactly like an owner tend can.
-  const outcome = await performTend(ctx.env.DB, creature, ctx.req.companion_id, action, note);
+  const outcome = await performTend(ctx.env.DB, creature, ctx.req.companion_id, action, note, Date.now(), "autonomous");
   await fireTendSol(ctx.env, creature.kind, ctx.req.companion_id, action);
   const milestoneLine = outcome.milestones_fired.length > 0
     ? ` ${outcome.milestones_fired.map(m => m.text).join(" ")}`
