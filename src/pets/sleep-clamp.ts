@@ -315,11 +315,15 @@ export function clampSleep(out: SleepOutput, st: ClampState): SleepPlan {
     if (existing.status === "faded") {
       if (delta <= 0) continue; // nothing to lower
       if (plan.counts.created >= SLEEP.MAX_CREATES) { drop(m.slug, "create_cap"); continue; }
-      // Never locked: a faded trait can come back as a new candidate at 1 (its history and evidence kept).
+      // Never locked: a faded trait (evicted, decayed, or its quirk retired) comes back as the SAME row,
+      // a fresh candidate at 1: origin, live points and live days start over from tonight's evidence, so
+      // UNIQUE(creature_id, slug) holds and the old evidence rows + any retired quirk stay as history.
       const row: TraitRow = {
         ...existing, status: "candidate", entrenchment: 1,
-        live_points: round(existing.live_points + liveShare),
-        live_days: JSON.stringify([...new Set([...parseDays(existing.live_days), ...liveDays])].sort()),
+        category: m.category ?? existing.category, perspective: m.perspective ?? existing.perspective,
+        origin: live.length > 0 ? "live" : "backfill",
+        live_points: round(liveShare),
+        live_days: JSON.stringify(liveDays.sort()),
         last_reinforced_at: nowIso,
       };
       plan.traitUpdates.push(row); updatedIds.add(row.id);
@@ -396,6 +400,13 @@ export function clampSleep(out: SleepOutput, st: ClampState): SleepPlan {
         status = "retired";
         arc.push({ night: st.nowDay, kind: "retired" });
         plan.counts.retired++;
+        // Never locked: the retired quirk's trait fades, so the same slug can grow again from 1.
+        const t = st.traits.find((x) => x.id === q.trait_id);
+        if (t && t.status === "graduated" && !updatedIds.has(t.id)) {
+          const row: TraitRow = { ...t, status: "faded" };
+          plan.traitUpdates.push(row); updatedIds.add(row.id);
+          touched.set(row.slug, row);
+        }
       }
     } else if (status === "active" && contra) {
       // Only contradiction after the last re-hardening counts, inside the 21-day window.

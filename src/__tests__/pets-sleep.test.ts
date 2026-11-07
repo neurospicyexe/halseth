@@ -486,3 +486,94 @@ describe("tickCreatures runs the sleep pass and never fails on it", () => {
     expect(body.sleep).toMatchObject({ ran: true, reason: "slept", created: 1, reinforced: 0, decayed: 0, promoted: 0, softened: 0, retired: 0 });
   });
 });
+
+// ── Controller rulings (second commit): CAS on the night, and never locked after retirement ─────────
+describe("CAS: two passes racing the same gate", () => {
+  it("one writes, the other writes nothing (reason raced)", async () => {
+    const { db, DB, solId } = setup();
+    const ids = [seedAppr(db, solId), seedAppr(db, solId), seedAppr(db, solId)];
+    const answer = JSON.stringify({ items: [
+      { op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light means food", evidence: ids },
+    ] });
+    // Barrier: neither model call returns until both passes have read the gate.
+    let arrived = 0;
+    let release!: () => void;
+    const both = new Promise<void>((r) => { release = r; });
+    const m: PetModel = { async complete() { if (++arrived === 2) release(); await both; return answer; } };
+    const quiet = vi.spyOn(console, "log").mockImplementation(() => {});
+    const [a, b] = await Promise.all([runSleepPass(env(DB), solId, m, NOW), runSleepPass(env(DB), solId, m, NOW + 1000)]);
+    quiet.mockRestore();
+    expect([a.reason, b.reason].sort()).toEqual(["raced", "slept"]);
+    expect(counts(db)).toEqual({ traits: 1, evidence: 1, quirks: 0, unprocessed: 0 });
+    // The stamp is the winner's, not overwritten by the loser.
+    const winner = a.reason === "slept" ? NOW : NOW + 1000;
+    expect(lastSleep(db, solId)).toBe(iso(winner));
+  });
+  it("same clock on both racers still lets only one through", async () => {
+    const { db, DB, solId } = setup();
+    const ids = [seedAppr(db, solId), seedAppr(db, solId), seedAppr(db, solId)];
+    const answer = JSON.stringify({ items: [
+      { op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light means food", evidence: ids },
+    ] });
+    let arrived = 0;
+    let release!: () => void;
+    const both = new Promise<void>((r) => { release = r; });
+    const m: PetModel = { async complete() { if (++arrived === 2) release(); await both; return answer; } };
+    const quiet = vi.spyOn(console, "log").mockImplementation(() => {});
+    const rs = await Promise.all([runSleepPass(env(DB), solId, m, NOW), runSleepPass(env(DB), solId, m, NOW)]);
+    quiet.mockRestore();
+    expect(rs.map((r) => r.reason).sort()).toEqual(["raced", "slept"]);
+    expect(counts(db).evidence).toBe(1);
+  });
+});
+
+describe("never locked: a retired quirk's trait fades and the slug can grow again", () => {
+  it("pure: retiring sets the trait faded; a later CREATE revives the same row at 1 with reset live points/days", () => {
+    const g = trait("dawn_feed", { entrenchment: 5, status: "graduated", live_points: 6, live_days: JSON.stringify(["2026-09-01", "2026-09-02", "2026-09-03"]) });
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-05", kind: "softening" }]) });
+    const p1 = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
+      state({ traits: [g], quirks: [q], night: nightOf(ap("a1")) }));
+    expect(p1.quirkUpdates[0]!.status).toBe("retired");
+    const faded = p1.traitUpdates.find((t) => t.id === g.id)!;
+    expect(faded.status).toBe("faded");
+
+    const p2 = clampSleep({ items: [{ op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light again", evidence: ["b1"] }] },
+      state({ traits: [faded], quirks: [], nowDay: "2026-12-01", nowMs: NOW + 11 * DAY, night: nightOf(ap("b1", { source: "backfill", day: "2026-11-30" })) }));
+    expect(p2.traitInserts).toHaveLength(0);
+    expect(p2.traitUpdates[0]!).toMatchObject({ id: g.id, status: "candidate", entrenchment: 1, live_points: 0, origin: "backfill", perspective: "first light again" });
+    expect(JSON.parse(p2.traitUpdates[0]!.live_days)).toEqual([]);
+  });
+  it("end to end: retire -> trait faded -> next night CREATE same slug revives the row; quirk stays retired", async () => {
+    const { db, DB, solId } = setup();
+    db.prepare(
+      "INSERT INTO creature_traits (id, creature_id, slug, category, perspective, entrenchment, live_points, live_days, origin, status, last_reinforced_at, created_at) VALUES ('tg', ?, 'dawn_feed', 'preference', 'first light', 5, 6, '[\"2026-09-01\"]', 'live', 'graduated', ?, ?)",
+    ).run(solId, iso(NOW - 60 * DAY), iso(NOW - 90 * DAY));
+    db.prepare(
+      "INSERT INTO creature_quirks (id, creature_id, trait_id, title, trigger_json, behavior, resolution_json, kind, status, arc, promoted_at) VALUES ('q1', ?, 'tg', 'Dawn Feeding', '{\"time_band\":\"dawn\"}', 'waits on the rail', '{\"kind\":\"visits\",\"n\":2}', 'preference', 'softening', ?, ?)",
+    ).run(solId, JSON.stringify([{ night: "2026-11-01", kind: "softening" }]), iso(NOW - 60 * DAY));
+    const ids1 = [seedAppr(db, solId), seedAppr(db, solId), seedAppr(db, solId)];
+    const r1 = await runSleepPass(env(DB), solId, fake(JSON.stringify({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ids1 }] })), NOW);
+    expect(r1).toMatchObject({ ran: true, retired: 1 });
+    expect((db.prepare("SELECT status FROM creature_traits WHERE id = 'tg'").get() as any).status).toBe("faded");
+    expect((db.prepare("SELECT status FROM creature_quirks WHERE id = 'q1'").get() as any).status).toBe("retired");
+
+    const later = NOW + 21 * H;
+    const ids2 = [1, 2, 3].map(() => seedAppr(db, solId, { createdMs: later - H }));
+    const r2 = await runSleepPass(env(DB), solId, fake(JSON.stringify({ items: [
+      { op: "CREATE", slug: "dawn_feed", category: "preference", perspective: "first light again", evidence: ids2 },
+    ] })), later);
+    expect(r2).toMatchObject({ ran: true, created: 1 });
+    const rows = db.prepare("SELECT * FROM creature_traits WHERE slug = 'dawn_feed'").all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "tg", status: "candidate", entrenchment: 1, origin: "live", perspective: "first light again" });
+    expect(rows[0].live_points).toBeCloseTo(1);
+    expect(JSON.parse(rows[0].live_days)).toEqual([chicagoDayOf(later - H)]);
+    const qq = db.prepare("SELECT status, arc FROM creature_quirks WHERE id = 'q1'").get() as any;
+    expect(qq.status).toBe("retired");
+    expect(JSON.parse(qq.arc).map((e: any) => e.kind)).toEqual(["softening", "contradict", "retired"]);
+  });
+});
+
+function chicagoDayOf(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+}

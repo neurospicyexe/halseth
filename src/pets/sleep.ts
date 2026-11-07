@@ -4,7 +4,8 @@
 // appraisal weight is >= 3. Input to the model is AGGREGATES of tends that happened (never a raw row's
 // text, never the note, never a line about who did not come); output is a small JSON plan which
 // sleep-clamp.ts cuts down to what the Global Constraints allow. Everything a night writes goes in ONE
-// db.batch: traits, evidence, quirk promotions, arc moves, appraisals marked processed, the stamp. A
+// db.batch, claimed by CAS on last_sleep_at (see CLAIM_SLEEP_NIGHT): the stamp, traits, evidence, quirk
+// promotions, arc moves, appraisals marked processed; a run that loses a race writes nothing. A
 // null/invalid answer, or an unreadable people list, writes NOTHING and leaves the appraisals for the
 // next tick. The pass never reads or writes trust (R7).
 //
@@ -18,9 +19,9 @@ import {
   type NightAppraisal, type QuirkRow, type SleepCounts, type TraitRow,
 } from "./sleep-clamp.js";
 import {
-  INSERT_QUIRK, INSERT_TRAIT, INSERT_TRAIT_EVIDENCE, MARK_APPRAISALS_PROCESSED, SELECT_ARC_QUIRKS, SELECT_PERSONA,
-  SELECT_SLEEP_CREATURE, SELECT_TRAITS, SELECT_UNPROCESSED_APPRAISALS, SET_LAST_SLEEP_AT, SUM_UNPROCESSED_WEIGHT,
-  UPDATE_QUIRK, UPDATE_TRAIT,
+  CLAIM_SLEEP_NIGHT, SELECT_ARC_QUIRKS, SELECT_PERSONA, SELECT_SLEEP_CREATURE, SELECT_TRAITS,
+  SELECT_UNPROCESSED_APPRAISALS, SLEEP_INSERT_EVIDENCE, SLEEP_INSERT_QUIRK, SLEEP_INSERT_TRAIT, SLEEP_MARK_PROCESSED,
+  SLEEP_UPDATE_QUIRK, SLEEP_UPDATE_TRAIT, SUM_UNPROCESSED_WEIGHT,
 } from "./sql.js";
 
 export const SLEEP_TEMPERATURE = 0.2;
@@ -34,7 +35,8 @@ export interface PersonaRow {
 }
 
 export type SleepReason =
-  | "slept" | "not_pet" | "rested" | "too_little" | "people_unreadable" | "model_failed" | "invalid_output" | "no_model" | "error";
+  | "slept" | "not_pet" | "rested" | "too_little" | "people_unreadable" | "model_failed" | "invalid_output" | "no_model"
+  | "raced" | "error";
 export interface SleepResult extends SleepCounts { ran: boolean; reason: SleepReason }
 
 const zero = (): SleepCounts => ({ created: 0, reinforced: 0, decayed: 0, promoted: 0, softened: 0, retired: 0 });
@@ -194,30 +196,41 @@ export async function runSleepPass(env: Env, creatureId: string, model: PetModel
   });
   if (plan.dropped.length) console.log("[pets/sleep] dropped", JSON.stringify(plan.dropped));
 
-  const stmts: D1PreparedStatement[] = [];
+  // One atomic batch, claimed by CAS: statement 0 stamps the night only if last_sleep_at is still what the
+  // gate read; every other write is guarded on this run's token, so a run that lost a race writes nothing.
+  const token = crypto.randomUUID().replace(/-/g, "");
+  const g = [creatureId, token] as const;
+  const stmts: D1PreparedStatement[] = [
+    db.prepare(CLAIM_SLEEP_NIGHT).bind(nowIso, token, creatureId, c.last_sleep_at ?? ""),
+  ];
   for (const t of plan.traitUpdates) {
-    stmts.push(db.prepare(UPDATE_TRAIT).bind(t.entrenchment, t.live_points, t.live_days, t.status, t.last_reinforced_at, t.id));
+    stmts.push(db.prepare(SLEEP_UPDATE_TRAIT).bind(
+      t.entrenchment, t.live_points, t.live_days, t.status, t.last_reinforced_at, t.category, t.perspective, t.origin, t.id, ...g,
+    ));
   }
   for (const t of plan.traitInserts) {
-    stmts.push(db.prepare(INSERT_TRAIT).bind(
+    stmts.push(db.prepare(SLEEP_INSERT_TRAIT).bind(
       t.id, t.creature_id, t.slug, t.category, t.target_actor, t.perspective, t.entrenchment, t.live_points,
-      t.live_days, t.origin, t.status, t.last_reinforced_at, t.created_at,
+      t.live_days, t.origin, t.status, t.last_reinforced_at, t.created_at, ...g,
     ));
   }
   for (const e of plan.evidence) {
-    stmts.push(db.prepare(INSERT_TRAIT_EVIDENCE).bind(
-      crypto.randomUUID().replace(/-/g, ""), e.trait_id, JSON.stringify(e.appraisal_ids), e.delta, nowDay, e.reason, nowIso,
+    stmts.push(db.prepare(SLEEP_INSERT_EVIDENCE).bind(
+      crypto.randomUUID().replace(/-/g, ""), e.trait_id, JSON.stringify(e.appraisal_ids), e.delta, nowDay, e.reason, nowIso, ...g,
     ));
   }
-  for (const q of plan.quirkUpdates) stmts.push(db.prepare(UPDATE_QUIRK).bind(q.status, q.arc, q.id));
+  for (const q of plan.quirkUpdates) stmts.push(db.prepare(SLEEP_UPDATE_QUIRK).bind(q.status, q.arc, q.id, ...g));
   for (const q of plan.quirkInserts) {
-    stmts.push(db.prepare(INSERT_QUIRK).bind(
+    stmts.push(db.prepare(SLEEP_INSERT_QUIRK).bind(
       q.id, q.creature_id, q.trait_id, q.title, q.trigger_json, q.behavior, q.resolution_json, q.target_actor,
-      q.kind, q.status, q.arc, q.promoted_at,
+      q.kind, q.status, q.arc, q.promoted_at, ...g,
     ));
   }
-  stmts.push(db.prepare(MARK_APPRAISALS_PROCESSED).bind(nowIso, creatureId, JSON.stringify(night.map((a) => a.id))));
-  stmts.push(db.prepare(SET_LAST_SLEEP_AT).bind(nowIso, creatureId));
-  await db.batch(stmts);
+  stmts.push(db.prepare(SLEEP_MARK_PROCESSED).bind(nowIso, creatureId, JSON.stringify(night.map((a) => a.id)), ...g));
+  const res = await db.batch(stmts) as Array<{ meta?: { changes?: number } }>;
+  if ((res[0]?.meta?.changes ?? 0) === 0) {
+    console.log("[pets/sleep] skipped raced (another pass claimed this night)");
+    return notRun("raced");
+  }
   return { ran: true, reason: "slept", ...plan.counts };
 }
