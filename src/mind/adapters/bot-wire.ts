@@ -37,7 +37,7 @@
 
 import type { MindState } from "../contract.js";
 import type { WmAgentId } from "../../webmind/types.js";
-import { buildSolBlock } from "../../webmind/creatures.js";
+import { buildSolBlock, type SolBlockExtras } from "../../webmind/creatures.js";
 import { relativeTime } from "../../webmind/relative-time.js";
 import { formatMaterials } from "../../lib/pattern-materials.js";
 
@@ -74,6 +74,9 @@ export interface BotWireExtras {
    *  null (silent / FEELING_LINE_MODE not `live` / any failure). Needs D1 reads loadMindState must not
    *  pay for, so it is an input, computed in the bot orient executor. */
   feeling_line?: string | null;
+  /** B64 (Task 8a): Sol's quirks + open grudge, loaded by the bot orient executor (D1 reads the pure
+   *  adapter must not make). Absent = the Sol block renders exactly as before. */
+  sol_extras?: Pick<SolBlockExtras, "quirks" | "grudge">;
 }
 
 /** The flat wire payload. Deliberately `Record<string, unknown>`-shaped at the boundary: the authority on
@@ -258,7 +261,7 @@ export function botWireFromMindState(
             return buildSolBlock({
               name: solRow.name, species: solRow.species, trust: solRow.trust,
               last_interaction_at: solRow.last_interaction_at ?? null, created_at: solRow.created_at,
-            });
+            }, Date.now(), extras.sol_extras);
           } catch { return null; }
         })()
       : null,

@@ -11,6 +11,8 @@
 //   - tick: a single daily server-side pass (no concurrency) reads each row, computes
 //     decayed trust + derived mood with the pure helpers below, writes it back.
 
+import { nestTextAllowed } from "./sol-hoard.js";
+
 export type CreatureAction = "feed" | "play" | "talk" | "give";
 
 export const VALID_ACTIONS: readonly CreatureAction[] = ["feed", "play", "talk", "give"];
@@ -473,6 +475,10 @@ export interface SolBlockExtras {
   nestCount?: number;
   treasuredCount?: number;
   knownBest?: { actor: string; count: number } | null;
+  /** B64: active quirk titles (max 2 rendered). */
+  quirks?: Array<{ title: string }>;
+  /** B64: the open grudge to show, if any. */
+  grudge?: { label: string; progress: number; of: number } | null;
 }
 export function buildSolBlock(c: SolRow, nowMs: number = Date.now(), extras?: SolBlockExtras): string {
   const r = restlessness(c.last_interaction_at, c.created_at, nowMs);
@@ -491,6 +497,14 @@ export function buildSolBlock(c: SolRow, nowMs: number = Date.now(), extras?: So
     const m = MILESTONES.find(x => x.id === extras.freshMilestone!.id);
     if (m) block += `\nNew this week: ${m.id.replace(/_/g, " ")}. ${m.text}`;
   }
+  // B64: quirks and an open grudge. Belt over the write-time guard: an item that fails the text guard now renders nothing.
+  const quirkTitles = (extras?.quirks ?? [])
+    .map(q => String(q?.title ?? "").trim())
+    .filter(t => t && nestTextAllowed(t, null))
+    .slice(0, 2);
+  if (quirkTitles.length) block += `\nQuirks: ${quirkTitles.join(", ")}.`;
+  const g = extras?.grudge;
+  if (g && g.label && nestTextAllowed(g.label, null)) block += `\nRight now he is ${g.label} (${g.progress} of ${g.of}).`;
   block += (disp === "absent" || disp === "aloof")
     ? `\nSol is keeping his distance; a little tending would bring him back.`
     : `\nSol is around; you can mention him to Raziel or tend him yourself.`;

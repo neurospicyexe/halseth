@@ -24,6 +24,7 @@ import type { WmAgentId } from "../../webmind/types.js";
 import { selectResurrections, MOTIF_TUNING, effectiveTrustSql, type MotifRow } from "../../webmind/motifs.js";
 import { warmSql, SURFACE_BUMP } from "../../webmind/heat.js";
 import { writeLoop } from "../../webmind/loops.js";
+import { findSolId, loadSolMindExtras } from "../../pets/orient.js";
 import { buildSolBlock, deriveDrives, dominantState, type SolBlockExtras } from "../../webmind/creatures.js";
 import { buildCommonsBlock, type CommonsPostRow } from "../../webmind/commons-block.js";
 import { markAnswersDelivered } from "../../webmind/questions.js";
@@ -519,7 +520,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
   // is empty or any inner-life query fails, the block degrades instead of breaking orient.
   let solExtras: SolBlockExtras | undefined;
   if (solRow) {
-    const [acted, freshMilestone, nestCounts, familiar] = await Promise.all([
+    const [acted, freshMilestone, nestCounts, familiar, mindExtras] = await Promise.all([
       ctx.env.DB.prepare(
         "SELECT action, MAX(created_at) AS last FROM creature_interactions WHERE creature_id = ? AND actor != 'sol' GROUP BY action"
       ).bind(solRow.id).all<{ action: string; last: string }>().catch(() => null),
@@ -534,6 +535,8 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       ctx.env.DB.prepare(
         "SELECT actor, COUNT(*) AS n FROM creature_interactions WHERE creature_id = ? AND actor NOT IN ('sol','raziel','imp') GROUP BY actor ORDER BY n DESC LIMIT 1"
       ).bind(solRow.id).first<{ actor: string; n: number }>().catch(() => null),
+      // B64: quirks + open grudge (0176 tables; fail-soft inside, {} when absent).
+      loadSolMindExtras(ctx.env.DB, solRow.id),
     ]);
     const by = new Map((acted?.results ?? []).map(r => [r.action, r.last]));
     const drives = deriveDrives(
@@ -546,6 +549,7 @@ export async function execSessionOrient(ctx: ExecutorContext): Promise<ExecutorR
       nestCount: nestCounts?.n ?? 0,
       treasuredCount: nestCounts?.t ?? 0,
       knownBest: familiar ? { actor: familiar.actor, count: familiar.n } : null,
+      ...mindExtras,
     };
   }
   const solBlock = solRow ? buildSolBlock(solRow, Date.now(), solExtras) : "";
@@ -1334,6 +1338,10 @@ export async function execBotOrient(
       owner: ctx.env.SYSTEM_OWNER,
       graph_linked: botLinked,
       feeling_line: botFeelingLine,
+      sol_extras: await (async () => {
+        const id = await findSolId(ctx.env.DB);
+        return id ? loadSolMindExtras(ctx.env.DB, id) : undefined;
+      })(),
     },
     agentId,
   );

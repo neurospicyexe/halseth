@@ -110,3 +110,7 @@ export const SELECT_VOICE_MILESTONE =
   `SELECT milestone_id FROM creature_milestones WHERE creature_id = ? ORDER BY fired_at DESC LIMIT 1`;
 export const SELECT_CREATURE_NAME =
   `SELECT name FROM creatures WHERE id = ?`;
+
+// orient (Task 8a): active quirk titles only, newest promoted first. Over-fetch a little; the text guard may drop some.
+export const SELECT_ORIENT_QUIRKS =
+  `SELECT title FROM creature_quirks WHERE creature_id = ? AND status = 'active' ORDER BY promoted_at DESC LIMIT 4`;
