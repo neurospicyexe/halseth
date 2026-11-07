@@ -4,7 +4,8 @@
 // delta clamp -1..+1 per slug per night, <= 2 CREATEs, 15 candidate traits (eviction to `faded`, never
 // deleted), 8 active quirks, promotion only at entrenchment 5 with >= 4 LIVE points across >= 3 distinct
 // LIVE days, -1 after 10 days unreinforced, the quirk long arc (softening 5-in-21, re-harden on one
-// supporting night, retire on a contradiction >= 14 days after softening), closed trigger vocabulary and
+// supporting night, retire when contradicting nights since softening span >= 14 days on >= 5 days: R17),
+// closed trigger vocabulary and
 // the text guard on every model-written string.
 //
 // Absent party (triad canon, Drevan's rule): "An opinion formed about an absent party is a draft, not a
@@ -177,11 +178,30 @@ function validQuirk(q: SleepQuirk, people: RegExp | null, target: string | null)
     trigger[k as keyof Trigger] = v;
   }
   if (Object.keys(trigger).length === 0) return null;
-  if (target !== null && trigger.actor !== undefined && trigger.actor !== target) return null;
+  // Absent party: a quirk that fires on (or is settled by) one actor must be that actor's own trait,
+  // grown only from their tends. A trait aimed at anyone (null) may not grow an actor-specific quirk.
+  if (trigger.actor !== undefined && trigger.actor !== target) return null;
   const res = parseResolution(JSON.stringify(q.resolution ?? null));
   if (!res) return null;
-  if (res.kind === "visits" && res.by !== undefined && !ACTOR_SET.has(res.by)) return null;
+  if (res.kind === "visits" && res.by !== undefined && res.by !== target) return null;
   return { title: (q.title as string).trim(), trigger, behavior: (q.behavior as string).trim(), resolution_json: JSON.stringify(res) };
+}
+
+/**
+ * R17: retire once the contradicting live nights since the latest softening span >= 14 days (first such
+ * night to tonight) with >= 5 distinct contradicting days in them. A supporting night re-hardens, and the
+ * next softening starts a fresh count. `arc` already holds tonight's contradict event.
+ */
+function retireDue(arc: ArcEvent[], nowDay: string): boolean {
+  let from = -1;
+  arc.forEach((e, i) => { if (e.kind === "softening") from = i; });
+  const contra = arc.slice(from + 1).filter((e) => e.kind === "contradict");
+  if (contra.length === 0) return false;
+  const first = Math.min(...contra.map((e) => dayIndex(e.night)));
+  if (dayIndex(nowDay) - first < SLEEP.RETIRE_AFTER_DAYS) return false;
+  const days = new Set<string>();
+  for (const e of contra) for (const d of e.days ?? []) days.add(d);
+  return days.size >= SLEEP.SOFTEN_DAYS;
 }
 
 interface Merged {
@@ -340,7 +360,9 @@ export function clampSleep(out: SleepOutput, st: ClampState): SleepPlan {
     const applied = round(ent - existing.entrenchment);
     const row: TraitRow = { ...existing, entrenchment: ent };
     if (delta > 0) {
-      row.live_points = round(existing.live_points + applied * liveShare);
+      // Live points follow the night's live share of the clamped delta even at the entrenchment cap, so
+      // a trait that reached 5 partly on backfill can still earn its live points (capped at 5).
+      row.live_points = round(Math.min(SLEEP.MAX_ENTRENCH, existing.live_points + delta * liveShare));
       row.live_days = JSON.stringify([...new Set([...parseDays(existing.live_days), ...liveDays])].sort());
       row.last_reinforced_at = nowIso;
       plan.counts.reinforced++;
@@ -392,11 +414,10 @@ export function clampSleep(out: SleepOutput, st: ClampState): SleepPlan {
     let status = q.status;
     if (contra) arc.push({ night: st.nowDay, kind: "contradict", days: contra.days, evidence: contra.evidence });
     if (status === "softening") {
-      const since = [...arc].reverse().find((e) => e.kind === "softening")?.night ?? st.nowDay;
       if (support) {
         status = "active";
         arc.push({ night: st.nowDay, kind: "rehardened", evidence: support });
-      } else if (contra && dayIndex(st.nowDay) - dayIndex(since) >= SLEEP.RETIRE_AFTER_DAYS) {
+      } else if (contra && retireDue(arc, st.nowDay)) {
         status = "retired";
         arc.push({ night: st.nowDay, kind: "retired" });
         plan.counts.retired++;

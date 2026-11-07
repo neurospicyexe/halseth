@@ -248,12 +248,42 @@ describe("clampSleep quirk arc", () => {
     expect(plan.quirkUpdates[0]!.status).toBe("active");
     expect(JSON.parse(plan.quirkUpdates[0]!.arc).at(-1).kind).toBe("rehardened");
   });
-  it("softening + contradiction 14+ days later -> retired (row kept, never deleted)", () => {
-    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-05", kind: "softening" }]) });
+  it("R17: softening + contradicting nights spanning >= 14 days on >= 5 days -> retired (row kept)", () => {
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-01", kind: "softening" }, ...contradict(["2026-11-05", "2026-11-08", "2026-11-11", "2026-11-15"])]) });
     const plan = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
       state({ traits: [g], quirks: [q], night: nightOf(ap("a1")) }));
     expect(plan.counts.retired).toBe(1);
     expect(plan.quirkUpdates[0]!.status).toBe("retired");
+  });
+  it("R17: one contradicting night 14+ days after softening is NOT enough (old rule retired here)", () => {
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-05", kind: "softening" }]) });
+    const plan = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
+      state({ traits: [g], quirks: [q], night: nightOf(ap("a1")) }));
+    expect(plan.counts.retired).toBe(0);
+    expect(plan.quirkUpdates[0]!.status).toBe("softening");
+  });
+  it("R17: span >= 14 days but only 3 contradicting days -> not retired", () => {
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-01", kind: "softening" }, ...contradict(["2026-11-05", "2026-11-12"])]) });
+    const plan = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
+      state({ traits: [g], quirks: [q], night: nightOf(ap("a1", { day: "2026-11-19" })) }));
+    expect(plan.counts.retired).toBe(0);
+  });
+  it("R17: 5 contradicting days but a span of only 13 days -> not retired", () => {
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-01", kind: "softening" }, ...contradict(["2026-11-07", "2026-11-09", "2026-11-12", "2026-11-15"])]) });
+    const plan = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
+      state({ traits: [g], quirks: [q], night: nightOf(ap("a1", { day: "2026-11-19" })) }));
+    expect(plan.counts.retired).toBe(0);
+  });
+  it("R17: a supporting night resets the count (contradictions before the re-harden do not carry over)", () => {
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([
+      { night: "2026-10-20", kind: "softening" }, ...contradict(["2026-10-22", "2026-10-25", "2026-10-28", "2026-11-01"]),
+      { night: "2026-11-02", kind: "rehardened" }, ...contradict(["2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"]),
+      { night: "2026-11-08", kind: "softening" },
+    ]) });
+    const plan = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
+      state({ traits: [g], quirks: [q], night: nightOf(ap("a1", { day: "2026-11-19" })) }));
+    expect(plan.counts.retired).toBe(0);
+    expect(plan.quirkUpdates[0]!.status).toBe("softening");
   });
   it("softening + contradiction only 10 days later -> still softening", () => {
     const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-10", kind: "softening" }]) });
@@ -530,7 +560,8 @@ describe("CAS: two passes racing the same gate", () => {
 describe("never locked: a retired quirk's trait fades and the slug can grow again", () => {
   it("pure: retiring sets the trait faded; a later CREATE revives the same row at 1 with reset live points/days", () => {
     const g = trait("dawn_feed", { entrenchment: 5, status: "graduated", live_points: 6, live_days: JSON.stringify(["2026-09-01", "2026-09-02", "2026-09-03"]) });
-    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-05", kind: "softening" }]) });
+    const q = quirk("q1", g.id, { status: "softening", arc: JSON.stringify([{ night: "2026-11-01", kind: "softening" },
+      ...["2026-11-05", "2026-11-08", "2026-11-11", "2026-11-15"].map((d) => ({ night: d, kind: "contradict", days: [d] }))]) });
     const p1 = clampSleep({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ["a1"] }] },
       state({ traits: [g], quirks: [q], night: nightOf(ap("a1")) }));
     expect(p1.quirkUpdates[0]!.status).toBe("retired");
@@ -550,7 +581,8 @@ describe("never locked: a retired quirk's trait fades and the slug can grow agai
     ).run(solId, iso(NOW - 60 * DAY), iso(NOW - 90 * DAY));
     db.prepare(
       "INSERT INTO creature_quirks (id, creature_id, trait_id, title, trigger_json, behavior, resolution_json, kind, status, arc, promoted_at) VALUES ('q1', ?, 'tg', 'Dawn Feeding', '{\"time_band\":\"dawn\"}', 'waits on the rail', '{\"kind\":\"visits\",\"n\":2}', 'preference', 'softening', ?, ?)",
-    ).run(solId, JSON.stringify([{ night: "2026-11-01", kind: "softening" }]), iso(NOW - 60 * DAY));
+    ).run(solId, JSON.stringify([{ night: "2026-11-01", kind: "softening" },
+      ...["2026-11-05", "2026-11-08", "2026-11-11", "2026-11-15"].map((d) => ({ night: d, kind: "contradict", days: [d] }))]), iso(NOW - 60 * DAY));
     const ids1 = [seedAppr(db, solId), seedAppr(db, solId), seedAppr(db, solId)];
     const r1 = await runSleepPass(env(DB), solId, fake(JSON.stringify({ items: [{ op: "DECAY", slug: "dawn_feed", delta: -1, evidence: ids1 }] })), NOW);
     expect(r1).toMatchObject({ ran: true, retired: 1 });
@@ -570,10 +602,66 @@ describe("never locked: a retired quirk's trait fades and the slug can grow agai
     expect(JSON.parse(rows[0].live_days)).toEqual([chicagoDayOf(later - H)]);
     const qq = db.prepare("SELECT status, arc FROM creature_quirks WHERE id = 'q1'").get() as any;
     expect(qq.status).toBe("retired");
-    expect(JSON.parse(qq.arc).map((e: any) => e.kind)).toEqual(["softening", "contradict", "retired"]);
+    expect(JSON.parse(qq.arc).map((e: any) => e.kind)).toEqual(["softening", "contradict", "contradict", "contradict", "contradict", "contradict", "retired"]);
   });
 });
 
 function chicagoDayOf(ms: number): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 }
+
+// -- Fix round 1 (task-5-review.md) --------------------------------------------
+describe("review fix 1: an actor-specific quirk needs that actor's own trait", () => {
+  const days3 = JSON.stringify(["2026-11-17", "2026-11-18", "2026-11-19"]);
+  it("a trait aimed at anyone cannot graduate a quirk that fires on drevan", () => {
+    const t = trait("dusk_seed", { target_actor: null, entrenchment: 4, live_points: 3, live_days: days3 });
+    const plan = clampSleep({ items: [{
+      op: "REINFORCE", slug: "dusk_seed", delta: 1, evidence: ["c1"],
+      quirk: { ...QUIRK_BLOCK, trigger: { actor: "drevan", time_band: "dusk" } },
+    }] }, state({ traits: [t], night: nightOf(ap("c1", { actor: "cypher" })) }));
+    expect(plan.counts.promoted).toBe(0);
+    expect(plan.quirkInserts).toHaveLength(0);
+    expect(plan.dropped[0]!.why).toBe("bad_quirk");
+  });
+  it("a visits resolution by an actor also needs the trait to target that actor", () => {
+    const t = trait("dusk_seed", { target_actor: null, entrenchment: 4, live_points: 3, live_days: days3 });
+    const plan = clampSleep({ items: [{
+      op: "REINFORCE", slug: "dusk_seed", delta: 1, evidence: ["c1"],
+      quirk: { ...QUIRK_BLOCK, resolution: { kind: "visits", n: 2, by: "drevan" } },
+    }] }, state({ traits: [t], night: nightOf(ap("c1", { actor: "cypher" })) }));
+    expect(plan.quirkInserts).toHaveLength(0);
+  });
+  it("the actor's own trait may graduate a quirk on that actor", () => {
+    const t = trait("dusk_seed", { target_actor: "drevan", entrenchment: 4, live_points: 3, live_days: days3 });
+    const plan = clampSleep({ items: [{
+      op: "REINFORCE", slug: "dusk_seed", delta: 1, evidence: ["d1"],
+      quirk: { ...QUIRK_BLOCK, trigger: { actor: "drevan", time_band: "dusk" }, resolution: { kind: "visits", n: 2, by: "drevan" } },
+    }] }, state({ traits: [t], night: nightOf(ap("d1", { actor: "drevan" })) }));
+    expect(plan.counts.promoted).toBe(1);
+    expect(plan.quirkInserts[0]!.target_actor).toBe("drevan");
+  });
+});
+
+describe("review fix 2: live points still accrue at the entrenchment cap", () => {
+  const days3 = JSON.stringify(["2026-11-17", "2026-11-18", "2026-11-19"]);
+  it("a trait at 5 with 3 live points earns its 4th from a live night and graduates", () => {
+    const t = trait("dawn_feed", { entrenchment: 5, live_points: 3, live_days: days3 });
+    const plan = clampSleep({ items: [{ op: "REINFORCE", slug: "dawn_feed", delta: 1, evidence: ["a1"], quirk: QUIRK_BLOCK }] },
+      state({ traits: [t], night: nightOf(ap("a1")) }));
+    expect(plan.counts.promoted).toBe(1);
+    expect(plan.traitUpdates[0]!).toMatchObject({ entrenchment: 5, live_points: 4, status: "graduated" });
+  });
+  it("live points are capped at 5", () => {
+    const t = trait("dawn_feed", { entrenchment: 5, live_points: 4.8, live_days: "[]" });
+    const plan = clampSleep({ items: [{ op: "REINFORCE", slug: "dawn_feed", delta: 1, evidence: ["a1"] }] },
+      state({ traits: [t], night: nightOf(ap("a1")) }));
+    expect(plan.traitUpdates[0]!.live_points).toBe(5);
+  });
+  it("backfill evidence at the cap still adds no live points", () => {
+    const t = trait("dawn_feed", { entrenchment: 5, live_points: 3, live_days: days3 });
+    const plan = clampSleep({ items: [{ op: "REINFORCE", slug: "dawn_feed", delta: 1, evidence: ["b1"], quirk: QUIRK_BLOCK }] },
+      state({ traits: [t], night: nightOf(ap("b1", { source: "backfill" })) }));
+    expect(plan.traitUpdates[0]!.live_points).toBe(3);
+    expect(plan.counts.promoted).toBe(0);
+  });
+});
