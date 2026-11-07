@@ -102,8 +102,10 @@ export const SELECT_VOICE_QUIRKS =
   `SELECT title, behavior FROM creature_quirks WHERE creature_id = ? AND status IN ('active','softening') ORDER BY CASE WHEN target_actor = ? THEN 0 WHEN target_actor IS NULL THEN 1 ELSE 2 END, promoted_at DESC LIMIT 3`;
 export const SELECT_VOICE_TRAITS =
   `SELECT slug, category, perspective FROM creature_traits WHERE creature_id = ? AND status IN ('candidate','graduated') ORDER BY entrenchment DESC, slug ASC LIMIT 3`;
+// R19: a make TITLE only (ref_type set). Gift notes and overheard fragments are tender-written text and
+// never reach the model, even when the tick has treasured them.
 export const SELECT_VOICE_TREASURE =
-  `SELECT content FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL AND treasured = 1 ORDER BY sparkle DESC LIMIT 1`;
+  `SELECT content FROM creature_nest WHERE creature_id = ? AND gifted_to IS NULL AND treasured = 1 AND ref_type IS NOT NULL ORDER BY sparkle DESC LIMIT 1`;
 export const SELECT_VOICE_MILESTONE =
   `SELECT milestone_id FROM creature_milestones WHERE creature_id = ? ORDER BY fired_at DESC LIMIT 1`;
 export const SELECT_CREATURE_NAME =

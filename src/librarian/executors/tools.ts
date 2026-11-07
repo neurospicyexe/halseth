@@ -12,7 +12,7 @@ import { createProvider } from "../../tools/live-providers.js";
 import { accruedLevel, driveFired, selectModality, hoursSinceIso, readDrivesSql } from "../../webmind/drives.js";
 import { isValidAction, listCreaturesSql, parseTendRequest, type CreatureAction } from "../../webmind/creatures.js";
 import { performTend } from "../../webmind/creature-interact.js";
-import { makeVoice } from "../../pets/voice.js";
+import { makeVoice, voiceMode } from "../../pets/voice.js";
 import { fireTendSol } from "../../webmind/loop-stimuli.js";
 import { insertQuestionSql } from "../../webmind/council.js";
 
@@ -129,7 +129,10 @@ export async function execCreatureInteract(ctx: ExecutorContext): Promise<Execut
   // Shared write path (webmind/creature-interact.ts): ledger + trust bump +
   // milestone firing + give-notes into the nest -- identical to the HTTP handler,
   // so a companion tend can land a milestone exactly like an owner tend can.
-  const outcome = await performTend(ctx.env.DB, creature, ctx.req.companion_id, action, note, Date.now(), "autonomous", makeVoice(ctx.env));
+  // R20: the Librarian has no waitUntil, so a shadow voice here would block the tend for a discarded line.
+  // Shadow (the default) = no voice from this path at all; "on" keeps it (bounded by 4000 ms).
+  const voice = voiceMode(ctx.env) === "on" ? makeVoice(ctx.env) : undefined;
+  const outcome = await performTend(ctx.env.DB, creature, ctx.req.companion_id, action, note, Date.now(), "autonomous", voice);
   await fireTendSol(ctx.env, creature.kind, ctx.req.companion_id, action);
   const milestoneLine = outcome.milestones_fired.length > 0
     ? ` ${outcome.milestones_fired.map(m => m.text).join(" ")}`

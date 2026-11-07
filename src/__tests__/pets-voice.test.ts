@@ -186,9 +186,10 @@ describe("speak / makeVoice", () => {
     const hang = fakeModel(() => new Promise<string | null>(() => { /* never */ }));
     let done: string | null = null;
     const p = makeVoice(env, hang)("*det*", tendCtx(solId)).then((s) => { done = s; return s; });
-    await vi.advanceTimersByTimeAsync(VOICE_TIMEOUT_MS - 1);
+    // The budget starts before the DB loads (minor b), so the timer may fire a few real ms early; not by 3 s.
+    await vi.advanceTimersByTimeAsync(3000);
     expect(done).toBeNull();
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(VOICE_TIMEOUT_MS + 100 - 3000);
     expect(await p).toBe("*det*");
     expect(shadowRows(db)[0]).toMatchObject({ generated: null, rejected_reason: "timeout" });
   });
@@ -377,5 +378,72 @@ describe("shadow runs in ctx.waitUntil (R18)", () => {
     const ctx = { waitUntil() {} } as any;
     await r.handle(new Request("http://h/x/1", { method: "POST" }), {} as any, ctx);
     expect(seen).toBe(ctx);
+  });
+});
+
+// Fix round 1: R19 (callback is a make title or a milestone, never tender-written text), R20 (the Librarian
+// tend path has no waitUntil, so shadow passes no voice), minor b (one budget covers loads + model).
+describe("fix round 1", () => {
+  it("R19: a treasured give note never reaches the model; a treasured make title may", async () => {
+    const { db, env, solId } = setup();
+    db.prepare("INSERT INTO creature_nest (id, creature_id, content, source, given_by, sparkle, treasured) VALUES ('n1', ?, 'the secret word is marmalade', 'gift', 'cypher', 0.99, 1)").run(solId);
+    const model = fakeModel(GOOD);
+    await makeVoice(env, model)("*det {who}*", tendCtx(solId));
+    expect(model.lastUser + model.lastSystem).not.toMatch(/marmalade/);
+    db.prepare("INSERT INTO creature_nest (id, creature_id, content, source, given_by, sparkle, treasured, ref_type, ref_id) VALUES ('n2', ?, 'a brass compass sketch', 'hoard', 'drevan', 0.5, 1, 'make', 'mk1')").run(solId);
+    await makeVoice(env, model)("*det {who}*", tendCtx(solId));
+    expect(model.lastUser).toContain("a brass compass sketch");
+    expect(model.lastUser).not.toMatch(/marmalade/);
+  });
+
+  function execCtx(env: any) {
+    return { env, req: { companion_id: "cypher", request: "feed Sol", context: JSON.stringify({ creature: "Sol", action: "feed" }) }, entry: {}, frontState: null, pluralAvailable: false } as any;
+  }
+  function stubFetch(line: string) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: line } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  }
+
+  it("R20: Librarian tend in shadow (default) makes no model call and writes no shadow row", async () => {
+    const { db, env } = setup();
+    env.DEEPINFRA_API_KEY = "test-key";
+    const f = stubFetch(GOOD);
+    const { execCreatureInteract } = await import("../librarian/executors/tools.js");
+    const out = await execCreatureInteract(execCtx(env));
+    expect(out.interacted).toBe(true);
+    expect(f).not.toHaveBeenCalled();
+    expect(shadowRows(db)).toHaveLength(0);
+  });
+
+  it("R20: Librarian tend in on mode keeps the voice", async () => {
+    const { env } = setup({ mode: "on" });
+    env.DEEPINFRA_API_KEY = "test-key";
+    const f = stubFetch(GOOD);
+    const { execCreatureInteract } = await import("../librarian/executors/tools.js");
+    const out = await execCreatureInteract(execCtx(env)) as any;
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(out.witness).toContain(renderCare(GOOD, "you"));
+  });
+
+  it("minor b: the model gets what is left of one 4000 ms budget, not a fresh 4000 after the loads", async () => {
+    const { env, solId } = setup({ mode: "on" });
+    const seen: number[] = [];
+    const model: PetModel = { async complete(_s, _u, _m, timeoutMs) { seen.push(timeoutMs); return GOOD; } };
+    const realNow = Date.now;
+    let calls = 0;
+    // every Date.now() read after the first moves the clock 1500 ms: the loads "took" time
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + (calls++ === 0 ? 0 : 1500));
+    expect(await makeVoice(env, model)("*det {who}*", tendCtx(solId))).toBe(GOOD);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeLessThanOrEqual(VOICE_TIMEOUT_MS - 1500);
+  });
+
+  it("minor b: a spent budget is a timeout without calling the model", async () => {
+    const { db, env, solId } = setup();
+    const model = fakeModel(GOOD);
+    const out = await speak(env, model, "tend", { system: "s", user: "u" }, "*det*", null, { creatureId: solId, who: "Cypher", timeoutMs: 0 });
+    expect(out).toBe("*det*");
+    expect(model.calls).toBe(0);
+    expect(shadowRows(db)[0]).toMatchObject({ rejected_reason: "timeout" });
   });
 });

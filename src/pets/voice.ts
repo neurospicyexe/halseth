@@ -184,6 +184,8 @@ export interface SpeakOpts {
   self?: string | null;
   /** ExecutionContext.waitUntil when the caller has one; otherwise the shadow write is awaited. */
   waitUntil?: (p: Promise<unknown>) => void;
+  /** What is left of the 4000 ms budget (makeVoice starts it before its DB loads). Default: the full budget. */
+  timeoutMs?: number;
 }
 
 export async function speak(
@@ -192,9 +194,10 @@ export async function speak(
 ): Promise<string> {
   const mode = voiceMode(env);
   if (mode === "off") return deterministic;
-  const res = await withTimeout(
-    model.complete(prompt.system, prompt.user, VOICE_MAX_TOKENS, VOICE_TIMEOUT_MS).catch(() => null),
-    VOICE_TIMEOUT_MS,
+  const budget = Math.max(0, Math.min(VOICE_TIMEOUT_MS, opts.timeoutMs ?? VOICE_TIMEOUT_MS));
+  const res = budget === 0 ? TIMED_OUT : await withTimeout(
+    model.complete(prompt.system, prompt.user, VOICE_MAX_TOKENS, budget).catch(() => null),
+    budget,
   );
   let line: string | null = null;
   let reason: string | null = null;
@@ -260,6 +263,8 @@ export function makeVoice(
   };
 
   async function run(m: PetModel, deterministic: string, ctx: VoiceCtx): Promise<string> {
+    // One 4000 ms budget covers the loads AND the model, so the caller's 4100 ms guard never drops a valid line.
+    const startedAt = Date.now();
     try {
       const db = env.DB;
       const persona = await loadPersona(db, ctx.creatureId);
@@ -285,6 +290,7 @@ export function makeVoice(
       // Inside run() the shadow write is always awaited: in shadow+waitUntil run() itself is the background work.
       return await speak(env, m, ctx.surface, prompt, deterministic, people, {
         creatureId: ctx.creatureId, who: ctx.who, self: selfRow?.name ?? null,
+        timeoutMs: VOICE_TIMEOUT_MS - (Date.now() - startedAt),
       });
     } catch (err) {
       console.error("[pets/voice] voice failed; authored line kept", { error: String(err) });
