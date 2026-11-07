@@ -227,9 +227,17 @@ async function mindView(db: D1Database, creatureId: string, nowMs: number): Prom
   };
 }
 
+/** Test seams + the Worker's ExecutionContext (passed by the router to the two voiced routes only). */
+interface VoiceDeps { petModel?: PetModel; ctx?: ExecutionContext }
+
+function voiceFor(env: Env, deps: VoiceDeps) {
+  const wu = deps.ctx && typeof deps.ctx.waitUntil === "function" ? deps.ctx.waitUntil.bind(deps.ctx) : undefined;
+  return makeVoice(env, deps.petModel, { waitUntil: wu });
+}
+
 // POST /mind/creatures/:id/interact   { actor, action, note?, via? }
 export async function interactCreature(
-  request: Request, env: Env, params: Record<string, string>, deps: { petModel?: PetModel } = {},
+  request: Request, env: Env, params: Record<string, string>, deps: VoiceDeps = {},
 ): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
@@ -269,8 +277,8 @@ export async function interactCreature(
     // Shared write path (webmind/creature-interact.ts): ledger + trust bump +
     // milestone firing + give-notes into the nest. Same code the Librarian
     // tend_creature executor runs, so no side effect can miss a writer.
-    // Handlers get no ExecutionContext here, so the voice awaits its shadow write (inside a catch).
-    const outcome = await performTend(env.DB, exists, actor, action, note, Date.now(), via, makeVoice(env, deps.petModel));
+    // Shadow with a ctx: the whole voice runs in ctx.waitUntil and the authored line returns at once (R18).
+    const outcome = await performTend(env.DB, exists, actor, action, note, Date.now(), via, voiceFor(env, deps));
     await fireTendSol(env, exists.kind, actor, action);
     return json({ interacted: true, action, ...outcome });
   } catch (err) {
@@ -284,7 +292,7 @@ export async function interactCreature(
 // trust, some moments become gifts: a nest item is marked given and rendered
 // into the text. The caller (worker) posts it and records the appearance.
 export async function momentCreature(
-  request: Request, env: Env, params: Record<string, string>, deps: { petModel?: PetModel } = {},
+  request: Request, env: Env, params: Record<string, string>, deps: VoiceDeps = {},
 ): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
@@ -319,7 +327,7 @@ export async function momentCreature(
     // Sol's appearance may be voiced (B64 Task 6); gifts and absence stay authored (spec 5.7).
     const authored = matrixMoment(live.state, live.tier, seed);
     const moment = c.kind === "companion_pet"
-      ? await voiceOr(makeVoice(env, deps.petModel), authored, {
+      ? await voiceOr(voiceFor(env, deps), authored, {
         creatureId: c.id, surface: "moment", actor: null, who: null, action: null, fit: null,
         tier: live.tier, state: live.state,
       })

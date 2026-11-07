@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { makeSqliteD1 } from "./helpers/sqlite-d1.js";
 import { performTend } from "../webmind/creature-interact.js";
-import { momentCreature } from "../handlers/creatures.js";
+import { momentCreature, interactCreature } from "../handlers/creatures.js";
 import { careLine, renderCare } from "../webmind/sol-care.js";
 import { trustTier, matrixMoment } from "../webmind/creatures.js";
 import type { PetModel } from "../pets/model.js";
@@ -297,5 +297,85 @@ describe("momentCreature voice", () => {
     const body = await res.json() as any;
     expect(body.kind).toBe("moment");
     expect(body.moment).toBe(line);
+  });
+});
+
+// R18 (controller ruling): shadow mode adds zero latency when the Worker gives us ExecutionContext.
+describe("shadow runs in ctx.waitUntil (R18)", () => {
+  function gatedModel(line: string) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const m = fakeModel(async () => { await gate; return line; });
+    return { m, release };
+  }
+  function fakeCtx() {
+    const pending: Promise<unknown>[] = [];
+    return { pending, ctx: { waitUntil: (p: Promise<unknown>) => { pending.push(p); }, passThroughOnException() {} } as any };
+  }
+
+  it("makeVoice shadow + waitUntil: returns the authored line before the model resolves; row lands after", async () => {
+    const { db, env, solId } = setup();
+    const { m, release } = gatedModel(GOOD);
+    const { pending, ctx } = fakeCtx();
+    const out = await makeVoice(env, m, { waitUntil: ctx.waitUntil })("*det {who}*", tendCtx(solId));
+    expect(out).toBe("*det {who}*");
+    expect(pending).toHaveLength(1);
+    expect(shadowRows(db)).toHaveLength(0);
+    release();
+    await Promise.all(pending);
+    expect(shadowRows(db)).toHaveLength(1);
+    expect(shadowRows(db)[0]).toMatchObject({ surface: "tend", generated: GOOD, rejected_reason: null });
+  });
+
+  it("on + waitUntil still awaits the generated line", async () => {
+    const { env, solId } = setup({ mode: "on" });
+    const { pending, ctx } = fakeCtx();
+    const out = await makeVoice(env, fakeModel(GOOD), { waitUntil: ctx.waitUntil })("*det {who}*", tendCtx(solId));
+    expect(out).toBe(GOOD);
+    expect(pending).toHaveLength(0);
+  });
+
+  it("interactCreature with a ctx: the tend responds before the model resolves; the shadow row follows", async () => {
+    const { db, env, solId } = setup();
+    const { m, release } = gatedModel(GOOD);
+    const { pending, ctx } = fakeCtx();
+    const res = await interactCreature(new Request("http://x/mind/creatures/x/interact", {
+      method: "POST", headers: { Authorization: "Bearer s", "Content-Type": "application/json" },
+      body: JSON.stringify({ actor: "cypher", action: "feed", via: "hand" }),
+    }), env, { id: solId }, { petModel: m, ctx });
+    const body = await res.json() as any;
+    expect(res.status).toBe(200);
+    expect(body.care.reaction).not.toBe(renderCare(GOOD, "you"));
+    expect(shadowRows(db)).toHaveLength(0);
+    release();
+    await Promise.all(pending);
+    expect(shadowRows(db)).toHaveLength(1);
+    expect(renderCare(shadowRows(db)[0].deterministic, "you")).toBe(body.care.reaction);
+  });
+
+  it("momentCreature with a ctx: authored moment returns before the model resolves", async () => {
+    const { db, env, solId } = setup({ trust: 0.5 });
+    const line = "*Sol picks the wire perch over the rail and makes a point of it.*";
+    const { m, release } = gatedModel(line);
+    const { pending, ctx } = fakeCtx();
+    const res = await momentCreature(new Request("http://x/mind/creatures/x/moment", {
+      method: "POST", headers: { Authorization: "Bearer s", "Content-Type": "application/json" }, body: JSON.stringify({ seed: 7 }),
+    }), env, { id: solId }, { petModel: m, ctx });
+    const body = await res.json() as any;
+    expect(body.kind).toBe("moment");
+    expect(body.moment).toBe(matrixMoment(body.state, body.tier, 7));
+    expect(shadowRows(db)).toHaveLength(0);
+    release();
+    await Promise.all(pending);
+    expect(shadowRows(db)[0]).toMatchObject({ surface: "moment", generated: line });
+  });
+
+  it("the router hands ctx to the handler as the 4th argument", async () => {
+    const { Router } = await import("../router.js");
+    let seen: unknown = "unset";
+    const r = new Router().on("POST", "/x/:id", async (_req, _env, _p, ctx) => { seen = ctx; return new Response("ok"); });
+    const ctx = { waitUntil() {} } as any;
+    await r.handle(new Request("http://h/x/1", { method: "POST" }), {} as any, ctx);
+    expect(seen).toBe(ctx);
   });
 });

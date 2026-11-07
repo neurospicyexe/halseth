@@ -3,7 +3,9 @@ import { Env } from "./types";
 export type Handler = (
   request: Request,
   env: Env,
-  params: Record<string, string>
+  params: Record<string, string>,
+  /** The Worker's ExecutionContext (optional: most handlers ignore it; tests may omit it). */
+  ctx?: ExecutionContext,
 ) => Promise<Response>;
 
 type Route = {
@@ -24,7 +26,7 @@ export class Router {
     return this;
   }
 
-  async handle(request: Request, env: Env): Promise<Response> {
+  async handle(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     for (const route of this.routes) {
@@ -32,7 +34,7 @@ export class Router {
       const match = route.pattern.exec({ pathname: url.pathname });
       if (!match) continue;
       const params = match.pathname.groups as Record<string, string>;
-      return route.handler(request, env, params);
+      return route.handler(request, env, params, ctx);
     }
 
     return new Response("Not found", { status: 404 });

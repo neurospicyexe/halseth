@@ -522,8 +522,8 @@ const router = new Router()
   .on("POST",  "/mind/creatures/tick",               (request, env)         => tickCreatures(request, env))
   .on("GET",   "/mind/creatures",                    (request, env)         => getCreatures(request, env))
   .on("GET",   "/mind/creatures/:id",                (request, env, params) => getCreature(request, env, params ?? {}))
-  .on("POST",  "/mind/creatures/:id/interact",       (request, env, params) => interactCreature(request, env, params ?? {}))
-  .on("POST",  "/mind/creatures/:id/moment",         (request, env, params) => momentCreature(request, env, params ?? {}))
+  .on("POST",  "/mind/creatures/:id/interact",       (request, env, params, ctx) => interactCreature(request, env, params ?? {}, { ctx }))
+  .on("POST",  "/mind/creatures/:id/moment",         (request, env, params, ctx) => momentCreature(request, env, params ?? {}, { ctx }))
   .on("GET",   "/mind/creatures/:id/nest",           (request, env, params) => getNest(request, env, params ?? {}))
   .on("POST",  "/mind/creatures/:id/hoard",          (request, env, params) => hoardCreature(request, env, params ?? {}))
 
@@ -867,7 +867,7 @@ export async function runScheduledWork(env: Env): Promise<void> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
 
@@ -893,7 +893,7 @@ export default {
         if (denied) return denied;
       }
 
-      return await router.handle(request, env);
+      return await router.handle(request, env, ctx);
     } catch (err) {
       console.error(err);
       return new Response("Internal server error", { status: 500 });

@@ -245,9 +245,21 @@ export function makeVoice(
   opts: { waitUntil?: (p: Promise<unknown>) => void } = {},
 ): Voice {
   return async (deterministic, ctx) => {
-    if (voiceMode(env) === "off") return deterministic;
+    const mode = voiceMode(env);
+    if (mode === "off") return deterministic;
     const m = model ?? (hasPetModel(env as Env) ? halsethPetModel(env as Env, VOICE_TEMPERATURE) : null);
     if (!m) return deterministic;
+    // Shadow never adds latency when the Worker gave us waitUntil (R18): the whole load + generate + validate +
+    // store runs after the response, and the authored line returns now. No waitUntil (tests, the tools
+    // executor) = today's await-with-catch below. "on" always awaits, bounded by the timeout.
+    if (mode === "shadow" && opts.waitUntil) {
+      opts.waitUntil(run(m, deterministic, ctx).catch(() => deterministic));
+      return deterministic;
+    }
+    return run(m, deterministic, ctx);
+  };
+
+  async function run(m: PetModel, deterministic: string, ctx: VoiceCtx): Promise<string> {
     try {
       const db = env.DB;
       const persona = await loadPersona(db, ctx.creatureId);
@@ -270,14 +282,15 @@ export function makeVoice(
         persona, state: ctx.state, tier: ctx.tier, fit: ctx.fit, action: ctx.action, quirks, traits,
         grudge: shownGrudge, grudgeStep: ctx.grudgeStep ?? null, callback, who: ctx.who ? "{who}" : null,
       });
+      // Inside run() the shadow write is always awaited: in shadow+waitUntil run() itself is the background work.
       return await speak(env, m, ctx.surface, prompt, deterministic, people, {
-        creatureId: ctx.creatureId, who: ctx.who, self: selfRow?.name ?? null, waitUntil: opts.waitUntil,
+        creatureId: ctx.creatureId, who: ctx.who, self: selfRow?.name ?? null,
       });
     } catch (err) {
       console.error("[pets/voice] voice failed; authored line kept", { error: String(err) });
       return deterministic;
     }
-  };
+  }
 }
 
 /**
