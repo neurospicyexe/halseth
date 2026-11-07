@@ -100,6 +100,7 @@ import { getDrives, contactDrive } from "./handlers/drives.js";
 import { postEchoMetric, getEchoMetric } from "./handlers/echo-metrics.js";
 import { postImpActivation, getImpActivations } from "./handlers/imps.js";
 import { getImpsActivity } from "./handlers/imps-activity.js";
+import { postBackfillAppraisals } from "./pets/backfill.js";
 import { getCreatures, getCreature, interactCreature, tickCreatures, momentCreature, getNest, hoardCreature } from "./handlers/creatures.js";
 import { getGardenGaia } from "./handlers/garden.js";
 import { postBeingSeenCheck, postGardenGaiaLooked } from "./handlers/being-seen.js";
@@ -193,6 +194,8 @@ const router = new Router()
   .on("POST", "/admin/backfill-embeddings",   (request, env) => backfillEmbeddings(request, env))
   // Idempotent full rebuild (deterministic upsert from D1 truth). Alias of backfill.
   .on("POST", "/admin/rebuild-embeddings",    (request, env) => backfillEmbeddings(request, env))
+  // B64 Task 7: Sol's history becomes memories (appraisals, source backfill); opinions start fresh.
+  .on("POST", "/admin/creatures/:id/backfill-appraisals", (request, env, params) => postBackfillAppraisals(request, env, params ?? {}))
   .on("POST", "/admin/seed-routing-vectors",  (request, env) => seedRoutingVectors(request, env))
   // Zero-neuron reindex: re-upsert existing vectors so they index under metadata indexes
   // created after they were first inserted (fixes filtered recall without spending neurons).
