@@ -62,6 +62,7 @@ import { expired, grudgeProgress } from "../pets/grudge.js";
 import { loadOpenGrudges, writeAppraisal } from "../pets/store.js";
 import { halsethPetModel, hasPetModel, type PetModel } from "../pets/model.js";
 import { notRun, runSleepPass, SLEEP_TEMPERATURE, type SleepResult } from "../pets/sleep.js";
+import { makeVoice, voiceOr } from "../pets/voice.js";
 import { INSERT_INTERACTION_VIA, SELECT_TRAITS_FORMING, SELECT_VISIBLE_QUIRKS } from "../pets/sql.js";
 
 function json(data: unknown, status = 200): Response {
@@ -227,7 +228,9 @@ async function mindView(db: D1Database, creatureId: string, nowMs: number): Prom
 }
 
 // POST /mind/creatures/:id/interact   { actor, action, note?, via? }
-export async function interactCreature(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
+export async function interactCreature(
+  request: Request, env: Env, params: Record<string, string>, deps: { petModel?: PetModel } = {},
+): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
   const id = params["id"] ?? "";
@@ -266,7 +269,8 @@ export async function interactCreature(request: Request, env: Env, params: Recor
     // Shared write path (webmind/creature-interact.ts): ledger + trust bump +
     // milestone firing + give-notes into the nest. Same code the Librarian
     // tend_creature executor runs, so no side effect can miss a writer.
-    const outcome = await performTend(env.DB, exists, actor, action, note, Date.now(), via);
+    // Handlers get no ExecutionContext here, so the voice awaits its shadow write (inside a catch).
+    const outcome = await performTend(env.DB, exists, actor, action, note, Date.now(), via, makeVoice(env, deps.petModel));
     await fireTendSol(env, exists.kind, actor, action);
     return json({ interacted: true, action, ...outcome });
   } catch (err) {
@@ -279,7 +283,9 @@ export async function interactCreature(request: Request, env: Env, params: Recor
 // Composes a deterministic appearance from live drives x trust tier. At bonded
 // trust, some moments become gifts: a nest item is marked given and rendered
 // into the text. The caller (worker) posts it and records the appearance.
-export async function momentCreature(request: Request, env: Env, params: Record<string, string>): Promise<Response> {
+export async function momentCreature(
+  request: Request, env: Env, params: Record<string, string>, deps: { petModel?: PetModel } = {},
+): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
   const id = params["id"] ?? "";
@@ -310,7 +316,15 @@ export async function momentCreature(request: Request, env: Env, params: Record<
       }
     }
 
-    return json({ moment: matrixMoment(live.state, live.tier, seed), kind: "moment", ...live });
+    // Sol's appearance may be voiced (B64 Task 6); gifts and absence stay authored (spec 5.7).
+    const authored = matrixMoment(live.state, live.tier, seed);
+    const moment = c.kind === "companion_pet"
+      ? await voiceOr(makeVoice(env, deps.petModel), authored, {
+        creatureId: c.id, surface: "moment", actor: null, who: null, action: null, fit: null,
+        tier: live.tier, state: live.state,
+      })
+      : authored;
+    return json({ moment, kind: "moment", ...live });
   } catch (err) {
     console.error("[mind/creatures] moment error", { error: String(err) });
     return json({ error: "Internal server error" }, 500);

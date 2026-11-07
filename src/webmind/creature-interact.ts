@@ -14,11 +14,12 @@ import {
   interactBumpSql,
   crossedMilestones,
   deriveDrives,
+  dominantState,
   trustTier,
   tierGroup,
   NEST_CAP,
 } from "./creatures.js";
-import { careResponse, renderCare, tenderName, SETTLED_WINDOW_MINUTES, type CareFit } from "./sol-care.js";
+import { careResponse, careLine, renderCare, tenderName, SETTLED_WINDOW_MINUTES, type CareFit } from "./sol-care.js";
 import { appraise, resolveVia, type Via } from "../pets/appraise.js";
 import {
   stepGrudge, expired, grudgeProgress, sulkLine, makeUpLine, type GrudgeStep, type OpenGrudge,
@@ -29,6 +30,7 @@ import {
 import { INSERT_INTERACTION_VIA } from "../pets/sql.js";
 import { nestTextAllowed } from "./sol-hoard.js";
 import { loadPersonRegex } from "./sol-hoard-people.js";
+import { voiceOr, type Voice, type VoiceCtx } from "../pets/voice.js";
 
 export interface TendTarget {
   id: string;
@@ -61,6 +63,11 @@ export async function performTend(
   note: string | null,
   nowMs: number = Date.now(),
   via?: Via,
+  /**
+   * Sol's generated voice (B64 Task 6). Called AFTER the tend's batch commits, with the deterministic line
+   * ({who} slot unrendered); a throw or hang yields that line. It never changes anything but the line.
+   */
+  voice?: Voice,
 ): Promise<TendOutcome> {
   // Unknown callers default to autonomous (under-weights, never over-weights): never assume hand.
   const resolvedVia: Via = via ?? resolveVia(undefined, actor);
@@ -74,6 +81,9 @@ export async function performTend(
   let delta = trustDelta(action);
   let mood = actionMood(action);
   let care: TendOutcome["care"] = null;
+  // What the voice needs, captured while the tend is read; only set for companion_pet.
+  let voiceLine: string | null = null;
+  let voiceCtx: VoiceCtx | null = null;
   if (creature.kind === "companion_pet") {
     const [row, acted, recent, quirks, loadedOpen] = await Promise.all([
       db.prepare("SELECT created_at, last_interaction_at FROM creatures WHERE id = ?").bind(creature.id)
@@ -128,7 +138,10 @@ export async function performTend(
     extra.push(...applyGrudgeStep(db, creature.id, actor, open, step, nowMs));
 
     // Only the reaction text changes; delta (trust gain) is untouched by anything below (R7).
-    const group = tierGroup(trustTier(creature.trust));
+    const tier = trustTier(creature.trust);
+    const group = tierGroup(tier);
+    let voiceGrudge: OpenGrudge | null = null;
+    let grudgeStep: VoiceCtx["grudgeStep"] = null;
     let line: string | null = null;
     if (step.kind === "open") {
       const shown: OpenGrudge = {
@@ -137,22 +150,31 @@ export async function performTend(
       };
       grudge = { label: step.label, ...grudgeProgress(shown, nowMs), step: "open" };
       line = sulkLine(group, seed);
+      voiceGrudge = shown; grudgeStep = "sulk";
     } else if (open && step.kind === "progress") {
       grudge = { label: open.label, ...grudgeProgress({ ...open, progress: step.progress }, nowMs), step: "progress" };
       line = sulkLine(group, seed);
+      voiceGrudge = open; grudgeStep = "sulk";
     } else if (open && step.kind === "resolve") {
       const r0 = open.resolution;
       const done = step.how === "met" && (r0.kind === "visits" || r0.kind === "item") ? { ...open, progress: r0.n } : open;
       grudge = { label: open.label, ...grudgeProgress(done, nowMs), step: "resolve" };
-      if (step.how === "met") line = makeUpLine(seed);
+      if (step.how === "met") { line = makeUpLine(seed); voiceGrudge = open; grudgeStep = "make_up"; }
     } else if (open) {
       grudge = { label: open.label, ...grudgeProgress(open, nowMs), step: "none" };
       line = sulkLine(group, seed);
+      voiceGrudge = open; grudgeStep = "sulk";
     } else if (expiredOld) {
       // Resolved by the clock on this tend: the end is shown, the normal care line stays.
       grudge = { label: expiredOld.label, ...grudgeProgress(expiredOld, nowMs), step: "resolve" };
     }
     if (line) care = { fit: r.fit, reaction: renderCare(line, "you"), reaction_named: renderCare(line, tenderName(actor)) };
+    // The same line careResponse rendered (same seed), slot still open, so one voiced line re-renders both.
+    voiceLine = line ?? careLine(action, r.fit, tier, seed);
+    voiceCtx = {
+      creatureId: creature.id, surface: "tend", actor, who: tenderName(actor), action, fit: r.fit, tier,
+      state: dominantState(drives), grudge: voiceGrudge, grudgeStep,
+    };
   }
 
   await db.batch([
@@ -185,6 +207,14 @@ export async function performTend(
     await db.prepare(
       "INSERT INTO creature_nest (id, creature_id, content, source, given_by, sparkle) VALUES (?, ?, ?, 'gift', ?, 1.0)",
     ).bind(crypto.randomUUID().replace(/-/g, ""), creature.id, note.slice(0, 120), actor).run();
+  }
+
+  // The voice runs only now: the tend above is committed whatever it does (Review Focus 4).
+  if (voice && care && voiceLine !== null && voiceCtx) {
+    const spoken = await voiceOr(voice, voiceLine, voiceCtx);
+    if (spoken !== voiceLine) {
+      care = { fit: care.fit, reaction: renderCare(spoken, "you"), reaction_named: renderCare(spoken, tenderName(actor)) };
+    }
   }
 
   return {

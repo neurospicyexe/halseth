@@ -73,6 +73,9 @@ export interface Env {
   // B62: the `repetition` stimulus (boredom, felt). "off" | "shadow" | "on"; unset = shadow (log a
   // would-fire row, touch no float). Generic: see SHADOWABLE in webmind/fermentation.ts.
   REPETITION_MODE?: string;
+  // B64 Sol's generated voice (src/pets/voice.ts). "off" | "shadow" | "on"; unset/unknown = shadow (generate
+  // and store the pair in creature_voice_shadow, return the authored line). Not set in any toml on purpose.
+  SOL_VOICE_MODE?: string;
   // Drevan's shelf (mig 0170): which companions' letters to Raziel and night explorations are captured as
   // makes automatically. Comma list; unset = "drevan"; "off" = none. The `keep as made` verb is not gated.
   MAKES_CAPTURE?: string;
