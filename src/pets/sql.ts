@@ -12,12 +12,15 @@ export const T = {
 
 // appraisals
 export const INSERT_APPRAISAL =
-  `INSERT OR IGNORE INTO creature_appraisals (id, creature_id, interaction_id, actor, action, via, fit, valence, arousal, friction, tags, weight, source)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  `INSERT OR IGNORE INTO creature_appraisals (id, creature_id, interaction_id, actor, action, via, fit, valence, arousal, friction, tags, weight, source, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 export const SELECT_UNPROCESSED_APPRAISALS =
   `SELECT * FROM creature_appraisals WHERE creature_id = ? AND processed_at IS NULL ORDER BY created_at ASC LIMIT ?`;
-export const MARK_APPRAISAL_PROCESSED =
-  `UPDATE creature_appraisals SET processed_at = datetime('now') WHERE id = ? AND processed_at IS NULL`;
+// Bind: [processed_at ISO, creature_id, JSON array of appraisal ids]. One statement for the whole night.
+export const MARK_APPRAISALS_PROCESSED =
+  `UPDATE creature_appraisals SET processed_at = ? WHERE creature_id = ? AND processed_at IS NULL AND id IN (SELECT value FROM json_each(?))`;
+export const SUM_UNPROCESSED_WEIGHT =
+  `SELECT COALESCE(SUM(weight), 0) AS w FROM creature_appraisals WHERE creature_id = ? AND processed_at IS NULL`;
 
 // traits
 export const SELECT_TRAITS =
@@ -25,19 +28,21 @@ export const SELECT_TRAITS =
 export const SELECT_TRAIT_BY_SLUG =
   `SELECT * FROM creature_traits WHERE creature_id = ? AND slug = ?`;
 export const INSERT_TRAIT =
-  `INSERT INTO creature_traits (id, creature_id, slug, category, target_actor, perspective, entrenchment, live_points, live_days, origin, status, last_reinforced_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  `INSERT INTO creature_traits (id, creature_id, slug, category, target_actor, perspective, entrenchment, live_points, live_days, origin, status, last_reinforced_at, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 export const UPDATE_TRAIT =
   `UPDATE creature_traits SET entrenchment = ?, live_points = ?, live_days = ?, status = ?, last_reinforced_at = ? WHERE id = ?`;
 export const INSERT_TRAIT_EVIDENCE =
-  `INSERT INTO creature_trait_evidence (id, trait_id, appraisal_ids, delta, night, reason) VALUES (?, ?, ?, ?, ?, ?)`;
+  `INSERT INTO creature_trait_evidence (id, trait_id, appraisal_ids, delta, night, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`;
 
 // quirks
 export const SELECT_QUIRKS =
   `SELECT * FROM creature_quirks WHERE creature_id = ? AND status = ?`;
 export const INSERT_QUIRK =
-  `INSERT INTO creature_quirks (id, creature_id, trait_id, title, trigger_json, behavior, resolution_json, target_actor, kind, status, arc)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  `INSERT INTO creature_quirks (id, creature_id, trait_id, title, trigger_json, behavior, resolution_json, target_actor, kind, status, arc, promoted_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+export const SELECT_ARC_QUIRKS =
+  `SELECT * FROM creature_quirks WHERE creature_id = ? AND status IN ('active','softening')`;
 export const UPDATE_QUIRK =
   `UPDATE creature_quirks SET status = ?, arc = ? WHERE id = ?`;
 
@@ -48,8 +53,6 @@ export const INSERT_INTERACTION_VIA =
 // grudges
 export const SELECT_OPEN_GRUDGE =
   `SELECT * FROM creature_grudges WHERE creature_id = ? AND actor = ? AND resolved_at IS NULL ORDER BY opened_at DESC LIMIT 1`;
-export const INSERT_GRUDGE =
-  `INSERT INTO creature_grudges (id, creature_id, quirk_id, actor, label, resolution_json, progress) VALUES (?, ?, ?, ?, ?, ?, ?)`;
 export const UPDATE_GRUDGE =
   `UPDATE creature_grudges SET progress = ?, resolved_at = ?, resolved_how = ? WHERE id = ? AND resolved_at IS NULL`;
 // Tend path (Task 4): opened_at bound from the tend's clock (ISO), and OR IGNORE so a racing second open
@@ -64,6 +67,11 @@ export const SELECT_TRAITS_FORMING =
   `SELECT slug, category, entrenchment FROM creature_traits WHERE creature_id = ? AND status = 'candidate' ORDER BY entrenchment DESC, slug ASC LIMIT 5`;
 
 // persona + voice shadow
+// Sleep pass stamp: touches only $.last_sleep_at on the row (never trust, never mood). Bind: [ISO, id].
+export const SET_LAST_SLEEP_AT =
+  `UPDATE creatures SET state_json = json_set(COALESCE(state_json,'{}'), '$.last_sleep_at', ?) WHERE id = ?`;
+export const SELECT_SLEEP_CREATURE =
+  `SELECT id, kind, json_extract(state_json, '$.last_sleep_at') AS last_sleep_at FROM creatures WHERE id = ?`;
 export const SELECT_PERSONA =
   `SELECT * FROM creature_personas WHERE creature_id = ?`;
 export const INSERT_VOICE_SHADOW =

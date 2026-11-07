@@ -60,6 +60,8 @@ import { loadPersonRegex } from "../webmind/sol-hoard-people.js";
 import { resolveVia, VIA_WEIGHT } from "../pets/appraise.js";
 import { expired, grudgeProgress } from "../pets/grudge.js";
 import { loadOpenGrudges, writeAppraisal } from "../pets/store.js";
+import { halsethPetModel, hasPetModel, type PetModel } from "../pets/model.js";
+import { notRun, runSleepPass, SLEEP_TEMPERATURE, type SleepResult } from "../pets/sleep.js";
 import { INSERT_INTERACTION_VIA, SELECT_TRAITS_FORMING, SELECT_VISIBLE_QUIRKS } from "../pets/sql.js";
 
 function json(data: unknown, status = 200): Response {
@@ -346,7 +348,7 @@ export async function getNest(request: Request, env: Env, params: Record<string,
 }
 
 // POST /mind/creatures/tick   -- daily decay + mood + nest recompute (worker CREATURE_CRON trigger)
-export async function tickCreatures(request: Request, env: Env): Promise<Response> {
+export async function tickCreatures(request: Request, env: Env, deps: { petModel?: PetModel } = {}): Promise<Response> {
   const denied = authGuard(request, env);
   if (denied) return denied;
   try {
@@ -420,10 +422,29 @@ export async function tickCreatures(request: Request, env: Env): Promise<Respons
       }
     }
 
+    // B64 sleep pass (spec 5.3): per companion_pet, after the day's maintenance. Never fails the tick and
+    // never touches trust. One pet today, so `sleep` is that pet's result; every pet's is in sleep_all.
+    const sleepAll: Array<SleepResult & { creature_id: string }> = [];
+    for (const c of creatures) {
+      if (c.kind !== "companion_pet") continue;
+      let r: SleepResult;
+      try {
+        const model = deps.petModel ?? (hasPetModel(env) ? halsethPetModel(env, SLEEP_TEMPERATURE) : null);
+        r = model ? await runSleepPass(env, c.id, model, now) : notRun("no_model");
+        if (!model) console.log("[pets/sleep] skipped no_model");
+      } catch (err) {
+        console.log(`[pets/sleep] skipped error: ${String(err).slice(0, 200)}`);
+        r = notRun("error");
+      }
+      sleepAll.push({ creature_id: c.id, ...r });
+    }
+
     return json({
       ok: true,
       ticked,
       total: creatures.length,
+      sleep: sleepAll[0] ?? null,
+      sleep_all: sleepAll,
       nest: {
         treasured: treasureRes.meta?.changes ?? 0,
         evicted: evictRes.meta?.changes ?? 0,
@@ -515,7 +536,7 @@ export async function hoardCreature(request: Request, env: Env, params: Record<s
       await writeAppraisal(env.DB, {
         id: crypto.randomUUID().replace(/-/g, ""), creature_id: id, interaction_id: `hoard:${id}:${m.id}`,
         actor: m.companion_id, action: "hoard", via, fit: null, valence: 0.3, arousal: 0.3, friction: false,
-        tags: [`hoard:${m.kind}`], weight: VIA_WEIGHT[via], source: "live",
+        tags: [`hoard:${m.kind}`], weight: VIA_WEIGHT[via], source: "live", created_at: new Date().toISOString(),
       }).run();
       hoarded.push({ make_id: m.id, companion_id: m.companion_id, kind: m.kind, title: m.title });
       if (react) {

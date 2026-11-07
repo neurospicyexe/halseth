@@ -1,5 +1,6 @@
 -- 0176 Sol gets a mind (B64): per-tend appraisals, traits, quirks, grudges, a persona and a voice shadow log.
 -- D1 rule: no foreign-key clauses anywhere. Sol's id is random per database (mig 0078), so the persona seed looks it up.
+-- Every timestamp is ISO 8601 UTC (bound from TS or defaulted via strftime), so ORDER BY and day math compare like with like.
 
 ALTER TABLE creature_interactions ADD COLUMN via TEXT;
 
@@ -10,7 +11,7 @@ CREATE TABLE creature_appraisals (
   actor          TEXT NOT NULL,
   action         TEXT NOT NULL,
   via            TEXT,
-  fit            REAL,
+  fit            TEXT,                                    -- CareFit word (met|welcome|full|drowsy|settled) or NULL
   valence        REAL,
   arousal        REAL,
   friction       REAL,
@@ -18,7 +19,7 @@ CREATE TABLE creature_appraisals (
   weight         REAL,
   source         TEXT,
   processed_at   TEXT,
-  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX idx_creature_appraisals_unprocessed ON creature_appraisals (creature_id, processed_at, created_at);
 
@@ -35,7 +36,7 @@ CREATE TABLE creature_traits (
   origin             TEXT,
   status             TEXT NOT NULL DEFAULT 'candidate',   -- candidate | faded | graduated
   last_reinforced_at TEXT,
-  created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (creature_id, slug)
 );
 CREATE INDEX idx_creature_traits_creature ON creature_traits (creature_id, status, entrenchment DESC);
@@ -47,7 +48,7 @@ CREATE TABLE creature_trait_evidence (
   delta         REAL,
   night         TEXT,
   reason        TEXT,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX idx_creature_trait_evidence_trait ON creature_trait_evidence (trait_id, created_at);
 
@@ -63,7 +64,7 @@ CREATE TABLE creature_quirks (
   kind            TEXT NOT NULL,                          -- aversion | preference
   status          TEXT NOT NULL DEFAULT 'active',
   arc             TEXT,
-  promoted_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  promoted_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX idx_creature_quirks_creature ON creature_quirks (creature_id, status);
 
@@ -75,7 +76,7 @@ CREATE TABLE creature_grudges (
   label           TEXT,
   resolution_json TEXT,
   progress        REAL NOT NULL DEFAULT 0,
-  opened_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  opened_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   resolved_at     TEXT,
   resolved_how    TEXT
 );
@@ -87,7 +88,7 @@ CREATE TABLE creature_personas (
   body_json    TEXT,
   voice_rules  TEXT,
   sample_lines TEXT,                                      -- JSON array
-  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 CREATE TABLE creature_voice_shadow (
@@ -97,7 +98,7 @@ CREATE TABLE creature_voice_shadow (
   deterministic   TEXT,
   generated       TEXT,
   rejected_reason TEXT,
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX idx_creature_voice_shadow_creature ON creature_voice_shadow (creature_id, created_at DESC);
 

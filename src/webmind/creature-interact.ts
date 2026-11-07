@@ -107,7 +107,7 @@ export async function performTend(
     extra.push(writeAppraisal(db, {
       id: appraisalId, creature_id: creature.id, interaction_id: interactionId, actor, action, via: resolvedVia,
       fit: r.fit, valence: ap.valence, arousal: ap.arousal, friction: ap.friction, tags: ap.tags,
-      weight: ap.weight, source: "live",
+      weight: ap.weight, source: "live", created_at: new Date(nowMs).toISOString(),
     }));
 
     // Grudge (B64 5.5). An expired one resolves FIRST (time), then this tend is read as if none were

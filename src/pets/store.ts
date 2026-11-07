@@ -105,6 +105,8 @@ export interface AppraisalRow {
   id: string; creature_id: string; interaction_id: string; actor: string; action: string; via: Via;
   fit: string | null; valence: number; arousal: number; friction: boolean; tags: string[]; weight: number;
   source: "live" | "backfill";
+  /** ISO 8601 (the tend's own clock). Required: the sleep pass reads Chicago days from it. */
+  created_at: string;
 }
 
 /** INSERT OR IGNORE (idempotent on interaction_id). Binds are D1-safe: no booleans, no undefined. */
@@ -112,6 +114,7 @@ export function writeAppraisal(db: D1Database, row: AppraisalRow): D1PreparedSta
   return db.prepare(INSERT_APPRAISAL).bind(
     row.id, row.creature_id, row.interaction_id, row.actor, row.action, row.via, row.fit ?? null,
     row.valence, row.arousal, row.friction ? 1 : 0, JSON.stringify(row.tags), row.weight, row.source,
+    row.created_at,
   );
 }
 
