@@ -247,6 +247,21 @@ describe("HTTP", () => {
     expect(body.quirks[0]).toHaveProperty("status");
     expect(body.traits_forming.map((t: any) => t.slug)).toEqual(["slug-5", "slug-4", "slug-3", "slug-2", "slug-1"]);
     expect(body.traits_forming[0]).toEqual({ slug: "slug-5", category: "habit", entrenchment: 5 });
+    // Retired quirks are his history: listed separately, never in the visible quirks.
+    expect(body.quirks_retired).toEqual([{ title: "Old Habit", behavior: "sulks" }]);
+  });
+  it("GET creature: quirks_retired is newest first, capped at 10, empty when none", async () => {
+    const { db, DB, solId } = setup();
+    const none = await (await getCreature(req(`/mind/creatures/${solId}`), env(DB), { id: solId })).json() as any;
+    expect(none.quirks_retired).toEqual([]);
+    for (let i = 0; i < 12; i++) {
+      db.prepare("INSERT INTO creature_quirks (id, creature_id, title, behavior, kind, status, promoted_at) VALUES (?, ?, ?, 'b', 'aversion', 'retired', ?)")
+        .run(`r${i}`, solId, `Old ${i}`, `2026-10-${String(10 + i).padStart(2, "0")}T00:00:00.000Z`);
+    }
+    const body = await (await getCreature(req(`/mind/creatures/${solId}`), env(DB), { id: solId })).json() as any;
+    expect(body.quirks_retired).toHaveLength(10);
+    expect(body.quirks_retired[0].title).toBe("Old 11");
+    expect(Object.keys(body.quirks_retired[0]).sort()).toEqual(["behavior", "title"]);
   });
   it("hoard writes a hoard:<kind> appraisal for the maker (autonomous)", async () => {
     const { db, DB, solId } = setup();

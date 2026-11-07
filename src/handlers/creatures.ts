@@ -63,7 +63,7 @@ import { loadOpenGrudges, writeAppraisal } from "../pets/store.js";
 import { halsethPetModel, hasPetModel, type PetModel } from "../pets/model.js";
 import { notRun, runSleepPass, SLEEP_TEMPERATURE, type SleepResult } from "../pets/sleep.js";
 import { makeVoice, voiceOr } from "../pets/voice.js";
-import { INSERT_INTERACTION_VIA, SELECT_TRAITS_FORMING, SELECT_VISIBLE_QUIRKS } from "../pets/sql.js";
+import { INSERT_INTERACTION_VIA, SELECT_RETIRED_QUIRKS, SELECT_TRAITS_FORMING, SELECT_VISIBLE_QUIRKS } from "../pets/sql.js";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -205,16 +205,20 @@ export async function getCreature(request: Request, env: Env, params: Record<str
 type MindView = {
   traits_forming: Array<{ slug: string; category: string | null; entrenchment: number }>;
   quirks: Array<{ title: string; behavior: string | null; status: string }>;
+  quirks_retired: Array<{ title: string; behavior: string | null }>;
   grudge: { actor: string; label: string; progress: number; of: number } | null;
   grudges: Array<{ actor: string; label: string; progress: number; of: number }>;
 };
-const EMPTY_MIND: MindView = { traits_forming: [], quirks: [], grudge: null, grudges: [] };
+const EMPTY_MIND: MindView = { traits_forming: [], quirks: [], quirks_retired: [], grudge: null, grudges: [] };
 
 async function mindView(db: D1Database, creatureId: string, nowMs: number): Promise<MindView> {
-  const [traits, quirks, open] = await Promise.all([
+  const [traits, quirks, open, retired] = await Promise.all([
     db.prepare(SELECT_TRAITS_FORMING).bind(creatureId).all<{ slug: string; category: string | null; entrenchment: number }>(),
     db.prepare(SELECT_VISIBLE_QUIRKS).bind(creatureId).all<{ title: string; behavior: string | null; status: string }>(),
     loadOpenGrudges(db, creatureId),
+    // History only: a failed read (table absent) is an empty history, never a failed creature view.
+    db.prepare(SELECT_RETIRED_QUIRKS).bind(creatureId).all<{ title: string; behavior: string | null }>()
+      .catch(() => ({ results: [] as Array<{ title: string; behavior: string | null }> })),
   ]);
   const grudges = open
     .filter(g => !expired(g, nowMs))
@@ -222,6 +226,7 @@ async function mindView(db: D1Database, creatureId: string, nowMs: number): Prom
   return {
     traits_forming: (traits.results ?? []).map(t => ({ slug: t.slug, category: t.category, entrenchment: t.entrenchment })),
     quirks: (quirks.results ?? []).map(q => ({ title: q.title, behavior: q.behavior, status: q.status })),
+    quirks_retired: (retired.results ?? []).map(q => ({ title: q.title, behavior: q.behavior })),
     grudge: grudges[0] ?? null,
     grudges,
   };

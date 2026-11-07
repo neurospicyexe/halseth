@@ -87,6 +87,8 @@ export const SELECT_OPEN_GRUDGES =
   `SELECT * FROM creature_grudges WHERE creature_id = ? AND resolved_at IS NULL ORDER BY opened_at DESC`;
 export const SELECT_VISIBLE_QUIRKS =
   `SELECT title, behavior, status FROM creature_quirks WHERE creature_id = ? AND status IN ('active','softening') ORDER BY promoted_at DESC`;
+export const SELECT_RETIRED_QUIRKS =
+  `SELECT title, behavior FROM creature_quirks WHERE creature_id = ? AND status = 'retired' ORDER BY promoted_at DESC LIMIT 10`;
 export const SELECT_TRAITS_FORMING =
   `SELECT slug, category, entrenchment FROM creature_traits WHERE creature_id = ? AND status = 'candidate' ORDER BY entrenchment DESC, slug ASC LIMIT 5`;
 
